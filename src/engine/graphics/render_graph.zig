@@ -388,6 +388,28 @@ pub const BloomPass = struct {
     }
 };
 
+// TAA pass - reserved temporal AA stage between scene rendering and bloom/post.
+pub const TAAPass = struct {
+    enabled: bool = true,
+    const VTABLE = IRenderPass.VTable{
+        .name = "TAAPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *TAAPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        const self: *TAAPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled or !ctx.taa_enabled) return;
+        ctx.rhi.computeTAA();
+    }
+};
+
 // FXAA pass - applies anti-aliasing to LDR output
 pub const FXAAPass = struct {
     enabled: bool = true,

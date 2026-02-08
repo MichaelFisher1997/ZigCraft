@@ -17,6 +17,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     setup.destroyMainRenderPassAndPipelines(ctx);
     lifecycle.destroyHDRResources(ctx);
     lifecycle.destroyFXAAResources(ctx);
+    lifecycle.destroyTAAResources(ctx);
     lifecycle.destroyBloomResources(ctx);
     lifecycle.destroyPostProcessResources(ctx);
     lifecycle.destroyGPassResources(ctx);
@@ -41,6 +42,10 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     };
     setup.createSSAOResources(ctx) catch |err| {
         std.log.err("Failed to recreate SSAO resources: {}", .{err});
+        return;
+    };
+    setup.createTAAResources(ctx) catch |err| {
+        std.log.err("Failed to recreate TAA resources: {}", .{err});
         return;
     };
     ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {

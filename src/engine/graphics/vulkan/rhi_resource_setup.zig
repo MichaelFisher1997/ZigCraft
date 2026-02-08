@@ -373,6 +373,10 @@ pub fn createSSAOResources(ctx: anytype) !void {
     try lifecycle.transitionImagesToShaderRead(ctx, &ssao_images, false);
 }
 
+pub fn createTAAResources(ctx: anytype) !void {
+    try ctx.taa.ensureResources(&ctx.resources, ctx.swapchain.getExtent());
+}
+
 pub fn createPostProcessResources(ctx: anytype) !void {
     const vk = ctx.vulkan_device.vk_device;
 

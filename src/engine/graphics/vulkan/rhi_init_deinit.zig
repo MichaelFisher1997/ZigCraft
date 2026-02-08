@@ -77,6 +77,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try lifecycle.createHDRResources(ctx);
     try setup.createGPassResources(ctx);
     try setup.createSSAOResources(ctx);
+    try setup.createTAAResources(ctx);
 
     try ctx.render_pass_manager.createMainRenderPass(
         ctx.vulkan_device.vk_device,
@@ -206,6 +207,7 @@ pub fn deinit(ctx: anytype) void {
 
         lifecycle.destroyHDRResources(ctx);
         lifecycle.destroyFXAAResources(ctx);
+        lifecycle.destroyTAAResources(ctx);
         lifecycle.destroyBloomResources(ctx);
         lifecycle.destroyVelocityResources(ctx);
         lifecycle.destroyPostProcessResources(ctx);

@@ -183,6 +183,14 @@ fn computeBloom(ctx_ptr: *anyopaque) void {
     );
 }
 
+fn computeTAA(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    if (!ctx.frames.frame_in_progress) return;
+    ctx.taa.compute();
+}
+
 fn setFXAA(ctx_ptr: *anyopaque, enabled: bool) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.fxaa.enabled = enabled;
@@ -703,6 +711,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .beginFXAAPass = beginFXAAPass,
         .endFXAAPass = endFXAAPass,
         .computeBloom = computeBloom,
+        .computeTAA = computeTAA,
         .getEncoder = getEncoder,
         .getStateContext = getStateContext,
         .getNativeSkyPipeline = getNativeSkyPipeline,

@@ -178,6 +178,7 @@ const MockContext = struct {
         .beginFXAAPass = undefined,
         .endFXAAPass = undefined,
         .computeBloom = undefined,
+        .computeTAA = undefined,
         .getEncoder = MockContext.getEncoder,
         .getStateContext = MockContext.getStateContext,
         .setClearColor = undefined,

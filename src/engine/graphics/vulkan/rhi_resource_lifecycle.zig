@@ -131,6 +131,10 @@ pub fn destroyBloomResources(ctx: anytype) void {
     ctx.bloom.deinit(ctx.vulkan_device.vk_device, ctx.allocator, ctx.descriptors.descriptor_pool);
 }
 
+pub fn destroyTAAResources(ctx: anytype) void {
+    ctx.taa.deinit(&ctx.resources);
+}
+
 pub fn destroyVelocityResources(ctx: anytype) void {
     const vk = ctx.vulkan_device.vk_device;
     if (vk == null) return;

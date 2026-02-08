@@ -286,6 +286,8 @@ pub const IRenderContext = struct {
         endFXAAPass: *const fn (ptr: *anyopaque) void,
         // Bloom pass
         computeBloom: *const fn (ptr: *anyopaque) void,
+        // TAA pass
+        computeTAA: *const fn (ptr: *anyopaque) void,
         getEncoder: *const fn (ptr: *anyopaque) IGraphicsCommandEncoder,
         getStateContext: *const fn (ptr: *anyopaque) IRenderStateContext,
 
@@ -346,6 +348,9 @@ pub const IRenderContext = struct {
     }
     pub fn computeBloom(self: IRenderContext) void {
         self.vtable.computeBloom(self.ptr);
+    }
+    pub fn computeTAA(self: IRenderContext) void {
+        self.vtable.computeTAA(self.ptr);
     }
     pub fn getEncoder(self: IRenderContext) IGraphicsCommandEncoder {
         return self.vtable.getEncoder(self.ptr);
@@ -671,6 +676,9 @@ pub const RHI = struct {
     }
     pub fn computeBloom(self: RHI) void {
         self.vtable.render.computeBloom(self.ptr);
+    }
+    pub fn computeTAA(self: RHI) void {
+        self.vtable.render.computeTAA(self.ptr);
     }
     pub fn setTextureUniforms(self: RHI, enabled: bool, handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.vtable.render.setTextureUniforms(self.ptr, enabled, handles);
