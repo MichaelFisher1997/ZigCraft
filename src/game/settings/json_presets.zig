@@ -142,7 +142,7 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.lpv_propagation_iterations = config.lpv_propagation_iterations;
     settings.lod_enabled = config.lod_enabled;
     settings.render_distance = config.render_distance;
-    settings.fxaa_enabled = config.fxaa_enabled;
+    settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
     settings.bloom_enabled = config.bloom_enabled;
     settings.bloom_intensity = config.bloom_intensity;
 }

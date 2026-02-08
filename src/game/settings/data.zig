@@ -168,7 +168,8 @@ pub const Settings = struct {
             } },
         };
         pub const msaa_samples = SettingMetadata{
-            .label = "ANTI-ALIASING (MSAA)",
+            .label = "ANTI-ALIASING (LEGACY)",
+            .description = "Legacy setting retained for compatibility while TAA rollout completes",
             .kind = .{ .choice = .{
                 .labels = &[_][]const u8{ "OFF", "2X", "4X", "8X" },
                 .values = &[_]u32{ 1, 2, 4, 8 },
