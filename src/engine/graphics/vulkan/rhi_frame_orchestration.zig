@@ -120,6 +120,7 @@ pub fn prepareFrameState(ctx: anytype) void {
     ctx.shadow_system.pass_active = false;
     ctx.runtime.post_process_ran_this_frame = false;
     ctx.runtime.fxaa_ran_this_frame = false;
+    ctx.taa.ran_this_frame = false;
     ctx.ui.ui_using_swapchain = false;
 
     ctx.draw.terrain_pipeline_bound = false;

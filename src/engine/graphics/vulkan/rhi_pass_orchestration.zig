@@ -314,6 +314,16 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
 
         c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.post_process.pipeline);
 
+        var source_view = ctx.hdr.hdr_view;
+        var source_sampler = ctx.post_process.sampler;
+        if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
+            if (ctx.resources.textures.get(ctx.taa.output_texture)) |tex| {
+                source_view = tex.view;
+                source_sampler = tex.sampler;
+            }
+        }
+        ctx.post_process.updateSourceDescriptors(ctx.vulkan_device.vk_device, source_view, source_sampler);
+
         const pp_ds = ctx.post_process.descriptor_sets[ctx.frames.current_frame];
         if (pp_ds == null) {
             std.log.err("Post-process descriptor set is null for frame {}", .{ctx.frames.current_frame});

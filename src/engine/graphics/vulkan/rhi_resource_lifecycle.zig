@@ -132,7 +132,7 @@ pub fn destroyBloomResources(ctx: anytype) void {
 }
 
 pub fn destroyTAAResources(ctx: anytype) void {
-    ctx.taa.deinit(&ctx.resources);
+    ctx.taa.deinit(ctx.vulkan_device.vk_device, ctx.descriptors.descriptor_pool, &ctx.resources);
 }
 
 pub fn destroyVelocityResources(ctx: anytype) void {

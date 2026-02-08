@@ -173,11 +173,20 @@ fn computeBloom(ctx_ptr: *anyopaque) void {
     if (!ctx.frames.frame_in_progress) return;
     pass_orchestration.ensureNoRenderPassActiveInternal(ctx);
 
+    var bloom_source_image = ctx.hdr.hdr_image;
+    if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
+        if (ctx.resources.textures.get(ctx.taa.output_texture)) |tex| {
+            if (tex.image) |img| {
+                bloom_source_image = img;
+            }
+        }
+    }
+
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     ctx.bloom.compute(
         command_buffer,
         ctx.frames.current_frame,
-        ctx.hdr.hdr_image,
+        bloom_source_image,
         ctx.swapchain.getExtent(),
         &ctx.runtime.draw_call_count,
     );
@@ -188,7 +197,20 @@ fn computeTAA(ctx_ptr: *anyopaque) void {
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
     if (!ctx.frames.frame_in_progress) return;
-    ctx.taa.compute();
+    if (!ctx.taa.enabled) return;
+    pass_orchestration.ensureNoRenderPassActiveInternal(ctx);
+
+    const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+    ctx.taa.compute(
+        ctx.vulkan_device.vk_device,
+        command_buffer,
+        ctx.frames.current_frame,
+        &ctx.resources,
+        ctx.hdr.hdr_view,
+        ctx.velocity.velocity_view,
+        ctx.swapchain.getExtent(),
+        &ctx.runtime.draw_call_count,
+    );
 }
 
 fn setFXAA(ctx_ptr: *anyopaque, enabled: bool) void {

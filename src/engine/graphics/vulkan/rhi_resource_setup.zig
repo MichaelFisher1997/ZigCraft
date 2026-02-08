@@ -374,7 +374,13 @@ pub fn createSSAOResources(ctx: anytype) !void {
 }
 
 pub fn createTAAResources(ctx: anytype) !void {
-    try ctx.taa.ensureResources(&ctx.resources, ctx.swapchain.getExtent());
+    try ctx.taa.ensureResources(
+        ctx.vulkan_device.vk_device,
+        ctx.allocator,
+        ctx.descriptors.descriptor_pool,
+        &ctx.resources,
+        ctx.swapchain.getExtent(),
+    );
 }
 
 pub fn createPostProcessResources(ctx: anytype) !void {

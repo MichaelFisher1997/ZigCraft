@@ -198,6 +198,27 @@ pub const PostProcessSystem = struct {
         }
     }
 
+    pub fn updateSourceDescriptors(self: *PostProcessSystem, vk: c.VkDevice, source_view: c.VkImageView, source_sampler: c.VkSampler) void {
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            if (self.descriptor_sets[i] == null) continue;
+
+            var source_image_info = std.mem.zeroes(c.VkDescriptorImageInfo);
+            source_image_info.imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            source_image_info.imageView = source_view;
+            source_image_info.sampler = source_sampler;
+
+            var write = std.mem.zeroes(c.VkWriteDescriptorSet);
+            write.sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = self.descriptor_sets[i];
+            write.dstBinding = 0;
+            write.descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &source_image_info;
+
+            c.vkUpdateDescriptorSets(vk, 1, &write, 0, null);
+        }
+    }
+
     pub fn updateLUTDescriptor(self: *PostProcessSystem, vk: c.VkDevice, lut_view: c.VkImageView, lut_sampler: c.VkSampler) void {
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
             if (self.descriptor_sets[i] == null) continue;
