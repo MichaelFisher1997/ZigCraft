@@ -196,19 +196,9 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
     c.vkFreeCommandBuffers(ctx.vulkan_device.vk_device, ctx.frames.command_pool, 1, &cmd);
 }
 
-fn getMSAASampleCountFlag(samples: u8) c.VkSampleCountFlagBits {
-    return switch (samples) {
-        2 => c.VK_SAMPLE_COUNT_2_BIT,
-        4 => c.VK_SAMPLE_COUNT_4_BIT,
-        8 => c.VK_SAMPLE_COUNT_8_BIT,
-        else => c.VK_SAMPLE_COUNT_1_BIT,
-    };
-}
-
 pub fn createHDRResources(ctx: anytype) !void {
     const extent = ctx.swapchain.getExtent();
     const format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
-    const sample_count = getMSAASampleCountFlag(ctx.options.msaa_samples);
 
     var image_info = std.mem.zeroes(c.VkImageCreateInfo);
     image_info.sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -241,18 +231,4 @@ pub fn createHDRResources(ctx: anytype) !void {
     view_info.format = format;
     view_info.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
     try Utils.checkVk(c.vkCreateImageView(ctx.vulkan_device.vk_device, &view_info, null, &ctx.hdr.hdr_view));
-
-    if (ctx.options.msaa_samples > 1) {
-        image_info.samples = sample_count;
-        image_info.usage = c.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        try Utils.checkVk(c.vkCreateImage(ctx.vulkan_device.vk_device, &image_info, null, &ctx.hdr.hdr_msaa_image));
-        c.vkGetImageMemoryRequirements(ctx.vulkan_device.vk_device, ctx.hdr.hdr_msaa_image, &mem_reqs);
-        alloc_info.allocationSize = mem_reqs.size;
-        alloc_info.memoryTypeIndex = try Utils.findMemoryType(ctx.vulkan_device.physical_device, mem_reqs.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        try Utils.checkVk(c.vkAllocateMemory(ctx.vulkan_device.vk_device, &alloc_info, null, &ctx.hdr.hdr_msaa_memory));
-        try Utils.checkVk(c.vkBindImageMemory(ctx.vulkan_device.vk_device, ctx.hdr.hdr_msaa_image, ctx.hdr.hdr_msaa_memory, 0));
-
-        view_info.image = ctx.hdr.hdr_msaa_image;
-        try Utils.checkVk(c.vkCreateImageView(ctx.vulkan_device.vk_device, &view_info, null, &ctx.hdr.hdr_msaa_view));
-    }
 }

@@ -82,7 +82,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try ctx.render_pass_manager.createMainRenderPass(
         ctx.vulkan_device.vk_device,
         ctx.swapchain.getExtent(),
-        ctx.options.msaa_samples,
+        1,
     );
 
     try ctx.pipeline_manager.createMainPipelines(
@@ -90,7 +90,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
         ctx.vulkan_device.vk_device,
         ctx.render_pass_manager.hdr_render_pass,
         ctx.render_pass_manager.g_render_pass,
-        ctx.options.msaa_samples,
+        1,
     );
 
     try setup.createPostProcessResources(ctx);

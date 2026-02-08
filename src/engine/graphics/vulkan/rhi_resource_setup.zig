@@ -463,9 +463,9 @@ pub fn createMainFramebuffers(ctx: anytype) !void {
         ctx.vulkan_device.vk_device,
         ctx.swapchain.getExtent(),
         ctx.hdr.hdr_view,
-        if (ctx.options.msaa_samples > 1) ctx.hdr.hdr_msaa_view else null,
+        null,
         ctx.swapchain.swapchain.depth_image_view,
-        ctx.options.msaa_samples,
+        1,
     );
 }
 

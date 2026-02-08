@@ -190,7 +190,7 @@ pub fn beginMainPassInternal(ctx: anytype) void {
     if (ctx.swapchain.getExtent().width == 0 or ctx.swapchain.getExtent().height == 0) return;
 
     if (ctx.render_pass_manager.hdr_render_pass == null) {
-        ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
+        ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), 1) catch |err| {
             std.log.err("beginMainPass: failed to recreate render pass: {}", .{err});
             return;
         };
@@ -231,19 +231,12 @@ pub fn beginMainPassInternal(ctx: anytype) void {
         render_pass_info.renderArea.offset = .{ .x = 0, .y = 0 };
         render_pass_info.renderArea.extent = ctx.swapchain.getExtent();
 
-        var clear_values: [3]c.VkClearValue = undefined;
+        var clear_values: [2]c.VkClearValue = undefined;
         clear_values[0] = std.mem.zeroes(c.VkClearValue);
         clear_values[0].color = .{ .float32 = ctx.runtime.clear_color };
         clear_values[1] = std.mem.zeroes(c.VkClearValue);
         clear_values[1].depthStencil = .{ .depth = 0.0, .stencil = 0 };
-
-        if (ctx.options.msaa_samples > 1) {
-            clear_values[2] = std.mem.zeroes(c.VkClearValue);
-            clear_values[2].color = .{ .float32 = ctx.runtime.clear_color };
-            render_pass_info.clearValueCount = 3;
-        } else {
-            render_pass_info.clearValueCount = 2;
-        }
+        render_pass_info.clearValueCount = 2;
         render_pass_info.pClearValues = &clear_values[0];
 
         c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
