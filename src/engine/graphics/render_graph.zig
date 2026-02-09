@@ -5,7 +5,6 @@ const World = @import("../../world/world.zig").World;
 const shadow_scene = @import("shadow_scene.zig");
 const RHI = @import("rhi.zig").RHI;
 const rhi_pkg = @import("rhi.zig");
-const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
 const log = @import("../core/log.zig");
 const CSM = @import("csm.zig");
@@ -22,6 +21,9 @@ pub const SceneContext = struct {
     aspect: f32,
     sky_params: rhi_pkg.SkyParams,
     cloud_params: rhi_pkg.CloudParams,
+    taa_enabled: bool,
+    viewport_width: f32,
+    viewport_height: f32,
     main_shader: rhi_pkg.ShaderHandle,
     env_map_handle: rhi_pkg.TextureHandle,
     shadow: rhi_pkg.ShadowConfig,
@@ -212,7 +214,7 @@ pub const GPass = struct {
         ctx.rhi.beginGPass();
         const atlas = ctx.material_system.getAtlasHandles(ctx.env_map_handle);
         ctx.rhi.bindTexture(atlas.diffuse, 1);
-        const view_proj = Mat4.perspectiveReverseZ(ctx.camera.fov, ctx.aspect, ctx.camera.near, ctx.camera.far).multiply(ctx.camera.getViewMatrixOriginCentered());
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, false);
         ctx.rhi.endGPass();
     }
@@ -234,7 +236,7 @@ pub const SSAOPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
         if (!ctx.ssao_enabled or ctx.disable_ssao) return;
-        const proj = Mat4.perspectiveReverseZ(ctx.camera.fov, ctx.aspect, ctx.camera.near, ctx.camera.far);
+        const proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled);
         const inv_proj = proj.inverse();
         ctx.rhi.ssao().compute(proj, inv_proj);
     }
@@ -288,7 +290,7 @@ pub const OpaquePass = struct {
         rhi.bindTexture(ctx.lpv_texture_handle, 11);
         rhi.bindTexture(ctx.lpv_texture_handle_g, 12);
         rhi.bindTexture(ctx.lpv_texture_handle_b, 13);
-        const view_proj = Mat4.perspectiveReverseZ(ctx.camera.fov, ctx.aspect, ctx.camera.near, ctx.camera.far).multiply(ctx.camera.getViewMatrixOriginCentered());
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, true);
     }
 };
@@ -309,7 +311,7 @@ pub const CloudPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
         if (ctx.disable_clouds) return;
-        const view_proj = Mat4.perspectiveReverseZ(ctx.camera.fov, ctx.aspect, ctx.camera.near, ctx.camera.far).multiply(ctx.camera.getViewMatrixOriginCentered());
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.atmosphere_system.renderClouds(ctx.cloud_params, view_proj) catch |err| {
             if (err != error.ResourceNotReady and
                 err != error.CloudPipelineNotReady and
@@ -383,6 +385,28 @@ pub const BloomPass = struct {
         const self: *BloomPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled or !ctx.bloom_enabled) return;
         ctx.rhi.computeBloom();
+    }
+};
+
+// TAA pass - reserved temporal AA stage between scene rendering and bloom/post.
+pub const TAAPass = struct {
+    enabled: bool = true,
+    const VTABLE = IRenderPass.VTable{
+        .name = "TAAPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *TAAPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        const self: *TAAPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled or !ctx.taa_enabled) return;
+        ctx.rhi.computeTAA();
     }
 };
 

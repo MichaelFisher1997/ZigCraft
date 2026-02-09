@@ -277,7 +277,7 @@ pub const World = struct {
         defer storage.chunks_mutex.unlockShared();
 
         if (storage.chunks.get(.{ .x = chunk_x, .z = chunk_z })) |data| {
-            return data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.fluid_allocation != null;
+            return data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null;
         }
         return false;
     }
@@ -317,6 +317,7 @@ pub const World = struct {
         var iter = self.storage.iteratorUnsafe();
         while (iter.next()) |entry| {
             if (entry.value_ptr.*.mesh.solid_allocation) |alloc| total_verts += alloc.count;
+            if (entry.value_ptr.*.mesh.cutout_allocation) |alloc| total_verts += alloc.count;
             if (entry.value_ptr.*.mesh.fluid_allocation) |alloc| total_verts += alloc.count;
         }
 

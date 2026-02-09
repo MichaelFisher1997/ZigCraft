@@ -9,6 +9,8 @@ const RHI = @import("../../engine/graphics/rhi.zig").RHI;
 /// - `textures_enabled` - Texture sampling toggle
 /// - `anisotropic_filtering` - Sampler anisotropy level
 /// - `msaa_samples` - Multisample anti-aliasing sample count
+/// - `taa_blend_factor` - TAA history accumulation factor
+/// - `taa_velocity_rejection` - TAA motion rejection threshold
 ///
 /// ## Settings NOT Applied Here (consumed elsewhere):
 /// These settings take effect without requiring this function because they are
@@ -27,6 +29,7 @@ const RHI = @import("../../engine/graphics/rhi.zig").RHI;
 /// | `max_texture_resolution`    | TextureLoader on texture load        | On asset reload        |
 /// | `fov`, `mouse_sensitivity`  | Camera / InputMapper                 | Next frame             |
 /// | `window_*`, `fullscreen`    | WindowManager                        | On explicit apply      |
+/// | `taa_enabled`               | TAA render graph stage toggle        | Next frame             |
 ///
 /// This separation exists because RHI exposes setters only for GPU pipeline state,
 /// while other settings are architectural concerns handled by their respective systems.
@@ -37,4 +40,6 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setDebugShadowView(settings.debug_shadows_active);
     rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
     rhi.setMSAA(settings.msaa_samples);
+    rhi.setTAABlendFactor(settings.taa_blend_factor);
+    rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
 }

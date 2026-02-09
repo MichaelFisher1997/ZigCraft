@@ -12,6 +12,9 @@ pub const PresetConfig = struct {
     pbr_enabled: bool,
     pbr_quality: u8,
     msaa_samples: u8,
+    taa_enabled: bool = false,
+    taa_blend_factor: f32 = 0.9,
+    taa_velocity_rejection: f32 = 0.02,
     anisotropic_filtering: u8,
     max_texture_resolution: u32,
     cloud_shadows_enabled: bool,
@@ -122,6 +125,9 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.pbr_enabled = config.pbr_enabled;
     settings.pbr_quality = config.pbr_quality;
     settings.msaa_samples = config.msaa_samples;
+    settings.taa_enabled = config.taa_enabled;
+    settings.taa_blend_factor = config.taa_blend_factor;
+    settings.taa_velocity_rejection = config.taa_velocity_rejection;
     settings.anisotropic_filtering = config.anisotropic_filtering;
     settings.max_texture_resolution = config.max_texture_resolution;
     settings.cloud_shadows_enabled = config.cloud_shadows_enabled;
@@ -140,7 +146,7 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.lpv_propagation_iterations = config.lpv_propagation_iterations;
     settings.lod_enabled = config.lod_enabled;
     settings.render_distance = config.render_distance;
-    settings.fxaa_enabled = config.fxaa_enabled;
+    settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
     settings.bloom_enabled = config.bloom_enabled;
     settings.bloom_intensity = config.bloom_intensity;
 }
@@ -161,6 +167,9 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         settings.pbr_enabled == preset.pbr_enabled and
         settings.pbr_quality == preset.pbr_quality and
         settings.msaa_samples == preset.msaa_samples and
+        settings.taa_enabled == preset.taa_enabled and
+        std.math.approxEqAbs(f32, settings.taa_blend_factor, preset.taa_blend_factor, epsilon) and
+        std.math.approxEqAbs(f32, settings.taa_velocity_rejection, preset.taa_velocity_rejection, epsilon) and
         settings.anisotropic_filtering == preset.anisotropic_filtering and
         settings.max_texture_resolution == preset.max_texture_resolution and
         settings.cloud_shadows_enabled == preset.cloud_shadows_enabled and

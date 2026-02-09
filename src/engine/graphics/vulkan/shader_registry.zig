@@ -12,6 +12,9 @@ pub const FXAA_FRAG = "assets/shaders/vulkan/fxaa.frag.spv";
 pub const POST_PROCESS_VERT = "assets/shaders/vulkan/post_process.vert.spv";
 pub const POST_PROCESS_FRAG = "assets/shaders/vulkan/post_process.frag.spv";
 
+pub const TAA_VERT = "assets/shaders/vulkan/post_process.vert.spv";
+pub const TAA_FRAG = "assets/shaders/vulkan/taa.frag.spv";
+
 pub const SHADOW_VERT = "assets/shaders/vulkan/shadow.vert.spv";
 pub const SHADOW_FRAG = "assets/shaders/vulkan/shadow.frag.spv";
 

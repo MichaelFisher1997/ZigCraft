@@ -9,6 +9,16 @@ const Key = @import("../core/interfaces.zig").Key;
 const InputMapper = @import("../../game/input_mapper.zig").InputMapper;
 
 pub const Camera = struct {
+    // 4-tap Halton(2,3) sequence centered to [-0.5, 0.5] pixel offsets.
+    // We keep this to 4 samples to keep temporal convergence fast while matching
+    // the current low-latency TAA target (minimal history lag and ghosting).
+    const JITTER_SEQUENCE = [_][2]f32{
+        .{ 0.0, -0.16666667 },
+        .{ -0.25, 0.16666667 },
+        .{ 0.25, -0.3888889 },
+        .{ -0.375, -0.055555556 },
+    };
+
     position: Vec3,
 
     /// Yaw in radians (rotation around Y axis)
@@ -36,6 +46,7 @@ pub const Camera = struct {
     forward: Vec3,
     right: Vec3,
     up: Vec3,
+    jitter_index: usize,
 
     pub const Config = struct {
         position: Vec3 = Vec3.init(0, 0, 3),
@@ -61,9 +72,23 @@ pub const Camera = struct {
             .forward = Vec3.zero,
             .right = Vec3.zero,
             .up = Vec3.zero,
+            .jitter_index = 0,
         };
         cam.updateVectors();
         return cam;
+    }
+
+    pub fn resetJitter(self: *Camera) void {
+        self.jitter_index = 0;
+    }
+
+    pub fn advanceJitter(self: *Camera) void {
+        self.jitter_index = (self.jitter_index + 1) % JITTER_SEQUENCE.len;
+    }
+
+    fn currentJitterPixel(self: *const Camera, enabled: bool) [2]f32 {
+        if (!enabled) return .{ 0.0, 0.0 };
+        return JITTER_SEQUENCE[self.jitter_index];
     }
 
     /// Update camera from input (call once per frame)
@@ -124,6 +149,23 @@ pub const Camera = struct {
     pub fn getProjectionMatrix(self: *const Camera, aspect_ratio: f32) Mat4 {
         // Standard perspective for compatibility
         return Mat4.perspective(self.fov, aspect_ratio, self.near, self.far);
+    }
+
+    pub fn getProjectionMatrixReverseZ(self: *const Camera, aspect_ratio: f32) Mat4 {
+        return Mat4.perspectiveReverseZ(self.fov, aspect_ratio, self.near, self.far);
+    }
+
+    pub fn getJitteredProjectionMatrixReverseZ(self: *const Camera, aspect_ratio: f32, viewport_width: f32, viewport_height: f32, jitter_enabled: bool) Mat4 {
+        const base_projection = self.getProjectionMatrixReverseZ(aspect_ratio);
+        if (!jitter_enabled or viewport_width <= 0.0 or viewport_height <= 0.0) {
+            return base_projection;
+        }
+
+        const jitter = self.currentJitterPixel(jitter_enabled);
+        const jitter_x_ndc = (jitter[0] * 2.0) / viewport_width;
+        const jitter_y_ndc = (jitter[1] * 2.0) / viewport_height;
+        const jitter_matrix = Mat4.translate(Vec3.init(jitter_x_ndc, jitter_y_ndc, 0.0));
+        return jitter_matrix.multiply(base_projection);
     }
 
     /// Get view matrix centered at origin (for floating origin rendering)

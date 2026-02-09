@@ -43,7 +43,7 @@ const FaceKey = struct {
 };
 
 /// Process a single 16x16 slice along the given axis, producing greedy-merged quads.
-/// Populates solid_list and fluid_list with generated vertices.
+/// Populates solid_list, cutout_list, and fluid_list with generated vertices.
 pub fn meshSlice(
     allocator: std.mem.Allocator,
     chunk: *const Chunk,
@@ -52,6 +52,7 @@ pub fn meshSlice(
     s: i32,
     si: u32,
     solid_list: *std.ArrayListUnmanaged(Vertex),
+    cutout_list: *std.ArrayListUnmanaged(Vertex),
     fluid_list: *std.ArrayListUnmanaged(Vertex),
     atlas: *const TextureAtlas,
 ) !void {
@@ -143,7 +144,11 @@ pub fn meshSlice(
             }
 
             const k_def = block_registry.getBlockDefinition(k.block);
-            const target = if (k_def.render_pass == .fluid) fluid_list else solid_list;
+            const target = switch (k_def.render_pass) {
+                .fluid => fluid_list,
+                .cutout => cutout_list,
+                else => solid_list,
+            };
             try addGreedyFace(allocator, target, axis, s, su, sv, width, height, k_def, k.side, si, k.light, k.color, chunk, neighbors, atlas);
 
             var dy: u32 = 0;

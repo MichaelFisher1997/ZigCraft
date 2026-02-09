@@ -18,6 +18,7 @@ const SSAOSystem = @import("ssao_system.zig").SSAOSystem;
 const PostProcessSystem = @import("post_process_system.zig").PostProcessSystem;
 const FXAASystem = @import("fxaa_system.zig").FXAASystem;
 const BloomSystem = @import("bloom_system.zig").BloomSystem;
+const TAASystem = @import("taa_system.zig").TAASystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
@@ -208,6 +209,7 @@ pub const VulkanContext = struct {
     post_process: PostProcessSystem = .{},
     debug_shadow: DebugShadowResources = .{},
     fxaa: FXAASystem = .{},
+    taa: TAASystem = .{},
     bloom: BloomSystem = .{},
     post_process_state: PostProcessState = .{},
     velocity: VelocityResources = .{},
