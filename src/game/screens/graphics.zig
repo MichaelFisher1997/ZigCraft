@@ -100,6 +100,8 @@ pub const GraphicsScreen = struct {
                     settings_pkg.json_presets.apply(settings, next_idx);
                     ctx.rhi.*.setAnisotropicFiltering(settings.anisotropic_filtering);
                     ctx.rhi.*.setTexturesEnabled(settings.textures_enabled);
+                    ctx.rhi.*.setTAABlendFactor(settings.taa_blend_factor);
+                    ctx.rhi.*.setTAAVelocityRejection(settings.taa_velocity_rejection);
                     if (settings.taa_enabled) {
                         settings.fxaa_enabled = false;
                         ctx.rhi.*.setFXAA(false);
@@ -224,6 +226,10 @@ pub const GraphicsScreen = struct {
                         settings.fxaa_enabled = false;
                         ctx.rhi.*.setFXAA(false);
                     }
+                } else if (std.mem.eql(u8, decl.name, "taa_blend_factor")) {
+                    ctx.rhi.*.setTAABlendFactor(settings.taa_blend_factor);
+                } else if (std.mem.eql(u8, decl.name, "taa_velocity_rejection")) {
+                    ctx.rhi.*.setTAAVelocityRejection(settings.taa_velocity_rejection);
                 } else if (std.mem.eql(u8, decl.name, "fxaa_enabled")) {
                     if (settings.taa_enabled and settings.fxaa_enabled) {
                         settings.fxaa_enabled = false;

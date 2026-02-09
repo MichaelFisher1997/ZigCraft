@@ -16,6 +16,8 @@ pub const TAASystem = struct {
     pass_active: bool = false,
     ran_this_frame: bool = false,
     history_valid: bool = false,
+    blend_factor: f32 = 0.9,
+    velocity_rejection: f32 = 0.02,
 
     render_pass: c.VkRenderPass = null,
     pipeline: c.VkPipeline = null,
@@ -61,7 +63,6 @@ pub const TAASystem = struct {
         self.history_textures[0] = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
         errdefer self.destroyHistoryTextures(resources);
         self.history_textures[1] = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
-        errdefer self.destroyHistoryTextures(resources);
 
         try self.createFramebuffers(vk, resources, extent);
 
@@ -334,8 +335,8 @@ pub const TAASystem = struct {
         c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipeline_layout, 0, 1, &self.descriptor_sets[frame_index], 0, null);
 
         const push = TAAPushConstants{
-            .blend_factor = 0.9,
-            .velocity_rejection = 0.02,
+            .blend_factor = self.blend_factor,
+            .velocity_rejection = self.velocity_rejection,
             .reset_history = if (self.history_valid) 0.0 else 1.0,
             ._pad = 0.0,
         };

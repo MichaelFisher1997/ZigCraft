@@ -258,6 +258,16 @@ fn setColorGradingIntensity(ctx_ptr: *anyopaque, intensity: f32) void {
     ctx.post_process_state.color_grading_intensity = intensity;
 }
 
+fn setTAABlendFactor(ctx_ptr: *anyopaque, value: f32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.taa.blend_factor = std.math.clamp(value, 0.0, 0.98);
+}
+
+fn setTAAVelocityRejection(ctx_ptr: *anyopaque, value: f32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.taa.velocity_rejection = std.math.clamp(value, 0.0, 0.25);
+}
+
 fn endFrame(ctx_ptr: *anyopaque) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
@@ -784,6 +794,8 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     .setFilmGrainIntensity = setFilmGrainIntensity,
     .setColorGradingEnabled = setColorGradingEnabled,
     .setColorGradingIntensity = setColorGradingIntensity,
+    .setTAABlendFactor = setTAABlendFactor,
+    .setTAAVelocityRejection = setTAAVelocityRejection,
 };
 
 fn beginPassTiming(ctx_ptr: *anyopaque, pass_name: []const u8) void {

@@ -487,6 +487,8 @@ pub const RHI = struct {
         setFilmGrainIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
         setColorGradingEnabled: *const fn (ctx: *anyopaque, enabled: bool) void,
         setColorGradingIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
+        setTAABlendFactor: *const fn (ctx: *anyopaque, value: f32) void,
+        setTAAVelocityRejection: *const fn (ctx: *anyopaque, value: f32) void,
     };
 
     pub fn factory(self: RHI) IResourceFactory {
@@ -741,5 +743,11 @@ pub const RHI = struct {
     }
     pub fn setColorGradingIntensity(self: RHI, intensity: f32) void {
         self.vtable.setColorGradingIntensity(self.ptr, intensity);
+    }
+    pub fn setTAABlendFactor(self: RHI, value: f32) void {
+        self.vtable.setTAABlendFactor(self.ptr, value);
+    }
+    pub fn setTAAVelocityRejection(self: RHI, value: f32) void {
+        self.vtable.setTAAVelocityRejection(self.ptr, value);
     }
 };

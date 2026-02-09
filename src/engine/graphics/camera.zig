@@ -10,6 +10,8 @@ const InputMapper = @import("../../game/input_mapper.zig").InputMapper;
 
 pub const Camera = struct {
     // 4-tap Halton(2,3) sequence centered to [-0.5, 0.5] pixel offsets.
+    // We keep this to 4 samples to keep temporal convergence fast while matching
+    // the current low-latency TAA target (minimal history lag and ghosting).
     const JITTER_SEQUENCE = [_][2]f32{
         .{ 0.0, -0.16666667 },
         .{ -0.25, 0.16666667 },

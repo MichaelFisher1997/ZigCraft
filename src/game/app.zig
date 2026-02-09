@@ -289,7 +289,7 @@ pub const App = struct {
         errdefer app.lpv_system.deinit();
 
         // Sync FXAA and Bloom settings to RHI after initialization
-        app.rhi.setFXAA(settings.fxaa_enabled);
+        app.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
         app.rhi.setBloom(settings.bloom_enabled);
         app.rhi.setBloomIntensity(settings.bloom_intensity);
 
