@@ -76,6 +76,7 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@v16
 
       - name: Cache Nix Store
+        continue-on-error: true
         uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
@@ -191,4 +192,3 @@ jobs:
             5. Confidence scores should reflect how certain you are - use "Low" when unsure
             6. If you have nothing meaningful to add to a section, write "None identified" instead of omitting it
             7. Always provide actionable fixes, never just complaints
-
