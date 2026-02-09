@@ -24,7 +24,7 @@ void main() {
 
     vec3 current = sampleCurrent(outUV);
 
-    if (taa.reset_history > 0.5 || history_uv.x < 0.0 || history_uv.y < 0.0 || history_uv.x > 1.0 || history_uv.y > 1.0) {
+    if (taa.reset_history > 0.5 || any(lessThan(history_uv, vec2(0.0))) || any(greaterThan(history_uv, vec2(1.0)))) {
         outColor = vec4(current, 1.0);
         return;
     }

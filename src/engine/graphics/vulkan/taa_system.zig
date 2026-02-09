@@ -60,9 +60,12 @@ pub const TAASystem = struct {
             .is_render_target = true,
         };
 
-        self.history_textures[0] = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
+        const history_0 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
+        errdefer resources.destroyTexture(history_0);
+        const history_1 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
+
+        self.history_textures = .{ history_0, history_1 };
         errdefer self.destroyHistoryTextures(resources);
-        self.history_textures[1] = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
 
         try self.createFramebuffers(vk, resources, extent);
 
@@ -284,6 +287,7 @@ pub const TAASystem = struct {
         if (!self.enabled) return;
         if (self.pipeline == null or self.pipeline_layout == null or self.render_pass == null) return;
         if (hdr_view == null or velocity_view == null) return;
+        if (self.history_textures[0] == 0 or self.history_textures[1] == 0) return;
 
         const write_idx = self.history_index;
         const read_idx = (self.history_index + 1) % 2;
