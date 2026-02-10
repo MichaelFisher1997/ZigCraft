@@ -199,6 +199,13 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
 pub fn createHDRResources(ctx: anytype) !void {
     const extent = ctx.swapchain.getExtent();
     const format = c.VK_FORMAT_R16G16B16A16_SFLOAT;
+    const sample_count: c_uint = @intCast(switch (ctx.options.msaa_samples) {
+        1 => c.VK_SAMPLE_COUNT_1_BIT,
+        2 => c.VK_SAMPLE_COUNT_2_BIT,
+        4 => c.VK_SAMPLE_COUNT_4_BIT,
+        8 => c.VK_SAMPLE_COUNT_8_BIT,
+        else => c.VK_SAMPLE_COUNT_1_BIT,
+    });
 
     var image_info = std.mem.zeroes(c.VkImageCreateInfo);
     image_info.sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -231,4 +238,39 @@ pub fn createHDRResources(ctx: anytype) !void {
     view_info.format = format;
     view_info.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
     try Utils.checkVk(c.vkCreateImageView(ctx.vulkan_device.vk_device, &view_info, null, &ctx.hdr.hdr_view));
+
+    if (ctx.options.msaa_samples > 1) {
+        var msaa_info = std.mem.zeroes(c.VkImageCreateInfo);
+        msaa_info.sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        msaa_info.imageType = c.VK_IMAGE_TYPE_2D;
+        msaa_info.extent = .{ .width = extent.width, .height = extent.height, .depth = 1 };
+        msaa_info.mipLevels = 1;
+        msaa_info.arrayLayers = 1;
+        msaa_info.format = format;
+        msaa_info.tiling = c.VK_IMAGE_TILING_OPTIMAL;
+        msaa_info.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+        msaa_info.usage = c.VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        msaa_info.samples = sample_count;
+        msaa_info.sharingMode = c.VK_SHARING_MODE_EXCLUSIVE;
+
+        try Utils.checkVk(c.vkCreateImage(ctx.vulkan_device.vk_device, &msaa_info, null, &ctx.hdr.hdr_msaa_image));
+
+        var msaa_reqs: c.VkMemoryRequirements = undefined;
+        c.vkGetImageMemoryRequirements(ctx.vulkan_device.vk_device, ctx.hdr.hdr_msaa_image, &msaa_reqs);
+        var msaa_alloc = std.mem.zeroes(c.VkMemoryAllocateInfo);
+        msaa_alloc.sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        msaa_alloc.allocationSize = msaa_reqs.size;
+        msaa_alloc.memoryTypeIndex = Utils.findMemoryType(ctx.vulkan_device.physical_device, msaa_reqs.memoryTypeBits, c.VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT | c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) catch
+            try Utils.findMemoryType(ctx.vulkan_device.physical_device, msaa_reqs.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        try Utils.checkVk(c.vkAllocateMemory(ctx.vulkan_device.vk_device, &msaa_alloc, null, &ctx.hdr.hdr_msaa_memory));
+        try Utils.checkVk(c.vkBindImageMemory(ctx.vulkan_device.vk_device, ctx.hdr.hdr_msaa_image, ctx.hdr.hdr_msaa_memory, 0));
+
+        var msaa_view_info = std.mem.zeroes(c.VkImageViewCreateInfo);
+        msaa_view_info.sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        msaa_view_info.image = ctx.hdr.hdr_msaa_image;
+        msaa_view_info.viewType = c.VK_IMAGE_VIEW_TYPE_2D;
+        msaa_view_info.format = format;
+        msaa_view_info.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+        try Utils.checkVk(c.vkCreateImageView(ctx.vulkan_device.vk_device, &msaa_view_info, null, &ctx.hdr.hdr_msaa_view));
+    }
 }

@@ -190,7 +190,7 @@ pub fn beginMainPassInternal(ctx: anytype) void {
     if (ctx.swapchain.getExtent().width == 0 or ctx.swapchain.getExtent().height == 0) return;
 
     if (ctx.render_pass_manager.hdr_render_pass == null) {
-        ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), 1) catch |err| {
+        ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
             std.log.err("beginMainPass: failed to recreate render pass: {}", .{err});
             return;
         };
@@ -315,7 +315,7 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
                 source_sampler = tex.sampler;
             }
         }
-        ctx.post_process.updateSourceDescriptors(ctx.vulkan_device.vk_device, source_view, source_sampler);
+        ctx.post_process.updateSourceDescriptor(ctx.vulkan_device.vk_device, ctx.frames.current_frame, source_view, source_sampler);
 
         const pp_ds = ctx.post_process.descriptor_sets[ctx.frames.current_frame];
         if (pp_ds == null) {
