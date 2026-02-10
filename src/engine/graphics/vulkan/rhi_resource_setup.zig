@@ -373,6 +373,16 @@ pub fn createSSAOResources(ctx: anytype) !void {
     try lifecycle.transitionImagesToShaderRead(ctx, &ssao_images, false);
 }
 
+pub fn createTAAResources(ctx: anytype) !void {
+    try ctx.taa.ensureResources(
+        ctx.vulkan_device.vk_device,
+        ctx.allocator,
+        ctx.descriptors.descriptor_pool,
+        &ctx.resources,
+        ctx.swapchain.getExtent(),
+    );
+}
+
 pub fn createPostProcessResources(ctx: anytype) !void {
     const vk = ctx.vulkan_device.vk_device;
 
@@ -453,9 +463,9 @@ pub fn createMainFramebuffers(ctx: anytype) !void {
         ctx.vulkan_device.vk_device,
         ctx.swapchain.getExtent(),
         ctx.hdr.hdr_view,
-        if (ctx.options.msaa_samples > 1) ctx.hdr.hdr_msaa_view else null,
+        null,
         ctx.swapchain.swapchain.depth_image_view,
-        ctx.options.msaa_samples,
+        1,
     );
 }
 

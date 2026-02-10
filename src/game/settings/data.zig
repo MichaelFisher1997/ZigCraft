@@ -41,6 +41,9 @@ pub const Settings = struct {
     shadow_distance: f32 = 250.0,
     anisotropic_filtering: u8 = 16,
     msaa_samples: u8 = 4,
+    taa_enabled: bool = false,
+    taa_blend_factor: f32 = 0.9,
+    taa_velocity_rejection: f32 = 0.02,
     ui_scale: f32 = 1.0, // Manual UI scale multiplier (0.5 to 2.0)
     window_width: u32 = 1920,
     window_height: u32 = 1080,
@@ -167,11 +170,27 @@ pub const Settings = struct {
             } },
         };
         pub const msaa_samples = SettingMetadata{
-            .label = "ANTI-ALIASING (MSAA)",
+            .label = "ANTI-ALIASING (LEGACY)",
+            .description = "Legacy setting retained for compatibility while TAA rollout completes",
             .kind = .{ .choice = .{
                 .labels = &[_][]const u8{ "OFF", "2X", "4X", "8X" },
                 .values = &[_]u32{ 1, 2, 4, 8 },
             } },
+        };
+        pub const taa_enabled = SettingMetadata{
+            .label = "TEMPORAL AA (TAA)",
+            .description = "Experimental temporal anti-aliasing pipeline",
+            .kind = .toggle,
+        };
+        pub const taa_blend_factor = SettingMetadata{
+            .label = "TAA HISTORY BLEND",
+            .description = "Higher values favor temporal stability over responsiveness",
+            .kind = .{ .slider = .{ .min = 0.50, .max = 0.98, .step = 0.02 } },
+        };
+        pub const taa_velocity_rejection = SettingMetadata{
+            .label = "TAA VELOCITY REJECT",
+            .description = "Lower values reject history sooner on motion",
+            .kind = .{ .slider = .{ .min = 0.0, .max = 0.25, .step = 0.01 } },
         };
         pub const max_texture_resolution = SettingMetadata{
             .label = "MAX TEXTURE RES",

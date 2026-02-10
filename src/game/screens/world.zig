@@ -4,7 +4,6 @@ const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const GameSession = @import("../session.zig").GameSession;
-const Mat4 = @import("../../engine/math/mat4.zig").Mat4;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
 const render_graph_pkg = @import("../../engine/graphics/render_graph.zig");
@@ -138,7 +137,8 @@ pub const WorldScreen = struct {
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
         const aspect = screen_w / screen_h;
 
-        const view_proj_render = Mat4.perspectiveReverseZ(camera.fov, aspect, camera.near, camera.far).multiply(camera.getViewMatrixOriginCentered());
+        const taa_enabled = ctx.settings.taa_enabled;
+        const view_proj_render = camera.getJitteredProjectionMatrixReverseZ(aspect, screen_w, screen_h, taa_enabled).multiply(camera.getViewMatrixOriginCentered());
 
         const sky_params = rhi_pkg.SkyParams{
             .cam_pos = camera.position,
@@ -228,6 +228,9 @@ pub const WorldScreen = struct {
                 .atmosphere_system = ctx.atmosphere_system,
                 .material_system = ctx.material_system,
                 .aspect = aspect,
+                .taa_enabled = taa_enabled,
+                .viewport_width = screen_w,
+                .viewport_height = screen_h,
                 .sky_params = sky_params,
                 .cloud_params = cloud_params,
                 .main_shader = ctx.shader,
@@ -238,7 +241,7 @@ pub const WorldScreen = struct {
                 .disable_gpass_draw = ctx.disable_gpass_draw,
                 .disable_ssao = ctx.disable_ssao,
                 .disable_clouds = ctx.disable_clouds,
-                .fxaa_enabled = ctx.settings.fxaa_enabled,
+                .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled,
                 .overlay_renderer = renderOverlay,
                 .overlay_ctx = self,
@@ -248,6 +251,12 @@ pub const WorldScreen = struct {
                 .lpv_texture_handle_b = ctx.lpv_system.getTextureHandleB(),
             };
             try ctx.render_graph.execute(render_ctx);
+        }
+
+        if (taa_enabled) {
+            camera.advanceJitter();
+        } else {
+            camera.resetJitter();
         }
 
         ui.begin();

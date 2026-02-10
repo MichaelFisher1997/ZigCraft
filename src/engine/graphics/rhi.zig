@@ -286,6 +286,8 @@ pub const IRenderContext = struct {
         endFXAAPass: *const fn (ptr: *anyopaque) void,
         // Bloom pass
         computeBloom: *const fn (ptr: *anyopaque) void,
+        // TAA pass
+        computeTAA: *const fn (ptr: *anyopaque) void,
         getEncoder: *const fn (ptr: *anyopaque) IGraphicsCommandEncoder,
         getStateContext: *const fn (ptr: *anyopaque) IRenderStateContext,
 
@@ -346,6 +348,9 @@ pub const IRenderContext = struct {
     }
     pub fn computeBloom(self: IRenderContext) void {
         self.vtable.computeBloom(self.ptr);
+    }
+    pub fn computeTAA(self: IRenderContext) void {
+        self.vtable.computeTAA(self.ptr);
     }
     pub fn getEncoder(self: IRenderContext) IGraphicsCommandEncoder {
         return self.vtable.getEncoder(self.ptr);
@@ -482,6 +487,8 @@ pub const RHI = struct {
         setFilmGrainIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
         setColorGradingEnabled: *const fn (ctx: *anyopaque, enabled: bool) void,
         setColorGradingIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
+        setTAABlendFactor: *const fn (ctx: *anyopaque, value: f32) void,
+        setTAAVelocityRejection: *const fn (ctx: *anyopaque, value: f32) void,
     };
 
     pub fn factory(self: RHI) IResourceFactory {
@@ -672,6 +679,9 @@ pub const RHI = struct {
     pub fn computeBloom(self: RHI) void {
         self.vtable.render.computeBloom(self.ptr);
     }
+    pub fn computeTAA(self: RHI) void {
+        self.vtable.render.computeTAA(self.ptr);
+    }
     pub fn setTextureUniforms(self: RHI, enabled: bool, handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.vtable.render.setTextureUniforms(self.ptr, enabled, handles);
     }
@@ -733,5 +743,11 @@ pub const RHI = struct {
     }
     pub fn setColorGradingIntensity(self: RHI, intensity: f32) void {
         self.vtable.setColorGradingIntensity(self.ptr, intensity);
+    }
+    pub fn setTAABlendFactor(self: RHI, value: f32) void {
+        self.vtable.setTAABlendFactor(self.ptr, value);
+    }
+    pub fn setTAAVelocityRejection(self: RHI, value: f32) void {
+        self.vtable.setTAAVelocityRejection(self.ptr, value);
     }
 };

@@ -136,7 +136,7 @@ pub const WorldRenderer = struct {
             var cx = pc_x - r_dist;
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.fluid_allocation != null) {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
                             self.visible_chunks.append(self.allocator, data) catch {};
                         } else {
@@ -161,6 +161,10 @@ pub const WorldRenderer = struct {
             self.rhi.setModelMatrix(model, Vec3.one, 0);
 
             if (data.mesh.solid_allocation) |alloc| {
+                self.last_render_stats.vertices_rendered += alloc.count;
+                self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+            }
+            if (data.mesh.cutout_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
                 self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
             }
@@ -205,7 +209,7 @@ pub const WorldRenderer = struct {
             var cx = pc_x - r_dist;
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.fluid_allocation != null) {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
 
@@ -221,6 +225,10 @@ pub const WorldRenderer = struct {
                         if (data.mesh.solid_allocation) |alloc| {
                             self.rhi.setModelMatrix(model, Vec3.one, 0);
 
+                            self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                        }
+                        if (data.mesh.cutout_allocation) |alloc| {
+                            self.rhi.setModelMatrix(model, Vec3.one, 0);
                             self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                         }
                     }

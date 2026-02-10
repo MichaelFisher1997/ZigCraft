@@ -99,8 +99,15 @@ pub const GraphicsScreen = struct {
                 if (next_idx < settings_pkg.json_presets.graphics_presets.items.len) {
                     settings_pkg.json_presets.apply(settings, next_idx);
                     ctx.rhi.*.setAnisotropicFiltering(settings.anisotropic_filtering);
-                    ctx.rhi.*.setMSAA(settings.msaa_samples);
                     ctx.rhi.*.setTexturesEnabled(settings.textures_enabled);
+                    ctx.rhi.*.setTAABlendFactor(settings.taa_blend_factor);
+                    ctx.rhi.*.setTAAVelocityRejection(settings.taa_velocity_rejection);
+                    if (settings.taa_enabled) {
+                        settings.fxaa_enabled = false;
+                        ctx.rhi.*.setFXAA(false);
+                    } else {
+                        ctx.rhi.*.setFXAA(settings.fxaa_enabled);
+                    }
                 } else {
                     // Custom selected, nothing changes in values but UI label updates to CUSTOM (via getPresetIndex next frame)
                 }
@@ -114,6 +121,8 @@ pub const GraphicsScreen = struct {
 
         // Auto-generated UI from metadata
         inline for (comptime std.meta.declarations(Settings.metadata)) |decl| {
+            if (comptime std.mem.eql(u8, decl.name, "msaa_samples")) continue;
+
             const meta = @field(Settings.metadata, decl.name);
             const val_ptr = &@field(settings, decl.name);
             const val_type = @TypeOf(val_ptr.*);
@@ -206,16 +215,28 @@ pub const GraphicsScreen = struct {
             if (val_ptr.* != old_val) {
                 if (std.mem.eql(u8, decl.name, "anisotropic_filtering")) {
                     ctx.rhi.*.setAnisotropicFiltering(settings.anisotropic_filtering);
-                } else if (std.mem.eql(u8, decl.name, "msaa_samples")) {
-                    ctx.rhi.*.setMSAA(settings.msaa_samples);
                 } else if (std.mem.eql(u8, decl.name, "textures_enabled")) {
                     ctx.rhi.*.setTexturesEnabled(settings.textures_enabled);
                 } else if (std.mem.eql(u8, decl.name, "vsync")) {
                     ctx.rhi.*.setVSync(settings.vsync);
                 } else if (std.mem.eql(u8, decl.name, "volumetric_density")) {
                     ctx.rhi.*.setVolumetricDensity(settings.volumetric_density);
+                } else if (std.mem.eql(u8, decl.name, "taa_enabled")) {
+                    if (settings.taa_enabled) {
+                        settings.fxaa_enabled = false;
+                        ctx.rhi.*.setFXAA(false);
+                    }
+                } else if (std.mem.eql(u8, decl.name, "taa_blend_factor")) {
+                    ctx.rhi.*.setTAABlendFactor(settings.taa_blend_factor);
+                } else if (std.mem.eql(u8, decl.name, "taa_velocity_rejection")) {
+                    ctx.rhi.*.setTAAVelocityRejection(settings.taa_velocity_rejection);
                 } else if (std.mem.eql(u8, decl.name, "fxaa_enabled")) {
-                    ctx.rhi.*.setFXAA(settings.fxaa_enabled);
+                    if (settings.taa_enabled and settings.fxaa_enabled) {
+                        settings.fxaa_enabled = false;
+                        ctx.rhi.*.setFXAA(false);
+                    } else {
+                        ctx.rhi.*.setFXAA(settings.fxaa_enabled);
+                    }
                 } else if (std.mem.eql(u8, decl.name, "bloom_enabled")) {
                     ctx.rhi.*.setBloom(settings.bloom_enabled);
                 } else if (std.mem.eql(u8, decl.name, "bloom_intensity")) {

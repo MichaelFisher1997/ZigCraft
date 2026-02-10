@@ -26,10 +26,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Nix
+    - name: Install Nix (primary)
+      id: nix_install_primary
+      continue-on-error: true
       uses: DeterminateSystems/nix-installer-action@v16
 
+    - name: Install Nix (fallback)
+      if: steps.nix_install_primary.outcome == 'failure'
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Verify Nix installation
+      run: nix --version
+
     - name: Cache Nix Store
+      continue-on-error: true
       uses: nix-community/cache-nix-action@v7
       with:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
@@ -60,10 +73,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Nix
+    - name: Install Nix (primary)
+      id: nix_install_primary
+      continue-on-error: true
       uses: DeterminateSystems/nix-installer-action@v16
 
+    - name: Install Nix (fallback)
+      if: steps.nix_install_primary.outcome == 'failure'
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Verify Nix installation
+      run: nix --version
+
     - name: Cache Nix Store
+      continue-on-error: true
       uses: nix-community/cache-nix-action@v7
       with:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
@@ -84,10 +110,23 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Nix
+    - name: Install Nix (primary)
+      id: nix_install_primary
+      continue-on-error: true
       uses: DeterminateSystems/nix-installer-action@v16
 
+    - name: Install Nix (fallback)
+      if: steps.nix_install_primary.outcome == 'failure'
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Verify Nix installation
+      run: nix --version
+
     - name: Cache Nix Store
+      continue-on-error: true
       uses: nix-community/cache-nix-action@v7
       with:
         primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}

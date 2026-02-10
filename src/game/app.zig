@@ -56,6 +56,7 @@ pub const App = struct {
     opaque_pass: render_graph_pkg.OpaquePass,
     cloud_pass: render_graph_pkg.CloudPass,
     entity_pass: render_graph_pkg.EntityPass,
+    taa_pass: render_graph_pkg.TAAPass,
     bloom_pass: render_graph_pkg.BloomPass,
     post_process_pass: render_graph_pkg.PostProcessPass,
     fxaa_pass: render_graph_pkg.FXAAPass,
@@ -249,6 +250,7 @@ pub const App = struct {
             .opaque_pass = .{},
             .cloud_pass = .{},
             .entity_pass = .{},
+            .taa_pass = .{ .enabled = true },
             .bloom_pass = .{ .enabled = true },
             .post_process_pass = .{},
             .fxaa_pass = .{ .enabled = true },
@@ -287,7 +289,7 @@ pub const App = struct {
         errdefer app.lpv_system.deinit();
 
         // Sync FXAA and Bloom settings to RHI after initialization
-        app.rhi.setFXAA(settings.fxaa_enabled);
+        app.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
         app.rhi.setBloom(settings.bloom_enabled);
         app.rhi.setBloomIntensity(settings.bloom_intensity);
 
@@ -310,6 +312,7 @@ pub const App = struct {
             try app.render_graph.addPass(app.opaque_pass.pass());
             try app.render_graph.addPass(app.cloud_pass.pass());
             try app.render_graph.addPass(app.entity_pass.pass());
+            try app.render_graph.addPass(app.taa_pass.pass());
             try app.render_graph.addPass(app.bloom_pass.pass());
             try app.render_graph.addPass(app.post_process_pass.pass());
             try app.render_graph.addPass(app.fxaa_pass.pass());

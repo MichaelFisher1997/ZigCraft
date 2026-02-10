@@ -17,6 +17,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     setup.destroyMainRenderPassAndPipelines(ctx);
     lifecycle.destroyHDRResources(ctx);
     lifecycle.destroyFXAAResources(ctx);
+    lifecycle.destroyTAAResources(ctx);
     lifecycle.destroyBloomResources(ctx);
     lifecycle.destroyPostProcessResources(ctx);
     lifecycle.destroyGPassResources(ctx);
@@ -43,11 +44,15 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         std.log.err("Failed to recreate SSAO resources: {}", .{err});
         return;
     };
-    ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
+    setup.createTAAResources(ctx) catch |err| {
+        std.log.err("Failed to recreate TAA resources: {}", .{err});
+        return;
+    };
+    ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), 1) catch |err| {
         std.log.err("Failed to recreate render pass: {}", .{err});
         return;
     };
-    ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, ctx.options.msaa_samples) catch |err| {
+    ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, 1) catch |err| {
         std.log.err("Failed to recreate pipelines: {}", .{err});
         return;
     };
@@ -115,6 +120,7 @@ pub fn prepareFrameState(ctx: anytype) void {
     ctx.shadow_system.pass_active = false;
     ctx.runtime.post_process_ran_this_frame = false;
     ctx.runtime.fxaa_ran_this_frame = false;
+    ctx.taa.ran_this_frame = false;
     ctx.ui.ui_using_swapchain = false;
 
     ctx.draw.terrain_pipeline_bound = false;
