@@ -63,9 +63,13 @@ pub const TAASystem = struct {
         const history_0 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
         errdefer resources.destroyTexture(history_0);
         const history_1 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
+        errdefer resources.destroyTexture(history_1);
 
         self.history_textures = .{ history_0, history_1 };
-        errdefer self.destroyHistoryTextures(resources);
+        errdefer {
+            self.history_textures = .{ 0, 0 };
+            self.output_texture = 0;
+        }
 
         try self.createFramebuffers(vk, resources, extent);
 
@@ -239,6 +243,8 @@ pub const TAASystem = struct {
     }
 
     fn createFramebuffers(self: *TAASystem, vk: c.VkDevice, resources: anytype, extent: c.VkExtent2D) !void {
+        errdefer self.destroyFramebuffers(vk);
+
         for (0..2) |i| {
             const tex = resources.textures.get(self.history_textures[i]) orelse return error.InvalidTexture;
 
