@@ -48,11 +48,11 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         std.log.err("Failed to recreate TAA resources: {}", .{err});
         return;
     };
-    ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), 1) catch |err| {
+    ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
         std.log.err("Failed to recreate render pass: {}", .{err});
         return;
     };
-    ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, 1) catch |err| {
+    ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, ctx.options.msaa_samples) catch |err| {
         std.log.err("Failed to recreate pipelines: {}", .{err});
         return;
     };
