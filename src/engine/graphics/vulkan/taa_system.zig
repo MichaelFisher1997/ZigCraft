@@ -11,6 +11,9 @@ pub const TAAPushConstants = extern struct {
     _pad: f32,
 };
 
+const DESCRIPTOR_SETS_PER_FRAME: usize = 2;
+const TAA_DESCRIPTOR_SET_COUNT: usize = rhi.MAX_FRAMES_IN_FLIGHT * DESCRIPTOR_SETS_PER_FRAME;
+
 pub const TAASystem = struct {
     enabled: bool = true,
     pass_active: bool = false,
@@ -23,7 +26,7 @@ pub const TAASystem = struct {
     pipeline: c.VkPipeline = null,
     pipeline_layout: c.VkPipelineLayout = null,
     descriptor_set_layout: c.VkDescriptorSetLayout = null,
-    descriptor_sets: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = .{null} ** rhi.MAX_FRAMES_IN_FLIGHT,
+    descriptor_sets: [TAA_DESCRIPTOR_SET_COUNT]c.VkDescriptorSet = .{null} ** TAA_DESCRIPTOR_SET_COUNT,
     sampler: c.VkSampler = null,
 
     history_textures: [2]rhi.TextureHandle = .{ 0, 0 },
@@ -228,18 +231,22 @@ pub const TAASystem = struct {
         }
 
         if (self.descriptor_sets[0] == null) {
-            var layouts: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSetLayout = undefined;
-            for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            var layouts: [TAA_DESCRIPTOR_SET_COUNT]c.VkDescriptorSetLayout = undefined;
+            for (0..TAA_DESCRIPTOR_SET_COUNT) |i| {
                 layouts[i] = self.descriptor_set_layout;
             }
 
             var alloc_info = std.mem.zeroes(c.VkDescriptorSetAllocateInfo);
             alloc_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             alloc_info.descriptorPool = descriptor_pool;
-            alloc_info.descriptorSetCount = rhi.MAX_FRAMES_IN_FLIGHT;
+            alloc_info.descriptorSetCount = TAA_DESCRIPTOR_SET_COUNT;
             alloc_info.pSetLayouts = &layouts[0];
             try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &alloc_info, &self.descriptor_sets[0]));
         }
+    }
+
+    fn descriptorSetIndex(frame_index: usize, read_idx: usize) usize {
+        return frame_index * DESCRIPTOR_SETS_PER_FRAME + read_idx;
     }
 
     fn createFramebuffers(self: *TAASystem, vk: c.VkDevice, resources: anytype, extent: c.VkExtent2D) !void {
@@ -301,6 +308,10 @@ pub const TAASystem = struct {
 
         const history_tex = resources.textures.get(self.history_textures[read_idx]) orelse return;
 
+        const set_index = descriptorSetIndex(frame_index, read_idx);
+        const descriptor_set = self.descriptor_sets[set_index];
+        if (descriptor_set == null) return;
+
         var image_infos = [_]c.VkDescriptorImageInfo{
             .{ .sampler = self.sampler, .imageView = hdr_view, .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
             .{ .sampler = self.sampler, .imageView = history_tex.view, .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
@@ -308,9 +319,9 @@ pub const TAASystem = struct {
         };
 
         var writes = [_]c.VkWriteDescriptorSet{
-            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[frame_index], .dstBinding = 0, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .pImageInfo = &image_infos[0] },
-            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[frame_index], .dstBinding = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .pImageInfo = &image_infos[1] },
-            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[frame_index], .dstBinding = 2, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .pImageInfo = &image_infos[2] },
+            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = descriptor_set, .dstBinding = 0, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .pImageInfo = &image_infos[0] },
+            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = descriptor_set, .dstBinding = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .pImageInfo = &image_infos[1] },
+            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = descriptor_set, .dstBinding = 2, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .pImageInfo = &image_infos[2] },
         };
         c.vkUpdateDescriptorSets(vk, writes.len, &writes[0], 0, null);
 
@@ -342,7 +353,7 @@ pub const TAASystem = struct {
         c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
         c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
-        c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipeline_layout, 0, 1, &self.descriptor_sets[frame_index], 0, null);
+        c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, self.pipeline_layout, 0, 1, &descriptor_set, 0, null);
 
         const push = TAAPushConstants{
             .blend_factor = self.blend_factor,
@@ -369,7 +380,7 @@ pub const TAASystem = struct {
         self.destroyHistoryTextures(resources);
 
         if (descriptor_pool != null) {
-            for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            for (0..TAA_DESCRIPTOR_SET_COUNT) |i| {
                 if (self.descriptor_sets[i] != null) {
                     _ = c.vkFreeDescriptorSets(vk, descriptor_pool, 1, &self.descriptor_sets[i]);
                     self.descriptor_sets[i] = null;
