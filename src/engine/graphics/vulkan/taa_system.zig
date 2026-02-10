@@ -60,16 +60,16 @@ pub const TAASystem = struct {
             .is_render_target = true,
         };
 
-        const history_0 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
-        errdefer resources.destroyTexture(history_0);
-        const history_1 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
-        errdefer resources.destroyTexture(history_1);
+        const history_textures = blk: {
+            const history_0 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
+            errdefer resources.destroyTexture(history_0);
+            const history_1 = try resources.createTexture(extent.width, extent.height, .rgba32f, config, null);
+            errdefer resources.destroyTexture(history_1);
+            break :blk [2]rhi.TextureHandle{ history_0, history_1 };
+        };
 
-        self.history_textures = .{ history_0, history_1 };
-        errdefer {
-            self.history_textures = .{ 0, 0 };
-            self.output_texture = 0;
-        }
+        self.history_textures = history_textures;
+        errdefer self.destroyHistoryTextures(resources);
 
         try self.createFramebuffers(vk, resources, extent);
 
