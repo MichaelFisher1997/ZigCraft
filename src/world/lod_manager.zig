@@ -55,6 +55,7 @@ const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 
 const MAX_LOD_REGIONS = 2048;
+const CHUNK_COVERAGE_PADDING: i32 = 1;
 
 comptime {
     if (LODLevel.count < 2) {
@@ -780,14 +781,15 @@ pub const LODManager = struct {
         }
     }
 
-    /// Check if all chunks within the given world bounds are loaded and renderable
+    /// Check if all chunks within the given world bounds are loaded and renderable.
+    /// Includes a small chunk halo around bounds to avoid exposing border cut-faces.
     pub fn areAllChunksLoaded(self: *Self, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
         _ = self;
         // Convert world bounds to chunk coordinates
-        const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X);
-        const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_X);
-        const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X); // -1 because max is exclusive
-        const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_X);
+        const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
+        const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
+        const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING; // -1 because max is exclusive
+        const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING;
 
         // Check every chunk in the region
         var cz = min_cz;
