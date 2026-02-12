@@ -25,6 +25,8 @@ const AABB = @import("../engine/math/aabb.zig").AABB;
 const rhi_types = @import("../engine/graphics/rhi_types.zig");
 const log = @import("../engine/core/log.zig");
 
+const CHUNK_COVERAGE_PADDING: i32 = 1;
+
 /// Expected RHI interface for LODRenderer:
 /// - createBuffer(size: usize, usage: BufferUsage) !BufferHandle
 /// - destroyBuffer(handle: BufferHandle) void
@@ -142,17 +144,18 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const bounds = chunk.worldBounds();
 
                     // Check if all underlying block chunks are loaded.
-                    // If they are, we skip rendering the LOD chunk to let blocks show through.
+                    // We require a 1-chunk halo around the LOD region to avoid exposing
+                    // block chunk cut-faces when neighbors are still missing.
                     if (chunk_checker) |checker| {
                         const side: i32 = @intCast(chunk.lod_level.chunksPerSide());
                         const start_cx = chunk.region_x * side;
                         const start_cz = chunk.region_z * side;
 
                         var all_loaded = true;
-                        var lcz: i32 = 0;
-                        while (lcz < side) : (lcz += 1) {
-                            var lcx: i32 = 0;
-                            while (lcx < side) : (lcx += 1) {
+                        var lcz: i32 = -CHUNK_COVERAGE_PADDING;
+                        while (lcz < side + CHUNK_COVERAGE_PADDING) : (lcz += 1) {
+                            var lcx: i32 = -CHUNK_COVERAGE_PADDING;
+                            while (lcx < side + CHUNK_COVERAGE_PADDING) : (lcx += 1) {
                                 if (!checker(start_cx + lcx, start_cz + lcz, checker_ctx.?)) {
                                     all_loaded = false;
                                     break;
