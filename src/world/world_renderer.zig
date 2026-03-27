@@ -57,7 +57,7 @@ pub const WorldRenderer = struct {
         }
 
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
-        vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rhi, vertex_capacity_mb);
+        vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rhi.resourceManager(), rhi.query(), vertex_capacity_mb);
 
         const max_chunks = 16384;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
