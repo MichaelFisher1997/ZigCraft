@@ -89,7 +89,30 @@ jobs:
         with:
           model: kimi-for-coding/k2p5
           prompt: |
-            You are reviewing a pull request. 
+            You are reviewing a pull request for the ZigCraft repository.
+
+            ZigCraft is a high-performance Minecraft-style voxel engine built with Zig, SDL3, and Vulkan. It uses Nix for dependency management, a custom RHI (Render Hardware Interface) abstraction layer, and a multithreaded job system for world generation and meshing.
+
+            **Tech Stack:**
+            - Zig 0.14+ with strict memory management (explicit allocators, defer/errdefer)
+            - SDL3 for windowing and input
+            - Vulkan for rendering (only backend, via RHI abstraction)
+            - Nix for reproducible builds (`nix develop --command zig build`)
+            - GLSL shaders validated via glslangValidator
+
+            **Build Commands:**
+            - `nix develop --command zig build test` - Unit tests + shader validation
+            - `nix develop --command zig build test -- --test-filter "test name"` - Single test
+            - `nix develop --command zig fmt src/` - Format code
+
+            **Prioritize review attention on:**
+            - RHI/Vulkan correctness (buffer/texture handles, pipeline state, synchronization)
+            - Memory safety (allocator usage, defer cleanup, ArrayListUnmanaged patterns)
+            - Threading/concurrency (JobSystem usage, chunk pin/unpin, mutex protection)
+            - GPU resource lifecycle (creation, destruction, double-buffering with MAX_FRAMES_IN_FLIGHT)
+            - Packed struct correctness for GPU data (PackedLight, Vertex)
+            - Coordinate system correctness (world vs chunk vs local, worldToChunk/worldToLocal)
+            - Shader uniform naming (must match RHI exactly)
 
             ${{ env.PREVIOUS_REVIEWS }}
 
