@@ -268,17 +268,6 @@ pub const World = struct {
         // NOTE: LOD Manager update is handled inside streamer.update() now
     }
 
-    pub fn isChunkRenderable(chunk_x: i32, chunk_z: i32, ctx: *anyopaque) bool {
-        const storage: *ChunkStorage = @ptrCast(@alignCast(ctx));
-        storage.chunks_mutex.lockShared();
-        defer storage.chunks_mutex.unlockShared();
-
-        if (storage.chunks.get(.{ .x = chunk_x, .z = chunk_z })) |data| {
-            return data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null;
-        }
-        return false;
-    }
-
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr = if (self.lod_enabled) self.lod_manager else null;
         self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod);
