@@ -69,10 +69,24 @@ pub const ChunkStorage = struct {
         self.chunks.deinit();
     }
 
-    pub fn count(self: *const ChunkStorage) usize {
+    pub fn count(self: *ChunkStorage) usize {
         self.chunks_mutex.lockShared();
         defer self.chunks_mutex.unlockShared();
         return self.chunks.count();
+    }
+
+    /// Sum total vertex count across all chunk meshes
+    pub fn totalVertexCount(self: *ChunkStorage) u64 {
+        self.chunks_mutex.lockShared();
+        defer self.chunks_mutex.unlockShared();
+        var total: u64 = 0;
+        var iter = self.chunks.iterator();
+        while (iter.next()) |entry| {
+            if (entry.value_ptr.*.mesh.solid_allocation) |alloc| total += alloc.count;
+            if (entry.value_ptr.*.mesh.cutout_allocation) |alloc| total += alloc.count;
+            if (entry.value_ptr.*.mesh.fluid_allocation) |alloc| total += alloc.count;
+        }
+        return total;
     }
 
     pub fn get(self: *ChunkStorage, cx: i32, cz: i32) ?*ChunkData {

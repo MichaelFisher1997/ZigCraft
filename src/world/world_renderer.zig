@@ -15,8 +15,6 @@ const LODManager = @import("lod_manager.zig").LODManager;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
-const World = @import("world.zig").World; // Circular dependency if not careful, better avoid. But isChunkRenderable callback needs it?
-// Actually isChunkRenderable uses World* but only needs access to storage/chunk state.
 
 pub const RenderStats = struct {
     chunks_total: u32 = 0,
