@@ -178,45 +178,34 @@ pub const App = struct {
             log.log.warn("ZIGCRAFT_DISABLE_CLOUDS enabled", .{});
         }
 
-        const atlas = try TextureAtlas.init(allocator, rhi, &resource_pack_manager, settings.max_texture_resolution);
+        const atlas = try TextureAtlas.init(allocator, rhi.resourceManager(), &resource_pack_manager, settings.max_texture_resolution);
         var atlas_mut = atlas;
         errdefer atlas_mut.deinit();
-        atlas.bind(1);
-        // Bind PBR textures if available
-        atlas.bindNormal(6);
-        atlas.bindRoughness(7);
-        atlas.bindDisplacement(8);
 
-        // Load EXR Environment Map
         var env_map: ?Texture = null;
         if (!std.mem.eql(u8, settings.environment_map, "default")) {
             if (resource_pack_manager.loadImageFileFloat(settings.environment_map)) |tex_data| {
-                env_map = try Texture.initFloat(rhi, tex_data.width, tex_data.height, tex_data.pixels);
-                env_map.?.bind(9);
+                env_map = try Texture.initFloat(rhi.resourceManager(), tex_data.width, tex_data.height, tex_data.pixels);
                 log.log.info("Loaded Environment Map: {s}", .{settings.environment_map});
                 var td = tex_data;
                 td.deinit(allocator);
             } else {
                 log.log.warn("Could not load environment map: {s}", .{settings.environment_map});
-                // Fallback to white
                 const white_pixel = [_]f32{ 1.0, 1.0, 1.0, 1.0 };
-                env_map = try Texture.initFloat(rhi, 1, 1, &white_pixel);
-                env_map.?.bind(9);
+                env_map = try Texture.initFloat(rhi.resourceManager(), 1, 1, &white_pixel);
             }
         } else {
-            // Default white
             const white_pixel = [_]f32{ 1.0, 1.0, 1.0, 1.0 };
-            env_map = try Texture.initFloat(rhi, 1, 1, &white_pixel);
-            env_map.?.bind(9);
+            env_map = try Texture.initFloat(rhi.resourceManager(), 1, 1, &white_pixel);
         }
         errdefer if (env_map) |*t| t.deinit();
 
-        const atmosphere_system = try AtmosphereSystem.init(allocator, rhi);
+        const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
         errdefer atmosphere_system.deinit();
         const audio_system = try AudioSystem.init(allocator);
         errdefer audio_system.deinit();
 
-        const ui = try UISystem.init(rhi, input.window_width, input.window_height);
+        const ui = try UISystem.init(rhi.uiRenderer(), input.window_width, input.window_height);
         var ui_mut = ui;
         errdefer ui_mut.deinit();
 
@@ -275,7 +264,7 @@ pub const App = struct {
 
         // EngineContext uses rhi as a pointer; App owns the instance.
 
-        app.material_system = try MaterialSystem.init(allocator, rhi, &app.atlas);
+        app.material_system = try MaterialSystem.init(allocator, &app.atlas);
         errdefer app.material_system.deinit();
         app.lpv_system = try LPVSystem.init(
             allocator,

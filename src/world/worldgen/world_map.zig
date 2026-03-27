@@ -13,12 +13,12 @@ pub const WorldMap = struct {
     width: u32,
     height: u32,
 
-    pub fn init(rhi_instance: rhi.RHI, width: u32, height: u32) !WorldMap {
+    pub fn init(resources: rhi.ResourceManager, width: u32, height: u32) !WorldMap {
         // Safety: ensure texture size is within typical hardware limits
         const safe_w = @min(width, 4096);
         const safe_h = @min(height, 4096);
 
-        const texture = try Texture.initEmpty(rhi_instance, safe_w, safe_h, .rgba, .{
+        const texture = try Texture.initEmpty(resources, safe_w, safe_h, .rgba, .{
             .min_filter = .nearest,
             .mag_filter = .nearest,
             .generate_mipmaps = false,

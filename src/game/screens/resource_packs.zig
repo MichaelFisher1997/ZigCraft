@@ -132,13 +132,9 @@ pub const ResourcePacksScreen = struct {
 
     fn reloadAtlas(self: *@This()) !void {
         const ctx = self.context;
-        ctx.rhi.*.waitIdle();
+        ctx.rhi.waitIdle();
         ctx.atlas.deinit();
-        ctx.atlas.* = try TextureAtlas.init(ctx.allocator, ctx.rhi.*, ctx.resource_pack_manager, ctx.settings.max_texture_resolution);
-        ctx.atlas.bind(1);
-        ctx.atlas.bindNormal(6);
-        ctx.atlas.bindRoughness(7);
-        ctx.atlas.bindDisplacement(8);
+        ctx.atlas.* = try TextureAtlas.init(ctx.allocator, ctx.rhi.resourceManager(), ctx.resource_pack_manager, ctx.settings.max_texture_resolution);
     }
 
     pub fn screen(self: *@This()) IScreen {

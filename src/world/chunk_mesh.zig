@@ -11,7 +11,7 @@ const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
-const RHI = rhi_mod.RHI;
+const RenderContext = rhi_mod.RenderContext;
 const Vertex = rhi_mod.Vertex;
 const chunk_alloc_mod = @import("chunk_allocator.zig");
 const GlobalVertexAllocator = chunk_alloc_mod.GlobalVertexAllocator;
@@ -310,23 +310,23 @@ pub const ChunkMesh = struct {
     }
 
     /// Draw the chunk mesh with a single draw call per pass.
-    pub fn draw(self: *const ChunkMesh, rhi: RHI, pass: Pass) void {
+    pub fn draw(self: *const ChunkMesh, ctx: RenderContext, pass: Pass) void {
         if (!self.ready) return;
 
         switch (pass) {
             .solid => {
                 if (self.solid_allocation) |alloc| {
-                    rhi.drawOffset(alloc.handle, alloc.count, .triangles, alloc.offset);
+                    ctx.drawOffset(alloc.handle, alloc.count, .triangles, alloc.offset);
                 }
             },
             .cutout => {
                 if (self.cutout_allocation) |alloc| {
-                    rhi.drawOffset(alloc.handle, alloc.count, .triangles, alloc.offset);
+                    ctx.drawOffset(alloc.handle, alloc.count, .triangles, alloc.offset);
                 }
             },
             .fluid => {
                 if (self.fluid_allocation) |alloc| {
-                    rhi.drawOffset(alloc.handle, alloc.count, .triangles, alloc.offset);
+                    ctx.drawOffset(alloc.handle, alloc.count, .triangles, alloc.offset);
                 }
             },
         }

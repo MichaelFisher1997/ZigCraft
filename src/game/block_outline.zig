@@ -3,7 +3,8 @@
 
 const std = @import("std");
 const rhi_pkg = @import("../engine/graphics/rhi.zig");
-const RHI = rhi_pkg.RHI;
+const ResourceManager = rhi_pkg.ResourceManager;
+const RenderContext = rhi_pkg.RenderContext;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Vertex = rhi_pkg.Vertex;
@@ -139,35 +140,34 @@ const outline_vertices = blk: {
 
 pub const BlockOutline = struct {
     buffer_handle: rhi_pkg.BufferHandle,
-    rhi: RHI,
+    resources: ResourceManager,
 
-    pub fn init(rhi: RHI) !BlockOutline {
-        const buffer = try rhi.createBuffer(@sizeOf(@TypeOf(outline_vertices)), .vertex);
-        try rhi.uploadBuffer(buffer, std.mem.asBytes(&outline_vertices));
+    pub fn init(resources: ResourceManager) !BlockOutline {
+        const buffer = try resources.createBuffer(@sizeOf(@TypeOf(outline_vertices)), .vertex);
+        try resources.uploadBuffer(buffer, std.mem.asBytes(&outline_vertices));
 
         return .{
             .buffer_handle = buffer,
-            .rhi = rhi,
+            .resources = resources,
         };
     }
 
     pub fn deinit(self: *BlockOutline) void {
         if (self.buffer_handle != rhi_pkg.InvalidBufferHandle) {
-            self.rhi.destroyBuffer(self.buffer_handle);
+            self.resources.destroyBuffer(self.buffer_handle);
             self.buffer_handle = rhi_pkg.InvalidBufferHandle;
         }
     }
 
-    /// Draw outline at the given block position
-    pub fn draw(self: *const BlockOutline, block_x: i32, block_y: i32, block_z: i32, camera_pos: Vec3) void {
+    pub fn draw(self: *const BlockOutline, ctx: RenderContext, block_x: i32, block_y: i32, block_z: i32, camera_pos: Vec3) void {
         const rel_x = @as(f32, @floatFromInt(block_x)) - camera_pos.x;
         const rel_y = @as(f32, @floatFromInt(block_y)) - camera_pos.y;
         const rel_z = @as(f32, @floatFromInt(block_z)) - camera_pos.z;
 
         const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
-        self.rhi.setSelectionMode(true);
-        self.rhi.setModelMatrix(model, Vec3.one, 0);
-        self.rhi.draw(self.buffer_handle, 288, .triangles);
-        self.rhi.setSelectionMode(false);
+        ctx.setSelectionMode(true);
+        ctx.setModelMatrix(model, Vec3.one, 0);
+        ctx.draw(self.buffer_handle, 288, .triangles);
+        ctx.setSelectionMode(false);
     }
 };

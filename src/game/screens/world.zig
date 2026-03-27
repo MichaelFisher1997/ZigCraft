@@ -321,9 +321,9 @@ pub const WorldScreen = struct {
 
     fn renderOverlay(scene_ctx: render_graph_pkg.SceneContext) void {
         const self: *WorldScreen = @ptrCast(@alignCast(scene_ctx.overlay_ctx.?));
-        if (self.session.player.target_block) |target| self.session.block_outline.draw(target.x, target.y, target.z, scene_ctx.camera.position);
-        self.session.renderEntities(scene_ctx.camera.position);
-        self.session.hand_renderer.draw(scene_ctx.camera.position, scene_ctx.camera.yaw, scene_ctx.camera.pitch);
+        if (self.session.player.target_block) |target| self.session.block_outline.draw(scene_ctx.render_ctx, target.x, target.y, target.z, scene_ctx.camera.position);
+        self.session.renderEntities(scene_ctx.render_ctx, scene_ctx.camera.position);
+        self.session.hand_renderer.draw(scene_ctx.render_ctx, scene_ctx.camera.position, scene_ctx.camera.yaw, scene_ctx.camera.pitch);
     }
 };
 
