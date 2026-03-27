@@ -1,4 +1,42 @@
 //! Job system for asynchronous operations.
+//!
+//! This module provides a priority-based job queue with worker thread pools
+//! for parallel execution of chunk generation, meshing, and generic tasks.
+//!
+//! ## Priority Model
+//!
+//! Jobs are ordered in a min-heap by priority value (lower = higher priority):
+//! - **Spatial jobs** (chunk_generation, chunk_meshing): Use `dist_sq` field
+//!   representing squared distance from player; closer chunks process first
+//! - **Generic jobs**: Use explicit `priority` field; caller controls ordering
+//!
+//! ## Lazy Reprioritization
+//!
+//! As the player moves, job priorities should shift. Rather than rebuilding
+//! the entire queue on every position update, the system uses lazy reprioritization:
+//! - `updatePlayerPos()` marks the queue as dirty (`needs_reprioritize = true`)
+//! - Actual rebuild occurs on next `pop()` if queue size >= REPRIORITIZE_THRESHOLD
+//! - Small queues are reprioritized immediately (overhead is negligible)
+//!
+//! This amortizes the O(n log n) rebuild cost across multiple position updates.
+//!
+//! ## JobQueue Lifecycle
+//!
+//! ```
+//! init() -> [push/pop cycles] -> stop() -> deinit()
+//!              |      |
+//!        setPaused(true)  setPaused(false)
+//! ```
+//!
+//! - **running**: Normal operation, workers process jobs
+//! - **paused**: Queue cleared, workers wait (used for world transitions)
+//! - **stopped**: Workers exit, queue drained (shutdown)
+//!
+//! ## WorkerPool
+//!
+//! Worker threads pull jobs from a shared JobQueue and invoke the appropriate
+//! handler based on job type. The pool is initialized with a configurable worker
+//! count and a process function callback.
 
 const std = @import("std");
 const Thread = std.Thread;

@@ -1,4 +1,30 @@
-//! LOD Renderer - handles culling and drawing of LOD meshes using MDI.
+//! LOD Renderer - handles culling and drawing of LOD meshes using Multi-Draw Indirect.
+//!
+//! This module is responsible for rendering distant terrain chunks (LOD1-LOD3)
+//! using an instanced rendering approach. It receives prepared mesh and region
+//! data from LODManager via the LODGPUBridge abstraction.
+//!
+//! ## Multi-Draw Indirect (MDI) Rendering
+//!
+//! The renderer uses instance buffers to batch-draw multiple LOD regions:
+//! - Per-frame instance data (position, color, mask radius) is accumulated
+//! - Data is uploaded to GPU storage buffers (double-buffered per frame)
+//! - RHI renders all visible regions in minimal draw calls
+//!
+//! ## GPU Data Flow
+//!
+//! ```
+//! LODManager -> MeshMap/RegionMap -> LODRenderer.render() -> InstanceBuffer -> GPU
+//! ```
+//!
+//! The LODGPUBridge and LODRenderInterface types abstract the data transfer,
+//! allowing LODManager to remain decoupled from rendering concerns.
+//!
+//! ## Frustum Culling
+//!
+//! Visible regions are filtered by frustum culling before adding to the draw
+//! list. Each LODChunk has an AABB that is tested against the camera frustum.
+//! Optional ChunkChecker callback allows additional visibility filtering.
 
 const std = @import("std");
 const lod_chunk = @import("lod_chunk.zig");

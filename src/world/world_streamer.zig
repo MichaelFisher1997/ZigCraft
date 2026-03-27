@@ -1,4 +1,48 @@
 //! World streamer - handles asynchronous chunk loading and unloading.
+//!
+//! This module manages the lifecycle of chunks around the player, coordinating
+//! generation, meshing, and GPU upload through a multi-threaded job system.
+//!
+//! ## Chunk State Machine
+//!
+//! Chunks flow through the following states:
+//! ```
+//! missing -> generating -> generated -> meshing -> mesh_ready -> uploading -> renderable
+//!    ^                                                                    |
+//!    |                    (dirty flag triggers remesh)                    |
+//!    +--------------------------------------------------------------------+
+//! ```
+//!
+//! - **missing**: Chunk not yet loaded or queued
+//! - **generating**: Terrain generation job in progress (worker thread)
+//! - **generated**: Terrain data ready, awaiting mesh job
+//! - **meshing**: Mesh building job in progress (worker thread)
+//! - **mesh_ready**: Mesh data built, awaiting GPU upload
+//! - **uploading**: Mesh being uploaded to GPU (main thread)
+//! - **renderable**: Ready for drawing
+//!
+//! ## Dual Queue Architecture
+//!
+//! The streamer uses two independent job queues with dedicated worker pools:
+//! - **gen_queue** (4 workers): Terrain generation via `processGenJob`
+//! - **mesh_queue** (3 workers): Mesh building via `processMeshJob`
+//!
+//! This separation prevents meshing from blocking generation and allows
+//! independent prioritization.
+//!
+//! ## Thread Safety
+//!
+//! - ChunkStorage is protected by `chunks_mutex` (shared/exclusive locking)
+//! - Workers read/write chunk data under lock protection
+//! - GPU uploads happen on the main thread via `processUploads()`
+//! - Never call RHI or windowing from worker threads
+//!
+//! ## Predictive Loading
+//!
+//! PlayerMovement tracking enables priority weighting based on velocity:
+//! - Chunks in movement direction get lower distance weight (higher priority)
+//! - Chunks behind the player get higher distance weight (lower priority)
+//! - This improves perceived loading speed during fast travel
 
 const std = @import("std");
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
