@@ -1,3 +1,41 @@
+//! Render Graph - Orchestrates frame rendering through sequential render passes.
+//!
+//! This module implements a simple render graph that executes a series of render
+//! passes in order, managing the main pass lifecycle automatically based on each
+//! pass's requirements.
+//!
+//! ## Pass Execution Model
+//!
+//! Passes are added via `addPass()` and executed sequentially in `execute()`:
+//! ```
+//! ShadowPass0 -> ShadowPass1 -> ShadowPass2 -> ShadowPass3 ->
+//! GPass -> SSAOPass -> SkyPass -> OpaquePass -> CloudPass -> UIPass
+//! ```
+//!
+//! ## Main Pass Lifecycle
+//!
+//! The render graph automatically manages the main render pass state machine:
+//! - Passes with `needs_main_pass = true` require an active main pass
+//! - The graph calls `beginMainPass()` / `endMainPass()` as needed when
+//!   transitioning between pass types
+//! - This allows mixing pre-pass work (shadows, SSAO) with main pass rendering
+//!
+//! ## Standard Passes
+//!
+//! - **ShadowPass**: Renders shadow map cascades (0-3), outside main pass
+//! - **GPass**: Geometry pass for SSAO, outputs normals/depth
+//! - **SSAOPass**: Screen-space ambient occlusion computation
+//! - **SkyPass**: Atmospheric sky rendering, inside main pass
+//! - **OpaquePass**: Main world geometry rendering
+//! - **CloudPass**: Volumetric cloud rendering
+//! - **UIPass**: Immediate-mode UI overlay
+//!
+//! ## Scene Context
+//!
+//! All passes receive a `SceneContext` struct containing references to:
+//! RHI, World, Camera, shadow scene, atmosphere system, and various configuration
+//! parameters. This provides passes with everything needed for rendering.
+
 const std = @import("std");
 const c = @import("../../c.zig").c;
 const Camera = @import("camera.zig").Camera;

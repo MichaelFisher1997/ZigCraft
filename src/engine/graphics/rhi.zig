@@ -1,3 +1,53 @@
+//! Render Hardware Interface (RHI) - Abstract rendering layer for GPU operations.
+//!
+//! This module provides a hardware abstraction layer that decouples the engine's
+//! rendering code from the underlying graphics API (currently Vulkan). The RHI
+//! exposes a set of segregated interfaces, each handling a specific aspect of
+//! rendering, allowing for clean separation of concerns.
+//!
+//! ## Architecture Overview
+//!
+//! The RHI is composed of several segregated interfaces (vtable-based polymorphism):
+//!
+//! - **IResourceFactory**: Creates and manages GPU resources (buffers, textures, shaders)
+//! - **IRenderContext**: Frame lifecycle management (begin/end frame, render passes)
+//! - **IGraphicsCommandEncoder**: Drawing commands (bind, draw, push constants)
+//! - **IRenderStateContext**: Render state configuration (model matrices, uniforms)
+//! - **IShadowContext**: Shadow map rendering passes
+//! - **IUIContext**: Immediate-mode UI rendering
+//! - **ISSAOContext**: Screen-space ambient occlusion computation
+//!
+//! ## Resource Handle Model
+//!
+//! GPU resources are referenced through opaque `u32` handles:
+//! - `BufferHandle`: Vertex, index, uniform, and storage buffers
+//! - `TextureHandle`: 2D/3D textures, depth attachments, shadow maps
+//! - `ShaderHandle`: Compiled shader pipelines
+//!
+//! Invalid handles are represented by 0 (InvalidBufferHandle, etc.). The RHI
+//! internally maps these handles to backend-specific resources.
+//!
+//! ## Frame Synchronization
+//!
+//! The engine uses double-buffering (MAX_FRAMES_IN_FLIGHT = 2) to prevent GPU/CPU
+//! synchronization issues. Each frame, resources are cycled via `getFrameIndex()`.
+//!
+//! ## Usage
+//!
+//! The RHI type is a composite struct that aggregates all interfaces:
+//! ```zig
+//! const rhi: RHI = try VulkanRHI.init(allocator, window);
+//! try rhi.beginFrame();
+//! // ... rendering commands ...
+//! rhi.endFrame();
+//! ```
+//!
+//! ## Backend Implementation
+//!
+//! The Vulkan backend (`rhi_vulkan.zig`) implements all interfaces and is currently
+//! the only supported backend. Future backends (WebGPU, Metal) would implement
+//! the same interface contracts.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mat4 = @import("../math/mat4.zig").Mat4;
