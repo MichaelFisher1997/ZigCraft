@@ -257,7 +257,7 @@ float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, 
     
     // Cascade blending transition (only when enabled).
     // cloud_params.z is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
-    if (global.cloud_params.z > 0.5 && layer < 2) {
+    if (global.cloud_params.z > 0.0 && layer < 2) {
         float nextSplit = shadows.cascade_splits[layer];
         float blendThreshold = nextSplit * 0.8;
         if (viewDepth > blendThreshold) {
@@ -498,14 +498,11 @@ void main() {
 
     vec3 L = normalize(global.sun_dir.xyz);
     float nDotL = max(dot(N, L), 0.0);
-    // NaN guard: if cascade_splits contain NaN, comparisons return false and
-    // we fall through to cascade 2 (widest). Also guard against zero/negative
-    // splits which indicate uninitialized or invalid cascade data.
-    int layer = 2;
-    if (shadows.cascade_splits[0] > 0.0 && shadows.cascade_splits[1] > 0.0) {
-        layer = vViewDepth < shadows.cascade_splits[0] ? 0
+    // Cascade selection via view-space Z depth. NaN/zero splits are safe:
+    // comparisons return false and we fall through to cascade 2 (widest).
+    // CPU validates splits via csm.zig isValid() before rendering.
+    int layer = vViewDepth < shadows.cascade_splits[0] ? 0
               : (vViewDepth < shadows.cascade_splits[1] ? 1 : 2);
-    }
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, vViewDepth, layer);
     
     float cloudShadow = (global.cloud_params.w > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05) ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) : 0.0;
