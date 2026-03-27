@@ -18,8 +18,8 @@ const registry = @import("worldgen/registry.zig");
 const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RHI = rhi_mod.RHI;
+const WorldLOD = @import("world_lod.zig").WorldLOD(RHI);
 const LODManager = @import("lod_manager.zig").LODManager;
-const LODRenderer = @import("lod_renderer.zig").LODRenderer(RHI);
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
@@ -57,10 +57,9 @@ pub const World = struct {
     safe_mode: bool,
     safe_render_distance: i32,
 
-    // LOD System (Issue #114)
-    lod_manager: ?*LODManager,
-    lod_renderer: ?*LODRenderer, // Owned separately; LODManager holds a type-erased interface
-    lod_enabled: bool,
+    // LOD System (Issue #114, #293)
+    lod: ?*WorldLOD,
+    lod_enabled: bool, // Runtime toggle for LOD rendering
 
     pub fn init(allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, atlas: *const TextureAtlas) !*World {
         return initGen(0, allocator, render_distance, seed, rhi, atlas);
@@ -96,8 +95,7 @@ pub const World = struct {
             .max_uploads_per_frame = max_uploads,
             .safe_mode = safe_mode,
             .safe_render_distance = safe_render_distance,
-            .lod_manager = null,
-            .lod_renderer = null,
+            .lod = null,
             .lod_enabled = false,
         };
 
@@ -114,22 +112,10 @@ pub const World = struct {
 
     pub fn initGenWithLOD(generator_index: usize, allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, lod_config: ILODConfig, atlas: *const TextureAtlas) !*World {
         const world = try initGen(generator_index, allocator, render_distance, seed, rhi, atlas);
+        errdefer world.deinit();
 
-        // Create LODRenderer (owns GPU draw resources, stays generic over RHI)
-        const lod_renderer = try LODRenderer.init(allocator, rhi);
-
-        // Create GPU bridge + render interface from the concrete renderer
-        const gpu_bridge = lod_renderer.createGPUBridge();
-        const render_iface = lod_renderer.toInterface();
-
-        // Initialize LOD manager with callback interfaces (no direct RHI dependency)
-        world.lod_manager = try LODManager.init(allocator, lod_config, gpu_bridge, render_iface, world.generator);
-        world.lod_renderer = lod_renderer;
+        world.lod = try WorldLOD.init(allocator, rhi, lod_config, world.generator);
         world.lod_enabled = true;
-
-        const radii = lod_config.getRadii();
-        log.log.info("World initialized with LOD system enabled (LOD3 radius: {} chunks)", .{radii[3]});
-
         return world;
     }
 
@@ -143,14 +129,8 @@ pub const World = struct {
         self.storage.deinitWithoutRHI();
         self.renderer.deinit();
 
-        // Cleanup LOD system if enabled.
-        // LODManager must be deinit'd first (it uses gpu_bridge callbacks that reference the renderer's RHI).
-        // LODRenderer is deinit'd second (it owns GPU draw buffers).
-        if (self.lod_manager) |lod_mgr| {
-            lod_mgr.deinit();
-        }
-        if (self.lod_renderer) |lod_rend| {
-            lod_rend.deinit();
+        if (self.lod) |lod| {
+            lod.deinit();
         }
 
         self.generator.deinit(self.allocator);
@@ -162,9 +142,8 @@ pub const World = struct {
         self.paused = true;
         self.streamer.setPaused(true);
 
-        // Pause LOD manager if enabled
-        if (self.lod_manager) |lod_mgr| {
-            lod_mgr.pause();
+        if (self.lod) |lod| {
+            lod.pause();
         }
     }
 
@@ -172,9 +151,8 @@ pub const World = struct {
         self.paused = false;
         self.streamer.setPaused(false);
 
-        // Resume LOD manager if enabled
-        if (self.lod_manager) |lod_mgr| {
-            lod_mgr.unpause();
+        if (self.lod) |lod| {
+            lod.unpause();
         }
     }
 
@@ -190,10 +168,8 @@ pub const World = struct {
             self.render_distance = target;
             self.streamer.setRenderDistance(target);
 
-            // Only update LOD0 radius - LOD1/2/3 are fixed for "infinite" terrain view
-            if (self.lod_manager) |lod_mgr| {
-                lod_mgr.config.setLOD0Radius(target);
-                std.log.info("LOD0 radius updated to match render distance: {}", .{target});
+            if (self.lod) |lod| {
+                lod.setLOD0Radius(target);
             }
         }
     }
@@ -255,20 +231,14 @@ pub const World = struct {
     }
 
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
-        // Process deferred vertex memory reclamation for this frame slot.
-        // Safe because beginFrame() has already waited for this slot's fence.
         self.renderer.vertex_allocator.tick(self.renderer.query.getFrameIndex());
 
-        const lod_mgr = if (self.lod_enabled) self.lod_manager else null;
+        const lod_mgr: ?*LODManager = if (self.lod_enabled) self.lod.?.manager else null;
         try self.streamer.update(player_pos, dt, lod_mgr);
 
-        // Process a few uploads per frame
         self.streamer.processUploads(self.renderer.vertex_allocator, self.max_uploads_per_frame);
 
-        // Process unloads
-        try self.streamer.processUnloads(player_pos, self.renderer.vertex_allocator, self.lod_manager);
-
-        // NOTE: LOD Manager update is handled inside streamer.update() now
+        try self.streamer.processUnloads(player_pos, self.renderer.vertex_allocator, lod_mgr);
     }
 
     pub fn isChunkRenderable(chunk_x: i32, chunk_z: i32, ctx: *anyopaque) bool {
@@ -283,12 +253,12 @@ pub const World = struct {
     }
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
-        const lod_mgr = if (self.lod_enabled) self.lod_manager else null;
+        const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
         self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod);
     }
 
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3) void {
-        const lod_mgr = if (self.lod_enabled) self.lod_manager else null;
+        const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
         self.renderer.renderShadowPass(light_space_matrix, camera_pos, self.render_distance, lod_mgr);
     }
 
@@ -334,14 +304,14 @@ pub const World = struct {
 
     /// Get LOD system statistics (returns null if LOD not enabled)
     pub fn getLODStats(self: *World) ?@import("lod_manager.zig").LODStats {
-        if (self.lod_manager) |lod_mgr| {
-            return lod_mgr.getStats();
+        if (self.lod) |lod| {
+            return lod.getStats();
         }
         return null;
     }
 
     /// Check if LOD system is enabled
     pub fn isLODEnabled(self: *const World) bool {
-        return self.lod_enabled;
+        return self.lod != null;
     }
 };

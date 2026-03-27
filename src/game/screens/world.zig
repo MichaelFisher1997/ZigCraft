@@ -83,7 +83,7 @@ pub const WorldScreen = struct {
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
-            if (self.session.world.lod_manager == null) {
+            if (self.session.world.lod == null) {
                 log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
             } else {
                 self.session.world.lod_enabled = !self.session.world.lod_enabled;
