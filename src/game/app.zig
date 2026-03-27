@@ -23,6 +23,7 @@ const MaterialSystem = @import("../engine/graphics/material_system.zig").Materia
 const LPVSystem = @import("../engine/graphics/lpv_system.zig").LPVSystem;
 const ResourcePackManager = @import("../engine/graphics/resource_pack.zig").ResourcePackManager;
 const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
+const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 const TimingOverlay = @import("../engine/ui/timing_overlay.zig").TimingOverlay;
 
 const settings_pkg = @import("settings.zig");
@@ -48,7 +49,7 @@ pub const App = struct {
     atmosphere_system: *AtmosphereSystem,
     material_system: *MaterialSystem,
     lpv_system: *LPVSystem,
-    audio_system: *AudioSystem,
+    audio_manager: *AudioSystemManager,
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
     ssao_pass: render_graph_pkg.SSAOPass,
@@ -202,8 +203,8 @@ pub const App = struct {
 
         const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
         errdefer atmosphere_system.deinit();
-        const audio_system = try AudioSystem.init(allocator);
-        errdefer audio_system.deinit();
+        const audio_manager = try AudioSystemManager.init(allocator);
+        errdefer audio_manager.deinit();
 
         const ui = try UISystem.init(rhi.uiRenderer(), input.window_width, input.window_height);
         var ui_mut = ui;
@@ -226,7 +227,7 @@ pub const App = struct {
             .atmosphere_system = atmosphere_system,
             .material_system = undefined,
             .lpv_system = undefined,
-            .audio_system = audio_system,
+            .audio_manager = audio_manager,
             .shadow_passes = .{
                 render_graph_pkg.ShadowPass.init(0),
                 render_graph_pkg.ShadowPass.init(1),
@@ -333,7 +334,7 @@ pub const App = struct {
         self.atmosphere_system.deinit();
         self.material_system.deinit();
         self.lpv_system.deinit();
-        self.audio_system.deinit();
+        self.audio_manager.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
         self.resource_pack_manager.deinit();
@@ -359,7 +360,7 @@ pub const App = struct {
             .atmosphere_system = self.atmosphere_system,
             .material_system = self.material_system,
             .lpv_system = self.lpv_system,
-            .audio_system = self.audio_system,
+            .audio_system = self.audio_manager.audio_system,
             .env_map_ptr = &self.env_map,
             .shader = self.shader,
             .settings = &self.settings,
@@ -386,7 +387,7 @@ pub const App = struct {
 
     pub fn runSingleFrame(self: *App) !void {
         self.time.update();
-        self.audio_system.update();
+        self.audio_manager.update();
 
         self.input.beginFrame();
         self.input.pollEvents();
