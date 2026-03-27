@@ -255,7 +255,8 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
 float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, int layer) {
     float shadow = computeShadowFactor(fragPosWorld, N, L, layer);
     
-    // Cascade blending transition (only when enabled via cloud_params.z)
+    // Cascade blending transition (only when enabled).
+    // cloud_params.z is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
     if (global.cloud_params.z > 0.5 && layer < 2) {
         float nextSplit = shadows.cascade_splits[layer];
         float blendThreshold = nextSplit * 0.8;

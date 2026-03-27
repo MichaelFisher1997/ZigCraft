@@ -76,7 +76,11 @@ void main() {
     // This is rotation-invariant — fragments at the same depth stay in the
     // same cascade regardless of camera yaw/pitch, matching CSM split
     // calculation which operates on view-space Z planes.
-    vec3 camForward = normalize(mat3(global.view_proj[0].xyz, global.view_proj[1].xyz, global.view_proj[2].xyz)[2]);
+    // Extract camera forward from mathematical row 2 of the VP matrix.
+    // In GLSL column-major layout, VP[i] is column i, so row 2 element j is VP[j][2].
+    // For VP = P*V with standard perspective, row 2 of VP is proportional to
+    // the camera forward vector (V row 2), which is rotation-invariant.
+    vec3 camForward = normalize(vec3(global.view_proj[0][2], global.view_proj[1][2], global.view_proj[2][2]));
     vViewDepth = -dot(toCamera, camForward);
     vAO = aAO;
     vMaskRadius = model_data.mask_radius;
