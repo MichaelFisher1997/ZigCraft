@@ -34,7 +34,7 @@ const UploadScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*UploadScreen {
         const upload_screen = try allocator.create(UploadScreen);
-        const rm = context.rhi.resourceManager();
+        const rm = context.render_system.getRHI().resourceManager();
         const buffer = try rm.createBuffer(upload_screen.payload.len, .vertex);
         upload_screen.* = .{ .context = context, .buffer = buffer };
         return upload_screen;
@@ -42,7 +42,7 @@ const UploadScreen = struct {
 
     fn deinit(ptr: *anyopaque) void {
         const self: *UploadScreen = @ptrCast(@alignCast(ptr));
-        self.context.rhi.resourceManager().destroyBuffer(self.buffer);
+        self.context.render_system.getRHI().resourceManager().destroyBuffer(self.buffer);
         self.context.allocator.destroy(self);
     }
 
@@ -50,7 +50,7 @@ const UploadScreen = struct {
         const self: *UploadScreen = @ptrCast(@alignCast(ptr));
         self.payload[0] = self.tick;
         self.tick +%= 1;
-        try self.context.rhi.resourceManager().updateBuffer(self.buffer, 0, self.payload[0..]);
+        try self.context.render_system.getRHI().resourceManager().updateBuffer(self.buffer, 0, self.payload[0..]);
     }
 
     fn draw(_: *anyopaque, ui: *UISystem) !void {
@@ -107,11 +107,11 @@ test "smoke test: launch, generate, render, exit" {
     var actual_w: c_int = 0;
     var actual_h: c_int = 0;
     _ = c.SDL_GetWindowSizeInPixels(app.window_manager.window, &actual_w, &actual_h);
-    const extent = app.rhi.context().getNativeSwapchainExtent();
+    const extent = app.render_system.getRHI().context().getNativeSwapchainExtent();
     try testing.expectEqual(@as(u32, @intCast(actual_w)), extent[0]);
     try testing.expectEqual(@as(u32, @intCast(actual_h)), extent[1]);
 
-    const val_count = app.rhi.getValidationErrorCount();
+    const val_count = app.render_system.getRHI().getValidationErrorCount();
     if (val_count > 0) {
         std.debug.print("WARNING: Integration test finished with {} validation errors (ignored for now)\n", .{val_count});
     }

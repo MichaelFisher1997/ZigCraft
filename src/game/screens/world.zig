@@ -27,7 +27,8 @@ pub const WorldScreen = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
-        const session = try GameSession.init(allocator, context.rhi, context.atlas, seed, context.settings.render_distance, context.settings.lod_enabled, generator_index);
+        const render_system = context.render_system;
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.lod_enabled, generator_index);
         errdefer session.deinit();
 
         const self = try allocator.create(WorldScreen);
@@ -48,6 +49,8 @@ pub const WorldScreen = struct {
     pub fn update(ptr: *anyopaque, dt: f32) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
+        const render_system = ctx.render_system;
+        const rhi = render_system.getRHI();
         const now = ctx.time.elapsed;
         const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
 
@@ -63,23 +66,23 @@ pub const WorldScreen = struct {
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_wireframe)) {
             ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
-            ctx.rhi.*.setWireframe(ctx.settings.wireframe_enabled);
+            rhi.setWireframe(ctx.settings.wireframe_enabled);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_textures)) {
             ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
-            ctx.rhi.*.setTexturesEnabled(ctx.settings.textures_enabled);
+            rhi.setTexturesEnabled(ctx.settings.textures_enabled);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_vsync)) {
             ctx.settings.vsync = !ctx.settings.vsync;
-            ctx.rhi.*.setVSync(ctx.settings.vsync);
+            rhi.setVSync(ctx.settings.vsync);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_shadow_debug_vis)) {
             log.log.info("Toggling shadow debug visualization (G pressed)", .{});
             ctx.settings.debug_shadows_active = !ctx.settings.debug_shadows_active;
-            ctx.rhi.*.setDebugShadowView(ctx.settings.debug_shadows_active);
+            rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
@@ -92,18 +95,18 @@ pub const WorldScreen = struct {
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_gpass_render)) {
-            self.context.disable_gpass_draw = !self.context.disable_gpass_draw;
-            log.log.info("G-pass rendering {s}", .{if (self.context.disable_gpass_draw) "disabled" else "enabled"});
+            render_system.disable_gpass_draw = !render_system.disable_gpass_draw;
+            log.log.info("G-pass rendering {s}", .{if (render_system.disable_gpass_draw) "disabled" else "enabled"});
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_ssao)) {
-            self.context.disable_ssao = !self.context.disable_ssao;
-            log.log.info("SSAO {s}", .{if (self.context.disable_ssao) "disabled" else "enabled"});
+            render_system.disable_ssao = !render_system.disable_ssao;
+            log.log.info("SSAO {s}", .{if (render_system.disable_ssao) "disabled" else "enabled"});
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_clouds)) {
-            self.context.disable_clouds = !self.context.disable_clouds;
-            log.log.info("Cloud rendering {s}", .{if (self.context.disable_clouds) "disabled" else "enabled"});
+            render_system.disable_clouds = !render_system.disable_clouds;
+            log.log.info("Cloud rendering {s}", .{if (render_system.disable_clouds) "disabled" else "enabled"});
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_fog)) {
@@ -117,11 +120,10 @@ pub const WorldScreen = struct {
             self.last_debug_toggle_time = now;
         }
 
-        // Update Audio Listener
         const cam = &self.session.player.camera;
         ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
 
-        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, ctx.atlas, ctx.window_manager.window, false, ctx.skip_world_update);
+        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update);
 
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
@@ -131,6 +133,8 @@ pub const WorldScreen = struct {
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
+        const render_system = ctx.render_system;
+        const rhi = render_system.getRHI();
         const camera = &self.session.player.camera;
 
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
@@ -155,11 +159,12 @@ pub const WorldScreen = struct {
             .time = self.session.atmosphere.time.time_of_day,
         };
 
-        const ssao_enabled = ctx.settings.ssao_enabled and !ctx.disable_ssao and !ctx.disable_gpass_draw;
-        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !ctx.disable_clouds;
+        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.disable_ssao and !render_system.disable_gpass_draw;
+        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.disable_clouds;
 
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
-        try ctx.lpv_system.setSettings(
+        const lpv_system = render_system.getLPVSystem();
+        try lpv_system.setSettings(
             ctx.settings.lpv_enabled,
             ctx.settings.lpv_intensity,
             ctx.settings.lpv_cell_size,
@@ -167,11 +172,11 @@ pub const WorldScreen = struct {
             lpv_quality.grid_size,
             lpv_quality.update_interval_frames,
         );
-        ctx.rhi.timing().beginPassTiming("LPVPass");
-        try ctx.lpv_system.update(self.session.world, camera.position, ctx.settings.debug_lpv_overlay_active);
-        ctx.rhi.timing().endPassTiming("LPVPass");
+        rhi.timing().beginPassTiming("LPVPass");
+        try lpv_system.update(self.session.world, camera.position, ctx.settings.debug_lpv_overlay_active);
+        rhi.timing().endPassTiming("LPVPass");
 
-        const lpv_origin = ctx.lpv_system.getOrigin();
+        const lpv_origin = lpv_system.getOrigin();
         const cloud_params: rhi_pkg.CloudParams = blk: {
             const p = self.session.clouds.getShadowParams();
             break :blk .{
@@ -187,7 +192,7 @@ pub const WorldScreen = struct {
                 .cloud_coverage = p.cloud_coverage,
                 .cloud_height = p.cloud_height,
                 .base_color = self.session.clouds.base_color,
-                .pbr_enabled = ctx.settings.pbr_enabled and ctx.atlas.has_pbr,
+                .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr,
                 .shadow = .{
                     .distance = ctx.settings.shadow_distance,
                     .resolution = ctx.settings.getShadowResolution(),
@@ -205,55 +210,55 @@ pub const WorldScreen = struct {
                 .ssao_enabled = ssao_enabled,
                 .lpv_enabled = ctx.settings.lpv_enabled,
                 .lpv_intensity = ctx.settings.lpv_intensity,
-                .lpv_cell_size = ctx.lpv_system.getCellSize(),
-                .lpv_grid_size = ctx.lpv_system.getGridSize(),
+                .lpv_cell_size = lpv_system.getCellSize(),
+                .lpv_grid_size = lpv_system.getGridSize(),
                 .lpv_origin = lpv_origin,
             };
         };
 
-        if (!ctx.skip_world_render) {
-            try ctx.rhi.*.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
+        const skip_world_render = render_system.safe_render_mode;
+        if (!skip_world_render) {
+            try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
 
-            const env_map_handle = if (ctx.env_map_ptr) |e_ptr| (if (e_ptr.*) |t| t.handle else 0) else 0;
+            const env_map_ptr = render_system.getEnvMapPtr();
+            const env_map_handle = if (env_map_ptr) |e_ptr| (if (e_ptr.*) |t| t.handle else 0) else 0;
 
-            // Frame-local cascade storage: computed once by the first ShadowPass,
-            // then reused by subsequent cascade passes for consistency.
             var frame_cascades: ?@import("../../engine/graphics/csm.zig").ShadowCascades = null;
 
             const render_ctx = render_graph_pkg.SceneContext{
-                .render_ctx = ctx.rhi.*.renderContext(),
-                .shadow_ctx = ctx.rhi.*.shadowSystem(),
-                .ssao_ctx = ctx.rhi.*.ssao(),
-                .timing = ctx.rhi.*.timing(),
+                .render_ctx = rhi.renderContext(),
+                .shadow_ctx = rhi.shadowSystem(),
+                .ssao_ctx = rhi.ssao(),
+                .timing = rhi.timing(),
                 .world = self.session.world,
                 .shadow_scene = self.session.world.shadowScene(),
                 .camera = camera,
-                .atmosphere_system = ctx.atmosphere_system,
-                .material_system = ctx.material_system,
+                .atmosphere_system = render_system.getAtmosphereSystem(),
+                .material_system = render_system.getMaterialSystem(),
                 .aspect = aspect,
                 .taa_enabled = taa_enabled,
                 .viewport_width = screen_w,
                 .viewport_height = screen_h,
                 .sky_params = sky_params,
                 .cloud_params = cloud_params,
-                .main_shader = ctx.shader,
+                .main_shader = render_system.getShader(),
                 .env_map_handle = env_map_handle,
                 .shadow = cloud_params.shadow,
                 .ssao_enabled = ssao_enabled,
-                .disable_shadow_draw = ctx.disable_shadow_draw,
-                .disable_gpass_draw = ctx.disable_gpass_draw,
-                .disable_ssao = ctx.disable_ssao,
-                .disable_clouds = ctx.disable_clouds,
+                .disable_shadow_draw = render_system.disable_shadow_draw,
+                .disable_gpass_draw = render_system.disable_gpass_draw,
+                .disable_ssao = render_system.disable_ssao,
+                .disable_clouds = render_system.disable_clouds,
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled,
                 .overlay_renderer = renderOverlay,
                 .overlay_ctx = self,
                 .cached_cascades = &frame_cascades,
-                .lpv_texture_handle = ctx.lpv_system.getTextureHandle(),
-                .lpv_texture_handle_g = ctx.lpv_system.getTextureHandleG(),
-                .lpv_texture_handle_b = ctx.lpv_system.getTextureHandleB(),
+                .lpv_texture_handle = lpv_system.getTextureHandle(),
+                .lpv_texture_handle_g = lpv_system.getTextureHandleG(),
+                .lpv_texture_handle_b = lpv_system.getTextureHandleB(),
             };
-            try ctx.render_graph.execute(render_ctx);
+            try render_system.getRenderGraph().execute(render_ctx);
         }
 
         if (taa_enabled) {
@@ -270,10 +275,10 @@ pub const WorldScreen = struct {
         const mouse_y: f32 = @floatFromInt(mouse_pos.y);
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
 
-        try self.session.drawHUD(ui, ctx.atlas, ctx.resource_pack_manager.active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
+        try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
 
         if (ctx.settings.debug_shadows_active) {
-            DebugShadowOverlay.draw(ctx.rhi.ui(), ctx.rhi.shadowSystem(), screen_w, screen_h, .{});
+            DebugShadowOverlay.draw(rhi.ui(), rhi.shadowSystem(), screen_w, screen_h, .{});
         }
         if (ctx.settings.debug_lpv_overlay_active) {
             const overlay_size = std.math.clamp(220.0 * ctx.settings.ui_scale, 160.0, screen_h * 0.4);
@@ -283,10 +288,10 @@ pub const WorldScreen = struct {
                 .spacing = 10.0 * ctx.settings.ui_scale,
             };
             const r = DebugLPVOverlay.rect(screen_h, cfg);
-            DebugLPVOverlay.draw(ctx.rhi.ui(), ctx.lpv_system.getDebugOverlayTextureHandle(), screen_w, screen_h, cfg);
+            DebugLPVOverlay.draw(rhi.ui(), lpv_system.getDebugOverlayTextureHandle(), screen_w, screen_h, cfg);
 
-            const stats = ctx.lpv_system.getStats();
-            const timing_results = ctx.rhi.timing().getTimingResults();
+            const stats = lpv_system.getStats();
+            const timing_results = rhi.timing().getTimingResults();
             var line0_buf: [64]u8 = undefined;
             var line1_buf: [64]u8 = undefined;
             var line2_buf: [64]u8 = undefined;

@@ -52,7 +52,8 @@ pub const ResourcePacksScreen = struct {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
         const settings = ctx.settings;
-        const manager = ctx.resource_pack_manager;
+        const render_system = ctx.render_system;
+        const manager = render_system.getResourcePackManager();
 
         // Draw background screen if it exists
         try ctx.screen_manager.drawParentScreen(ptr, ui);
@@ -132,9 +133,11 @@ pub const ResourcePacksScreen = struct {
 
     fn reloadAtlas(self: *@This()) !void {
         const ctx = self.context;
-        ctx.rhi.waitIdle();
-        ctx.atlas.deinit();
-        ctx.atlas.* = try TextureAtlas.init(ctx.allocator, ctx.rhi.resourceManager(), ctx.resource_pack_manager, ctx.settings.max_texture_resolution);
+        const render_system = ctx.render_system;
+        const rhi = render_system.getRHI();
+        rhi.waitIdle();
+        render_system.getAtlas().deinit();
+        render_system.getAtlas().* = try TextureAtlas.init(ctx.allocator, rhi.resourceManager(), render_system.getResourcePackManager(), ctx.settings.max_texture_resolution);
     }
 
     pub fn screen(self: *@This()) IScreen {
