@@ -34,14 +34,15 @@ const UploadScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*UploadScreen {
         const upload_screen = try allocator.create(UploadScreen);
-        const buffer = try context.rhi.createBuffer(upload_screen.payload.len, .vertex);
+        const rm = context.rhi.resourceManager();
+        const buffer = try rm.createBuffer(upload_screen.payload.len, .vertex);
         upload_screen.* = .{ .context = context, .buffer = buffer };
         return upload_screen;
     }
 
     fn deinit(ptr: *anyopaque) void {
         const self: *UploadScreen = @ptrCast(@alignCast(ptr));
-        self.context.rhi.destroyBuffer(self.buffer);
+        self.context.rhi.resourceManager().destroyBuffer(self.buffer);
         self.context.allocator.destroy(self);
     }
 
@@ -49,7 +50,7 @@ const UploadScreen = struct {
         const self: *UploadScreen = @ptrCast(@alignCast(ptr));
         self.payload[0] = self.tick;
         self.tick +%= 1;
-        try self.context.rhi.updateBuffer(self.buffer, 0, self.payload[0..]);
+        try self.context.rhi.resourceManager().updateBuffer(self.buffer, 0, self.payload[0..]);
     }
 
     fn draw(_: *anyopaque, ui: *UISystem) !void {
