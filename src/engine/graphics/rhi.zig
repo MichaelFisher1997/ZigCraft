@@ -378,6 +378,36 @@ pub const IShadowContext = struct {
     }
 };
 
+/// Concrete wrapper around `IShadowContext` for shadow mapping operations.
+///
+/// Use this when a subsystem only needs shadow map rendering without accessing
+/// the full `RHI` composite. Obtain via `rhi.shadowSystem()`. Reduces coupling
+/// and clarifies intent.
+///
+/// ```zig
+/// const ss = rhi.shadowSystem();
+/// ss.beginPass(0, light_space_matrix);
+/// // ... render shadow casters ...
+/// ss.endPass();
+/// const handle = ss.getShadowMapHandle(0);
+/// ```
+pub const ShadowSystemWrapper = struct {
+    ctx: IShadowContext,
+
+    pub fn beginPass(self: ShadowSystemWrapper, cascade_index: u32, light_space_matrix: Mat4) void {
+        self.ctx.beginPass(cascade_index, light_space_matrix);
+    }
+    pub fn endPass(self: ShadowSystemWrapper) void {
+        self.ctx.endPass();
+    }
+    pub fn updateUniforms(self: ShadowSystemWrapper, params: ShadowParams) !void {
+        try self.ctx.updateUniforms(params);
+    }
+    pub fn getShadowMapHandle(self: ShadowSystemWrapper, cascade_index: u32) TextureHandle {
+        return self.ctx.getShadowMapHandle(cascade_index);
+    }
+};
+
 pub const IUIContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -773,6 +803,9 @@ pub const RHI = struct {
     }
     pub fn shadow(self: RHI) IShadowContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.shadow };
+    }
+    pub fn shadowSystem(self: RHI) ShadowSystemWrapper {
+        return .{ .ctx = self.shadow() };
     }
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };

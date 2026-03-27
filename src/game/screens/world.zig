@@ -222,7 +222,7 @@ pub const WorldScreen = struct {
 
             const render_ctx = render_graph_pkg.SceneContext{
                 .render_ctx = ctx.rhi.*.renderContext(),
-                .shadow_ctx = ctx.rhi.*.shadow(),
+                .shadow_ctx = ctx.rhi.*.shadowSystem(),
                 .ssao_ctx = ctx.rhi.*.ssao(),
                 .timing = ctx.rhi.*.timing(),
                 .world = self.session.world,
@@ -273,7 +273,7 @@ pub const WorldScreen = struct {
         try self.session.drawHUD(ui, ctx.atlas, ctx.resource_pack_manager.active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
 
         if (ctx.settings.debug_shadows_active) {
-            DebugShadowOverlay.draw(ctx.rhi.ui(), ctx.rhi.shadow(), screen_w, screen_h, .{});
+            DebugShadowOverlay.draw(ctx.rhi.ui(), ctx.rhi.shadowSystem(), screen_w, screen_h, .{});
         }
         if (ctx.settings.debug_lpv_overlay_active) {
             const overlay_size = std.math.clamp(220.0 * ctx.settings.ui_scale, 160.0, screen_h * 0.4);
