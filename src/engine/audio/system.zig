@@ -30,6 +30,13 @@ pub const AudioSystem = struct {
             .backend = undefined,
             .manager = manager_pkg.SoundManager.init(allocator),
         };
+        errdefer {
+            self.manager.deinit();
+            if (self.backend_ptr) |ptr| {
+                const backend_inst: *sdl_backend.SDLAudioBackend = @ptrCast(@alignCast(ptr));
+                backend_inst.destroy();
+            }
+        }
 
         const config = sdl_backend.AudioConfig{};
         if (sdl_backend.SDLAudioBackend.create(allocator, config)) |backend_inst| {
@@ -42,7 +49,6 @@ pub const AudioSystem = struct {
             self.enabled = false;
         }
 
-        // Create some default test sounds
         _ = try self.manager.createTestSound("test_tone");
 
         return self;
