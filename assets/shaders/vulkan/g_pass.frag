@@ -35,25 +35,22 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 lpv_origin;
 } global;
 
-// 4x4 Bayer matrix for dithered LOD transitions
-float bayerDither4x4(vec2 position) {
-    const float bayerMatrix[16] = float[](
-        0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
-        12.0/16.0, 4.0/16.0, 14.0/16.0,  6.0/16.0,
-        3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
-        15.0/16.0, 7.0/16.0, 13.0/16.0,  5.0/16.0
-    );
-    int x = int(mod(position.x, 4.0));
-    int y = int(mod(position.y, 4.0));
-    return bayerMatrix[x + y * 4];
+// World-space hash for LOD transition masking.
+// Using world-space noise avoids a fixed screen-space dot pattern.
+float lodTransitionNoise(vec2 worldXZ) {
+    vec2 p = floor(worldXZ * 0.25);
+    p = fract(p * vec2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return fract((p.x + p.y) * p.x);
 }
 
 void main() {
-    const float LOD_TRANSITION_WIDTH = 24.0;
+    const float LOD_TRANSITION_WIDTH = 16.0;
     if (vTileID < 0 && vMaskRadius > 0.0) {
         float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
         float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
-        float ditherThreshold = bayerDither4x4(gl_FragCoord.xy);
+        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
+        float ditherThreshold = lodTransitionNoise(worldXZ);
         if (fade < ditherThreshold) discard;
     }
 
