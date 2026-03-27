@@ -221,7 +221,10 @@ pub const WorldScreen = struct {
             var frame_cascades: ?@import("../../engine/graphics/csm.zig").ShadowCascades = null;
 
             const render_ctx = render_graph_pkg.SceneContext{
-                .rhi = ctx.rhi.*, // SceneContext expects value for now
+                .render_ctx = ctx.rhi.*.renderContext(),
+                .shadow_ctx = ctx.rhi.*.shadow(),
+                .ssao_ctx = ctx.rhi.*.ssao(),
+                .timing = ctx.rhi.*.timing(),
                 .world = self.session.world,
                 .shadow_scene = self.session.world.shadowScene(),
                 .camera = camera,

@@ -41,8 +41,11 @@ const c = @import("../../c.zig").c;
 const Camera = @import("camera.zig").Camera;
 const World = @import("../../world/world.zig").World;
 const shadow_scene = @import("shadow_scene.zig");
-const RHI = @import("rhi.zig").RHI;
 const rhi_pkg = @import("rhi.zig");
+const RenderContext = rhi_pkg.RenderContext;
+const IShadowContext = rhi_pkg.IShadowContext;
+const ISSAOContext = rhi_pkg.ISSAOContext;
+const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("../math/vec3.zig").Vec3;
 const log = @import("../core/log.zig");
 const CSM = @import("csm.zig");
@@ -50,7 +53,10 @@ const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
 
 pub const SceneContext = struct {
-    rhi: RHI,
+    render_ctx: RenderContext,
+    shadow_ctx: IShadowContext,
+    ssao_ctx: ISSAOContext,
+    timing: IDeviceTiming,
     world: *World,
     shadow_scene: shadow_scene.IShadowScene,
     camera: *Camera,
@@ -126,31 +132,30 @@ pub const RenderGraph = struct {
     }
 
     pub fn execute(self: *const RenderGraph, ctx: SceneContext) !void {
-        const timing = ctx.rhi.timing();
         var main_pass_started = false;
         for (self.passes.items) |pass| {
             updateMainPassState(ctx, pass, &main_pass_started);
 
             const pass_name = pass.name();
-            timing.beginPassTiming(pass_name);
+            ctx.timing.beginPassTiming(pass_name);
             try pass.execute(ctx);
-            timing.endPassTiming(pass_name);
+            ctx.timing.endPassTiming(pass_name);
         }
 
         if (main_pass_started) {
-            ctx.rhi.endMainPass();
+            ctx.render_ctx.endMainPass();
         }
     }
 
     fn updateMainPassState(ctx: SceneContext, pass: IRenderPass, main_pass_started: *bool) void {
         if (pass.needsMainPass()) {
             if (!main_pass_started.*) {
-                ctx.rhi.beginMainPass();
+                ctx.render_ctx.beginMainPass();
                 main_pass_started.* = true;
             }
         } else {
             if (main_pass_started.*) {
-                ctx.rhi.endMainPass();
+                ctx.render_ctx.endMainPass();
                 main_pass_started.* = false;
             }
         }
@@ -188,7 +193,6 @@ pub const ShadowPass = struct {
         std.debug.assert(self.cascade_index < rhi_pkg.SHADOW_CASCADE_COUNT);
 
         const cascade_idx = self.cascade_index;
-        const rhi = ctx.rhi;
 
         // Compute cascades once per frame and cache via shared pointer so all
         // cascade passes within the same frame use identical matrices.
@@ -216,7 +220,7 @@ pub const ShadowPass = struct {
 
         // Only update uniforms on first cascade pass
         if (cascade_idx == 0) {
-            try rhi.updateShadowUniforms(.{
+            try ctx.shadow_ctx.updateUniforms(.{
                 .light_space_matrices = cascades.light_space_matrices,
                 .cascade_splits = cascades.cascade_splits,
                 .shadow_texel_sizes = cascades.texel_sizes,
@@ -225,10 +229,10 @@ pub const ShadowPass = struct {
 
         if (ctx.disable_shadow_draw) return;
 
-        rhi.beginShadowPass(cascade_idx, light_space_matrix);
-        errdefer rhi.endShadowPass();
+        ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
+        errdefer ctx.shadow_ctx.endPass();
         ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position);
-        rhi.endShadowPass();
+        ctx.shadow_ctx.endPass();
     }
 };
 
@@ -249,12 +253,12 @@ pub const GPass = struct {
         _ = ptr;
         if (!ctx.ssao_enabled or ctx.disable_gpass_draw) return;
 
-        ctx.rhi.beginGPass();
+        ctx.render_ctx.beginGPass();
         const atlas = ctx.material_system.getAtlasHandles(ctx.env_map_handle);
-        ctx.rhi.bindTexture(atlas.diffuse, 1);
+        ctx.render_ctx.bindTexture(atlas.diffuse, 1);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, false);
-        ctx.rhi.endGPass();
+        ctx.render_ctx.endGPass();
     }
 };
 
@@ -276,7 +280,7 @@ pub const SSAOPass = struct {
         if (!ctx.ssao_enabled or ctx.disable_ssao) return;
         const proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled);
         const inv_proj = proj.inverse();
-        ctx.rhi.ssao().compute(proj, inv_proj);
+        ctx.ssao_ctx.compute(proj, inv_proj);
     }
 };
 
@@ -322,12 +326,11 @@ pub const OpaquePass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
-        const rhi = ctx.rhi;
-        rhi.bindShader(ctx.main_shader);
+        ctx.render_ctx.bindShader(ctx.main_shader);
         ctx.material_system.bindTerrainMaterial(ctx.env_map_handle);
-        rhi.bindTexture(ctx.lpv_texture_handle, 11);
-        rhi.bindTexture(ctx.lpv_texture_handle_g, 12);
-        rhi.bindTexture(ctx.lpv_texture_handle_b, 13);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle, 11);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, true);
     }
@@ -398,9 +401,9 @@ pub const PostProcessPass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
-        ctx.rhi.beginPostProcessPass();
-        ctx.rhi.draw(rhi_pkg.InvalidBufferHandle, 3, .triangles);
-        ctx.rhi.endPostProcessPass();
+        ctx.render_ctx.beginPostProcessPass();
+        ctx.render_ctx.draw(rhi_pkg.InvalidBufferHandle, 3, .triangles);
+        ctx.render_ctx.endPostProcessPass();
     }
 };
 
@@ -422,7 +425,7 @@ pub const BloomPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *BloomPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled or !ctx.bloom_enabled) return;
-        ctx.rhi.computeBloom();
+        ctx.render_ctx.computeBloom();
     }
 };
 
@@ -444,7 +447,7 @@ pub const TAAPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *TAAPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled or !ctx.taa_enabled) return;
-        ctx.rhi.computeTAA();
+        ctx.render_ctx.computeTAA();
     }
 };
 
@@ -466,7 +469,7 @@ pub const FXAAPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *FXAAPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled or !ctx.fxaa_enabled) return;
-        ctx.rhi.beginFXAAPass();
-        ctx.rhi.endFXAAPass();
+        ctx.render_ctx.beginFXAAPass();
+        ctx.render_ctx.endFXAAPass();
     }
 };

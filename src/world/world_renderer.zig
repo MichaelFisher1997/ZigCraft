@@ -8,7 +8,9 @@ const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
-const RHI = rhi_mod.RHI;
+const ResourceManager = rhi_mod.ResourceManager;
+const RenderContext = rhi_mod.RenderContext;
+const IDeviceQuery = rhi_mod.IDeviceQuery;
 const LODManager = @import("lod_manager.zig").LODManager;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
@@ -26,7 +28,9 @@ pub const RenderStats = struct {
 pub const WorldRenderer = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
-    rhi: RHI,
+    rm: ResourceManager,
+    render_ctx: RenderContext,
+    query: IDeviceQuery,
 
     vertex_allocator: *GlobalVertexAllocator,
     visible_chunks: std.ArrayListUnmanaged(*ChunkData),
@@ -42,7 +46,7 @@ pub const WorldRenderer = struct {
     mdi_instance_offset: usize,
     mdi_command_offset: usize,
 
-    pub fn init(allocator: std.mem.Allocator, rhi: RHI, storage: *ChunkStorage) !*WorldRenderer {
+    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
         const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
@@ -57,20 +61,22 @@ pub const WorldRenderer = struct {
         }
 
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
-        vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rhi.resourceManager(), rhi.query(), vertex_capacity_mb);
+        vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
         const max_chunks = 16384;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         var indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
-            instance_buffers[i] = try rhi.createBuffer(max_chunks * @sizeOf(rhi_mod.InstanceData), .storage);
-            indirect_buffers[i] = try rhi.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 2, .indirect);
+            instance_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.InstanceData), .storage);
+            indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 2, .indirect);
         }
 
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
-            .rhi = rhi,
+            .rm = rm,
+            .render_ctx = render_ctx,
+            .query = query,
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
             .last_render_stats = .{},
@@ -91,8 +97,8 @@ pub const WorldRenderer = struct {
         self.visible_chunks.deinit(self.allocator);
 
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
-            if (self.instance_buffers[i] != 0) self.rhi.destroyBuffer(self.instance_buffers[i]);
-            if (self.indirect_buffers[i] != 0) self.rhi.destroyBuffer(self.indirect_buffers[i]);
+            if (self.instance_buffers[i] != 0) self.rm.destroyBuffer(self.instance_buffers[i]);
+            if (self.indirect_buffers[i] != 0) self.rm.destroyBuffer(self.indirect_buffers[i]);
         }
         self.instance_data.deinit(self.allocator);
         self.solid_commands.deinit(self.allocator);
@@ -158,19 +164,19 @@ pub const WorldRenderer = struct {
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
-            self.rhi.setModelMatrix(model, Vec3.one, 0);
+            self.render_ctx.setModelMatrix(model, Vec3.one, 0);
 
             if (data.mesh.solid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
             }
             if (data.mesh.cutout_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
             }
             if (data.mesh.fluid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
             }
         }
 
@@ -223,13 +229,13 @@ pub const WorldRenderer = struct {
                         const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
                         if (data.mesh.solid_allocation) |alloc| {
-                            self.rhi.setModelMatrix(model, Vec3.one, 0);
+                            self.render_ctx.setModelMatrix(model, Vec3.one, 0);
 
-                            self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                            self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                         }
                         if (data.mesh.cutout_allocation) |alloc| {
-                            self.rhi.setModelMatrix(model, Vec3.one, 0);
-                            self.rhi.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                            self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+                            self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                         }
                     }
                 }
