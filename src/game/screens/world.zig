@@ -162,8 +162,8 @@ pub const WorldScreen = struct {
             .time = self.session.atmosphere.time.time_of_day,
         };
 
-        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.disable_ssao and !render_system.disable_gpass_draw;
-        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.disable_clouds;
+        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw();
+        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.getDisableClouds();
 
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
@@ -222,7 +222,7 @@ pub const WorldScreen = struct {
             };
         };
 
-        const skip_world_render = render_system.safe_render_mode;
+        const skip_world_render = render_system.getSafeRenderMode();
         if (!skip_world_render) {
             try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
 
@@ -251,10 +251,10 @@ pub const WorldScreen = struct {
                 .env_map_handle = env_map_handle,
                 .shadow = cloud_params.shadow,
                 .ssao_enabled = ssao_enabled,
-                .disable_shadow_draw = render_system.disable_shadow_draw,
-                .disable_gpass_draw = render_system.disable_gpass_draw,
-                .disable_ssao = render_system.disable_ssao,
-                .disable_clouds = render_system.disable_clouds,
+                .disable_shadow_draw = render_system.getDisableShadowDraw(),
+                .disable_gpass_draw = render_system.getDisableGPassDraw(),
+                .disable_ssao = render_system.getDisableSSAO(),
+                .disable_clouds = render_system.getDisableClouds(),
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled,
                 .overlay_renderer = renderOverlay,
