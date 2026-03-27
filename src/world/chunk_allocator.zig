@@ -18,8 +18,8 @@ pub const GlobalVertexAllocator = struct {
         size: usize,
     };
 
-    resources: ResourceManager,
-    query: IDeviceQuery,
+    resource_manager: ResourceManager,
+    device_query: IDeviceQuery,
     buffer: rhi_mod.BufferHandle,
     capacity: usize,
     allocator: std.mem.Allocator,
@@ -43,8 +43,8 @@ pub const GlobalVertexAllocator = struct {
         }
 
         return .{
-            .resources = resources,
-            .query = query,
+            .resource_manager = resources,
+            .device_query = query,
             .buffer = buffer,
             .capacity = capacity,
             .allocator = allocator,
@@ -55,7 +55,7 @@ pub const GlobalVertexAllocator = struct {
     }
 
     pub fn deinit(self: *GlobalVertexAllocator) void {
-        self.resources.destroyBuffer(self.buffer);
+        self.resource_manager.destroyBuffer(self.buffer);
         self.free_blocks.deinit(self.allocator);
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
             self.deferred_frees[i].deinit(self.allocator);
@@ -105,7 +105,7 @@ pub const GlobalVertexAllocator = struct {
             };
 
             // Upload at the correct offset within the megabuffer
-            try self.resources.updateBuffer(self.buffer, block.offset, std.mem.sliceAsBytes(vertices));
+            try self.resource_manager.updateBuffer(self.buffer, block.offset, std.mem.sliceAsBytes(vertices));
 
             // Update free block
             if (block.size > size_needed) {
@@ -151,7 +151,7 @@ pub const GlobalVertexAllocator = struct {
         // HOWEVER, we must be careful with reuse.
         // A safer way is to queue for (frame_index + 1) % MAX_FRAMES_IN_FLIGHT.
 
-        const frame_idx = self.query.getFrameIndex();
+        const frame_idx = self.device_query.getFrameIndex();
         self.deferred_frees[frame_idx].append(self.allocator, allocation) catch {
             // Fallback to immediate free if queue is full (better than leak, though slightly risky)
             std.log.warn("Deferred free queue full, falling back to immediate free", .{});

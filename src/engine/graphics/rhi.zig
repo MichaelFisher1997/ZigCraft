@@ -149,6 +149,17 @@ pub const IResourceFactory = struct {
     }
 };
 
+/// Concrete wrapper around `IResourceFactory` for GPU resource lifecycle operations.
+///
+/// Use this when a subsystem only needs buffer/texture/shader creation and
+/// destruction, without accessing the full `RHI` composite. Obtain via
+/// `rhi.resourceManager()`. Reduces coupling and clarifies intent.
+///
+/// ```zig
+/// const rm = rhi.resourceManager();
+/// const buffer = try rm.createBuffer(size, .vertex);
+/// defer rm.destroyBuffer(buffer);
+/// ```
 pub const ResourceManager = struct {
     factory: IResourceFactory,
 
