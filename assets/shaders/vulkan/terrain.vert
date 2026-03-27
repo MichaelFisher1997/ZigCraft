@@ -71,14 +71,13 @@ void main() {
     vBlockLight = aBlockLight;
     
     vFragPosWorld = worldPos.xyz;
-    // Calculate actual view-space Z depth for cascade selection
-    // This aligns with how CSM splits are calculated (view-space Z)
-    vec4 viewPos = global.view_proj * vec4(worldPos.xyz, 1.0);
-    // In reverse-Z, view-space Z increases as we go deeper into the scene
-    // We need the actual view-space depth, not clip-space
-    // Transform world position to view space
     vec3 toCamera = worldPos.xyz - global.cam_pos.xyz;
-    vViewDepth = length(toCamera);
+    // View-space Z depth: project distance onto camera forward direction.
+    // This is rotation-invariant — fragments at the same depth stay in the
+    // same cascade regardless of camera yaw/pitch, matching CSM split
+    // calculation which operates on view-space Z planes.
+    vec3 camForward = normalize(mat3(global.view_proj[0].xyz, global.view_proj[1].xyz, global.view_proj[2].xyz)[2]);
+    vViewDepth = -dot(toCamera, camForward);
     vAO = aAO;
     vMaskRadius = model_data.mask_radius;
 
