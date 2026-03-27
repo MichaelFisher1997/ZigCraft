@@ -7,7 +7,6 @@ const NeighborChunks = @import("chunk_mesh.zig").NeighborChunks;
 const BlockType = @import("block.zig").BlockType;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
 const ChunkData = @import("chunk_storage.zig").ChunkData;
-const ChunkKey = @import("chunk_storage.zig").ChunkKey;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const worldToLocal = @import("chunk.zig").worldToLocal;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
@@ -225,9 +224,7 @@ pub const World = struct {
     /// and used before the next call to World.update (which may unload chunks).
     /// If accessing from a background thread, the chunk must be pinned first.
     pub fn getChunk(self: *World, cx: i32, cz: i32) ?*ChunkData {
-        self.storage.chunks_mutex.lockShared();
-        defer self.storage.chunks_mutex.unlockShared();
-        return self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz });
+        return self.storage.get(cx, cz);
     }
 
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
@@ -239,17 +236,6 @@ pub const World = struct {
         self.streamer.processUploads(self.renderer.vertex_allocator, self.max_uploads_per_frame);
 
         try self.streamer.processUnloads(player_pos, self.renderer.vertex_allocator, lod_mgr);
-    }
-
-    pub fn isChunkRenderable(chunk_x: i32, chunk_z: i32, ctx: *anyopaque) bool {
-        const storage: *ChunkStorage = @ptrCast(@alignCast(ctx));
-        storage.chunks_mutex.lockShared();
-        defer storage.chunks_mutex.unlockShared();
-
-        if (storage.chunks.get(.{ .x = chunk_x, .z = chunk_z })) |data| {
-            return data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null;
-        }
-        return false;
     }
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
@@ -281,20 +267,11 @@ pub const World = struct {
     }
 
     pub fn getStats(self: *World) struct { chunks_loaded: usize, total_vertices: u64, gen_queue: usize, mesh_queue: usize, upload_queue: usize } {
-        self.storage.chunks_mutex.lockShared();
-        defer self.storage.chunks_mutex.unlockShared();
-        var total_verts: u64 = 0;
-        var iter = self.storage.iteratorUnsafe();
-        while (iter.next()) |entry| {
-            if (entry.value_ptr.*.mesh.solid_allocation) |alloc| total_verts += alloc.count;
-            if (entry.value_ptr.*.mesh.cutout_allocation) |alloc| total_verts += alloc.count;
-            if (entry.value_ptr.*.mesh.fluid_allocation) |alloc| total_verts += alloc.count;
-        }
-
+        const total_verts = self.storage.totalVertexCount();
         const streamer_stats = self.streamer.getStats();
 
         return .{
-            .chunks_loaded = self.storage.chunks.count(),
+            .chunks_loaded = self.storage.count(),
             .total_vertices = total_verts,
             .gen_queue = streamer_stats.gen_queue,
             .mesh_queue = streamer_stats.mesh_queue,
