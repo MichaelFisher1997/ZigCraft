@@ -9,6 +9,9 @@ pub const PresetConfig = struct {
     shadow_distance: f32,
     shadow_pcf_samples: u8,
     shadow_cascade_blend: bool,
+    shadow_caster_distance: f32 = 250.0,
+    shadow_lod_bias: f32 = 0.0,
+    shadow_lod_enabled: bool = true,
     pbr_enabled: bool,
     pbr_quality: u8,
     msaa_samples: u8,
@@ -62,6 +65,14 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
         // Skip invalid presets instead of failing entire load
         if (p.shadow_distance < 100.0 or p.shadow_distance > 1000.0) {
             std.log.warn("Skipping preset '{s}': invalid shadow_distance {}", .{ p.name, p.shadow_distance });
+            continue;
+        }
+        if (p.shadow_caster_distance < 50.0 or p.shadow_caster_distance > 500.0) {
+            std.log.warn("Skipping preset '{s}': invalid shadow_caster_distance {}", .{ p.name, p.shadow_caster_distance });
+            continue;
+        }
+        if (p.shadow_lod_bias < 0.0 or p.shadow_lod_bias > 3.0) {
+            std.log.warn("Skipping preset '{s}': invalid shadow_lod_bias {}", .{ p.name, p.shadow_lod_bias });
             continue;
         }
         if (p.volumetric_density < 0.0 or p.volumetric_density > 0.5) {
@@ -122,6 +133,9 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.shadow_distance = config.shadow_distance;
     settings.shadow_pcf_samples = config.shadow_pcf_samples;
     settings.shadow_cascade_blend = config.shadow_cascade_blend;
+    settings.shadow_caster_distance = config.shadow_caster_distance;
+    settings.shadow_lod_bias = config.shadow_lod_bias;
+    settings.shadow_lod_enabled = config.shadow_lod_enabled;
     settings.pbr_enabled = config.pbr_enabled;
     settings.pbr_quality = config.pbr_quality;
     settings.msaa_samples = config.msaa_samples;
@@ -164,6 +178,9 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.shadow_distance, preset.shadow_distance, epsilon) and
         settings.shadow_pcf_samples == preset.shadow_pcf_samples and
         settings.shadow_cascade_blend == preset.shadow_cascade_blend and
+        std.math.approxEqAbs(f32, settings.shadow_caster_distance, preset.shadow_caster_distance, epsilon) and
+        std.math.approxEqAbs(f32, settings.shadow_lod_bias, preset.shadow_lod_bias, epsilon) and
+        settings.shadow_lod_enabled == preset.shadow_lod_enabled and
         settings.pbr_enabled == preset.pbr_enabled and
         settings.pbr_quality == preset.pbr_quality and
         settings.msaa_samples == preset.msaa_samples and

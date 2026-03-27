@@ -28,7 +28,8 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 cloud_wind_offset; // xy = offset, z = scale, w = coverage
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
     vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
-    vec4 cloud_params; // x = cloud_height, y = shadow_samples, z = shadow_blend, w = cloud_shadows
+    vec4 cloud_params; // x = cloud_height, y = cloud_shadows_enabled, z/w reserved
+    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z = lod_bias, w = lod_enabled
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
     vec4 viewport_size; // xy = width/height
@@ -200,7 +201,7 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     bias = min(bias, MAX_BIAS);
     if (vTileID < 0) bias = max(bias, 0.006 * cascadeScale);
 
-    int pcfSamples = int(global.cloud_params.y);
+    int pcfSamples = int(global.shadow_params.x);
 
     if (pcfSamples <= 4) {
         // LOW preset: simple 4-sample cross PCF, no PCSS, no temporal noise.
@@ -256,8 +257,8 @@ float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, 
     float shadow = computeShadowFactor(fragPosWorld, N, L, layer);
     
     // Cascade blending transition (only when enabled).
-    // cloud_params.z is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
-    if (global.cloud_params.z > 0.0 && layer < 2) {
+    // shadow_params.y is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
+    if (global.shadow_params.y > 0.0 && layer < 2) {
         float nextSplit = shadows.cascade_splits[layer];
         float blendThreshold = nextSplit * 0.8;
         if (viewDepth > blendThreshold) {
@@ -505,7 +506,7 @@ void main() {
               : (vViewDepth < shadows.cascade_splits[1] ? 1 : 2);
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, vViewDepth, layer);
     
-    float cloudShadow = (global.cloud_params.w > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05) ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) : 0.0;
+    float cloudShadow = (global.cloud_params.y > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05) ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) : 0.0;
     float totalShadow = min(shadowFactor + cloudShadow, 1.0);
 
     float ssao = mix(1.0, texture(uSSAOMap, gl_FragCoord.xy / global.viewport_size.xy).r, global.pbr_params.w);

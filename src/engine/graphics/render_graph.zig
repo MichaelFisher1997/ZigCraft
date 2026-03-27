@@ -231,7 +231,7 @@ pub const ShadowPass = struct {
 
         ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
         errdefer ctx.shadow_ctx.endPass();
-        ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position);
+        ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position, ctx.shadow);
         ctx.shadow_ctx.endPass();
     }
 };

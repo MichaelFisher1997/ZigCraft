@@ -24,6 +24,7 @@ const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
 const shadow_scene = @import("../engine/graphics/shadow_scene.zig");
+const ShadowConfig = @import("../engine/graphics/rhi_types.zig").ShadowConfig;
 const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
@@ -287,9 +288,9 @@ pub const World = struct {
         self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod);
     }
 
-    pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3) void {
-        const lod_mgr = if (self.lod_enabled) self.lod_manager else null;
-        self.renderer.renderShadowPass(light_space_matrix, camera_pos, self.render_distance, lod_mgr);
+    pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+        const lod_mgr = if (self.lod_enabled and shadow_config.lod_enabled) self.lod_manager else null;
+        self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance, lod_mgr);
     }
 
     pub fn shadowScene(self: *World) shadow_scene.IShadowScene {
@@ -301,9 +302,9 @@ pub const World = struct {
         };
     }
 
-    fn renderShadowPassWrapper(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3) void {
+    fn renderShadowPassWrapper(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
         const self: *World = @ptrCast(@alignCast(ptr));
-        self.renderShadowPass(light_space_matrix, camera_pos);
+        self.renderShadowPass(light_space_matrix, camera_pos, shadow_config);
     }
 
     pub fn getRenderStats(self: *const World) RenderStats {
