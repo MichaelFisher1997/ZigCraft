@@ -498,9 +498,9 @@ void main() {
 
     vec3 L = normalize(global.sun_dir.xyz);
     float nDotL = max(dot(N, L), 0.0);
-    // Cascade selection via view-space Z depth. NaN/zero splits are safe:
+    // Select cascade from view-space Z depth (branchless ternary — compiles to cmp/sel).
+    // If splits are NaN/uninitialized (csm.zig isValid() guards this on CPU),
     // comparisons return false and we fall through to cascade 2 (widest).
-    // CPU validates splits via csm.zig isValid() before rendering.
     int layer = vViewDepth < shadows.cascade_splits[0] ? 0
               : (vViewDepth < shadows.cascade_splits[1] ? 1 : 2);
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, vViewDepth, layer);

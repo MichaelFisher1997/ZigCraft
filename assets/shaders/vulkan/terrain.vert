@@ -71,15 +71,10 @@ void main() {
     vBlockLight = aBlockLight;
     
     vFragPosWorld = worldPos.xyz;
-    vec3 toCamera = worldPos.xyz - global.cam_pos.xyz;
-    // View-space Z depth: project distance onto camera forward direction.
-    // This is rotation-invariant — fragments at the same depth stay in the
-    // same cascade regardless of camera yaw/pitch, matching CSM split
-    // calculation which operates on view-space Z planes.
-    // For any perspective P, row 3 is (0,0,-1,0), so VP row 3 = -V row 2,
-    // which is the exact camera forward direction regardless of projection params.
-    vec3 camForward = normalize(vec3(global.view_proj[0][3], global.view_proj[1][3], global.view_proj[2][3]));
-    vViewDepth = -dot(toCamera, camForward);
+    // View-space Z depth for cascade selection. For any perspective matrix P,
+    // row 3 is (0,0,-1,0), so clip.w = -viewZ. This is exact, requires no
+    // matrix extraction, and is invariant to camera rotation.
+    vViewDepth = -clipPos.w;
     vAO = aAO;
     vMaskRadius = model_data.mask_radius;
 
