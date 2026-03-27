@@ -27,6 +27,7 @@ const TimingOverlay = @import("../engine/ui/timing_overlay.zig").TimingOverlay;
 
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
+const SettingsManager = @import("settings_manager.zig").SettingsManager;
 const InputSettings = @import("input_settings.zig").InputSettings;
 
 const screen_pkg = @import("screen.zig");
@@ -61,7 +62,7 @@ pub const App = struct {
     post_process_pass: render_graph_pkg.PostProcessPass,
     fxaa_pass: render_graph_pkg.FXAAPass,
 
-    settings: Settings,
+    settings_manager: SettingsManager,
     input: Input,
     input_mapper: InputMapper,
     time: Time,
@@ -83,15 +84,10 @@ pub const App = struct {
     pub fn init(allocator: std.mem.Allocator) !*App {
         // Load settings first to get window resolution
         log.log.info("Initializing engine systems...", .{});
-        settings_pkg.initPresets(allocator) catch |err| {
-            log.log.warn("Failed to initialize presets: {}, proceeding with defaults", .{err});
-        };
-        // Clean up presets if init fails after this point
-        errdefer settings_pkg.deinitPresets(allocator);
+        var settings_manager = try SettingsManager.init(allocator);
+        errdefer settings_manager.deinit();
 
-        const settings = settings_pkg.persistence.load(allocator);
-
-        var wm = try WindowManager.init(allocator, true, settings.window_width, settings.window_height);
+        var wm = try WindowManager.init(allocator, true, settings_manager.settings.window_width, settings_manager.settings.window_height);
         errdefer wm.deinit();
 
         var input = Input.init(allocator);
@@ -100,7 +96,7 @@ pub const App = struct {
         const time = Time.init();
 
         log.log.info("Initializing Vulkan backend...", .{});
-        const rhi = try rhi_vulkan.createRHI(allocator, wm.window, null, settings.getShadowResolution(), settings.msaa_samples, settings.anisotropic_filtering);
+        const rhi = try rhi_vulkan.createRHI(allocator, wm.window, null, settings_manager.settings.getShadowResolution(), settings_manager.settings.msaa_samples, settings_manager.settings.anisotropic_filtering);
         errdefer rhi.deinit();
 
         try rhi.init(allocator, null);
@@ -108,8 +104,8 @@ pub const App = struct {
         var resource_pack_manager = ResourcePackManager.init(allocator);
         errdefer resource_pack_manager.deinit();
         try resource_pack_manager.scanPacks();
-        if (resource_pack_manager.packExists(settings.texture_pack)) {
-            try resource_pack_manager.setActivePack(settings.texture_pack);
+        if (resource_pack_manager.packExists(settings_manager.settings.texture_pack)) {
+            try resource_pack_manager.setActivePack(settings_manager.settings.texture_pack);
         } else if (resource_pack_manager.packExists("default")) {
             try resource_pack_manager.setActivePack("default");
         }
@@ -178,19 +174,19 @@ pub const App = struct {
             log.log.warn("ZIGCRAFT_DISABLE_CLOUDS enabled", .{});
         }
 
-        const atlas = try TextureAtlas.init(allocator, rhi.resourceManager(), &resource_pack_manager, settings.max_texture_resolution);
+        const atlas = try TextureAtlas.init(allocator, rhi.resourceManager(), &resource_pack_manager, settings_manager.settings.max_texture_resolution);
         var atlas_mut = atlas;
         errdefer atlas_mut.deinit();
 
         var env_map: ?Texture = null;
-        if (!std.mem.eql(u8, settings.environment_map, "default")) {
-            if (resource_pack_manager.loadImageFileFloat(settings.environment_map)) |tex_data| {
+        if (!std.mem.eql(u8, settings_manager.settings.environment_map, "default")) {
+            if (resource_pack_manager.loadImageFileFloat(settings_manager.settings.environment_map)) |tex_data| {
                 env_map = try Texture.initFloat(rhi.resourceManager(), tex_data.width, tex_data.height, tex_data.pixels);
-                log.log.info("Loaded Environment Map: {s}", .{settings.environment_map});
+                log.log.info("Loaded Environment Map: {s}", .{settings_manager.settings.environment_map});
                 var td = tex_data;
                 td.deinit(allocator);
             } else {
-                log.log.warn("Could not load environment map: {s}", .{settings.environment_map});
+                log.log.warn("Could not load environment map: {s}", .{settings_manager.settings.environment_map});
                 const white_pixel = [_]f32{ 1.0, 1.0, 1.0, 1.0 };
                 env_map = try Texture.initFloat(rhi.resourceManager(), 1, 1, &white_pixel);
             }
@@ -243,7 +239,7 @@ pub const App = struct {
             .bloom_pass = .{ .enabled = true },
             .post_process_pass = .{},
             .fxaa_pass = .{ .enabled = true },
-            .settings = settings,
+            .settings_manager = settings_manager,
             .input = input,
             .input_mapper = input_mapper,
             .time = time,
@@ -269,21 +265,21 @@ pub const App = struct {
         app.lpv_system = try LPVSystem.init(
             allocator,
             rhi,
-            settings.lpv_grid_size,
-            settings.lpv_cell_size,
-            settings.lpv_intensity,
-            settings.lpv_propagation_iterations,
-            settings.lpv_enabled,
+            settings_manager.settings.lpv_grid_size,
+            settings_manager.settings.lpv_cell_size,
+            settings_manager.settings.lpv_intensity,
+            settings_manager.settings.lpv_propagation_iterations,
+            settings_manager.settings.lpv_enabled,
         );
         errdefer app.lpv_system.deinit();
 
         // Sync FXAA and Bloom settings to RHI after initialization
-        app.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
-        app.rhi.setBloom(settings.bloom_enabled);
-        app.rhi.setBloomIntensity(settings.bloom_intensity);
+        app.rhi.setFXAA(settings_manager.settings.fxaa_enabled and !settings_manager.settings.taa_enabled);
+        app.rhi.setBloom(settings_manager.settings.bloom_enabled);
+        app.rhi.setBloomIntensity(settings_manager.settings.bloom_intensity);
 
         // Apply all RHI settings (VSync, Wireframe, Textures, Debug Shadows, etc.)
-        settings_pkg.apply_logic.applyToRHI(&settings, &app.rhi);
+        settings_manager.applyToRHI(&app.rhi);
 
         if (build_options.smoke_test) {
             app.rhi.timing().setTimingEnabled(true);
@@ -337,8 +333,7 @@ pub const App = struct {
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
         self.resource_pack_manager.deinit();
-        settings_pkg.persistence.deinit(&self.settings, self.allocator);
-        settings_pkg.deinitPresets(self.allocator);
+        self.settings_manager.deinit();
         if (self.shader != rhi_pkg.InvalidShaderHandle) self.rhi.destroyShader(self.shader);
         self.rhi.deinit();
 
@@ -362,7 +357,7 @@ pub const App = struct {
             .audio_system = self.audio_system,
             .env_map_ptr = &self.env_map,
             .shader = self.shader,
-            .settings = &self.settings,
+            .settings = self.settings_manager.ptr(),
             .input = self.input.interface(),
             .input_mapper = self.input_mapper.interface(),
             .time = &self.time,
@@ -378,7 +373,7 @@ pub const App = struct {
     }
 
     pub fn saveAllSettings(self: *const App) void {
-        settings_pkg.persistence.save(&self.settings, self.allocator);
+        self.settings_manager.save();
         InputSettings.saveFromMapper(self.allocator, self.input_mapper.interface()) catch |err| {
             log.log.err("Failed to save input settings: {}", .{err});
         };
