@@ -61,14 +61,14 @@ pub const SoundManager = struct {
         const frequency: u32 = 44100;
         const length_seconds: f32 = 1.0;
         const num_samples: u32 = @intFromFloat(@as(f32, @floatFromInt(frequency)) * length_seconds);
-        const buffer = try self.allocator.alloc(u8, num_samples * 2); // 16-bit mono
+        const buffer = try self.allocator.alloc(u8, num_samples * 2);
+        errdefer self.allocator.free(buffer);
 
-        // Generate A440 sine wave
         var i: u32 = 0;
         while (i < num_samples) : (i += 1) {
             const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(frequency));
             const val = @sin(t * 440.0 * std.math.tau);
-            const sample: i16 = @intFromFloat(val * 16000.0); // 50% volume
+            const sample: i16 = @intFromFloat(val * 16000.0);
 
             std.mem.writeInt(i16, buffer[i * 2 ..][0..2], sample, .little);
         }
@@ -87,6 +87,8 @@ pub const SoundManager = struct {
         self.next_handle += 1;
 
         const name_copy = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(name_copy);
+
         try self.sound_names.put(self.allocator, name_copy, handle);
 
         log.log.info("Created test sound '{s}' (Handle: {})", .{ name, handle });

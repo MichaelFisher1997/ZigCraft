@@ -7,7 +7,7 @@ const log = @import("../engine/core/log.zig");
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const Input = @import("../engine/input/input.zig").Input;
 const Time = @import("../engine/core/time.zig").Time;
-const UISystem = @import("../engine/ui/ui_system.zig").UISystem;
+const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const InputMapper = @import("input_mapper.zig").InputMapper;
@@ -23,7 +23,7 @@ const MaterialSystem = @import("../engine/graphics/material_system.zig").Materia
 const LPVSystem = @import("../engine/graphics/lpv_system.zig").LPVSystem;
 const ResourcePackManager = @import("../engine/graphics/resource_pack.zig").ResourcePackManager;
 const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
-const TimingOverlay = @import("../engine/ui/timing_overlay.zig").TimingOverlay;
+const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
@@ -49,7 +49,7 @@ pub const App = struct {
     atmosphere_system: *AtmosphereSystem,
     material_system: *MaterialSystem,
     lpv_system: *LPVSystem,
-    audio_system: *AudioSystem,
+    audio_manager: *AudioSystemManager,
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
     ssao_pass: render_graph_pkg.SSAOPass,
@@ -67,11 +67,9 @@ pub const App = struct {
     input_mapper: InputMapper,
     time: Time,
 
-    ui: ?UISystem,
-    timing_overlay: TimingOverlay,
+    ui_manager: UISystemManager,
 
     screen_manager: ScreenManager,
-    last_debug_toggle_time: f32 = 0,
     safe_render_mode: bool,
     skip_world_update: bool,
     skip_world_render: bool,
@@ -198,12 +196,11 @@ pub const App = struct {
 
         const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
         errdefer atmosphere_system.deinit();
-        const audio_system = try AudioSystem.init(allocator);
-        errdefer audio_system.deinit();
+        const audio_manager = try AudioSystemManager.init(allocator);
+        errdefer audio_manager.deinit();
 
-        const ui = try UISystem.init(rhi.uiRenderer(), input.window_width, input.window_height);
-        var ui_mut = ui;
-        errdefer ui_mut.deinit();
+        var ui_manager = try UISystemManager.init(rhi.uiRenderer(), input.window_width, input.window_height, build_options.smoke_test);
+        errdefer ui_manager.deinit();
 
         // Load custom bindings
         const input_mapper = InputSettings.loadAndReturnMapper(allocator);
@@ -222,7 +219,7 @@ pub const App = struct {
             .atmosphere_system = atmosphere_system,
             .material_system = undefined,
             .lpv_system = undefined,
-            .audio_system = audio_system,
+            .audio_manager = audio_manager,
             .shadow_passes = .{
                 render_graph_pkg.ShadowPass.init(0),
                 render_graph_pkg.ShadowPass.init(1),
@@ -243,8 +240,7 @@ pub const App = struct {
             .input = input,
             .input_mapper = input_mapper,
             .time = time,
-            .ui = ui,
-            .timing_overlay = .{ .enabled = build_options.smoke_test },
+            .ui_manager = ui_manager,
             .screen_manager = ScreenManager.init(allocator),
             .safe_render_mode = safe_render_mode,
             .skip_world_update = skip_world_update,
@@ -321,7 +317,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         self.rhi.waitIdle();
 
-        if (self.ui) |*u| u.deinit();
+        self.ui_manager.deinit();
 
         self.screen_manager.deinit();
 
@@ -329,7 +325,7 @@ pub const App = struct {
         self.atmosphere_system.deinit();
         self.material_system.deinit();
         self.lpv_system.deinit();
-        self.audio_system.deinit();
+        self.audio_manager.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
         self.resource_pack_manager.deinit();
@@ -354,7 +350,7 @@ pub const App = struct {
             .atmosphere_system = self.atmosphere_system,
             .material_system = self.material_system,
             .lpv_system = self.lpv_system,
-            .audio_system = self.audio_system,
+            .audio_system = self.audio_manager.audio_system,
             .env_map_ptr = &self.env_map,
             .shader = self.shader,
             .settings = self.settings_manager.ptr(),
@@ -381,21 +377,14 @@ pub const App = struct {
 
     pub fn runSingleFrame(self: *App) !void {
         self.time.update();
-        self.audio_system.update();
+        self.audio_manager.update();
 
         self.input.beginFrame();
         self.input.pollEvents();
 
-        if (self.input_mapper.isActionPressed(self.input.interface(), .toggle_timing_overlay)) {
-            const now = self.time.elapsed;
-            if (now - self.last_debug_toggle_time > 0.2) {
-                self.timing_overlay.toggle();
-                self.rhi.timing().setTimingEnabled(self.timing_overlay.enabled);
-                self.last_debug_toggle_time = now;
-            }
-        }
+        self.ui_manager.handleTimingToggle(self.input.interface(), self.input_mapper.interface(), &self.time, &self.rhi);
 
-        if (self.ui) |*u| u.resize(self.input.interface().getWindowWidth(), self.input.interface().getWindowHeight());
+        self.ui_manager.resize(self.input.interface().getWindowWidth(), self.input.interface().getWindowHeight());
 
         self.rhi.setViewport(self.input.interface().getWindowWidth(), self.input.interface().getWindowHeight());
 
@@ -445,17 +434,7 @@ pub const App = struct {
             return;
         }
 
-        if (self.ui) |*u| {
-            try self.screen_manager.draw(u);
-
-            if (self.timing_overlay.enabled) {
-                u.begin();
-                const timing = self.rhi.timing();
-                const results = timing.getTimingResults();
-                self.timing_overlay.draw(u, results);
-                u.end();
-            }
-        }
+        try self.ui_manager.draw(&self.screen_manager, &self.rhi);
 
         self.rhi.endFrame();
 
