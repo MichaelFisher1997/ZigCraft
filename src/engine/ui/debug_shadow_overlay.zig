@@ -1,7 +1,7 @@
 const std = @import("std");
 const rhi = @import("../graphics/rhi.zig");
 const IUIContext = rhi.IUIContext;
-const IShadowContext = rhi.IShadowContext;
+const ShadowSystemWrapper = rhi.ShadowSystemWrapper;
 
 /// System for rendering debug shadow cascade overlays.
 pub const DebugShadowOverlay = struct {
@@ -14,8 +14,8 @@ pub const DebugShadowOverlay = struct {
     };
 
     /// Draws the shadow cascade thumbnails to the screen.
-    /// Requires an active UI context and a shadow context to retrieve handles.
-    pub fn draw(ui: IUIContext, shadow: IShadowContext, screen_width: f32, screen_height: f32, config: Config) void {
+    /// Requires an active UI context and a shadow system to retrieve handles.
+    pub fn draw(ui: IUIContext, shadow: ShadowSystemWrapper, screen_width: f32, screen_height: f32, config: Config) void {
         ui.beginPass(screen_width, screen_height);
         defer ui.endPass();
 

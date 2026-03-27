@@ -43,7 +43,7 @@ const World = @import("../../world/world.zig").World;
 const shadow_scene = @import("shadow_scene.zig");
 const rhi_pkg = @import("rhi.zig");
 const RenderContext = rhi_pkg.RenderContext;
-const IShadowContext = rhi_pkg.IShadowContext;
+const ShadowSystemWrapper = rhi_pkg.ShadowSystemWrapper;
 const ISSAOContext = rhi_pkg.ISSAOContext;
 const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -54,7 +54,7 @@ const MaterialSystem = @import("material_system.zig").MaterialSystem;
 
 pub const SceneContext = struct {
     render_ctx: RenderContext,
-    shadow_ctx: IShadowContext,
+    shadow_ctx: ShadowSystemWrapper,
     ssao_ctx: ISSAOContext,
     timing: IDeviceTiming,
     world: *World,
