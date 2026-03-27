@@ -102,7 +102,7 @@ pub const World = struct {
         };
 
         world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, render_distance);
-        world.renderer = try WorldRenderer.init(allocator, rhi, &world.storage);
+        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage);
 
         return world;
     }
@@ -257,7 +257,7 @@ pub const World = struct {
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
         // Process deferred vertex memory reclamation for this frame slot.
         // Safe because beginFrame() has already waited for this slot's fence.
-        self.renderer.vertex_allocator.tick(self.renderer.rhi.getFrameIndex());
+        self.renderer.vertex_allocator.tick(self.renderer.query.getFrameIndex());
 
         const lod_mgr = if (self.lod_enabled) self.lod_manager else null;
         try self.streamer.update(player_pos, dt, lod_mgr);

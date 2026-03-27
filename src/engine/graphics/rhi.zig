@@ -201,6 +201,158 @@ pub const ResourceManager = struct {
     }
 };
 
+/// Concrete wrapper combining `IRenderContext`, `IGraphicsCommandEncoder`, and
+/// `IRenderStateContext` for frame lifecycle, draw commands, and render state.
+///
+/// Use this when a subsystem needs to manage render passes and issue draw calls
+/// without accessing the full `RHI` composite. Obtain via `rhi.renderContext()`.
+/// Reduces coupling and clarifies intent.
+///
+/// **Note:** The encoder is resolved at construction time via `getEncoder()`, so
+/// this must be constructed per-frame (not cached across frame boundaries).
+///
+/// ```zig
+/// const rc = rhi.renderContext();
+/// rc.beginMainPass();
+/// rc.bindShader(shader);
+/// rc.draw(buffer, count, .triangles);
+/// rc.endMainPass();
+/// ```
+pub const RenderContext = struct {
+    render: IRenderContext,
+    encoder: IGraphicsCommandEncoder,
+    state: IRenderStateContext,
+
+    // --- IRenderContext delegates ---
+
+    pub fn beginFrame(self: RenderContext) void {
+        self.render.beginFrame();
+    }
+    pub fn endFrame(self: RenderContext) void {
+        self.render.endFrame();
+    }
+    pub fn abortFrame(self: RenderContext) void {
+        self.render.vtable.abortFrame(self.render.ptr);
+    }
+    pub fn beginMainPass(self: RenderContext) void {
+        self.render.beginMainPass();
+    }
+    pub fn endMainPass(self: RenderContext) void {
+        self.render.endMainPass();
+    }
+    pub fn beginPostProcessPass(self: RenderContext) void {
+        self.render.beginPostProcessPass();
+    }
+    pub fn endPostProcessPass(self: RenderContext) void {
+        self.render.endPostProcessPass();
+    }
+    pub fn beginGPass(self: RenderContext) void {
+        self.render.vtable.beginGPass(self.render.ptr);
+    }
+    pub fn endGPass(self: RenderContext) void {
+        self.render.vtable.endGPass(self.render.ptr);
+    }
+    pub fn beginFXAAPass(self: RenderContext) void {
+        self.render.beginFXAAPass();
+    }
+    pub fn endFXAAPass(self: RenderContext) void {
+        self.render.endFXAAPass();
+    }
+    pub fn computeBloom(self: RenderContext) void {
+        self.render.computeBloom();
+    }
+    pub fn computeTAA(self: RenderContext) void {
+        self.render.computeTAA();
+    }
+    pub fn setClearColor(self: RenderContext, color: Vec3) void {
+        self.render.vtable.setClearColor(self.render.ptr, color);
+    }
+    pub fn computeSSAO(self: RenderContext, proj: Mat4, inv_proj: Mat4) void {
+        self.render.vtable.computeSSAO(self.render.ptr, proj, inv_proj);
+    }
+    pub fn drawDebugShadowMap(self: RenderContext, cascade_index: usize, depth_map_handle: TextureHandle) void {
+        self.render.vtable.drawDebugShadowMap(self.render.ptr, cascade_index, depth_map_handle);
+    }
+    pub fn getNativeSkyPipeline(self: RenderContext) u64 {
+        return self.render.vtable.getNativeSkyPipeline(self.render.ptr);
+    }
+    pub fn getNativeSkyPipelineLayout(self: RenderContext) u64 {
+        return self.render.vtable.getNativeSkyPipelineLayout(self.render.ptr);
+    }
+    pub fn getNativeCloudPipeline(self: RenderContext) u64 {
+        return self.render.vtable.getNativeCloudPipeline(self.render.ptr);
+    }
+    pub fn getNativeCloudPipelineLayout(self: RenderContext) u64 {
+        return self.render.vtable.getNativeCloudPipelineLayout(self.render.ptr);
+    }
+    pub fn getNativeMainDescriptorSet(self: RenderContext) u64 {
+        return self.render.vtable.getNativeMainDescriptorSet(self.render.ptr);
+    }
+    pub fn getNativeCommandBuffer(self: RenderContext) u64 {
+        return self.render.vtable.getNativeCommandBuffer(self.render.ptr);
+    }
+    pub fn getNativeSwapchainExtent(self: RenderContext) [2]u32 {
+        return self.render.vtable.getNativeSwapchainExtent(self.render.ptr);
+    }
+    pub fn getNativeDevice(self: RenderContext) u64 {
+        return self.render.vtable.getNativeDevice(self.render.ptr);
+    }
+
+    // --- IGraphicsCommandEncoder delegates ---
+
+    pub fn bindShader(self: RenderContext, handle: ShaderHandle) void {
+        self.encoder.bindShader(handle);
+    }
+    pub fn bindTexture(self: RenderContext, handle: TextureHandle, slot: u32) void {
+        self.encoder.bindTexture(handle, slot);
+    }
+    pub fn bindBuffer(self: RenderContext, handle: BufferHandle, usage: BufferUsage) void {
+        self.encoder.bindBuffer(handle, usage);
+    }
+    pub fn pushConstants(self: RenderContext, stages: ShaderStageFlags, offset: u32, size: u32, data: *const anyopaque) void {
+        self.encoder.pushConstants(stages, offset, size, data);
+    }
+    pub fn draw(self: RenderContext, handle: BufferHandle, count: u32, mode: DrawMode) void {
+        self.encoder.draw(handle, count, mode);
+    }
+    pub fn drawOffset(self: RenderContext, handle: BufferHandle, count: u32, mode: DrawMode, offset: usize) void {
+        self.encoder.drawOffset(handle, count, mode, offset);
+    }
+    pub fn drawIndexed(self: RenderContext, vbo: BufferHandle, ebo: BufferHandle, count: u32) void {
+        self.encoder.drawIndexed(vbo, ebo, count);
+    }
+    pub fn drawIndirect(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
+        self.encoder.drawIndirect(handle, command_buffer, offset, draw_count, stride);
+    }
+    pub fn drawInstance(self: RenderContext, handle: BufferHandle, count: u32, instance_index: u32) void {
+        self.encoder.drawInstance(handle, count, instance_index);
+    }
+    pub fn setViewport(self: RenderContext, width: u32, height: u32) void {
+        self.encoder.setViewport(width, height);
+    }
+
+    // --- IRenderStateContext delegates ---
+
+    pub fn setModelMatrix(self: RenderContext, model: Mat4, color: Vec3, mask_radius: f32) void {
+        self.state.setModelMatrix(model, color, mask_radius);
+    }
+    pub fn setInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
+        self.state.setInstanceBuffer(handle);
+    }
+    pub fn setLODInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
+        self.state.setLODInstanceBuffer(handle);
+    }
+    pub fn setSelectionMode(self: RenderContext, enabled: bool) void {
+        self.state.setSelectionMode(enabled);
+    }
+    pub fn updateGlobalUniforms(self: RenderContext, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: CloudParams) !void {
+        try self.state.updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, cloud_params);
+    }
+    pub fn setTextureUniforms(self: RenderContext, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
+        self.state.setTextureUniforms(texture_enabled, shadow_map_handles);
+    }
+};
+
 pub const IShadowContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -601,6 +753,14 @@ pub const RHI = struct {
     }
     pub fn context(self: RHI) IRenderContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.render };
+    }
+    pub fn renderContext(self: RHI) RenderContext {
+        const rc = self.context();
+        return .{
+            .render = rc,
+            .encoder = rc.getEncoder(),
+            .state = rc.getState(),
+        };
     }
     pub fn encoder(self: RHI) IGraphicsCommandEncoder {
         return self.context().getEncoder();
