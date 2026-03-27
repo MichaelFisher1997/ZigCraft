@@ -122,7 +122,7 @@ layout(push_constant) uniform ModelUniforms {
     float mask_radius;
 } model_data;
 
-// Poisson Disk for PCF
+// Poisson Disk for PCF (16-sample)
 const vec2 poissonDisk16[16] = vec2[](
     vec2(-0.94201624, -0.39906216),
     vec2(0.94558609, -0.76890725),
@@ -140,6 +140,14 @@ const vec2 poissonDisk16[16] = vec2[](
     vec2(0.19984126, 0.78641367),
     vec2(0.14383161, -0.14100790),
     vec2(-0.63242006, 0.31173663)
+);
+
+// 4-sample cross pattern for LOW preset (no noise, no PCSS)
+const vec2 pcfCross4[4] = vec2[](
+    vec2(-1.0, 0.0),
+    vec2(1.0, 0.0),
+    vec2(0.0, -1.0),
+    vec2(0.0, 1.0)
 );
 
 float interleavedGradientNoise(vec2 fragCoord) {
@@ -192,7 +200,21 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     bias = min(bias, MAX_BIAS);
     if (vTileID < 0) bias = max(bias, 0.006 * cascadeScale);
 
-    // Noise rotation for temporal stability
+    int pcfSamples = int(global.cloud_params.y);
+
+    if (pcfSamples <= 4) {
+        // LOW preset: simple 4-sample cross PCF, no PCSS, no temporal noise.
+        // Stable because there is no TAA to accumulate noise on LOW.
+        float radius = texelSize * 1.5;
+        float shadow = 0.0;
+        for (int i = 0; i < 4; i++) {
+            vec2 offset = pcfCross4[i] * radius;
+            shadow += texture(uShadowMaps, vec4(projCoords.xy + offset, float(layer), currentDepth + bias));
+        }
+        return 1.0 - (shadow / 4.0);
+    }
+
+    // HIGH/ULTRA: PCSS with temporal noise rotation
     float angle = interleavedGradientNoise(gl_FragCoord.xy) * PI * 0.25;
     float s = sin(angle);
     float co = cos(angle);
@@ -233,8 +255,9 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
 float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, int layer) {
     float shadow = computeShadowFactor(fragPosWorld, N, L, layer);
     
-    // Cascade blending transition
-    if (layer < 2) {
+    // Cascade blending transition (only when enabled).
+    // cloud_params.z is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
+    if (global.cloud_params.z > 0.0 && layer < 2) {
         float nextSplit = shadows.cascade_splits[layer];
         float blendThreshold = nextSplit * 0.8;
         if (viewDepth > blendThreshold) {
@@ -475,15 +498,12 @@ void main() {
 
     vec3 L = normalize(global.sun_dir.xyz);
     float nDotL = max(dot(N, L), 0.0);
-    // NaN guard: if cascade_splits contain NaN, comparisons return false and
-    // we fall through to cascade 2 (widest). Also guard against zero/negative
-    // splits which indicate uninitialized or invalid cascade data.
-    int layer = 2;
-    if (shadows.cascade_splits[0] > 0.0 && shadows.cascade_splits[1] > 0.0) {
-        layer = viewDistance < shadows.cascade_splits[0] ? 0
-              : (viewDistance < shadows.cascade_splits[1] ? 1 : 2);
-    }
-    float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, viewDistance, layer);
+    // Select cascade from view-space Z depth (branchless ternary — compiles to cmp/sel).
+    // If splits are NaN/uninitialized (csm.zig isValid() guards this on CPU),
+    // comparisons return false and we fall through to cascade 2 (widest).
+    int layer = vViewDepth < shadows.cascade_splits[0] ? 0
+              : (vViewDepth < shadows.cascade_splits[1] ? 1 : 2);
+    float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, vViewDepth, layer);
     
     float cloudShadow = (global.cloud_params.w > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05) ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) : 0.0;
     float totalShadow = min(shadowFactor + cloudShadow, 1.0);
