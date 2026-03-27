@@ -143,7 +143,7 @@ pub const EnvironmentScreen = struct {
     fn reloadEnvMap(self: *@This()) !void {
         const ctx = self.context;
         const render_system = ctx.render_system;
-        const env_ptr = render_system.getEnvMapPtr() orelse return;
+        const env_ptr = render_system.getEnvMapPtr();
         const rhi = render_system.getRHI();
 
         rhi.waitIdle();

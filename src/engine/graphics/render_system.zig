@@ -137,6 +137,9 @@ pub const RenderSystem = struct {
         const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
         errdefer atmosphere_system.deinit();
 
+        var render_graph = RenderGraph.init(allocator);
+        errdefer render_graph.deinit();
+
         const self = try allocator.create(RenderSystem);
         errdefer allocator.destroy(self);
 
@@ -147,7 +150,7 @@ pub const RenderSystem = struct {
             .resource_pack_manager = resource_pack_manager,
             .atlas = atlas,
             .env_map = env_map,
-            .render_graph = RenderGraph.init(allocator),
+            .render_graph = render_graph,
             .atmosphere_system = atmosphere_system,
             .material_system = undefined,
             .lpv_system = undefined,
@@ -173,7 +176,6 @@ pub const RenderSystem = struct {
             .disable_ssao = disable_ssao,
             .disable_clouds = disable_clouds,
         };
-        errdefer self.render_graph.deinit();
 
         self.material_system = try MaterialSystem.init(allocator, &self.atlas);
         errdefer self.material_system.deinit();
@@ -298,7 +300,7 @@ pub const RenderSystem = struct {
         return &self.atlas;
     }
 
-    pub fn getEnvMapPtr(self: *RenderSystem) ?*?Texture {
+    pub fn getEnvMapPtr(self: *RenderSystem) *?Texture {
         return &self.env_map;
     }
 
@@ -332,5 +334,17 @@ pub const RenderSystem = struct {
 
     pub fn getDisableClouds(self: *const RenderSystem) bool {
         return self.disable_clouds;
+    }
+
+    pub fn setDisableGPassDraw(self: *RenderSystem, value: bool) void {
+        self.disable_gpass_draw = value;
+    }
+
+    pub fn setDisableSSAO(self: *RenderSystem, value: bool) void {
+        self.disable_ssao = value;
+    }
+
+    pub fn setDisableClouds(self: *RenderSystem, value: bool) void {
+        self.disable_clouds = value;
     }
 };

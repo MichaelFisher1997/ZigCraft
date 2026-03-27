@@ -95,18 +95,21 @@ pub const WorldScreen = struct {
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_gpass_render)) {
-            render_system.disable_gpass_draw = !render_system.disable_gpass_draw;
-            log.log.info("G-pass rendering {s}", .{if (render_system.disable_gpass_draw) "disabled" else "enabled"});
+            const new_val = !render_system.getDisableGPassDraw();
+            render_system.setDisableGPassDraw(new_val);
+            log.log.info("G-pass rendering {s}", .{if (new_val) "disabled" else "enabled"});
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_ssao)) {
-            render_system.disable_ssao = !render_system.disable_ssao;
-            log.log.info("SSAO {s}", .{if (render_system.disable_ssao) "disabled" else "enabled"});
+            const new_val = !render_system.getDisableSSAO();
+            render_system.setDisableSSAO(new_val);
+            log.log.info("SSAO {s}", .{if (new_val) "disabled" else "enabled"});
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_clouds)) {
-            render_system.disable_clouds = !render_system.disable_clouds;
-            log.log.info("Cloud rendering {s}", .{if (render_system.disable_clouds) "disabled" else "enabled"});
+            const new_val = !render_system.getDisableClouds();
+            render_system.setDisableClouds(new_val);
+            log.log.info("Cloud rendering {s}", .{if (new_val) "disabled" else "enabled"});
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_fog)) {
@@ -221,7 +224,7 @@ pub const WorldScreen = struct {
             try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
-            const env_map_handle = if (env_map_ptr) |e_ptr| (if (e_ptr.*) |t| t.handle else 0) else 0;
+            const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;
 
             var frame_cascades: ?@import("../../engine/graphics/csm.zig").ShadowCascades = null;
 
