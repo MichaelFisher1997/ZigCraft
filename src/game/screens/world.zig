@@ -86,7 +86,7 @@ pub const WorldScreen = struct {
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
-            if (self.session.world.lod_manager == null) {
+            if (self.session.world.lod == null) {
                 log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
             } else {
                 self.session.world.lod_enabled = !self.session.world.lod_enabled;
@@ -201,6 +201,9 @@ pub const WorldScreen = struct {
                     .resolution = ctx.settings.getShadowResolution(),
                     .pcf_samples = ctx.settings.shadow_pcf_samples,
                     .cascade_blend = ctx.settings.shadow_cascade_blend,
+                    .caster_distance = ctx.settings.shadow_caster_distance,
+                    .lod_bias = ctx.settings.shadow_lod_bias,
+                    .lod_enabled = ctx.settings.shadow_lod_enabled,
                 },
                 .cloud_shadows = cloud_shadows_enabled,
                 .pbr_quality = ctx.settings.pbr_quality,
