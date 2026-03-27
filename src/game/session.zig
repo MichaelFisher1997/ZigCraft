@@ -12,6 +12,7 @@ const BlockOutline = @import("block_outline.zig").BlockOutline;
 const HandRenderer = @import("hand_renderer.zig").HandRenderer;
 const Camera = @import("../engine/graphics/camera.zig").Camera;
 const RHI = @import("../engine/graphics/rhi.zig").RHI;
+const RenderContext = @import("../engine/graphics/rhi.zig").RenderContext;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const Input = @import("../engine/input/input.zig").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
@@ -144,7 +145,7 @@ pub const GameSession = struct {
         else
             try World.initGen(generator_index, allocator, effective_render_distance, seed, rhi.*, atlas);
 
-        const world_map = try WorldMap.init(rhi.*, 256, 256);
+        const world_map = try WorldMap.init(rhi.resourceManager(), 256, 256);
 
         // ecs_registry and ecs_render_system are initialized directly in the struct
 
@@ -161,11 +162,11 @@ pub const GameSession = struct {
             .player = player,
             .inventory = Inventory.init(),
             .inventory_ui_state = .{},
-            .block_outline = try BlockOutline.init(rhi.*),
-            .hand_renderer = try HandRenderer.init(rhi.*),
+            .block_outline = try BlockOutline.init(rhi.resourceManager()),
+            .hand_renderer = try HandRenderer.init(rhi.resourceManager()),
             .camera = player.camera,
             .ecs_registry = ECSRegistry.init(allocator),
-            .ecs_render_system = try ECSRenderSystem.init(rhi),
+            .ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager()),
             .rhi = rhi,
             .atmosphere = atmosphere,
             .clouds = CloudState{},
@@ -267,8 +268,8 @@ pub const GameSession = struct {
         }
     }
 
-    pub fn renderEntities(self: *GameSession, camera_pos: Vec3) void {
-        self.ecs_render_system.render(&self.ecs_registry, camera_pos);
+    pub fn renderEntities(self: *GameSession, ctx: RenderContext, camera_pos: Vec3) void {
+        self.ecs_render_system.render(ctx, &self.ecs_registry, camera_pos);
     }
 
     pub fn drawHUD(self: *GameSession, ui: *UISystem, atlas: *const TextureAtlas, active_pack: ?[]const u8, fps: f32, screen_w: f32, screen_h: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) !void {

@@ -3,7 +3,8 @@
 
 const std = @import("std");
 const rhi_pkg = @import("../engine/graphics/rhi.zig");
-const RHI = rhi_pkg.RHI;
+const ResourceManager = rhi_pkg.ResourceManager;
+const RenderContext = rhi_pkg.RenderContext;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Vertex = rhi_pkg.Vertex;
@@ -13,20 +14,19 @@ const block_registry = @import("../world/block_registry.zig");
 const Inventory = @import("inventory.zig").Inventory;
 
 pub const HandRenderer = struct {
-    rhi: RHI,
+    resources: ResourceManager,
     buffer_handle: rhi_pkg.BufferHandle,
     last_block: ?BlockType,
     visible: bool,
 
-    // Animation state
     swing_progress: f32,
     swinging: bool,
 
-    pub fn init(rhi: RHI) !HandRenderer {
-        const buffer = try rhi.createBuffer(36 * @sizeOf(Vertex), .vertex);
+    pub fn init(resources: ResourceManager) !HandRenderer {
+        const buffer = try resources.createBuffer(36 * @sizeOf(Vertex), .vertex);
 
         return .{
-            .rhi = rhi,
+            .resources = resources,
             .buffer_handle = buffer,
             .last_block = null,
             .visible = false,
@@ -37,7 +37,7 @@ pub const HandRenderer = struct {
 
     pub fn deinit(self: *HandRenderer) void {
         if (self.buffer_handle != rhi_pkg.InvalidBufferHandle) {
-            self.rhi.destroyBuffer(self.buffer_handle);
+            self.resources.destroyBuffer(self.buffer_handle);
             self.buffer_handle = rhi_pkg.InvalidBufferHandle;
         }
     }
@@ -113,7 +113,7 @@ pub const HandRenderer = struct {
         // West Face (x = n)
         addQuad(&vertices, &idx, .{ n, n, n }, .{ n, n, p }, .{ n, p, p }, .{ n, p, n }, faces[5].normal, faces[5].tile, color);
 
-        try self.rhi.uploadBuffer(self.buffer_handle, std.mem.asBytes(&vertices));
+        try self.resources.uploadBuffer(self.buffer_handle, std.mem.asBytes(&vertices));
     }
 
     fn addQuad(verts: *[36]Vertex, idx: *usize, p0: [3]f32, p1: [3]f32, p2: [3]f32, p3: [3]f32, normal: [3]f32, tile: u16, color: [3]f32) void {
@@ -139,7 +139,7 @@ pub const HandRenderer = struct {
         idx.* += 1;
     }
 
-    pub fn draw(self: *HandRenderer, camera_pos: Vec3, camera_yaw: f32, camera_pitch: f32) void {
+    pub fn draw(self: *HandRenderer, ctx: RenderContext, camera_pos: Vec3, camera_yaw: f32, camera_pitch: f32) void {
         if (!self.visible) return;
 
         // Position relative to camera:
@@ -218,10 +218,8 @@ pub const HandRenderer = struct {
         const swing_rot = Mat4.rotateZ(swing_rot_z);
         m = m.multiply(swing_rot);
 
-        self.rhi.setModelMatrix(m, Vec3.one, 0);
+        ctx.setModelMatrix(m, Vec3.one, 0);
 
-        // Use solid draw mode (triangles)
-        // Pass DrawMode.triangles
-        self.rhi.draw(self.buffer_handle, 36, .triangles);
+        ctx.draw(self.buffer_handle, 36, .triangles);
     }
 };

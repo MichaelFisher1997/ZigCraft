@@ -400,11 +400,10 @@ test "AtmosphereSystem.renderSky with null handles" {
     const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };
 
     const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
-    var system = try AtmosphereSystem.init(testing.allocator, rhi_instance);
+    var system = try AtmosphereSystem.init(testing.allocator, rhi_instance.resourceManager());
     defer system.deinit();
 
-    // Should return error.SkyPipelineNotReady if handles are missing
-    try testing.expectError(error.SkyPipelineNotReady, system.renderSky(.{
+    try testing.expectError(error.SkyPipelineNotReady, system.renderSky(rhi_instance.renderContext(), .{
         .cam_pos = Vec3.zero,
         .cam_forward = Vec3.init(0, 0, 1),
         .cam_right = Vec3.init(1, 0, 0),
@@ -427,10 +426,10 @@ test "AtmosphereSystem.renderClouds with null handles" {
     const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };
 
     const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
-    var system = try AtmosphereSystem.init(testing.allocator, rhi_instance);
+    var system = try AtmosphereSystem.init(testing.allocator, rhi_instance.resourceManager());
     defer system.deinit();
 
-    try testing.expectError(error.CloudPipelineNotReady, system.renderClouds(.{
+    try testing.expectError(error.CloudPipelineNotReady, system.renderClouds(rhi_instance.renderContext(), .{
         .cam_pos = Vec3.zero,
         .sun_dir = Vec3.init(0, -1, 0),
         .sun_intensity = 1.0,
@@ -441,7 +440,6 @@ test "AtmosphereSystem.renderClouds with null handles" {
         .wind_offset_z = 0.0,
         .fog_color = Vec3.init(0.8, 0.9, 1.0),
         .fog_density = 0.01,
-        .view_proj = Mat4.identity,
     }, Mat4.identity));
 
     try testing.expect(mock.cloud_pipeline_requested);

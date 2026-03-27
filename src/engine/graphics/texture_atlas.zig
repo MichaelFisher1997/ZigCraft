@@ -63,7 +63,7 @@ pub const TextureAtlas = struct {
         return self.tile_mappings[block_id];
     }
 
-    pub fn init(allocator: std.mem.Allocator, rhi_instance: rhi.RHI, pack_manager: ?*resource_pack.ResourcePackManager, max_resolution: u32) !TextureAtlas {
+    pub fn init(allocator: std.mem.Allocator, resources: rhi.ResourceManager, pack_manager: ?*resource_pack.ResourcePackManager, max_resolution: u32) !TextureAtlas {
         // 1. Detect tile size from pack textures
         const tile_size = detectTileSize(pack_manager, allocator, max_resolution);
         const atlas_size = tile_size * TILES_PER_ROW;
@@ -86,7 +86,7 @@ pub const TextureAtlas = struct {
         }
 
         // 4. Create GPU textures
-        const atlas_textures = try createRhiTextures(rhi_instance, atlas_size, &buffers);
+        const atlas_textures = try createRhiTextures(resources, atlas_size, &buffers);
 
         return .{
             .texture = atlas_textures.diffuse,
@@ -120,33 +120,6 @@ pub const TextureAtlas = struct {
         }
     }
 
-    /// Bind diffuse texture
-    pub fn bind(self: *const TextureAtlas, slot: u32) void {
-        self.texture.bind(slot);
-    }
-
-    /// Bind normal map texture (if available)
-    pub fn bindNormal(self: *const TextureAtlas, slot: u32) void {
-        if (self.normal_texture) |*t| {
-            t.bind(slot);
-        }
-    }
-
-    /// Bind roughness texture (if available)
-    pub fn bindRoughness(self: *const TextureAtlas, slot: u32) void {
-        if (self.roughness_texture) |*t| {
-            t.bind(slot);
-        }
-    }
-
-    /// Bind displacement texture (if available)
-    pub fn bindDisplacement(self: *const TextureAtlas, slot: u32) void {
-        if (self.displacement_texture) |*t| {
-            t.bind(slot);
-        }
-    }
-
-    /// Check if PBR textures are available
     pub fn hasPBR(self: *const TextureAtlas) bool {
         return self.has_pbr;
     }
@@ -326,10 +299,10 @@ const AtlasTextures = struct {
     roughness: ?Texture,
 };
 
-fn createRhiTextures(rhi_instance: rhi.RHI, atlas_size: u32, buffers: *const AtlasBuffers) !AtlasTextures {
+fn createRhiTextures(resources: rhi.ResourceManager, atlas_size: u32, buffers: *const AtlasBuffers) !AtlasTextures {
     // Disable mipmaps to prevent texture atlas bleeding between adjacent tiles
     // This is the only way to completely eliminate the "block outlines" (grid lines)
-    const diffuse = try Texture.init(rhi_instance, atlas_size, atlas_size, .rgba_srgb, .{
+    const diffuse = try Texture.init(resources, atlas_size, atlas_size, .rgba_srgb, .{
         .min_filter = .nearest,
         .mag_filter = .nearest,
         .generate_mipmaps = false,
@@ -339,7 +312,7 @@ fn createRhiTextures(rhi_instance: rhi.RHI, atlas_size: u32, buffers: *const Atl
     var roughness: ?Texture = null;
 
     if (buffers.normal) |np| {
-        normal = try Texture.init(rhi_instance, atlas_size, atlas_size, .rgba, .{
+        normal = try Texture.init(resources, atlas_size, atlas_size, .rgba, .{
             .min_filter = .nearest,
             .mag_filter = .nearest,
             .generate_mipmaps = false,
@@ -347,7 +320,7 @@ fn createRhiTextures(rhi_instance: rhi.RHI, atlas_size: u32, buffers: *const Atl
     }
 
     if (buffers.roughness) |rp| {
-        roughness = try Texture.init(rhi_instance, atlas_size, atlas_size, .rgba, .{
+        roughness = try Texture.init(resources, atlas_size, atlas_size, .rgba, .{
             .min_filter = .nearest,
             .mag_filter = .nearest,
             .generate_mipmaps = false,

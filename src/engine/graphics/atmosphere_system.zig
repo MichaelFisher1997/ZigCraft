@@ -1,6 +1,7 @@
 const std = @import("std");
 const rhi = @import("rhi.zig");
-const RHI = rhi.RHI;
+const ResourceManager = rhi.ResourceManager;
+const RenderContext = rhi.RenderContext;
 const c = @import("../../c.zig").c;
 const Vec3 = @import("../math/vec3.zig").Vec3;
 const Mat4 = @import("../math/mat4.zig").Mat4;
@@ -8,20 +9,19 @@ const log = @import("../core/log.zig");
 
 pub const AtmosphereSystem = struct {
     allocator: std.mem.Allocator,
-    rhi: RHI,
+    resources: ResourceManager,
 
     cloud_vbo: rhi.BufferHandle = 0,
     cloud_ebo: rhi.BufferHandle = 0,
     cloud_mesh_size: f32 = 2000.0,
 
-    pub fn init(allocator: std.mem.Allocator, rhi_instance: RHI) !*AtmosphereSystem {
+    pub fn init(allocator: std.mem.Allocator, resources: ResourceManager) !*AtmosphereSystem {
         const self = try allocator.create(AtmosphereSystem);
         self.* = .{
             .allocator = allocator,
-            .rhi = rhi_instance,
+            .resources = resources,
         };
 
-        // Create cloud mesh (large quad centered on camera)
         const cloud_vertices = [_]f32{
             -self.cloud_mesh_size, -self.cloud_mesh_size,
             self.cloud_mesh_size,  -self.cloud_mesh_size,
@@ -30,31 +30,28 @@ pub const AtmosphereSystem = struct {
         };
         const cloud_indices = [_]u16{ 0, 1, 2, 0, 2, 3 };
 
-        self.cloud_vbo = try rhi_instance.createBuffer(@sizeOf(@TypeOf(cloud_vertices)), .vertex);
-        self.cloud_ebo = try rhi_instance.createBuffer(@sizeOf(@TypeOf(cloud_indices)), .index);
+        self.cloud_vbo = try resources.createBuffer(@sizeOf(@TypeOf(cloud_vertices)), .vertex);
+        self.cloud_ebo = try resources.createBuffer(@sizeOf(@TypeOf(cloud_indices)), .index);
 
-        try rhi_instance.uploadBuffer(self.cloud_vbo, std.mem.asBytes(&cloud_vertices));
-        try rhi_instance.uploadBuffer(self.cloud_ebo, std.mem.asBytes(&cloud_indices));
+        try resources.uploadBuffer(self.cloud_vbo, std.mem.asBytes(&cloud_vertices));
+        try resources.uploadBuffer(self.cloud_ebo, std.mem.asBytes(&cloud_indices));
 
         return self;
     }
 
     pub fn deinit(self: *AtmosphereSystem) void {
-        if (self.cloud_vbo != 0) self.rhi.destroyBuffer(self.cloud_vbo);
-        if (self.cloud_ebo != 0) self.rhi.destroyBuffer(self.cloud_ebo);
+        if (self.cloud_vbo != 0) self.resources.destroyBuffer(self.cloud_vbo);
+        if (self.cloud_ebo != 0) self.resources.destroyBuffer(self.cloud_ebo);
         self.allocator.destroy(self);
     }
 
-    pub fn renderSky(self: *AtmosphereSystem, params: rhi.SkyParams) rhi.RhiError!void {
-        const context = self.rhi.context();
-
-        const pipeline_u64 = context.vtable.getNativeSkyPipeline(context.ptr);
-        const layout_u64 = context.vtable.getNativeSkyPipelineLayout(context.ptr);
-        const descriptor_set_u64 = context.vtable.getNativeMainDescriptorSet(context.ptr);
-        const cmd_u64 = context.vtable.getNativeCommandBuffer(context.ptr);
+    pub fn renderSky(_: *AtmosphereSystem, ctx: RenderContext, params: rhi.SkyParams) rhi.RhiError!void {
+        const pipeline_u64 = ctx.getNativeSkyPipeline();
+        const layout_u64 = ctx.getNativeSkyPipelineLayout();
+        const descriptor_set_u64 = ctx.getNativeMainDescriptorSet();
+        const cmd_u64 = ctx.getNativeCommandBuffer();
 
         if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0) {
-            // Note: This may happen during early initialization before the main renderer has completed setup.
             log.log.warn("AtmosphereSystem: Sky rendering skipped, native handles missing (pipeline={}, layout={}, cmd={})", .{ pipeline_u64 != 0, layout_u64 != 0, cmd_u64 != 0 });
             if (pipeline_u64 == 0) return error.SkyPipelineNotReady;
             if (layout_u64 == 0) return error.SkyPipelineLayoutNotReady;
@@ -79,8 +76,6 @@ pub const AtmosphereSystem = struct {
         };
 
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        // Main descriptor set is optional for sky rendering if it only uses push constants.
-        // It may be 0 if the render pass is starting but descriptors have not yet been updated for the current frame.
         if (descriptor_set_u64 != 0) {
             c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
         }
@@ -88,14 +83,12 @@ pub const AtmosphereSystem = struct {
         c.vkCmdDraw(cmd, 3, 1, 0, 0);
     }
 
-    pub fn renderClouds(self: *AtmosphereSystem, params: rhi.CloudParams, view_proj: Mat4) rhi.RhiError!void {
-        const context = self.rhi.context();
-        const pipeline_u64 = context.vtable.getNativeCloudPipeline(context.ptr);
-        const layout_u64 = context.vtable.getNativeCloudPipelineLayout(context.ptr);
-        const cmd_u64 = context.vtable.getNativeCommandBuffer(context.ptr);
+    pub fn renderClouds(self: *AtmosphereSystem, ctx: RenderContext, params: rhi.CloudParams, view_proj: Mat4) rhi.RhiError!void {
+        const pipeline_u64 = ctx.getNativeCloudPipeline();
+        const layout_u64 = ctx.getNativeCloudPipelineLayout();
+        const cmd_u64 = ctx.getNativeCommandBuffer();
 
         if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0) {
-            // Note: This may happen during early initialization before the main renderer has completed setup.
             log.log.warn("AtmosphereSystem: Cloud rendering skipped, native handles missing (pipeline={}, layout={}, cmd={})", .{ pipeline_u64 != 0, layout_u64 != 0, cmd_u64 != 0 });
             if (pipeline_u64 == 0) return error.CloudPipelineNotReady;
             if (layout_u64 == 0) return error.CloudPipelineLayoutNotReady;
@@ -118,8 +111,8 @@ pub const AtmosphereSystem = struct {
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         c.vkCmdPushConstants(cmd, layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(rhi.CloudPushConstants), &pc);
 
-        context.bindBuffer(self.cloud_vbo, .vertex);
-        context.bindBuffer(self.cloud_ebo, .index);
-        context.drawIndexed(self.cloud_vbo, self.cloud_ebo, 6);
+        ctx.bindBuffer(self.cloud_vbo, .vertex);
+        ctx.bindBuffer(self.cloud_ebo, .index);
+        ctx.drawIndexed(self.cloud_vbo, self.cloud_ebo, 6);
     }
 };

@@ -34,12 +34,16 @@
 //!
 //! ## Usage
 //!
-//! The RHI type is a composite struct that aggregates all interfaces:
+//! **DEPRECATED**: Use focused wrappers instead:
+//! - `ResourceManager` for resource lifecycle (`createBuffer`, `createTexture`, etc.)
+//! - `RenderContext` for frame rendering (`beginFrame`, `draw`, `bindTexture`, etc.)
+//! - `UIRenderer` for UI rendering (`beginPass`, `drawRect`, `drawTexture`, etc.)
+//! - `ShadowSystemWrapper` for shadow mapping
+//!
 //! ```zig
-//! const rhi: RHI = try VulkanRHI.init(allocator, window);
-//! try rhi.beginFrame();
-//! // ... rendering commands ...
-//! rhi.endFrame();
+//! const resources = rhi.resourceManager();
+//! const ctx = rhi.renderContext();
+//! const ui = rhi.uiRenderer();
 //! ```
 //!
 //! ## Backend Implementation
@@ -441,6 +445,41 @@ pub const IUIContext = struct {
     }
 };
 
+/// Focused wrapper for immediate-mode UI rendering.
+///
+/// Provides a clean interface for 2D drawing operations (rectangles,
+/// textures, depth textures) without exposing the full RHI composite.
+///
+/// ```zig
+/// const ui = rhi.uiRenderer();
+/// ui.beginPass(width, height);
+/// ui.drawRect(rect, color);
+/// ui.drawTexture(tex, rect);
+/// ui.endPass();
+/// ```
+pub const UIRenderer = struct {
+    ctx: IUIContext,
+
+    pub fn beginPass(self: UIRenderer, width: f32, height: f32) void {
+        self.ctx.beginPass(width, height);
+    }
+    pub fn endPass(self: UIRenderer) void {
+        self.ctx.endPass();
+    }
+    pub fn drawRect(self: UIRenderer, rect: Rect, color: Color) void {
+        self.ctx.drawRect(rect, color);
+    }
+    pub fn drawTexture(self: UIRenderer, texture: TextureHandle, rect: Rect) void {
+        self.ctx.drawTexture(texture, rect);
+    }
+    pub fn drawDepthTexture(self: UIRenderer, texture: TextureHandle, rect: Rect) void {
+        self.ctx.drawDepthTexture(texture, rect);
+    }
+    pub fn bindPipeline(self: UIRenderer, textured: bool) void {
+        self.ctx.bindPipeline(textured);
+    }
+};
+
 pub const IGraphicsCommandEncoder = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -733,7 +772,17 @@ pub const IDeviceTiming = struct {
     }
 };
 
-/// Composite RHI structure for backward compatibility during refactoring
+/// DEPRECATED: This struct is retained as a composition root during the RHI
+/// modularization refactoring (issue #291 / #272). New code should use focused
+/// wrappers: `ResourceManager`, `RenderContext`, `UIRenderer`, `ShadowSystemWrapper`.
+///
+/// Migration guide:
+/// - Resource operations -> `rhi.resourceManager()`
+/// - Frame rendering -> `rhi.renderContext()`
+/// - UI rendering -> `rhi.uiRenderer()`
+/// - Shadow mapping -> `rhi.shadowSystem()`
+/// - Device timing -> `rhi.timing()`
+/// - Device query -> `rhi.query()`
 pub const RHI = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -810,6 +859,9 @@ pub const RHI = struct {
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };
     }
+    pub fn uiRenderer(self: RHI) UIRenderer {
+        return .{ .ctx = self.ui() };
+    }
     pub fn query(self: RHI) IDeviceQuery {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.query };
     }
@@ -817,7 +869,17 @@ pub const RHI = struct {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.timing };
     }
 
-    // Legacy wrappers (redirecting to sub-interfaces)
+    // -------------------------------------------------------------------------
+    // DEPRECATED: Legacy passthrough methods. These delegate to focused wrappers
+    // and exist only during the #272 modularization transition.
+    // Use the focused wrappers directly instead:
+    //   rhi.resourceManager() -> ResourceManager (createBuffer, createTexture, etc.)
+    //   rhi.renderContext()   -> RenderContext (beginFrame, draw, bindTexture, etc.)
+    //   rhi.uiRenderer()      -> UIRenderer   (beginPass, drawRect, etc.)
+    //   rhi.shadowSystem()    -> ShadowSystemWrapper (beginPass, endPass, etc.)
+    // -------------------------------------------------------------------------
+    // Resource operations (use ResourceManager)
+    // -------------------------------------------------------------------------
     pub fn createBuffer(self: RHI, size: usize, usage: BufferUsage) RhiError!BufferHandle {
         return self.vtable.resources.createBuffer(self.ptr, size, usage);
     }

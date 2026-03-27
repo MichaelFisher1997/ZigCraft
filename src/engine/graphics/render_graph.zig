@@ -299,7 +299,7 @@ pub const SkyPass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
-        ctx.atmosphere_system.renderSky(ctx.sky_params) catch |err| {
+        ctx.atmosphere_system.renderSky(ctx.render_ctx, ctx.sky_params) catch |err| {
             if (err != error.ResourceNotReady and
                 err != error.SkyPipelineNotReady and
                 err != error.SkyPipelineLayoutNotReady and
@@ -327,7 +327,7 @@ pub const OpaquePass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
         ctx.render_ctx.bindShader(ctx.main_shader);
-        ctx.material_system.bindTerrainMaterial(ctx.env_map_handle);
+        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle, 11);
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
@@ -353,7 +353,7 @@ pub const CloudPass = struct {
         _ = ptr;
         if (ctx.disable_clouds) return;
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        ctx.atmosphere_system.renderClouds(ctx.cloud_params, view_proj) catch |err| {
+        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, view_proj) catch |err| {
             if (err != error.ResourceNotReady and
                 err != error.CloudPipelineNotReady and
                 err != error.CloudPipelineLayoutNotReady and
