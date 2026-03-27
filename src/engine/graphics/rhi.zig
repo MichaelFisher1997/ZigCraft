@@ -149,6 +149,47 @@ pub const IResourceFactory = struct {
     }
 };
 
+pub const ResourceManager = struct {
+    factory: IResourceFactory,
+
+    pub fn createBuffer(self: ResourceManager, size: usize, usage: BufferUsage) RhiError!BufferHandle {
+        return self.factory.createBuffer(size, usage);
+    }
+    pub fn uploadBuffer(self: ResourceManager, handle: BufferHandle, data: []const u8) RhiError!void {
+        return self.factory.uploadBuffer(handle, data);
+    }
+    pub fn updateBuffer(self: ResourceManager, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void {
+        return self.factory.updateBuffer(handle, offset, data);
+    }
+    pub fn destroyBuffer(self: ResourceManager, handle: BufferHandle) void {
+        self.factory.destroyBuffer(handle);
+    }
+    pub fn createTexture(self: ResourceManager, width: u32, height: u32, format: TextureFormat, config: TextureConfig, data: ?[]const u8) RhiError!TextureHandle {
+        return self.factory.createTexture(width, height, format, config, data);
+    }
+    pub fn createTexture3D(self: ResourceManager, width: u32, height: u32, depth: u32, format: TextureFormat, config: TextureConfig, data: ?[]const u8) RhiError!TextureHandle {
+        return self.factory.createTexture3D(width, height, depth, format, config, data);
+    }
+    pub fn destroyTexture(self: ResourceManager, handle: TextureHandle) void {
+        self.factory.destroyTexture(handle);
+    }
+    pub fn updateTexture(self: ResourceManager, handle: TextureHandle, data: []const u8) RhiError!void {
+        return self.factory.updateTexture(handle, data);
+    }
+    pub fn createShader(self: ResourceManager, vertex_src: [*c]const u8, fragment_src: [*c]const u8) RhiError!ShaderHandle {
+        return self.factory.createShader(vertex_src, fragment_src);
+    }
+    pub fn destroyShader(self: ResourceManager, handle: ShaderHandle) void {
+        self.factory.destroyShader(handle);
+    }
+    pub fn mapBuffer(self: ResourceManager, handle: BufferHandle) RhiError!?*anyopaque {
+        return self.factory.mapBuffer(handle);
+    }
+    pub fn unmapBuffer(self: ResourceManager, handle: BufferHandle) void {
+        self.factory.unmapBuffer(handle);
+    }
+};
+
 pub const IShadowContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -543,6 +584,9 @@ pub const RHI = struct {
 
     pub fn factory(self: RHI) IResourceFactory {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.resources };
+    }
+    pub fn resourceManager(self: RHI) ResourceManager {
+        return .{ .factory = self.factory() };
     }
     pub fn context(self: RHI) IRenderContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.render };

@@ -1,6 +1,7 @@
 const std = @import("std");
 const rhi_mod = @import("../engine/graphics/rhi.zig");
-const RHI = rhi_mod.RHI;
+const ResourceManager = rhi_mod.ResourceManager;
+const IDeviceQuery = rhi_mod.IDeviceQuery;
 const Vertex = rhi_mod.Vertex;
 
 pub const VertexAllocation = struct {
@@ -17,7 +18,8 @@ pub const GlobalVertexAllocator = struct {
         size: usize,
     };
 
-    rhi: RHI,
+    resources: ResourceManager,
+    query: IDeviceQuery,
     buffer: rhi_mod.BufferHandle,
     capacity: usize,
     allocator: std.mem.Allocator,
@@ -26,9 +28,9 @@ pub const GlobalVertexAllocator = struct {
     deferred_frees: [rhi_mod.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(VertexAllocation),
     mutex: std.Thread.Mutex,
 
-    pub fn init(allocator: std.mem.Allocator, rhi: RHI, capacity_mb: usize) !GlobalVertexAllocator {
+    pub fn init(allocator: std.mem.Allocator, resources: ResourceManager, query: IDeviceQuery, capacity_mb: usize) !GlobalVertexAllocator {
         const capacity = capacity_mb * 1024 * 1024;
-        const buffer = try rhi.createBuffer(capacity, .vertex);
+        const buffer = try resources.createBuffer(capacity, .vertex);
 
         var free_blocks = std.ArrayListUnmanaged(FreeBlock){};
         try free_blocks.append(allocator, .{ .offset = 0, .size = capacity });
@@ -41,7 +43,8 @@ pub const GlobalVertexAllocator = struct {
         }
 
         return .{
-            .rhi = rhi,
+            .resources = resources,
+            .query = query,
             .buffer = buffer,
             .capacity = capacity,
             .allocator = allocator,
@@ -52,7 +55,7 @@ pub const GlobalVertexAllocator = struct {
     }
 
     pub fn deinit(self: *GlobalVertexAllocator) void {
-        self.rhi.destroyBuffer(self.buffer);
+        self.resources.destroyBuffer(self.buffer);
         self.free_blocks.deinit(self.allocator);
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
             self.deferred_frees[i].deinit(self.allocator);
@@ -102,7 +105,7 @@ pub const GlobalVertexAllocator = struct {
             };
 
             // Upload at the correct offset within the megabuffer
-            try self.rhi.updateBuffer(self.buffer, block.offset, std.mem.sliceAsBytes(vertices));
+            try self.resources.updateBuffer(self.buffer, block.offset, std.mem.sliceAsBytes(vertices));
 
             // Update free block
             if (block.size > size_needed) {
@@ -148,7 +151,7 @@ pub const GlobalVertexAllocator = struct {
         // HOWEVER, we must be careful with reuse.
         // A safer way is to queue for (frame_index + 1) % MAX_FRAMES_IN_FLIGHT.
 
-        const frame_idx = self.rhi.getFrameIndex();
+        const frame_idx = self.query.getFrameIndex();
         self.deferred_frees[frame_idx].append(self.allocator, allocation) catch {
             // Fallback to immediate free if queue is full (better than leak, though slightly risky)
             std.log.warn("Deferred free queue full, falling back to immediate free", .{});
