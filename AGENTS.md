@@ -63,6 +63,8 @@ src/
     block.zig       # Block types and properties
     chunk.zig       # Chunk data structure (16x256x16)
     chunk_mesh.zig  # Mesh generation from chunks
+    world.zig       # World management and streaming
+    lod_*.zig       # Level-of-detail system for distant terrain
   game/             # Application logic, state, menus
   c.zig             # Central C imports (@cImport for SDL3, Vulkan)
   main.zig          # Entry point
