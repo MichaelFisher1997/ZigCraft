@@ -182,7 +182,7 @@ pub const WorldRenderer = struct {
         self.mdi_command_offset = 0;
     }
 
-    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, render_distance: i32, lod_manager: ?*LODManager) void {
+    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32, lod_manager: ?*LODManager) void {
         const shadow_frustum = Frustum.fromViewProj(light_space_matrix);
 
         self.storage.chunks_mutex.lockShared();
@@ -205,7 +205,8 @@ pub const WorldRenderer = struct {
         const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
         const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
 
-        const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, @as(i32, @intCast(mgr.config.getRadii()[0]))) else render_distance;
+        // Use shadow_caster_distance for render bounds (independent of visual render_distance)
+        const r_dist_val: i32 = if (lod_manager) |mgr| @min(@as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X)), @as(i32, @intCast(mgr.config.getRadii()[0]))) else @as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
         const r_dist: i64 = @as(i64, @intCast(r_dist_val));
 
         var cz = pc_z - r_dist;
