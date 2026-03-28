@@ -1902,6 +1902,85 @@ test "NoiseSampler different seeds produce different results" {
     try testing.expect(c1 != c2);
 }
 
+test "WorldClassMap.getCell in-bounds returns stored cell" {
+    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const ClassCell = world_class_mod.ClassCell;
+    const WorldClassMap = world_class_mod.WorldClassMap;
+
+    var map = WorldClassMap.init();
+    const test_cell = ClassCell{
+        .biome_id = .desert,
+        .surface_type = .sand,
+        .is_water = false,
+        .continental_zone = .inland_high,
+        .region_role = .destination,
+        .path_type = .river,
+    };
+    map.cells[5 + 3 * 10] = test_cell;
+
+    const result = map.getCell(5, 3);
+    try testing.expectEqual(test_cell, result);
+}
+
+test "WorldClassMap.getCell out-of-bounds returns default cell" {
+    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const WorldClassMap = world_class_mod.WorldClassMap;
+
+    var map = WorldClassMap.init();
+
+    const oob_x = map.getCell(10, 0);
+    try testing.expectEqual(world_class_mod.DEFAULT_CELL, oob_x);
+
+    const oob_z = map.getCell(0, 10);
+    try testing.expectEqual(world_class_mod.DEFAULT_CELL, oob_z);
+
+    const oob_both = map.getCell(99, 99);
+    try testing.expectEqual(world_class_mod.DEFAULT_CELL, oob_both);
+}
+
+test "WorldClassMap.getCell boundary values" {
+    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const ClassCell = world_class_mod.ClassCell;
+    const WorldClassMap = world_class_mod.WorldClassMap;
+
+    var map = WorldClassMap.init();
+    const edge_cell = ClassCell{
+        .biome_id = .mountains,
+        .surface_type = .rock,
+        .is_water = false,
+        .continental_zone = .mountain_core,
+        .region_role = .destination,
+        .path_type = .none,
+    };
+    map.cells[9 + 9 * 10] = edge_cell;
+
+    const corner = map.getCell(9, 9);
+    try testing.expectEqual(edge_cell, corner);
+
+    const just_over = map.getCell(10, 0);
+    try testing.expectEqual(world_class_mod.DEFAULT_CELL, just_over);
+}
+
+test "WorldClassMap.getCell returns by value (no dangling pointer)" {
+    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const WorldClassMap = world_class_mod.WorldClassMap;
+
+    var map = WorldClassMap.init();
+    map.cells[0] = .{
+        .biome_id = .snow_tundra,
+        .surface_type = .snow,
+        .is_water = false,
+        .continental_zone = .inland_high,
+        .region_role = .transit,
+        .path_type = .none,
+    };
+
+    const cell_copy = map.getCell(0, 0);
+    map.cells[0] = world_class_mod.DEFAULT_CELL;
+
+    try testing.expectEqual(.snow_tundra, cell_copy.biome_id);
+}
+
 test "HeightSampler continental zones" {
     const sampler = HeightSampler.init();
     const world_class_mod = @import("world/worldgen/world_class.zig");
