@@ -65,7 +65,7 @@ jobs:
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless
           ZIGCRAFT_SMOKE_FRAMES: "5"
-          ZIGCRAFT_SAFE_MODE: "1"
+          ZIGCRAFT_SAFE_RENDER: "1"
         run: |
           LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
           LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
