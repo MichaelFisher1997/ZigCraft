@@ -117,6 +117,7 @@ const RenderOptions = struct {
     msaa_samples: u8 = 1,
     safe_mode: bool = false,
     debug_shadows_active: bool = false,
+    shadow_debug_channel: u32 = 0,
 };
 
 const DrawState = struct {

@@ -116,7 +116,13 @@ pub const WorldScreen = struct {
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_shadow_debug_vis)) {
             log.log.info("Toggling shadow debug visualization (G pressed)", .{});
             ctx.settings.debug_shadows_active = !ctx.settings.debug_shadows_active;
+            if (ctx.settings.debug_shadows_active) {
+                ctx.settings.debug_shadow_cascade_index = false;
+                ctx.settings.debug_shadow_caster_coverage = false;
+                ctx.settings.debug_shadow_seam_diag = false;
+            }
             rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
+            rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
@@ -326,7 +332,7 @@ pub const WorldScreen = struct {
 
         try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
 
-        if (ctx.settings.debug_shadows_active) {
+        if (ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag) {
             const shadow_res = ctx.settings.getShadowResolution();
             const shadow_dist = ctx.settings.shadow_distance;
             const debug_cascades = CSM.computeCascades(
@@ -339,7 +345,7 @@ pub const WorldScreen = struct {
                 camera.getViewMatrixOriginCentered(),
                 true,
             );
-            DebugShadowOverlay.draw(ui, rhi.shadowSystem(), screen_w, screen_h, .{}, &debug_cascades.cascade_splits);
+            DebugShadowOverlay.draw(ui, rhi.shadowSystem(), screen_w, screen_h, .{}, &debug_cascades.cascade_splits, ctx.settings);
         }
         if (ctx.settings.debug_lpv_overlay_active) {
             const overlay_size = std.math.clamp(220.0 * ctx.settings.ui_scale, 160.0, screen_h * 0.4);
@@ -463,6 +469,9 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.fps_counter)] = self.session.debug_show_fps;
         states[@intFromEnum(DebugFeature.block_info)] = self.session.debug_show_block_info;
         states[@intFromEnum(DebugFeature.shadow_debug)] = ctx.settings.debug_shadows_active;
+        states[@intFromEnum(DebugFeature.shadow_cascade_index)] = ctx.settings.debug_shadow_cascade_index;
+        states[@intFromEnum(DebugFeature.shadow_caster_coverage)] = ctx.settings.debug_shadow_caster_coverage;
+        states[@intFromEnum(DebugFeature.shadow_seam_diag)] = ctx.settings.debug_shadow_seam_diag;
         states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
         states[@intFromEnum(DebugFeature.lod_render)] = self.session.world.lod_enabled;
         states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
@@ -500,7 +509,46 @@ pub const WorldScreen = struct {
             },
             .shadow_debug => {
                 ctx.settings.debug_shadows_active = !ctx.settings.debug_shadows_active;
+                if (ctx.settings.debug_shadows_active) {
+                    ctx.settings.debug_shadow_cascade_index = false;
+                    ctx.settings.debug_shadow_caster_coverage = false;
+                    ctx.settings.debug_shadow_seam_diag = false;
+                }
                 rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .shadow_cascade_index => {
+                ctx.settings.debug_shadow_cascade_index = !ctx.settings.debug_shadow_cascade_index;
+                if (ctx.settings.debug_shadow_cascade_index) {
+                    ctx.settings.debug_shadows_active = false;
+                    ctx.settings.debug_shadow_caster_coverage = false;
+                    ctx.settings.debug_shadow_seam_diag = false;
+                }
+                const any_active = ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag;
+                rhi.setDebugShadowView(any_active);
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .shadow_caster_coverage => {
+                ctx.settings.debug_shadow_caster_coverage = !ctx.settings.debug_shadow_caster_coverage;
+                if (ctx.settings.debug_shadow_caster_coverage) {
+                    ctx.settings.debug_shadows_active = false;
+                    ctx.settings.debug_shadow_cascade_index = false;
+                    ctx.settings.debug_shadow_seam_diag = false;
+                }
+                const any_active = ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag;
+                rhi.setDebugShadowView(any_active);
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .shadow_seam_diag => {
+                ctx.settings.debug_shadow_seam_diag = !ctx.settings.debug_shadow_seam_diag;
+                if (ctx.settings.debug_shadow_seam_diag) {
+                    ctx.settings.debug_shadows_active = false;
+                    ctx.settings.debug_shadow_cascade_index = false;
+                    ctx.settings.debug_shadow_caster_coverage = false;
+                }
+                const any_active = ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag;
+                rhi.setDebugShadowView(any_active);
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .timing_overlay => {
                 ctx.ui_manager.timing_overlay.toggle();
@@ -567,4 +615,8 @@ fn resolveLPVQuality(preset: u32) LPVQualityResolved {
         2 => .{ .grid_size = 64, .propagation_iterations = 5, .update_interval_frames = 3 },
         else => .{ .grid_size = 32, .propagation_iterations = 3, .update_interval_frames = 6 },
     };
+}
+
+fn resolveShadowDebugChannel(settings: *const @import("../settings/data.zig").Settings) u32 {
+    return @intFromEnum(@import("../settings/data.zig").resolveShadowDebugChannel(settings));
 }

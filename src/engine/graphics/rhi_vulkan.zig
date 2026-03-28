@@ -451,6 +451,11 @@ fn setDebugShadowView(ctx_ptr: *anyopaque, enabled: bool) void {
     state_control.setDebugShadowView(ctx, enabled);
 }
 
+fn setShadowDebugChannel(ctx_ptr: *anyopaque, channel: u32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    state_control.setShadowDebugChannel(ctx, channel);
+}
+
 fn setVSync(ctx_ptr: *anyopaque, enabled: bool) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     state_control.setVSync(ctx, enabled);
@@ -781,6 +786,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     .setWireframe = setWireframe,
     .setTexturesEnabled = setTexturesEnabled,
     .setDebugShadowView = setDebugShadowView,
+    .setShadowDebugChannel = setShadowDebugChannel,
     .setVSync = setVSync,
     .setAnisotropicFiltering = setAnisotropicFiltering,
     .setVolumetricDensity = setVolumetricDensity,

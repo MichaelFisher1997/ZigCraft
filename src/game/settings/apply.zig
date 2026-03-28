@@ -1,4 +1,5 @@
 const Settings = @import("data.zig").Settings;
+const resolveShadowDebugChannel = @import("data.zig").resolveShadowDebugChannel;
 const RHI = @import("../../engine/graphics/rhi.zig").RHI;
 const IRenderSettings = @import("../../engine/core/interfaces.zig").IRenderSettings;
 
@@ -39,6 +40,7 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setWireframe(settings.wireframe_enabled);
     rhi.setTexturesEnabled(settings.textures_enabled);
     rhi.setDebugShadowView(settings.debug_shadows_active);
+    rhi.setShadowDebugChannel(@intFromEnum(resolveShadowDebugChannel(settings)));
     rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
     rhi.setMSAA(settings.msaa_samples);
     rhi.setTAABlendFactor(settings.taa_blend_factor);

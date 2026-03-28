@@ -103,6 +103,10 @@ pub fn setDebugShadowView(ctx: anytype, enabled: bool) void {
     ctx.options.debug_shadows_active = enabled;
 }
 
+pub fn setShadowDebugChannel(ctx: anytype, channel: u32) void {
+    ctx.options.shadow_debug_channel = channel;
+}
+
 pub fn setVSync(ctx: anytype, enabled: bool) void {
     if (ctx.options.vsync_enabled == enabled) return;
 

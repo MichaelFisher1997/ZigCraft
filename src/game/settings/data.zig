@@ -1,5 +1,21 @@
 const std = @import("std");
 
+pub const ShadowDebugChannel = enum(u32) {
+    off = 0,
+    shadow_factor = 1,
+    cascade_index = 2,
+    caster_coverage = 3,
+    seam_diagnostics = 4,
+};
+
+pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {
+    if (settings.debug_shadow_seam_diag) return .seam_diagnostics;
+    if (settings.debug_shadow_caster_coverage) return .caster_coverage;
+    if (settings.debug_shadow_cascade_index) return .cascade_index;
+    if (settings.debug_shadows_active) return .shadow_factor;
+    return .off;
+}
+
 pub const ShadowQuality = struct {
     resolution: u32,
     label: []const u8,
@@ -35,7 +51,10 @@ pub const Settings = struct {
     fov: f32 = 45.0,
     textures_enabled: bool = true,
     wireframe_enabled: bool = false,
-    debug_shadows_active: bool = false, // Reverted to false for normal gameplay
+    debug_shadows_active: bool = false,
+    debug_shadow_cascade_index: bool = false,
+    debug_shadow_caster_coverage: bool = false,
+    debug_shadow_seam_diag: bool = false,
     debug_lpv_overlay_active: bool = false,
     debug_frustum_active: bool = false,
     shadow_quality: u32 = 2, // 0=Low, 1=Medium, 2=High, 3=Ultra
