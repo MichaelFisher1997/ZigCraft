@@ -50,7 +50,7 @@ jobs:
           )
 
           if [ -n "$INPUT_MODULE" ]; then
-            if ! echo "$INPUT_MODULE" | grep -qE '^[a-zA-Z0-9_ /-]+$'; then
+            if ! echo "$INPUT_MODULE" | grep -qE '^[a-zA-Z0-9_/-]+$'; then
               echo "ERROR: Invalid module input: '$INPUT_MODULE'" >&2
               exit 1
             fi
@@ -170,6 +170,20 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate scan paths exist
+        if: steps.check-existing.outputs.skip != 'true'
+        run: |
+          MISSING=0
+          for path in ${{ steps.select-module.outputs.scan_paths }}; do
+            if [ ! -e "$path" ]; then
+              echo "WARNING: scan path does not exist: $path"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          if [ "$MISSING" -gt 0 ]; then
+            echo "::warning::$MISSING scan path(s) missing — the scan_paths case statement in this workflow may need updating"
+          fi
 
       - name: Install Nix
         if: steps.check-existing.outputs.skip != 'true'
