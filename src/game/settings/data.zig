@@ -37,6 +37,7 @@ pub const Settings = struct {
     wireframe_enabled: bool = false,
     debug_shadows_active: bool = false, // Reverted to false for normal gameplay
     debug_lpv_overlay_active: bool = false,
+    debug_frustum_active: bool = false,
     shadow_quality: u32 = 2, // 0=Low, 1=Medium, 2=High, 3=Ultra
     shadow_distance: f32 = 250.0,
     anisotropic_filtering: u8 = 16,
