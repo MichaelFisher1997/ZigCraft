@@ -38,10 +38,10 @@ jobs:
       - uses: anomalyco/opencode/github@latest
         if: steps.check.outputs.result == 'true'
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
-          use_github_token: "true"
           prompt: |
             Analyze this issue. You have access to the codebase context.
             **CRITICAL: Your only allowed action is to post a COMMENT on the issue. DO NOT create branches, pull requests, or attempt to modify the codebase.**
