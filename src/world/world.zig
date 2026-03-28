@@ -27,6 +27,7 @@ const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
 const RenderStats = @import("world_renderer.zig").RenderStats;
+const ShadowStats = @import("world_renderer.zig").ShadowStats;
 const ChunkStateCounts = @import("../engine/ui/chunk_inspector_overlay.zig").ChunkStateCounts;
 const JobQueue = @import("../engine/core/job_system.zig").JobQueue;
 const WorkerPool = @import("../engine/core/job_system.zig").WorkerPool;
@@ -301,7 +302,7 @@ pub const World = struct {
 
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance, lod_mgr);
+        self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance, lod_mgr, shadow_config.lod_enabled);
     }
 
     pub fn shadowScene(self: *World) shadow_scene.IShadowScene {
@@ -320,6 +321,10 @@ pub const World = struct {
 
     pub fn getRenderStats(self: *const World) RenderStats {
         return self.renderer.last_render_stats;
+    }
+
+    pub fn getShadowStats(self: *const World) ShadowStats {
+        return self.renderer.last_shadow_stats;
     }
 
     /// Counts chunks by state for the debug inspector overlay.
