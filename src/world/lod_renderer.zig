@@ -135,7 +135,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             var i: usize = LODLevel.count - 1;
             while (i > 0) : (i -= 1) {
                 self.collectVisibleMeshes(&meshes[i], &regions[i], config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum) catch |err| {
-                    log.log.err("Failed to collect visible meshes for LOD{}: {}", .{ i, err });
+                    log.log.errWithTrace("Failed to collect visible meshes for LOD{}: {}", .{ i, err });
                 };
             }
 

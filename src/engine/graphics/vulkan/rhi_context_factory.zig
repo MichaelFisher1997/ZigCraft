@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const build_options = @import("build_options");
@@ -100,7 +101,7 @@ pub fn createRHI(
     else
         false;
     if (ctx.options.safe_mode) {
-        std.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
+        log.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
     }
 
     ctx.frames.command_pool = null;

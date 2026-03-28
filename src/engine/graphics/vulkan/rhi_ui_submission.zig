@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const build_options = @import("build_options");
 const pass_orchestration = @import("rhi_pass_orchestration.zig");
@@ -56,7 +57,7 @@ pub fn begin2DPass(ctx: anytype, screen_width: f32, screen_height: f32) void {
     if (ui_vbo.mapped_ptr) |ptr| {
         ctx.ui.ui_mapped_ptr = ptr;
     } else {
-        std.log.err("UI VBO memory not mapped!", .{});
+        log.log.err("UI VBO memory not mapped!", .{});
     }
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -136,7 +137,7 @@ pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) v
 
     const tex_opt = ctx.resources.textures.get(texture);
     if (tex_opt == null) {
-        std.log.err("drawTexture2D: Texture handle {} not found in textures map!", .{texture});
+        log.log.err("drawTexture2D: Texture handle {} not found in textures map!", .{texture});
         return;
     }
     const tex = tex_opt.?;
@@ -219,7 +220,7 @@ pub fn drawDepthTexture(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect
 
     const tex_opt = ctx.resources.textures.get(texture);
     if (tex_opt == null) {
-        std.log.err("drawDepthTexture: Texture handle {} not found in textures map!", .{texture});
+        log.log.err("drawDepthTexture: Texture handle {} not found in textures map!", .{texture});
         return;
     }
     const tex = tex_opt.?;

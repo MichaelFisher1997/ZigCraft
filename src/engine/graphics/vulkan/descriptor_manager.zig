@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const rhi_types = @import("../rhi_types.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const ResourceManager = @import("resource_manager.zig").ResourceManager;
@@ -278,7 +279,7 @@ pub const DescriptorManager = struct {
 
     pub fn updateGlobalUniforms(self: *DescriptorManager, frame_index: usize, data: *const anyopaque) !void {
         const dest = self.global_ubos_mapped[frame_index] orelse {
-            std.log.err("Failed to update global uniforms: memory not mapped", .{});
+            log.log.err("Failed to update global uniforms: memory not mapped", .{});
             return error.UnmappedBuffer;
         };
         const src = @as([*]const u8, @ptrCast(data));
@@ -287,7 +288,7 @@ pub const DescriptorManager = struct {
 
     pub fn updateShadowUniforms(self: *DescriptorManager, frame_index: usize, data: *const anyopaque) !void {
         const dest = self.shadow_ubos_mapped[frame_index] orelse {
-            std.log.err("Failed to update shadow uniforms: memory not mapped", .{});
+            log.log.err("Failed to update shadow uniforms: memory not mapped", .{});
             return error.UnmappedBuffer;
         };
         const src = @as([*]const u8, @ptrCast(data));

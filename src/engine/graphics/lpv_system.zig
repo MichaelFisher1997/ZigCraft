@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../c.zig").c;
 const rhi_pkg = @import("rhi.zig");
+const log = @import("../core/log.zig");
 const Vec3 = @import("../math/vec3.zig").Vec3;
 const World = @import("../../world/world.zig").World;
 const CHUNK_SIZE_X = @import("../../world/chunk.zig").CHUNK_SIZE_X;
@@ -418,7 +419,7 @@ pub const LPVSystem = struct {
         // Ensure CPU buffer is allocated
         if (self.occlusion_grid.len != total_cells) {
             const new_grid = self.allocator.alloc(u32, total_cells) catch |err| {
-                std.log.err("LPV occlusion grid allocation failed ({} cells): {}", .{ total_cells, err });
+                log.log.err("LPV occlusion grid allocation failed ({} cells): {}", .{ total_cells, err });
                 return false;
             };
             if (self.occlusion_grid.len > 0) self.allocator.free(self.occlusion_grid);
@@ -494,7 +495,7 @@ pub const LPVSystem = struct {
             return true;
         }
 
-        std.log.err("LPV occlusion upload skipped: buffer is not mapped", .{});
+        log.log.err("LPV occlusion upload skipped: buffer is not mapped", .{});
         return false;
     }
 
@@ -797,7 +798,7 @@ pub const LPVSystem = struct {
     fn destroyLightBuffer(self: *LPVSystem) void {
         if (self.light_buffer.buffer != null) {
             if (self.light_buffer.memory == null) {
-                std.log.warn("LPV light buffer has VkBuffer but null VkDeviceMemory during teardown", .{});
+                log.log.warn("LPV light buffer has VkBuffer but null VkDeviceMemory during teardown", .{});
             }
             if (self.light_buffer.mapped_ptr != null) {
                 c.vkUnmapMemory(self.vk_ctx.vulkan_device.vk_device, self.light_buffer.memory);
@@ -1119,8 +1120,8 @@ fn createShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Alloc
 
 fn ensureShaderFileExists(path: []const u8) !void {
     std.fs.cwd().access(path, .{}) catch |err| {
-        std.log.err("LPV shader artifact missing: {s} ({})", .{ path, err });
-        std.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
+        log.log.errWithTrace("LPV shader artifact missing: {s} ({})", .{ path, err });
+        log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
         return err;
     };
 }

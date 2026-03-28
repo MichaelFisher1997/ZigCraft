@@ -19,6 +19,7 @@
 const std = @import("std");
 const c = @import("../../c.zig").c;
 const rhi = @import("rhi.zig");
+const log = @import("../core/log.zig");
 
 fn debugCallback(
     severity: c.VkDebugUtilsMessageSeverityFlagBitsEXT,
@@ -33,7 +34,7 @@ fn debugCallback(
             if (callback_data) |data| {
                 if (data.pMessage != null) {
                     const message = std.mem.span(data.pMessage);
-                    std.log.err("Vulkan validation error: {s}", .{message});
+                    log.log.err("Vulkan validation error: {s}", .{message});
                 }
             }
         }
@@ -140,12 +141,12 @@ pub const VulkanDevice = struct {
         const debug_utils_enabled = enable_validation and debug_utils_supported and (debug_utils_in_sdl or enable_debug_utils);
         self.debug_utils_enabled = debug_utils_enabled;
         if (props2_supported and enable_props2) {
-            std.log.info("Enabling VK_KHR_get_physical_device_properties2", .{});
+            log.log.info("Enabling VK_KHR_get_physical_device_properties2", .{});
         } else if (!props2_supported) {
-            std.log.warn("VK_KHR_get_physical_device_properties2 not supported by instance", .{});
+            log.log.warn("VK_KHR_get_physical_device_properties2 not supported by instance", .{});
         }
         if (enable_validation and !debug_utils_enabled) {
-            std.log.warn("VK_EXT_debug_utils not available; validation errors will not be counted", .{});
+            log.log.warn("VK_EXT_debug_utils not available; validation errors will not be counted", .{});
         }
 
         var app_info = std.mem.zeroes(c.VkApplicationInfo);
@@ -180,7 +181,7 @@ pub const VulkanDevice = struct {
                     if (found) {
                         create_info.enabledLayerCount = 1;
                         create_info.ppEnabledLayerNames = &validation_layers;
-                        std.log.info("Vulkan validation layers enabled", .{});
+                        log.log.info("Vulkan validation layers enabled", .{});
                     }
                 }
             }
@@ -273,14 +274,14 @@ pub const VulkanDevice = struct {
             if (std.mem.eql(u8, name_slice, device_fault_name_slice)) supports_device_fault = true;
         }
 
-        if (supports_robustness2) std.log.info("VK_EXT_robustness2 supported", .{});
-        if (supports_device_fault) std.log.info("VK_EXT_device_fault supported", .{});
+        if (supports_robustness2) log.log.info("VK_EXT_robustness2 supported", .{});
+        if (supports_device_fault) log.log.info("VK_EXT_device_fault supported", .{});
         self.supports_device_fault = supports_device_fault;
 
         const allow_robustness2 = supports_robustness2 and props2_enabled;
         const allow_device_fault = supports_device_fault and props2_enabled;
         if (!props2_enabled and (supports_robustness2 or supports_device_fault)) {
-            std.log.warn("VK_KHR_get_physical_device_properties2 not enabled; skipping robustness/device fault", .{});
+            log.log.warn("VK_KHR_get_physical_device_properties2 not enabled; skipping robustness/device fault", .{});
         }
 
         var robustness2_features = std.mem.zeroes(c.VkPhysicalDeviceRobustness2FeaturesEXT);
@@ -332,7 +333,7 @@ pub const VulkanDevice = struct {
         if ((allow_robustness2 or allow_device_fault) and
             (create_result == c.VK_ERROR_FEATURE_NOT_PRESENT or create_result == c.VK_ERROR_EXTENSION_NOT_PRESENT))
         {
-            std.log.warn("Robustness/device fault features not available, falling back to basic device", .{});
+            log.log.warn("Robustness/device fault features not available, falling back to basic device", .{});
             device_create_info.pNext = null;
             enabled_extensions[0] = c.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
             enabled_extension_count = 1;
@@ -372,13 +373,13 @@ pub const VulkanDevice = struct {
                 debug_info.pfnUserCallback = debugCallback;
                 debug_info.pUserData = self;
                 if (func(self.instance, &debug_info, null, &self.debug_messenger) != c.VK_SUCCESS) {
-                    std.log.warn("Failed to create debug utils messenger", .{});
+                    log.log.warn("Failed to create debug utils messenger", .{});
                 }
             } else {
-                std.log.warn("vkCreateDebugUtilsMessengerEXT not available", .{});
+                log.log.warn("vkCreateDebugUtilsMessengerEXT not available", .{});
             }
         } else {
-            std.log.warn("vkCreateDebugUtilsMessengerEXT not found; validation errors will not be counted", .{});
+            log.log.warn("vkCreateDebugUtilsMessengerEXT not found; validation errors will not be counted", .{});
         }
     }
 
@@ -423,7 +424,7 @@ pub const VulkanDevice = struct {
 
         if (result == c.VK_ERROR_DEVICE_LOST) {
             self.fault_count += 1;
-            std.log.err("GPU reset triggered voluntarily (VK_ERROR_DEVICE_LOST). Total faults: {d}", .{self.fault_count});
+            log.log.err("GPU reset triggered voluntarily (VK_ERROR_DEVICE_LOST). Total faults: {d}", .{self.fault_count});
             self.logDeviceFaults();
             return error.GpuLost;
         }
@@ -434,11 +435,11 @@ pub const VulkanDevice = struct {
     /// Logs detailed fault information if VK_EXT_device_fault is enabled and supported.
     pub fn logDeviceFaults(self: VulkanDevice) void {
         const func = self.vkGetDeviceFaultInfoEXT orelse {
-            std.log.warn("VK_EXT_device_fault not available; review system logs (dmesg) for GPU errors.", .{});
+            log.log.warn("VK_EXT_device_fault not available; review system logs (dmesg) for GPU errors.", .{});
             return;
         };
 
-        std.log.info("Querying VK_EXT_device_fault for detailed hang info...", .{});
+        log.log.info("Querying VK_EXT_device_fault for detailed hang info...", .{});
 
         var fault_info = std.mem.zeroes(c.VkDeviceFaultInfoEXT);
         fault_info.sType = c.VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
@@ -446,11 +447,11 @@ pub const VulkanDevice = struct {
         const result = func(self.vk_device, &fault_info);
         if (result == c.VK_SUCCESS) {
             const desc: [*:0]const u8 = @ptrCast(&fault_info.description);
-            std.log.err("GPU Fault Detected: {s}", .{desc});
+            log.log.err("GPU Fault Detected: {s}", .{desc});
         } else {
-            std.log.warn("Failed to retrieve device fault info: {d}", .{result});
+            log.log.warn("Failed to retrieve device fault info: {d}", .{result});
         }
-        std.log.warn("Review system logs (dmesg/journalctl) for kernel-level GPU driver errors.", .{});
+        log.log.warn("Review system logs (dmesg/journalctl) for kernel-level GPU driver errors.", .{});
     }
 };
 

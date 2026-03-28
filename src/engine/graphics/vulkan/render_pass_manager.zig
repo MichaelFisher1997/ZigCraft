@@ -9,6 +9,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 
@@ -196,7 +197,7 @@ pub const RenderPassManager = struct {
             render_pass_info.pDependencies = &dependencies[0];
 
             try Utils.checkVk(c.vkCreateRenderPass(vk_device, &render_pass_info, null, &self.hdr_render_pass));
-            std.log.info("Created HDR MSAA {}x render pass", .{msaa_samples});
+            log.log.info("Created HDR MSAA {}x render pass", .{msaa_samples});
         } else {
             // Non-MSAA render pass: 2 attachments (color, depth)
             var color_attachment = std.mem.zeroes(c.VkAttachmentDescription);

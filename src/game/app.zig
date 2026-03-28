@@ -43,9 +43,12 @@ pub const App = struct {
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
+
+        log.log.info("App.init: initializing SettingsManager", .{});
         var settings_manager = try SettingsManager.init(allocator);
         errdefer settings_manager.deinit();
 
+        log.log.info("App.init: initializing WindowManager ({}x{})", .{ settings_manager.settings.window_width, settings_manager.settings.window_height });
         var wm = try WindowManager.init(allocator, true, settings_manager.settings.window_width, settings_manager.settings.window_height);
         errdefer wm.deinit();
 
@@ -54,6 +57,7 @@ pub const App = struct {
         input.initWindowSize(wm.window);
         const time = Time.init();
 
+        log.log.info("App.init: initializing RenderSystem", .{});
         const render_system = try RenderSystem.init(allocator, wm.window, &settings_manager.settings);
         errdefer render_system.deinit();
 
@@ -73,9 +77,11 @@ pub const App = struct {
             log.log.warn("ZIGCRAFT_SKIP_WORLD_UPDATE enabled", .{});
         }
 
+        log.log.info("App.init: initializing AudioSystemManager", .{});
         const audio_manager = try AudioSystemManager.init(allocator);
         errdefer audio_manager.deinit();
 
+        log.log.info("App.init: initializing UISystemManager", .{});
         var ui_manager = try UISystemManager.init(render_system.getRHI().uiRenderer(), input.window_width, input.window_height, build_options.smoke_test);
         errdefer ui_manager.deinit();
 
@@ -150,7 +156,7 @@ pub const App = struct {
     pub fn saveAllSettings(self: *const App) void {
         self.settings_manager.save();
         InputSettings.saveFromMapper(self.allocator, self.input_mapper.interface()) catch |err| {
-            log.log.err("Failed to save input settings: {}", .{err});
+            log.log.errWithTrace("Failed to save input settings: {}", .{err});
         };
     }
 

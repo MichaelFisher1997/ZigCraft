@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi_types = @import("../rhi_types.zig");
+const log = @import("../../core/log.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const VulkanSwapchain = @import("../vulkan_swapchain.zig").VulkanSwapchain;
 const Utils = @import("utils.zig");
@@ -29,14 +30,14 @@ pub const SwapchainPresenter = struct {
         // Load vkQueuePresentKHR dynamically to avoid linking issues or NULL symbols
         const fp_present = c.vkGetDeviceProcAddr(vulkan_device.vk_device, "vkQueuePresentKHR");
         if (fp_present == null) {
-            std.log.err("Failed to load vkQueuePresentKHR function pointer", .{});
+            log.log.err("Failed to load vkQueuePresentKHR function pointer", .{});
             return error.ExtensionNotPresent;
         }
 
         const build_options = @import("build_options");
         const skip = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
 
-        if (skip) std.log.warn("Headless/DryRun mode: Skipping vkQueuePresentKHR", .{});
+        if (skip) log.log.warn("Headless/DryRun mode: Skipping vkQueuePresentKHR", .{});
 
         return SwapchainPresenter{
             .allocator = allocator,
@@ -78,10 +79,10 @@ pub const SwapchainPresenter = struct {
         if (result == c.VK_ERROR_OUT_OF_DATE_KHR) {
             return error.OutOfDate;
         } else if (result == c.VK_TIMEOUT) {
-            std.log.err("vkAcquireNextImageKHR timed out (2s). Swapchain exhaustion?", .{});
+            log.log.err("vkAcquireNextImageKHR timed out (2s). Swapchain exhaustion?", .{});
             return error.Timeout;
         } else if (result != c.VK_SUCCESS and result != c.VK_SUBOPTIMAL_KHR) {
-            std.log.err("vkAcquireNextImageKHR failed with result: {d}", .{result});
+            log.log.err("vkAcquireNextImageKHR failed with result: {d}", .{result});
             return error.VulkanError;
         }
 
@@ -90,7 +91,7 @@ pub const SwapchainPresenter = struct {
 
     pub fn present(self: *SwapchainPresenter, wait_semaphore: c.VkSemaphore, image_index: u32) !void {
         if (self.skip_present) {
-            std.log.debug("Skipping vkQueuePresentKHR (headless mode)", .{});
+            log.log.debug("Skipping vkQueuePresentKHR (headless mode)", .{});
             return;
         }
 

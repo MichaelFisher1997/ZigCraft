@@ -4,6 +4,7 @@
 //! LODManager uses these interfaces instead of holding a direct RHI reference.
 
 const std = @import("std");
+const log = @import("../engine/core/log.zig");
 const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODChunk = lod_chunk.LODChunk;
@@ -46,7 +47,7 @@ pub const LODGPUBridge = struct {
 
     pub fn destroy(self: LODGPUBridge, mesh: *LODMesh) void {
         if (self.hasInvalidCtx()) {
-            std.log.err("LODGPUBridge.destroy called with invalid context pointer", .{});
+            log.log.err("LODGPUBridge.destroy called with invalid context pointer", .{});
             return;
         }
         self.assertValidCtx();
@@ -55,7 +56,7 @@ pub const LODGPUBridge = struct {
 
     pub fn waitIdle(self: LODGPUBridge) void {
         if (self.hasInvalidCtx()) {
-            std.log.err("LODGPUBridge.waitIdle called with invalid context pointer", .{});
+            log.log.err("LODGPUBridge.waitIdle called with invalid context pointer", .{});
             return;
         }
         self.assertValidCtx();

@@ -1,6 +1,7 @@
 const std = @import("std");
 const data = @import("data.zig");
 const Settings = data.Settings;
+const log = @import("../../engine/core/log.zig");
 
 const CONFIG_DIR = ".config/zigcraft";
 const CONFIG_FILE = "settings.json";
@@ -28,7 +29,7 @@ pub fn load(allocator: std.mem.Allocator) Settings {
 
     // Open home directory
     var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
-        std.log.warn("Failed to open home directory '{s}': {}", .{ home, err });
+        log.log.warn("Failed to open home directory '{s}': {}", .{ home, err });
         return .{};
     };
     defer home_dir.close();
@@ -37,7 +38,7 @@ pub fn load(allocator: std.mem.Allocator) Settings {
     const config_path = CONFIG_DIR ++ "/" ++ CONFIG_FILE;
     const content = home_dir.readFileAlloc(config_path, allocator, @enumFromInt(16 * 1024)) catch |err| {
         if (err != error.FileNotFound) {
-            std.log.warn("Failed to read settings file '{s}': {}", .{ config_path, err });
+            log.log.warn("Failed to read settings file '{s}': {}", .{ config_path, err });
         }
         return .{};
     };
@@ -46,7 +47,7 @@ pub fn load(allocator: std.mem.Allocator) Settings {
     const parsed = std.json.parseFromSlice(Settings, allocator, content, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
-        std.log.warn("Failed to parse settings JSON: {}. Using defaults.", .{err});
+        log.log.warn("Failed to parse settings JSON: {}. Using defaults.", .{err});
         return .{};
     };
     defer parsed.deinit();
@@ -55,14 +56,14 @@ pub fn load(allocator: std.mem.Allocator) Settings {
 
     // Deep copy string fields so they survive parsed.deinit()
     const texture_pack = dupStringField(allocator, settings.texture_pack) catch {
-        std.log.warn("Failed to allocate texture_pack string, using default", .{});
+        log.log.warn("Failed to allocate texture_pack string, using default", .{});
         settings.texture_pack = "default";
         settings.environment_map = "default";
         return settings;
     };
 
     const environment_map = dupStringField(allocator, settings.environment_map) catch {
-        std.log.warn("Failed to allocate environment_map string, using default", .{});
+        log.log.warn("Failed to allocate environment_map string, using default", .{});
         freeStringField(allocator, texture_pack); // Clean up successful first allocation
         settings.texture_pack = "default";
         settings.environment_map = "default";
@@ -72,7 +73,7 @@ pub fn load(allocator: std.mem.Allocator) Settings {
     settings.texture_pack = texture_pack;
     settings.environment_map = environment_map;
 
-    std.log.info("Settings loaded from ~/{s}", .{config_path});
+    log.log.info("Settings loaded from ~/{s}", .{config_path});
     return settings;
 }
 
@@ -98,43 +99,43 @@ pub fn setEnvironmentMap(settings: *Settings, allocator: std.mem.Allocator, name
 /// Save settings to ~/.config/zigcraft/settings.json
 pub fn save(settings: *const Settings, allocator: std.mem.Allocator) void {
     const home = std.posix.getenv("HOME") orelse {
-        std.log.warn("Cannot save settings: HOME not set", .{});
+        log.log.warn("Cannot save settings: HOME not set", .{});
         return;
     };
 
     // Open home directory
     var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
-        std.log.warn("Cannot open home directory: {}", .{err});
+        log.log.warn("Cannot open home directory: {}", .{err});
         return;
     };
     defer home_dir.close();
 
     // Create config directory if it doesn't exist
     home_dir.makePath(CONFIG_DIR) catch |err| {
-        std.log.warn("Failed to create config directory: {}", .{err});
+        log.log.warn("Failed to create config directory: {}", .{err});
         return;
     };
 
     // Open/create the settings file
     const config_path = CONFIG_DIR ++ "/" ++ CONFIG_FILE;
     const file = home_dir.createFile(config_path, .{}) catch |err| {
-        std.log.warn("Failed to create settings file: {}", .{err});
+        log.log.warn("Failed to create settings file: {}", .{err});
         return;
     };
     defer file.close();
 
     // Serialize settings to JSON and write to file
     const json_str = std.json.Stringify.valueAlloc(allocator, settings.*, .{ .whitespace = .indent_2 }) catch |err| {
-        std.log.warn("Failed to serialize settings: {}", .{err});
+        log.log.warn("Failed to serialize settings: {}", .{err});
         return;
     };
     defer allocator.free(json_str);
 
     // Write to file
     _ = file.writeAll(json_str) catch |err| {
-        std.log.warn("Failed to write settings: {}", .{err});
+        log.log.warn("Failed to write settings: {}", .{err});
         return;
     };
 
-    std.log.info("Settings saved to ~/{s}", .{config_path});
+    log.log.info("Settings saved to ~/{s}", .{config_path});
 }

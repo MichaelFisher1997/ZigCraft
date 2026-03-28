@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const post_process_system_pkg = @import("post_process_system.zig");
+const log = @import("../../core/log.zig");
 const PostProcessPushConstants = post_process_system_pkg.PostProcessPushConstants;
 const fxaa_system_pkg = @import("fxaa_system.zig");
 const FXAAPushConstants = fxaa_system_pkg.FXAAPushConstants;
@@ -10,19 +11,19 @@ pub fn beginGPassInternal(ctx: anytype) void {
     if (!ctx.frames.frame_in_progress or ctx.runtime.g_pass_active) return;
 
     if (ctx.render_pass_manager.g_render_pass == null or ctx.render_pass_manager.g_framebuffer == null or ctx.pipeline_manager.g_pipeline == null) {
-        std.log.warn("beginGPass: skipping - resources null (rp={}, fb={}, pipeline={})", .{ ctx.render_pass_manager.g_render_pass != null, ctx.render_pass_manager.g_framebuffer != null, ctx.pipeline_manager.g_pipeline != null });
+        log.log.warn("beginGPass: skipping - resources null (rp={}, fb={}, pipeline={})", .{ ctx.render_pass_manager.g_render_pass != null, ctx.render_pass_manager.g_framebuffer != null, ctx.pipeline_manager.g_pipeline != null });
         return;
     }
 
     if (ctx.gpass.g_pass_extent.width != ctx.swapchain.getExtent().width or ctx.gpass.g_pass_extent.height != ctx.swapchain.getExtent().height) {
-        std.log.warn("beginGPass: size mismatch! G-pass={}x{}, swapchain={}x{} - recreating", .{ ctx.gpass.g_pass_extent.width, ctx.gpass.g_pass_extent.height, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height });
+        log.log.warn("beginGPass: size mismatch! G-pass={}x{}, swapchain={}x{} - recreating", .{ ctx.gpass.g_pass_extent.width, ctx.gpass.g_pass_extent.height, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height });
         _ = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
         setup.createGPassResources(ctx) catch |err| {
-            std.log.err("Failed to recreate G-pass resources: {}", .{err});
+            log.log.errWithTrace("Failed to recreate G-Pass resources: {}", .{err});
             return;
         };
         setup.createSSAOResources(ctx) catch |err| {
-            std.log.err("Failed to recreate SSAO resources: {}", .{err});
+            log.log.errWithTrace("Failed to recreate SSAO resources: {}", .{err});
             return;
         };
     }
@@ -34,7 +35,7 @@ pub fn beginGPassInternal(ctx: anytype) void {
     const command_buffer = ctx.frames.command_buffers[current_frame];
 
     if (command_buffer == null or ctx.pipeline_manager.pipeline_layout == null) {
-        std.log.err("beginGPass: invalid command state (cb={}, layout={})", .{ command_buffer != null, ctx.pipeline_manager.pipeline_layout != null });
+        log.log.err("beginGPass: invalid command state (cb={}, layout={})", .{ command_buffer != null, ctx.pipeline_manager.pipeline_layout != null });
         return;
     }
 
@@ -64,7 +65,7 @@ pub fn beginGPassInternal(ctx: anytype) void {
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
     const ds = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
-    if (ds == null) std.log.err("CRITICAL: descriptor_set is NULL for frame {}", .{ctx.frames.current_frame});
+    if (ds == null) log.log.err("CRITICAL: descriptor_set is NULL for frame {}", .{ctx.frames.current_frame});
 
     c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, &ds, 0, null);
 }
@@ -191,13 +192,13 @@ pub fn beginMainPassInternal(ctx: anytype) void {
 
     if (ctx.render_pass_manager.hdr_render_pass == null) {
         ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
-            std.log.err("beginMainPass: failed to recreate render pass: {}", .{err});
+            log.log.errWithTrace("beginMainPass: failed to recreate render pass: {}", .{err});
             return;
         };
     }
     if (ctx.render_pass_manager.main_framebuffer == null) {
         setup.createMainFramebuffers(ctx) catch |err| {
-            std.log.err("beginMainPass: failed to recreate framebuffer: {}", .{err});
+            log.log.errWithTrace("beginMainPass: failed to recreate framebuffer: {}", .{err});
             return;
         };
     }
@@ -301,7 +302,7 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
         ctx.runtime.post_process_ran_this_frame = true;
 
         if (ctx.post_process.pipeline == null) {
-            std.log.err("Post-process pipeline is null, skipping draw", .{});
+            log.log.err("Post-process pipeline is null, skipping draw", .{});
             return;
         }
 
@@ -319,7 +320,7 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
 
         const pp_ds = ctx.post_process.descriptor_sets[ctx.frames.current_frame];
         if (pp_ds == null) {
-            std.log.err("Post-process descriptor set is null for frame {}", .{ctx.frames.current_frame});
+            log.log.err("Post-process descriptor set is null for frame {}", .{ctx.frames.current_frame});
             return;
         }
         c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.post_process.pipeline_layout, 0, 1, &pp_ds, 0, null);
@@ -392,7 +393,7 @@ pub fn endFrame(ctx: anytype) void {
     const transfer_cb = ctx.resources.getTransferCommandBuffer();
 
     ctx.frames.endFrame(&ctx.swapchain, transfer_cb) catch |err| {
-        std.log.err("endFrame failed: {}", .{err});
+        log.log.errWithTrace("endFrame failed: {}", .{err});
     };
 
     if (transfer_cb != null) {

@@ -190,7 +190,7 @@ pub const OverworldGenerator = struct {
         LightingComputer.computeSkylight(chunk);
         if (stop_flag) |sf| if (sf.*) return;
         LightingComputer.computeBlockLight(chunk, self.allocator) catch |err| {
-            log.log.err("Failed to compute block light for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
+            log.log.errWithTrace("Failed to compute block light for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
             return;
         };
 

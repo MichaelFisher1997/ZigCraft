@@ -77,9 +77,9 @@ pub const World = struct {
         const safe_render_distance: i32 = if (safe_mode) @min(render_distance, 8) else render_distance;
         const max_uploads: usize = if (safe_mode) @as(usize, 4) else @as(usize, 32);
         if (safe_mode) {
-            std.log.warn("ZIGCRAFT_SAFE_MODE enabled: limiting uploads to {} per frame", .{max_uploads});
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: limiting uploads to {} per frame", .{max_uploads});
             if (safe_render_distance != render_distance) {
-                std.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance to {}", .{safe_render_distance});
+                log.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance to {}", .{safe_render_distance});
             }
         }
 
@@ -99,7 +99,11 @@ pub const World = struct {
             .lod_enabled = false,
         };
 
+        log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
         world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, render_distance);
+        errdefer world.streamer.deinit();
+
+        log.log.info("World.initGen: initializing WorldRenderer", .{});
         world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage);
 
         return world;
@@ -162,9 +166,9 @@ pub const World = struct {
 
         if (self.render_distance != target) {
             if (self.safe_mode and target != distance) {
-                std.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance {} -> {}", .{ distance, target });
+                log.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance {} -> {}", .{ distance, target });
             }
-            std.log.info("Render distance changed: {} -> {}", .{ self.render_distance, target });
+            log.log.info("Render distance changed: {} -> {}", .{ self.render_distance, target });
             self.render_distance = target;
             self.streamer.setRenderDistance(target);
 

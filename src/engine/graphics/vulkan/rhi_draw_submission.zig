@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const pass_orchestration = @import("rhi_pass_orchestration.zig");
 
@@ -88,7 +89,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                     else
                         ctx.pipeline_manager.terrain_pipeline;
                     if (selected_pipeline == null) {
-                        std.log.warn("drawIndirect: main pipeline (selected_pipeline) is null - cannot draw terrain", .{});
+                        log.log.warn("drawIndirect: main pipeline (selected_pipeline) is null - cannot draw terrain", .{});
                         return;
                     }
                     c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, selected_pipeline);
@@ -139,7 +140,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                         return;
                     }
                 } else {
-                    std.log.warn("drawIndirect: command buffer range out of bounds (offset={}, size={}, buffer={})", .{ offset, map_size, cmd_size });
+                    log.log.warn("drawIndirect: command buffer range out of bounds (offset={}, size={}, buffer={})", .{ offset, map_size, cmd_size });
                 }
             }
 
@@ -152,7 +153,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                     const draw_offset = offset + @as(usize, draw_index) * stride_bytes;
                     c.vkCmdDrawIndirect(cb, cmd.buffer, @intCast(draw_offset), 1, stride);
                 }
-                std.log.info("drawIndirect: MDI unsupported - drew {} draws via single-draw fallback", .{draw_count});
+                log.log.info("drawIndirect: MDI unsupported - drew {} draws via single-draw fallback", .{draw_count});
             }
         }
     }
@@ -245,7 +246,7 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
         const vertex_stride: u64 = @sizeOf(rhi.Vertex);
         const required_bytes: u64 = @as(u64, offset) + @as(u64, count) * vertex_stride;
         if (required_bytes > vbo.size) {
-            std.log.err("drawOffset: vertex buffer overrun (handle={}, offset={}, count={}, size={})", .{ handle, offset, count, vbo.size });
+            log.log.err("drawOffset: vertex buffer overrun (handle={}, offset={}, count={}, size={})", .{ handle, offset, count, vbo.size });
             return;
         }
 

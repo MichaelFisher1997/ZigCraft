@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../c.zig").c;
 const rhi = @import("rhi.zig");
+const log = @import("../core/log.zig");
 const RenderDevice = @import("render_device.zig").RenderDevice;
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -67,13 +68,13 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (ctx.frames.frame_in_progress) return;
 
     if (ctx.runtime.framebuffer_resized) {
-        std.log.info("beginFrame: triggering recreateSwapchainInternal (resize)", .{});
+        log.log.info("beginFrame: triggering recreateSwapchainInternal (resize)", .{});
         frame_orchestration.recreateSwapchainInternal(ctx);
     }
 
     if (ctx.resources.transfer_ready) {
         ctx.resources.flushTransfer() catch |err| {
-            std.log.err("Failed to flush inter-frame transfers: {}", .{err});
+            log.log.errWithTrace("Failed to flush inter-frame transfers: {}", .{err});
         };
     }
 
@@ -82,7 +83,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
         if (err == error.GpuLost) {
             ctx.runtime.gpu_fault_detected = true;
         } else {
-            std.log.err("beginFrame failed: {}", .{err});
+            log.log.errWithTrace("beginFrame failed: {}", .{err});
         }
         return;
     };
