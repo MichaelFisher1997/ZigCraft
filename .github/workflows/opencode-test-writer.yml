@@ -79,7 +79,8 @@ jobs:
           echo "module=${SELECTED}" >> "$GITHUB_OUTPUT"
           echo "branch=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
 
-          # Derive source paths the agent should scan
+          # NOTE: These scan paths must be kept in sync with actual source layout.
+          # When adding/removing/renaming source files, update the corresponding case entry.
           case "$SELECTED" in
             graphics/vulkan-device)
               echo "scan_paths=src/engine/graphics/vulkan_device.zig src/engine/graphics/vulkan/device.zig src/engine/graphics/vulkan/rhi_state_control.zig" >> "$GITHUB_OUTPUT"
@@ -160,7 +161,7 @@ jobs:
             --state open \
             --limit 20 \
             --json title,headRefName \
-            --jq ".[] | select(.title | startswith(\"test: [${MODULE}]\")) | .headRefName" || echo "")
+            --jq --arg m "$MODULE" '.[] | select(.title | startswith("test: [\($m)]")) | .headRefName' || echo "")
           if [ -n "$EXISTING" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Existing PR found on branch: ${EXISTING}"
