@@ -97,7 +97,7 @@ pub const World = struct {
         };
 
         world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage);
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, render_distance, world.renderer.vertex_allocator, max_uploads);
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads);
 
         return world;
     }
