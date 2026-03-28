@@ -58,6 +58,7 @@ const Generator = @import("worldgen/generator_interface.zig").Generator;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
+const LODManager = @import("lod_manager.zig").LODManager;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const log = @import("../engine/core/log.zig");
 
@@ -140,12 +141,16 @@ pub const WorldStreamer = struct {
     last_pc: struct { x: i32, z: i32 },
     render_distance: i32,
 
+    vertex_allocator: *GlobalVertexAllocator,
+    lod_manager: ?*LODManager,
+    max_uploads_per_frame: usize,
+
     paused: bool = false,
 
     const GEN_WORKERS = 4;
     const MESH_WORKERS = 3;
 
-    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32) !*WorldStreamer {
+    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
 
         const gen_queue = try allocator.create(JobQueue);
@@ -167,6 +172,9 @@ pub const WorldStreamer = struct {
             .player_movement = .{},
             .last_pc = .{ .x = 9999, .z = 9999 },
             .render_distance = render_distance,
+            .vertex_allocator = vertex_allocator,
+            .lod_manager = null,
+            .max_uploads_per_frame = max_uploads_per_frame,
         };
 
         streamer.gen_pool = try WorkerPool.init(allocator, GEN_WORKERS, gen_queue, streamer, processGenJob);
@@ -223,9 +231,19 @@ pub const WorldStreamer = struct {
         }
     }
 
-    pub fn update(self: *WorldStreamer, player_pos: Vec3, dt: f32, lod_manager: anytype) !void {
+    pub fn setLODManager(self: *WorldStreamer, lod_manager: ?*LODManager) void {
+        self.lod_manager = lod_manager;
+    }
+
+    pub fn updateFrame(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         if (self.paused) return;
 
+        try self.updateStreaming(player_pos, dt);
+        self.processUploads();
+        try self.processUnloads(player_pos);
+    }
+
+    fn updateStreaming(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         // Update velocity tracking for predictive loading
         _ = self.player_movement.update(player_pos, dt);
 
@@ -238,8 +256,7 @@ pub const WorldStreamer = struct {
             try self.gen_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z);
             try self.mesh_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z);
 
-            // Clamp generation distance to LOD0 radius if LOD is active
-            const render_dist = if (lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+            const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
 
             var cz = pc.chunk_z - render_dist;
             while (cz <= pc.chunk_z + render_dist) : (cz += 1) {
@@ -271,8 +288,6 @@ pub const WorldStreamer = struct {
                             });
                             data.chunk.state = .generating;
                         },
-                        // .queued_for_generation is handled implicitly by the job queue.
-                        // .generating state persists until the job completes.
                         else => {},
                     }
                 }
@@ -282,7 +297,7 @@ pub const WorldStreamer = struct {
         self.storage.chunks_mutex.lockShared();
         var mesh_iter = self.storage.iteratorUnsafe();
 
-        const render_dist = if (lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
 
         while (mesh_iter.next()) |entry| {
             const key = entry.key_ptr.*;
@@ -317,8 +332,7 @@ pub const WorldStreamer = struct {
         }
         self.storage.chunks_mutex.unlockShared();
 
-        // Update LOD manager if enabled
-        if (lod_manager) |lod_mgr| {
+        if (self.lod_manager) |lod_mgr| {
             const velocity = Vec3.init(
                 self.player_movement.dir_x * self.player_movement.speed,
                 0,
@@ -328,14 +342,14 @@ pub const WorldStreamer = struct {
         }
     }
 
-    pub fn processUploads(self: *WorldStreamer, vertex_allocator: *GlobalVertexAllocator, max_uploads: usize) void {
+    fn processUploads(self: *WorldStreamer) void {
         var uploads: usize = 0;
-        while (!self.upload_queue.isEmpty() and uploads < max_uploads) {
+        while (!self.upload_queue.isEmpty() and uploads < self.max_uploads_per_frame) {
             const key = self.upload_queue.pop() orelse break;
             if (self.storage.get(key.x, key.z)) |data| {
                 if (data.chunk.state != .uploading) continue;
 
-                data.mesh.upload(vertex_allocator);
+                data.mesh.upload(self.vertex_allocator);
                 if (data.mesh.ready) {
                     data.chunk.state = .renderable;
                 } else {
@@ -346,9 +360,9 @@ pub const WorldStreamer = struct {
         }
     }
 
-    pub fn processUnloads(self: *WorldStreamer, player_pos: Vec3, vertex_allocator: *GlobalVertexAllocator, lod_manager: anytype) !void {
+    fn processUnloads(self: *WorldStreamer, player_pos: Vec3) !void {
         const pc = worldToChunk(@intFromFloat(player_pos.x), @intFromFloat(player_pos.z));
-        const render_dist_unload = if (lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        const render_dist_unload = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
         const unload_dist_sq = (render_dist_unload + CHUNK_UNLOAD_BUFFER) * (render_dist_unload + CHUNK_UNLOAD_BUFFER);
 
         self.storage.chunks_mutex.lock();
@@ -371,7 +385,7 @@ pub const WorldStreamer = struct {
         }
 
         for (to_remove.items) |key| {
-            _ = self.storage.removeUnlocked(key.x, key.z, vertex_allocator);
+            _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
         }
         self.storage.chunks_mutex.unlock();
     }
