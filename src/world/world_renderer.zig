@@ -203,6 +203,8 @@ pub const WorldRenderer = struct {
         self.mdi_command_offset = 0;
     }
 
+    /// Intentionally excludes visual LOD meshes to prevent LOD offset/morphing
+    /// artifacts from corrupting shadow maps. Only real chunk geometry is rendered.
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
         const frustum = Frustum.fromViewProj(light_space_matrix);
 
