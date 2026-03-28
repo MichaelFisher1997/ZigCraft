@@ -60,6 +60,7 @@ jobs:
 
       - name: Run menu screenshot capture
         id: screenshot
+        continue-on-error: true
         env:
           ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
           XDG_RUNTIME_DIR: /tmp/runtime-runner
@@ -71,21 +72,21 @@ jobs:
           LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
           export VK_ICD_FILENAMES=$LVP_PATH
           export VK_LAYER_PATH=$LAYER_PATH
-          nix develop --command zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true
+          nix develop --command zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true 2>&1 | tee build-output.log
 
       - name: Convert PPM to PNG
+        id: convert
+        if: always()
         run: |
           if [ -f screenshot.ppm ]; then
             nix run nixpkgs#imagemagick -- screenshot.ppm screenshot.png
             echo "screenshot_exists=true" >> $GITHUB_OUTPUT
           else
             echo "screenshot_exists=false" >> $GITHUB_OUTPUT
-            echo "::error::Screenshot file not found - capture failed"
-            exit 1
           fi
 
       - name: Upload screenshot artifact
-        if: steps.screenshot.outputs.screenshot_exists == 'true'
+        if: steps.convert.outputs.screenshot_exists == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: menu-screenshot
@@ -94,8 +95,16 @@ jobs:
             screenshot.ppm
           retention-days: 30
 
+      - name: Upload build log artifact
+        if: always() && hashFiles('build-output.log') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-output-log
+          path: build-output.log
+          retention-days: 7
+
       - name: Run opencode visual verification
-        if: steps.screenshot.outputs.screenshot_exists == 'true'
+        if: steps.convert.outputs.screenshot_exists == 'true'
         uses: anomalyco/opencode/github@v1.3.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -132,31 +141,64 @@ jobs:
             - Font rendering may be slightly different in software mode - that is acceptable.
             - The important thing is that the menu is FUNCTIONAL (visible text, clickable buttons, proper layout).
 
-      - name: Create failure issue on error
-        if: failure() && steps.screenshot.outputs.screenshot_exists != 'true'
-        run: |
-          gh issue create \
-            --title "[Visual Test] Menu screenshot capture failed" \
-            --label "visual-test" \
-            --body "$(cat <<'EOF'
-          ## Visual Test Failure
-
-          The automated visual test workflow failed to capture a screenshot of the main menu.
-
-          ### Possible Causes
-          - Vulkan initialization failed with Lavapipe
-          - The application crashed before rendering any frames
-          - The screenshot capture code failed to write the PPM file
-          - Build error in screenshot mode
-
-          ### Workflow Run
-          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          ### Steps to Reproduce
-          1. Run: `zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true`
-          2. With Lavapipe ICD and headless Weston compositor
-          3. Check if `screenshot.ppm` is created
-          EOF
-          )"
+      - name: Run opencode failure diagnosis
+        if: failure() || steps.screenshot.outcome == 'failure' || steps.convert.outputs.screenshot_exists != 'true'
+        uses: anomalyco/opencode/github@v1.3.3
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        with:
+          model: kimi-for-coding/k2p5
+          prompt: |
+            You are a senior systems programmer debugging a CI failure in a Zig voxel engine project.
+
+            ## SITUATION
+
+            The automated visual test workflow failed. This test:
+            1. Starts a headless Weston compositor (1280x720)
+            2. Builds and runs the game with Lavapipe (software Vulkan): `zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true`
+            3. The game should render the HomeScreen menu for 5 frames, capture a screenshot as PPM, and exit
+            4. The PPM is then converted to PNG
+
+            Something went wrong. Your job is to diagnose the failure and file a detailed GitHub issue.
+
+            ## YOUR TASK
+
+            1. **Read the build log**: Read `build-output.log` in the workspace root. This contains the full stdout/stderr from the game run.
+
+            2. **Check for common failure patterns** in the log:
+               - Vulkan instance/device creation failures
+               - Swapchain creation errors (especially in headless mode)
+               - Shader compilation failures
+               - Screenshot capture errors (staging buffer, fence timeout, PPM write)
+               - Application panics or segfaults
+               - Missing files or environment issues
+
+            3. **Read relevant source code** to understand the failure:
+               - `src/engine/graphics/vulkan/screenshot.zig` — screenshot capture implementation
+               - `src/engine/graphics/vulkan_swapchain.zig` — headless swapchain setup (look at `headless_mode` path)
+               - `src/game/app.zig` — screenshot mode initialization and frame counting
+               - `src/game/screens/home.zig` — the HomeScreen that should be rendered
+               - `src/engine/graphics/rhi_vulkan.zig` — RHI initialization
+
+            4. **Diagnose root cause**: Based on the log output and code, determine what went wrong and why.
+
+            5. **File a GitHub issue** with label `visual-test` containing:
+               - Title: `[Visual Test] {concise description of the failure}`
+               - The exact error output from the log (relevant lines only, not the entire log)
+               - Your diagnosis of the root cause
+               - The specific file and function where the failure originates
+               - A suggested fix (code snippet if applicable)
+
+            ## IMPORTANT CONTEXT
+            - The game uses `-Dscreenshot-path=screenshot.ppm` which sets `build_options.screenshot_path`
+            - This enables screenshot mode: loads HomeScreen instead of WorldScreen, counts frames, captures PPM via Vulkan, then exits
+            - The environment has `ZIGCRAFT_SAFE_RENDER=1` and `ZIGCRAFT_SMOKE_FRAMES=5`
+            - Lavapipe is the software Vulkan driver (VK_ICD_FILENAMES points to lvp_icd.x86_64.json)
+            - The headless swapchain creates an offscreen VkImage with `VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT`
+
+            ## CRITICAL CONSTRAINTS
+            - You may ONLY create a single GitHub issue. Do NOT create branches, PRs, or modify files.
+            - Read the actual log and code — do not guess. Reference specific log lines and source file locations.
+            - If you cannot determine the root cause, file the issue with what you found and note that further investigation is needed.
+            - Include the workflow run link in the issue: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
