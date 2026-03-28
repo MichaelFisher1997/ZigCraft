@@ -4,6 +4,7 @@ const Color = @import("ui_system.zig").Color;
 const Rect = @import("ui_system.zig").Rect;
 const rhi = @import("../graphics/rhi.zig");
 const RenderDeviceStats = @import("../graphics/render_device.zig").Stats;
+const LODLevel = @import("../../world/lod_chunk.zig").LODLevel;
 const font = @import("font.zig");
 
 pub const TimingOverlay = struct {
@@ -152,6 +153,6 @@ pub const WorldStats = struct {
 };
 
 pub const LODStatsDisplay = struct {
-    loaded: [4]u32,
+    loaded: [LODLevel.count]u32,
     memory_used_mb: u32,
 };

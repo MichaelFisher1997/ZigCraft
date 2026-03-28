@@ -164,7 +164,7 @@ pub const App = struct {
 
     fn getWorldStats(self: *const App) ?WorldStats {
         if (self.screen_manager.stack.items.len == 0) return null;
-        const top = self.screen_manager.stack.items[self.screen_manager.stack.items.len - 1];
+        const top = self.screen_manager.stack.getLast();
         return top.getWorldStats();
     }
 
