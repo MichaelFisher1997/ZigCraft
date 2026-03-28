@@ -13,6 +13,7 @@ const DebugShadowOverlay = @import("../../engine/ui/debug_shadow_overlay.zig").D
 const DebugLPVOverlay = @import("../../engine/ui/debug_lpv_overlay.zig").DebugLPVOverlay;
 const DebugMenuOverlay = @import("../../engine/ui/debug_menu.zig").DebugMenuOverlay;
 const DebugFeature = @import("../../engine/ui/debug_menu.zig").DebugFeature;
+const ChunkInspectorOverlay = @import("../../engine/ui/chunk_inspector_overlay.zig").ChunkInspectorOverlay;
 const Font = @import("../../engine/ui/font.zig");
 const log = @import("../../engine/core/log.zig");
 
@@ -21,6 +22,7 @@ pub const WorldScreen = struct {
     session: *GameSession,
     last_debug_toggle_time: f32 = 0,
     debug_menu: DebugMenuOverlay,
+    chunk_inspector_overlay: ChunkInspectorOverlay = .{},
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -135,6 +137,11 @@ pub const WorldScreen = struct {
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lpv_overlay)) {
             ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active;
             log.log.info("LPV overlay {s}", .{if (ctx.settings.debug_lpv_overlay_active) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_chunk_inspector)) {
+            self.chunk_inspector_overlay.toggle();
+            log.log.info("Chunk inspector {s}", .{if (self.chunk_inspector_overlay.enabled) "enabled" else "disabled"});
             self.last_debug_toggle_time = now;
         }
 
@@ -331,6 +338,14 @@ pub const WorldScreen = struct {
             Font.drawText(ui, line3, text_x, text_y + 30.0, 1.5, .{ .r = 0.95, .g = 0.98, .b = 1.0, .a = 1.0 });
         }
 
+        if (self.chunk_inspector_overlay.enabled) {
+            self.chunk_inspector_overlay.draw(
+                ui,
+                self.session.world.getRenderStats(),
+                self.session.world.getChunkStateCounts(),
+            );
+        }
+
         if (self.debug_menu.enabled) {
             const feature_states = self.collectDebugStates(ctx, render_system);
             const scroll_delta = ctx.input.getScrollDelta();
@@ -371,6 +386,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.lpv_overlay)] = ctx.settings.debug_lpv_overlay_active;
         states[@intFromEnum(DebugFeature.creative_mode)] = self.session.creative_mode;
         states[@intFromEnum(DebugFeature.time_pause)] = self.session.atmosphere.time.time_scale == 0.0;
+        states[@intFromEnum(DebugFeature.chunk_inspector)] = self.chunk_inspector_overlay.enabled;
         return states;
     }
 
@@ -434,6 +450,9 @@ pub const WorldScreen = struct {
             },
             .time_pause => {
                 self.session.atmosphere.time.time_scale = if (self.session.atmosphere.time.time_scale > 0) @as(f32, 0.0) else @as(f32, 1.0);
+            },
+            .chunk_inspector => {
+                self.chunk_inspector_overlay.toggle();
             },
         }
     }

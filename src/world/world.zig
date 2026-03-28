@@ -27,6 +27,7 @@ const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
 const RenderStats = @import("world_renderer.zig").RenderStats;
+const ChunkStateCounts = @import("../engine/ui/chunk_inspector_overlay.zig").ChunkStateCounts;
 const JobQueue = @import("../engine/core/job_system.zig").JobQueue;
 const WorkerPool = @import("../engine/core/job_system.zig").WorkerPool;
 const Job = @import("../engine/core/job_system.zig").Job;
@@ -262,6 +263,31 @@ pub const World = struct {
 
     pub fn getRenderStats(self: *const World) RenderStats {
         return self.renderer.last_render_stats;
+    }
+
+    /// Counts chunks by state for the debug inspector overlay.
+    /// Note: Holds a shared mutex lock while iterating all chunks.
+    /// May cause minor contention with world streamer threads under heavy load.
+    pub fn getChunkStateCounts(self: *World) ChunkStateCounts {
+        self.storage.chunks_mutex.lockShared();
+        defer self.storage.chunks_mutex.unlockShared();
+
+        var counts: ChunkStateCounts = .{};
+        counts.total = @intCast(self.storage.chunks.count());
+
+        var iter = self.storage.chunks.iterator();
+        while (iter.next()) |entry| {
+            const state = entry.value_ptr.*.chunk.state;
+            switch (state) {
+                .missing => counts.missing += 1,
+                .generating => counts.generating += 1,
+                .meshing => counts.meshing += 1,
+                .renderable => counts.renderable += 1,
+                else => counts.other_states += 1,
+            }
+            if (entry.value_ptr.*.chunk.dirty) counts.dirty += 1;
+        }
+        return counts;
     }
 
     pub fn getStats(self: *World) struct { chunks_loaded: usize, total_vertices: u64, gen_queue: usize, mesh_queue: usize, upload_queue: usize } {
