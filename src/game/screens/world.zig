@@ -4,6 +4,8 @@ const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const GameSession = @import("../session.zig").GameSession;
+const World = @import("../../world/world.zig").World;
+const LODStats = @import("../../world/lod_manager.zig").LODStats;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
 const RenderSystem = @import("../../engine/graphics/render_system.zig").RenderSystem;
@@ -18,6 +20,8 @@ const DebugFrustumOverlay = DebugFrustum.DebugFrustum;
 const FRUSTUM_VERTEX_COUNT = DebugFrustum.FRUSTUM_VERTEX_COUNT;
 const ChunkInspectorOverlay = @import("../../engine/ui/chunk_inspector_overlay.zig").ChunkInspectorOverlay;
 const Font = @import("../../engine/ui/font.zig");
+const WorldStats = @import("../../engine/ui/timing_overlay.zig").WorldStats;
+const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDisplay;
 const log = @import("../../engine/core/log.zig");
 const CSM = @import("../../engine/graphics/csm.zig");
 
@@ -36,6 +40,7 @@ pub const WorldScreen = struct {
         .draw = draw,
         .onEnter = onEnter,
         .onExit = onExit,
+        .getWorldStats = getWorldStatsIScreen,
     };
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
@@ -417,6 +422,34 @@ pub const WorldScreen = struct {
 
     pub fn screen(self: *@This()) IScreen {
         return Screen.makeScreen(@This(), self);
+    }
+
+    pub fn getWorldStats(self: *WorldScreen) ?WorldStats {
+        const ws = self.session.world;
+        const rs = ws.getRenderStats();
+        const stats = ws.getStats();
+        var lod_display: ?LODStatsDisplay = null;
+        if (ws.getLODStats()) |ls| {
+            lod_display = .{
+                .loaded = ls.loaded,
+                .memory_used_mb = ls.memory_used_mb,
+            };
+        }
+        return .{
+            .chunks_total = rs.chunks_total,
+            .chunks_rendered = rs.chunks_rendered,
+            .chunks_culled = rs.chunks_culled,
+            .vertices_rendered = rs.vertices_rendered,
+            .gen_queue = stats.gen_queue,
+            .mesh_queue = stats.mesh_queue,
+            .upload_queue = stats.upload_queue,
+            .lod = lod_display,
+        };
+    }
+
+    fn getWorldStatsIScreen(ptr: *anyopaque) ?WorldStats {
+        const self: *WorldScreen = @ptrCast(@alignCast(ptr));
+        return self.getWorldStats();
     }
 
     fn collectDebugStates(self: *WorldScreen, ctx: EngineContext, render_system: *RenderSystem) [DebugFeature.count]bool {

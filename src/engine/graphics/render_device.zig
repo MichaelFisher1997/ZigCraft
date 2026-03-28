@@ -379,11 +379,12 @@ const TexturePool = struct {
         var total: usize = 0;
         for (self.textures.items) |entry| {
             if (entry.alive) {
-                const bytes_per_pixel = switch (entry.format) {
+                const bytes_per_pixel: u32 = switch (entry.format) {
                     .rgb => 3,
-                    .rgba => 4,
+                    .rgba, .rgba_srgb => 4,
                     .red => 1,
                     .depth => 4,
+                    .rgba32f => 16,
                 };
                 total += @as(usize, entry.width) * entry.height * bytes_per_pixel;
             }

@@ -4,6 +4,9 @@
 const std = @import("std");
 const UISystem = @import("ui_system.zig").UISystem;
 const TimingOverlay = @import("timing_overlay.zig").TimingOverlay;
+const PerformanceData = @import("timing_overlay.zig").PerformanceData;
+const WorldStats = @import("timing_overlay.zig").WorldStats;
+const RenderDeviceStats = @import("../graphics/render_device.zig").Stats;
 const rhi = @import("../graphics/rhi.zig");
 const IRawInputProvider = @import("../input/interfaces.zig").IRawInputProvider;
 const IInputMapper = @import("../../game/input_mapper.zig").IInputMapper;
@@ -42,15 +45,25 @@ pub const UISystemManager = struct {
         }
     }
 
-    pub fn draw(self: *UISystemManager, screen_manager: *ScreenManager, rhi_ptr: *rhi.RHI) !void {
+    pub fn draw(self: *UISystemManager, screen_manager: *ScreenManager, rhi_ptr: *rhi.RHI, world_stats: ?WorldStats, cpu_frame_ms: f32, fps: f32) !void {
         if (self.ui) |*u| {
             try screen_manager.draw(u);
 
             if (self.timing_overlay.enabled) {
                 u.begin();
                 const timing = rhi_ptr.timing();
-                const results = timing.getTimingResults();
-                self.timing_overlay.draw(u, results);
+                const gpu_timing = timing.getTimingResults();
+
+                const gpu_stats = if (rhi_ptr.device) |device| device.getStats() else std.mem.zeroes(RenderDeviceStats);
+
+                const data = PerformanceData{
+                    .gpu = gpu_timing,
+                    .cpu_frame_ms = cpu_frame_ms,
+                    .fps = fps,
+                    .world = world_stats,
+                    .gpu_stats = gpu_stats,
+                };
+                self.timing_overlay.draw(u, data);
                 u.end();
             }
         }
