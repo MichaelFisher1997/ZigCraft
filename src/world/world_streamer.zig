@@ -238,7 +238,7 @@ pub const WorldStreamer = struct {
     pub fn updateFrame(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         if (self.paused) return;
 
-        self.updateStreaming(player_pos, dt);
+        try self.updateStreaming(player_pos, dt);
         self.processUploads();
         try self.processUnloads(player_pos);
     }
