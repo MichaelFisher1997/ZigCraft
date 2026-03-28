@@ -25,6 +25,7 @@ pub const DebugFeature = enum(u8) {
     frustum_debug,
     creative_mode,
     time_pause,
+    chunk_inspector,
 
     pub const count = @typeInfo(DebugFeature).@"enum".fields.len;
 };
@@ -53,6 +54,7 @@ pub const FEATURE_INFOS = [DebugFeature.count]FeatureInfo{
     .{ .label = "FRUSTUM DEBUG", .hotkey = "J" },
     .{ .label = "CREATIVE MODE", .hotkey = "F12" },
     .{ .label = "TIME PAUSE", .hotkey = "N" },
+    .{ .label = "CHUNK INSPECTOR", .hotkey = "J" },
 };
 
 pub const DebugMenuOverlay = struct {

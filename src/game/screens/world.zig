@@ -13,7 +13,10 @@ const DebugShadowOverlay = @import("../../engine/ui/debug_shadow_overlay.zig").D
 const DebugLPVOverlay = @import("../../engine/ui/debug_lpv_overlay.zig").DebugLPVOverlay;
 const DebugMenuOverlay = @import("../../engine/ui/debug_menu.zig").DebugMenuOverlay;
 const DebugFeature = @import("../../engine/ui/debug_menu.zig").DebugFeature;
-const DebugFrustum = @import("../../engine/ui/debug_frustum.zig").DebugFrustum;
+const DebugFrustum = @import("../../engine/ui/debug_frustum.zig");
+const DebugFrustumOverlay = DebugFrustum.DebugFrustum;
+const FRUSTUM_VERTEX_COUNT = DebugFrustum.FRUSTUM_VERTEX_COUNT;
+const ChunkInspectorOverlay = @import("../../engine/ui/chunk_inspector_overlay.zig").ChunkInspectorOverlay;
 const Font = @import("../../engine/ui/font.zig");
 const log = @import("../../engine/core/log.zig");
 const CSM = @import("../../engine/graphics/csm.zig");
@@ -25,6 +28,7 @@ pub const WorldScreen = struct {
     debug_menu: DebugMenuOverlay,
     frustum_buffer: rhi_pkg.BufferHandle = 0,
     frustum_initialized: bool = false,
+    chunk_inspector_overlay: ChunkInspectorOverlay = .{},
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -147,6 +151,11 @@ pub const WorldScreen = struct {
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_frustum_debug)) {
             ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active;
             log.log.info("Frustum debug {s}", .{if (ctx.settings.debug_frustum_active) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_chunk_inspector)) {
+            self.chunk_inspector_overlay.toggle();
+            log.log.info("Chunk inspector {s}", .{if (self.chunk_inspector_overlay.enabled) "enabled" else "disabled"});
             self.last_debug_toggle_time = now;
         }
 
@@ -358,24 +367,32 @@ pub const WorldScreen = struct {
         if (ctx.settings.debug_frustum_active) {
             if (!self.frustum_initialized) {
                 self.frustum_buffer = try render_system.getRHI().resourceManager().createBuffer(
-                    @sizeOf([DebugFrustum.FRUSTUM_VERTEX_COUNT]rhi_pkg.Vertex),
+                    @sizeOf([FRUSTUM_VERTEX_COUNT]rhi_pkg.Vertex),
                     .vertex,
                 );
                 self.frustum_initialized = true;
             }
 
-            const corners = DebugFrustum.extractCorners(view_proj_render, camera.getViewMatrixOriginCentered());
-            const frustum_verts = DebugFrustum.buildLineVertices(corners, DebugFrustum.DefaultColor);
+            const corners = DebugFrustumOverlay.extractCorners(view_proj_render, camera.getViewMatrixOriginCentered());
+            const frustum_verts = DebugFrustumOverlay.buildLineVertices(corners, DebugFrustumOverlay.DefaultColor);
             try render_system.getRHI().resourceManager().uploadBuffer(
                 self.frustum_buffer,
                 std.mem.asBytes(&frustum_verts),
             );
 
-            DebugFrustum.draw(
+            DebugFrustumOverlay.draw(
                 rhi.renderContext(),
                 self.frustum_buffer,
-                DebugFrustum.FRUSTUM_VERTEX_COUNT,
+                FRUSTUM_VERTEX_COUNT,
                 camera.position,
+            );
+        }
+
+        if (self.chunk_inspector_overlay.enabled) {
+            self.chunk_inspector_overlay.draw(
+                ui,
+                self.session.world.getRenderStats(),
+                self.session.world.getChunkStateCounts(),
             );
         }
 
@@ -420,6 +437,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.frustum_debug)] = ctx.settings.debug_frustum_active;
         states[@intFromEnum(DebugFeature.creative_mode)] = self.session.creative_mode;
         states[@intFromEnum(DebugFeature.time_pause)] = self.session.atmosphere.time.time_scale == 0.0;
+        states[@intFromEnum(DebugFeature.chunk_inspector)] = self.chunk_inspector_overlay.enabled;
         return states;
     }
 
@@ -486,6 +504,9 @@ pub const WorldScreen = struct {
             },
             .time_pause => {
                 self.session.atmosphere.time.time_scale = if (self.session.atmosphere.time.time_scale > 0) @as(f32, 0.0) else @as(f32, 1.0);
+            },
+            .chunk_inspector => {
+                self.chunk_inspector_overlay.toggle();
             },
         }
     }
