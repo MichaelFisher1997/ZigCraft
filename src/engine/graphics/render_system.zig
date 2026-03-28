@@ -101,8 +101,10 @@ pub const RenderSystem = struct {
         const rhi = try rhi_vulkan.createRHI(allocator, window, null, settings.getShadowResolution(), settings.msaa_samples, settings.anisotropic_filtering);
         errdefer rhi.deinit();
 
+        log.log.info("RenderSystem.init: initializing RHI device", .{});
         try rhi.init(allocator, null);
 
+        log.log.info("RenderSystem.init: scanning resource packs", .{});
         var resource_pack_manager = ResourcePackManager.init(allocator);
         errdefer resource_pack_manager.deinit();
         try resource_pack_manager.scanPacks();
@@ -112,6 +114,7 @@ pub const RenderSystem = struct {
             try resource_pack_manager.setActivePack("default");
         }
 
+        log.log.info("RenderSystem.init: creating texture atlas (max_resolution={})", .{settings.max_texture_resolution});
         const atlas = try TextureAtlas.init(allocator, rhi.resourceManager(), &resource_pack_manager, settings.max_texture_resolution);
         var atlas_mut = atlas;
         errdefer atlas_mut.deinit();
@@ -134,6 +137,7 @@ pub const RenderSystem = struct {
         }
         errdefer if (env_map) |*t| t.deinit();
 
+        log.log.info("RenderSystem.init: initializing AtmosphereSystem", .{});
         const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
         errdefer atmosphere_system.deinit();
 
@@ -177,8 +181,10 @@ pub const RenderSystem = struct {
             .disable_clouds = disable_clouds,
         };
 
+        log.log.info("RenderSystem.init: initializing MaterialSystem", .{});
         self.material_system = try MaterialSystem.init(allocator, &self.atlas);
         errdefer self.material_system.deinit();
+        log.log.info("RenderSystem.init: initializing LPVSystem (grid_size={}, cell_size={})", .{ settings.lpv_grid_size, settings.lpv_cell_size });
         self.lpv_system = try LPVSystem.init(
             allocator,
             rhi,

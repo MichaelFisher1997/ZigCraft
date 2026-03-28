@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("../../engine/core/log.zig");
 const gen_interface = @import("generator_interface.zig");
 const Generator = gen_interface.Generator;
 const overworld = @import("overworld_generator.zig");
@@ -51,7 +52,7 @@ pub fn getGeneratorInfo(index: usize) gen_interface.GeneratorInfo {
 pub fn createGenerator(index: usize, seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
     if (index >= GENERATORS.len) return error.InvalidGeneratorIndex;
     return GENERATORS[index].initFn(seed, allocator) catch |err| {
-        std.log.err("Generator initialization failed for index {}: {}", .{ index, err });
+        log.log.err("Generator initialization failed for index {}: {}", .{ index, err });
         return err;
     };
 }

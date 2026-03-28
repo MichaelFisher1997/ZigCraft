@@ -481,7 +481,7 @@ pub const WorldStreamer = struct {
 
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
             chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
-                log.log.err("Mesh build failed for chunk ({}, {}): {}", .{ cx, cz, err });
+                log.log.errWithTrace("Mesh build failed for chunk ({}, {}): {}", .{ cx, cz, err });
             };
             if (self.mesh_queue.abort_worker) {
                 chunk_data.chunk.state = .generated;

@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("../engine/core/log.zig");
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const ResourceManager = rhi_mod.ResourceManager;
 const IDeviceQuery = rhi_mod.IDeviceQuery;
@@ -35,7 +36,7 @@ pub const GlobalVertexAllocator = struct {
         var free_blocks = std.ArrayListUnmanaged(FreeBlock){};
         try free_blocks.append(allocator, .{ .offset = 0, .size = capacity });
 
-        std.log.info("Initialized GlobalVertexAllocator with {}MB, buffer handle={}", .{ capacity_mb, buffer });
+        log.log.info("Initialized GlobalVertexAllocator with {}MB, buffer handle={}", .{ capacity_mb, buffer });
 
         var deferred_frees: [rhi_mod.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(VertexAllocation) = undefined;
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
@@ -126,7 +127,7 @@ pub const GlobalVertexAllocator = struct {
             total_free += block.size;
         }
 
-        std.log.err("GlobalVertexAllocator OOM: needed {} ({} vertices), capacity {}GB, total free: {} KB, free blocks: {}. Largest block: {} KB", .{
+        log.log.err("GlobalVertexAllocator OOM: needed {} ({} vertices), capacity {}GB, total free: {} KB, free blocks: {}. Largest block: {} KB", .{
             size_needed,
             vertices.len,
             self.capacity / (1024 * 1024 * 1024),
@@ -154,7 +155,7 @@ pub const GlobalVertexAllocator = struct {
         const frame_idx = self.device_query.getFrameIndex();
         self.deferred_frees[frame_idx].append(self.allocator, allocation) catch {
             // Fallback to immediate free if queue is full (better than leak, though slightly risky)
-            std.log.warn("Deferred free queue full, falling back to immediate free", .{});
+            log.log.warn("Deferred free queue full, falling back to immediate free", .{});
             self.freeImmediateUnlocked(allocation);
         };
     }
@@ -165,7 +166,7 @@ pub const GlobalVertexAllocator = struct {
         // Safety check: ensure we're not double-freeing or freeing an overlapping region
         for (self.free_blocks.items) |block| {
             if (allocation.offset < block.offset + block.size and allocation.offset + size > block.offset) {
-                std.log.err("Double-free or overlapping free detected in GlobalVertexAllocator! offset={}, size={}", .{ allocation.offset, size });
+                log.log.err("Double-free or overlapping free detected in GlobalVertexAllocator! offset={}, size={}", .{ allocation.offset, size });
                 return;
             }
         }
@@ -185,7 +186,7 @@ pub const GlobalVertexAllocator = struct {
         }
 
         self.free_blocks.insert(self.allocator, insert_idx, new_block) catch {
-            std.log.err("Failed to track free block in GlobalVertexAllocator", .{});
+            log.log.err("Failed to track free block in GlobalVertexAllocator", .{});
             return;
         };
 

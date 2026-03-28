@@ -1,6 +1,7 @@
 const std = @import("std");
 const data = @import("data.zig");
 const Settings = data.Settings;
+const log = @import("../../engine/core/log.zig");
 
 // Preset config compatible with static presets but with dynamic string name
 pub const PresetConfig = struct {
@@ -48,7 +49,7 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
 
     // Load from assets/config/presets.json
     const content = std.fs.cwd().readFileAlloc("assets/config/presets.json", allocator, @enumFromInt(1024 * 1024)) catch |err| {
-        std.log.warn("Failed to open presets.json: {}", .{err});
+        log.log.warn("Failed to open presets.json: {}", .{err});
         return err;
     };
     defer allocator.free(content);
@@ -64,51 +65,51 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
         // Validate preset values against metadata constraints
         // Skip invalid presets instead of failing entire load
         if (p.shadow_distance < 100.0 or p.shadow_distance > 1000.0) {
-            std.log.warn("Skipping preset '{s}': invalid shadow_distance {}", .{ p.name, p.shadow_distance });
+            log.log.warn("Skipping preset '{s}': invalid shadow_distance {}", .{ p.name, p.shadow_distance });
             continue;
         }
         if (p.shadow_caster_distance < 50.0 or p.shadow_caster_distance > 500.0) {
-            std.log.warn("Skipping preset '{s}': invalid shadow_caster_distance {}", .{ p.name, p.shadow_caster_distance });
+            log.log.warn("Skipping preset '{s}': invalid shadow_caster_distance {}", .{ p.name, p.shadow_caster_distance });
             continue;
         }
         if (p.shadow_lod_bias < 0.0 or p.shadow_lod_bias > 3.0) {
-            std.log.warn("Skipping preset '{s}': invalid shadow_lod_bias {}", .{ p.name, p.shadow_lod_bias });
+            log.log.warn("Skipping preset '{s}': invalid shadow_lod_bias {}", .{ p.name, p.shadow_lod_bias });
             continue;
         }
         if (p.volumetric_density < 0.0 or p.volumetric_density > 0.5) {
-            std.log.warn("Skipping preset '{s}': invalid volumetric_density {}", .{ p.name, p.volumetric_density });
+            log.log.warn("Skipping preset '{s}': invalid volumetric_density {}", .{ p.name, p.volumetric_density });
             continue;
         }
         if (p.volumetric_steps < 4 or p.volumetric_steps > 32) {
-            std.log.warn("Skipping preset '{s}': invalid volumetric_steps {}", .{ p.name, p.volumetric_steps });
+            log.log.warn("Skipping preset '{s}': invalid volumetric_steps {}", .{ p.name, p.volumetric_steps });
             continue;
         }
         if (p.volumetric_scattering < 0.0 or p.volumetric_scattering > 1.0) {
-            std.log.warn("Skipping preset '{s}': invalid volumetric_scattering {}", .{ p.name, p.volumetric_scattering });
+            log.log.warn("Skipping preset '{s}': invalid volumetric_scattering {}", .{ p.name, p.volumetric_scattering });
             continue;
         }
         if (p.bloom_intensity < 0.0 or p.bloom_intensity > 2.0) {
-            std.log.warn("Skipping preset '{s}': invalid bloom_intensity {}", .{ p.name, p.bloom_intensity });
+            log.log.warn("Skipping preset '{s}': invalid bloom_intensity {}", .{ p.name, p.bloom_intensity });
             continue;
         }
         if (p.lpv_intensity < 0.0 or p.lpv_intensity > 2.0) {
-            std.log.warn("Skipping preset '{s}': invalid lpv_intensity {}", .{ p.name, p.lpv_intensity });
+            log.log.warn("Skipping preset '{s}': invalid lpv_intensity {}", .{ p.name, p.lpv_intensity });
             continue;
         }
         if (p.lpv_quality_preset > 2) {
-            std.log.warn("Skipping preset '{s}': invalid lpv_quality_preset {}", .{ p.name, p.lpv_quality_preset });
+            log.log.warn("Skipping preset '{s}': invalid lpv_quality_preset {}", .{ p.name, p.lpv_quality_preset });
             continue;
         }
         if (p.lpv_cell_size < 1.0 or p.lpv_cell_size > 4.0) {
-            std.log.warn("Skipping preset '{s}': invalid lpv_cell_size {}", .{ p.name, p.lpv_cell_size });
+            log.log.warn("Skipping preset '{s}': invalid lpv_cell_size {}", .{ p.name, p.lpv_cell_size });
             continue;
         }
         if (p.lpv_grid_size != 16 and p.lpv_grid_size != 32 and p.lpv_grid_size != 64) {
-            std.log.warn("Skipping preset '{s}': invalid lpv_grid_size {}", .{ p.name, p.lpv_grid_size });
+            log.log.warn("Skipping preset '{s}': invalid lpv_grid_size {}", .{ p.name, p.lpv_grid_size });
             continue;
         }
         if (p.lpv_propagation_iterations < 1 or p.lpv_propagation_iterations > 8) {
-            std.log.warn("Skipping preset '{s}': invalid lpv_propagation_iterations {}", .{ p.name, p.lpv_propagation_iterations });
+            log.log.warn("Skipping preset '{s}': invalid lpv_propagation_iterations {}", .{ p.name, p.lpv_propagation_iterations });
             continue;
         }
         // Duplicate name because parsed.deinit() will free strings
@@ -116,7 +117,7 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
         errdefer allocator.free(p.name);
         try graphics_presets.append(allocator, p);
     }
-    std.log.info("Loaded {} graphics presets", .{graphics_presets.items.len});
+    log.log.info("Loaded {} graphics presets", .{graphics_presets.items.len});
 }
 
 pub fn deinitPresets(allocator: std.mem.Allocator) void {

@@ -5,6 +5,7 @@
 //! delegated to modules in `meshing/`.
 
 const std = @import("std");
+const log = @import("../engine/core/log.zig");
 
 const Chunk = @import("chunk.zig").Chunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
@@ -249,7 +250,7 @@ pub const ChunkMesh = struct {
 
             if (v.len > 0) {
                 self.solid_allocation = allocator.allocate(v) catch |err| {
-                    std.log.err("Failed to allocate chunk mesh vertices (will retry): {}", .{err});
+                    log.log.errWithTrace("Failed to allocate chunk mesh vertices (will retry): {}", .{err});
                     return;
                 };
             }
@@ -272,7 +273,7 @@ pub const ChunkMesh = struct {
 
             if (v.len > 0) {
                 self.cutout_allocation = allocator.allocate(v) catch |err| {
-                    std.log.err("Failed to allocate chunk cutout vertices (will retry): {}", .{err});
+                    log.log.errWithTrace("Failed to allocate chunk cutout vertices (will retry): {}", .{err});
                     return;
                 };
             }
@@ -294,7 +295,7 @@ pub const ChunkMesh = struct {
 
             if (v.len > 0) {
                 self.fluid_allocation = allocator.allocate(v) catch |err| {
-                    std.log.err("Failed to allocate chunk fluid vertices (will retry): {}", .{err});
+                    log.log.errWithTrace("Failed to allocate chunk fluid vertices (will retry): {}", .{err});
                     return;
                 };
             }

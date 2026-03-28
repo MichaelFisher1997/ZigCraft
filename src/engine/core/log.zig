@@ -1,4 +1,12 @@
-//! Engine-wide logging system with severity levels.
+//! Engine-wide logging system with severity levels and error return trace
+//! support. All logging should go through this module rather than std.log
+//! directly to ensure consistent formatting.
+//!
+//! Usage:
+//!   const log = @import("../engine/core/log.zig");
+//!   log.log.info("initialized subsystem", .{});
+//!   log.log.err("failed: {}", .{err});
+//!   log.log.errWithTrace("init failed: {}", .{err}); // includes stack trace
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -43,6 +51,13 @@ pub const Logger = struct {
         self.log(.fatal, fmt, args);
     }
 
+    pub fn errWithTrace(self: *const Logger, comptime fmt: []const u8, args: anytype) void {
+        self.log(.err, fmt, args);
+        if (@errorReturnTrace()) |ret_trace| {
+            std.debug.dumpStackTrace(ret_trace);
+        }
+    }
+
     fn log(self: *const Logger, level: LogLevel, comptime fmt: []const u8, args: anytype) void {
         if (@intFromEnum(level) < @intFromEnum(self.min_level)) return;
 
@@ -59,5 +74,4 @@ pub const Logger = struct {
     }
 };
 
-/// Global logger instance
 pub var log = Logger.init(if (builtin.is_test) .err else .debug);

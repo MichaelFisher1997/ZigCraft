@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 const resource_texture_ops = @import("resource_texture_ops.zig");
@@ -150,7 +151,7 @@ pub const ResourceManager = struct {
         fence_info.sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fence_info.flags = 0; // Not signaled initially
         Utils.checkVk(c.vkCreateFence(vulkan_device.vk_device, &fence_info, null, &self.transfer_fence)) catch |err| {
-            std.log.err("Failed to create transfer fence: {}", .{err});
+            log.log.err("Failed to create transfer fence: {}", .{err});
             // Cleanup command pool and buffers before returning to avoid leaks
             if (self.transfer_command_pool != null) {
                 c.vkDestroyCommandPool(vulkan_device.vk_device, self.transfer_command_pool, null);
@@ -317,7 +318,7 @@ pub const ResourceManager = struct {
         };
         _ = self.buffers.remove(handle);
         self.buffer_deletion_queue[self.current_frame_index].append(self.allocator, .{ .buffer = buf.buffer, .memory = buf.memory }) catch |err| {
-            std.log.err("Failed to queue buffer deletion: {}", .{err});
+            log.log.err("Failed to queue buffer deletion: {}", .{err});
         };
     }
 
@@ -330,7 +331,7 @@ pub const ResourceManager = struct {
 
         const staging = &self.staging_buffers[self.current_frame_index];
         const staging_offset = staging.allocate(data.len) orelse {
-            std.log.err("Staging buffer overflow in updateBuffer! Data dropped.", .{});
+            log.log.err("Staging buffer overflow in updateBuffer! Data dropped.", .{});
             return error.OutOfMemory;
         };
 
@@ -389,7 +390,7 @@ pub const ResourceManager = struct {
             .sampler = tex.sampler,
             .is_owned = tex.is_owned,
         }) catch |err| {
-            std.log.err("Failed to queue texture deletion: {}", .{err});
+            log.log.err("Failed to queue texture deletion: {}", .{err});
         };
     }
 
@@ -481,7 +482,7 @@ pub const ResourceManager = struct {
             c.vkCmdPipelineBarrier(transfer_cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &barrier);
         } else {
             // Buffer full, drop update for now (or implement fallback)
-            std.log.err("Staging buffer full during updateTexture! Update dropped.", .{});
+            log.log.err("Staging buffer full during updateTexture! Update dropped.", .{});
             return error.OutOfMemory;
         }
     }

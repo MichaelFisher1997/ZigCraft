@@ -6,6 +6,7 @@
 const std = @import("std");
 const c = @import("c.zig").c;
 const VulkanDevice = @import("engine/graphics/vulkan_device.zig").VulkanDevice;
+const log = @import("engine/core/log.zig");
 
 pub fn main() !void {
     std.debug.print("\n=== GPU Robustness Demo ===\n\n", .{});
@@ -23,7 +24,7 @@ pub fn main() !void {
     defer c.SDL_DestroyWindow(window);
 
     // 2. Create Robust Vulkan Device
-    std.log.info("Initializing robust Vulkan device...", .{});
+    log.log.info("Initializing robust Vulkan device...", .{});
     var device = try VulkanDevice.init(allocator, window.?);
     device.initDebugMessenger();
     defer device.deinit();
@@ -87,7 +88,7 @@ pub fn main() !void {
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &cmd;
 
-    std.log.info("Submitting via device.submitGuarded()...", .{});
+    log.log.info("Submitting via device.submitGuarded()...", .{});
     device.submitGuarded(submit_info, null) catch |err| {
         if (err == error.GpuLost) {
             std.debug.print("\n[EXPECTED] GPU was lost but system is stable.\n", .{});

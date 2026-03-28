@@ -115,7 +115,7 @@ pub const GameSession = struct {
         const effective_lod_enabled = if (safe_mode) false else lod_enabled;
 
         if (safe_mode) {
-            std.log.warn("ZIGCRAFT_SAFE_MODE enabled: render distance capped to {} and LOD disabled", .{effective_render_distance});
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: render distance capped to {} and LOD disabled", .{effective_render_distance});
         }
 
         const lod_config = if (safe_mode)

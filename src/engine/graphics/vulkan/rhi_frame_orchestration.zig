@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const build_options = @import("build_options");
 const bindings = @import("descriptor_bindings.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
@@ -28,52 +29,52 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     ctx.runtime.ssao_pass_active = false;
 
     ctx.swapchain.recreate() catch |err| {
-        std.log.err("Failed to recreate swapchain: {}", .{err});
+        log.log.errWithTrace("Failed to recreate swapchain: {}", .{err});
         return;
     };
 
     lifecycle.createHDRResources(ctx) catch |err| {
-        std.log.err("Failed to recreate HDR resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate HDR resources: {}", .{err});
         return;
     };
     setup.createGPassResources(ctx) catch |err| {
-        std.log.err("Failed to recreate G-Pass resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate G-Pass resources: {}", .{err});
         return;
     };
     setup.createSSAOResources(ctx) catch |err| {
-        std.log.err("Failed to recreate SSAO resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate SSAO resources: {}", .{err});
         return;
     };
     setup.createTAAResources(ctx) catch |err| {
-        std.log.err("Failed to recreate TAA resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate TAA resources: {}", .{err});
         return;
     };
     ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
-        std.log.err("Failed to recreate render pass: {}", .{err});
+        log.log.errWithTrace("Failed to recreate render pass: {}", .{err});
         return;
     };
     ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, ctx.options.msaa_samples) catch |err| {
-        std.log.err("Failed to recreate pipelines: {}", .{err});
+        log.log.errWithTrace("Failed to recreate pipelines: {}", .{err});
         return;
     };
     setup.createPostProcessResources(ctx) catch |err| {
-        std.log.err("Failed to recreate post-process resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate post-process resources: {}", .{err});
         return;
     };
     setup.createSwapchainUIResources(ctx) catch |err| {
-        std.log.err("Failed to recreate swapchain UI resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate swapchain UI resources: {}", .{err});
         return;
     };
     ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews()) catch |err| {
-        std.log.err("Failed to recreate FXAA resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate FXAA resources: {}", .{err});
         return;
     };
     ctx.pipeline_manager.createSwapchainUIPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.ui_swapchain_render_pass) catch |err| {
-        std.log.err("Failed to recreate swapchain UI pipelines: {}", .{err});
+        log.log.errWithTrace("Failed to recreate swapchain UI pipelines: {}", .{err});
         return;
     };
     ctx.bloom.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.hdr.hdr_view, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height, c.VK_FORMAT_R16G16B16A16_SFLOAT) catch |err| {
-        std.log.err("Failed to recreate Bloom resources: {}", .{err});
+        log.log.errWithTrace("Failed to recreate Bloom resources: {}", .{err});
         return;
     };
     setup.updatePostProcessDescriptorsWithBloom(ctx);
@@ -96,14 +97,14 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         }
 
         if (count > 0) {
-            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| std.log.warn("Failed to transition images: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.warn("Failed to transition images: {}", .{err});
         }
 
         if (ctx.gpass.g_depth_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| std.log.warn("Failed to transition G-depth image: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| log.log.warn("Failed to transition G-depth image: {}", .{err});
         }
         if (ctx.shadow_system.shadow_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true) catch |err| std.log.warn("Failed to transition Shadow image: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true) catch |err| log.log.warn("Failed to transition Shadow image: {}", .{err});
             for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
                 ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             }
@@ -192,7 +193,7 @@ pub fn prepareFrameState(ctx: anytype) void {
 
     if (ctx.draw.descriptors_dirty[ctx.frames.current_frame]) {
         if (ctx.descriptors.descriptor_sets[ctx.frames.current_frame] == null) {
-            std.log.err("CRITICAL: Descriptor set for frame {} is NULL!", .{ctx.frames.current_frame});
+            log.log.err("CRITICAL: Descriptor set for frame {} is NULL!", .{ctx.frames.current_frame});
             return;
         }
         var writes: [14]c.VkWriteDescriptorSet = undefined;
@@ -236,13 +237,13 @@ pub fn prepareFrameState(ctx: anytype) void {
         }
 
         if (ctx.shadow_system.shadow_sampler == null) {
-            std.log.err("CRITICAL: Shadow sampler is NULL!", .{});
+            log.log.err("CRITICAL: Shadow sampler is NULL!", .{});
         }
         if (ctx.shadow_system.shadow_sampler_regular == null) {
-            std.log.err("CRITICAL: Shadow regular sampler is NULL!", .{});
+            log.log.err("CRITICAL: Shadow regular sampler is NULL!", .{});
         }
         if (ctx.shadow_system.shadow_image_view == null) {
-            std.log.err("CRITICAL: Shadow image view is NULL!", .{});
+            log.log.err("CRITICAL: Shadow image view is NULL!", .{});
         }
         image_infos[info_count] = .{
             .sampler = ctx.shadow_system.shadow_sampler,

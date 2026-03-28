@@ -962,7 +962,7 @@ pub const LODManager = struct {
                 // Build mesh (expensive, done without lock)
                 // Note: buildMeshForChunk -> getOrCreateMesh acquires its own lock
                 self.buildMeshForChunk(chunk) catch |err| {
-                    log.log.err("Failed to build LOD{} async mesh: {}", .{ @intFromEnum(lod_level), err });
+                    log.log.errWithTrace("Failed to build LOD{} async mesh: {}", .{ @intFromEnum(lod_level), err });
                     new_state = .generated; // Retry later
                     chunk.unpin();
                     // Acquire lock briefly to update state

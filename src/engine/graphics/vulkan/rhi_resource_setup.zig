@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const Utils = @import("utils.zig");
 const shader_registry = @import("shader_registry.zig");
 const build_options = @import("build_options");
@@ -325,7 +326,7 @@ pub fn createGPassResources(ctx: anytype) !void {
     try lifecycle.transitionImagesToShaderRead(ctx, &d_images, true);
 
     ctx.gpass.g_pass_extent = extent;
-    std.log.debug("G-Pass resources created ({}x{}) with velocity buffer", .{ extent.width, extent.height });
+    log.log.debug("G-Pass resources created ({}x{}) with velocity buffer", .{ extent.width, extent.height });
 }
 
 pub fn createSSAOResources(ctx: anytype) !void {

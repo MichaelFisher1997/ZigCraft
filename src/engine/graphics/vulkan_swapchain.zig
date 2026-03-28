@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("../../c.zig").c;
 const rhi = @import("rhi.zig");
 const VulkanDevice = @import("vulkan_device.zig").VulkanDevice;
+const log = @import("../core/log.zig");
 
 pub const VulkanSwapchain = struct {
     device: *const VulkanDevice,
@@ -112,7 +113,7 @@ pub const VulkanSwapchain = struct {
 
     fn createSwapchain(self: *VulkanSwapchain) !void {
         if (self.headless_mode) {
-            std.log.info("VulkanSwapchain: Initializing in HEADLESS mode (offscreen)", .{});
+            log.log.info("VulkanSwapchain: Initializing in HEADLESS mode (offscreen)", .{});
             self.image_format = c.VK_FORMAT_B8G8R8A8_UNORM;
             self.extent = .{ .width = 1920, .height = 1080 };
             self.pixel_width = 1920;

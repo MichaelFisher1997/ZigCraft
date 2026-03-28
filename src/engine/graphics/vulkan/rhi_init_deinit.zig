@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const log = @import("../../core/log.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 const ResourceManager = @import("resource_manager.zig").ResourceManager;
@@ -70,7 +71,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     else
         false;
     if (ctx.options.safe_mode) {
-        std.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
+        log.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
     }
 
     try setup.createShadowResources(ctx);
@@ -116,14 +117,14 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.draw.current_lpv_texture_b = ctx.draw.dummy_texture_3d;
 
     const cloud_vbo_handle = try ctx.resources.createBuffer(8 * @sizeOf(f32), .vertex);
-    std.log.info("Cloud VBO handle: {}, map count: {}", .{ cloud_vbo_handle, ctx.resources.buffers.count() });
+    log.log.info("Cloud VBO handle: {}, map count: {}", .{ cloud_vbo_handle, ctx.resources.buffers.count() });
     if (cloud_vbo_handle == 0) {
-        std.log.err("Failed to create cloud VBO", .{});
+        log.log.err("Failed to create cloud VBO", .{});
         return error.InitializationFailed;
     }
     const cloud_buf = ctx.resources.buffers.get(cloud_vbo_handle);
     if (cloud_buf == null) {
-        std.log.err("Cloud VBO created but not found in map!", .{});
+        log.log.err("Cloud VBO created but not found in map!", .{});
         return error.InitializationFailed;
     }
     ctx.cloud.cloud_vbo = cloud_buf.?;
@@ -142,7 +143,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
             alloc_info.pSetLayouts = &ctx.pipeline_manager.ui_tex_descriptor_set_layout;
             const result = c.vkAllocateDescriptorSets(ctx.vulkan_device.vk_device, &alloc_info, &ctx.ui.ui_tex_descriptor_pool[i][j]);
             if (result != c.VK_SUCCESS) {
-                std.log.err("Failed to allocate UI texture descriptor set [{}][{}]: error {}. Pool state: maxSets={}, available may be exhausted by FXAA+Bloom+UI", .{ i, j, result, @as(u32, 1000) });
+                log.log.err("Failed to allocate UI texture descriptor set [{}][{}]: error {}. Pool state: maxSets={}, available may be exhausted by FXAA+Bloom+UI", .{ i, j, result, @as(u32, 1000) });
             }
         }
         ctx.ui.ui_tex_descriptor_next[i] = 0;
@@ -176,11 +177,11 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
         }
 
         if (count > 0) {
-            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| std.log.err("Failed to transition images during init: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.err("Failed to transition images during init: {}", .{err});
         }
 
         if (ctx.gpass.g_depth_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| std.log.err("Failed to transition G-depth image during init: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| log.log.err("Failed to transition G-depth image during init: {}", .{err});
         }
     }
 

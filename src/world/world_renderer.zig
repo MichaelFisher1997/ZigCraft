@@ -1,6 +1,7 @@
 //! World renderer - handles chunk rendering, culling, and MDI.
 
 const std = @import("std");
+const log = @import("../engine/core/log.zig");
 const ChunkData = @import("chunk_storage.zig").ChunkData;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
 const worldToChunk = @import("chunk.zig").worldToChunk;
@@ -55,7 +56,7 @@ pub const WorldRenderer = struct {
         const vertex_capacity_mb: usize = if (safe_mode) 1024 else 2048;
 
         if (safe_mode) {
-            std.log.warn("ZIGCRAFT_SAFE_MODE enabled: GlobalVertexAllocator reduced to {}MB", .{vertex_capacity_mb});
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: GlobalVertexAllocator reduced to {}MB", .{vertex_capacity_mb});
         }
 
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);

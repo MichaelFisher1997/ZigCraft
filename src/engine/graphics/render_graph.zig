@@ -305,7 +305,7 @@ pub const SkyPass = struct {
                 err != error.SkyPipelineLayoutNotReady and
                 err != error.CommandBufferNotReady)
             {
-                log.log.err("SkyPass: rendering failed: {}", .{err});
+                log.log.errWithTrace("SkyPass: rendering failed: {}", .{err});
             }
         };
     }
@@ -359,7 +359,7 @@ pub const CloudPass = struct {
                 err != error.CloudPipelineLayoutNotReady and
                 err != error.CommandBufferNotReady)
             {
-                log.log.err("CloudPass: rendering failed: {}", .{err});
+                log.log.errWithTrace("CloudPass: rendering failed: {}", .{err});
             }
         };
     }

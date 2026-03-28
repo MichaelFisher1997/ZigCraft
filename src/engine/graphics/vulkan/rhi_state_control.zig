@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
 const frame_orchestration = @import("rhi_frame_orchestration.zig");
+const log = @import("../../core/log.zig");
 
 pub fn waitIdle(ctx: anytype) void {
     if (!ctx.frames.dry_run and ctx.vulkan_device.vk_device != null) {
@@ -62,12 +63,12 @@ pub fn recover(ctx: anytype) !void {
     if (!ctx.runtime.gpu_fault_detected) return;
 
     if (ctx.vulkan_device.recovery_count >= ctx.vulkan_device.max_recovery_attempts) {
-        std.log.err("RHI: Max recovery attempts ({d}) exceeded. GPU is unstable.", .{ctx.vulkan_device.max_recovery_attempts});
+        log.log.err("RHI: Max recovery attempts ({d}) exceeded. GPU is unstable.", .{ctx.vulkan_device.max_recovery_attempts});
         return error.GpuLost;
     }
 
     ctx.vulkan_device.recovery_count += 1;
-    std.log.info("RHI: Attempting GPU recovery (Attempt {d}/{d})...", .{ ctx.vulkan_device.recovery_count, ctx.vulkan_device.max_recovery_attempts });
+    log.log.info("RHI: Attempting GPU recovery (Attempt {d}/{d})...", .{ ctx.vulkan_device.recovery_count, ctx.vulkan_device.max_recovery_attempts });
 
     _ = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
 
@@ -77,14 +78,14 @@ pub fn recover(ctx: anytype) !void {
     frame_orchestration.recreateSwapchainInternal(ctx);
 
     if (c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device) != c.VK_SUCCESS) {
-        std.log.err("RHI: Device unresponsive after recovery. Recovery failed.", .{});
+        log.log.err("RHI: Device unresponsive after recovery. Recovery failed.", .{});
         ctx.vulkan_device.recovery_fail_count += 1;
         ctx.runtime.gpu_fault_detected = true;
         return error.GpuLost;
     }
 
     ctx.vulkan_device.recovery_success_count += 1;
-    std.log.info("RHI: Recovery step complete. If issues persist, please restart.", .{});
+    log.log.info("RHI: Recovery step complete. If issues persist, please restart.", .{});
 }
 
 pub fn setWireframe(ctx: anytype, enabled: bool) void {
@@ -139,7 +140,7 @@ pub fn setVSync(ctx: anytype, enabled: bool) void {
         c.VK_PRESENT_MODE_FIFO_RELAXED_KHR => "FIFO_RELAXED",
         else => "UNKNOWN",
     };
-    std.log.info("Vulkan present mode: {s}", .{mode_name});
+    log.log.info("Vulkan present mode: {s}", .{mode_name});
 }
 
 pub fn setAnisotropicFiltering(ctx: anytype, level: u8) void {
@@ -160,7 +161,7 @@ pub fn setMSAA(ctx: anytype, samples: u8) void {
     ctx.swapchain.msaa_samples = clamped;
     ctx.runtime.framebuffer_resized = true;
     ctx.runtime.pipeline_rebuild_needed = true;
-    std.log.info("Vulkan MSAA set to {}x (pending swapchain recreation)", .{clamped});
+    log.log.info("Vulkan MSAA set to {}x (pending swapchain recreation)", .{clamped});
 }
 
 pub fn getMaxAnisotropy(ctx: anytype) u8 {
