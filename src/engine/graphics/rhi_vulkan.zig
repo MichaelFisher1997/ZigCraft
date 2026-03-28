@@ -376,6 +376,8 @@ fn createTexture3D(ctx_ptr: *anyopaque, width: u32, height: u32, depth: u32, for
 
 fn destroyTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
     ctx.resources.destroyTexture(handle);
 }
 
