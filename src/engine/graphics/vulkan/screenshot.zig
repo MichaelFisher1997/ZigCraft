@@ -20,6 +20,8 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
     const width = extent.width;
     const height = extent.height;
 
+    _ = c.vkDeviceWaitIdle(vk);
+
     const image_size: u64 = @as(u64, width) * height * 4;
 
     const staging = Utils.createVulkanBuffer(
@@ -67,7 +69,7 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
 
     var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
     barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.srcAccessMask = c.VK_ACCESS_MEMORY_READ_BIT;
     barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
     barrier.oldLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -153,11 +155,7 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
         log.log.err("screenshot: failed to submit command buffer", .{});
         return false;
     };
-    const fence_result = c.vkWaitForFences(vk, 1, &fence, c.VK_TRUE, 5_000_000_000);
-    if (fence_result != c.VK_SUCCESS) {
-        log.log.err("screenshot: fence wait failed or timed out ({})", .{fence_result});
-        return false;
-    }
+    _ = c.vkWaitForFences(vk, 1, &fence, c.VK_TRUE, std.math.maxInt(u64));
 
     const mapped_ptr = staging.mapped_ptr orelse {
         log.log.err("screenshot: staging buffer not mapped", .{});
@@ -171,11 +169,6 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
 }
 
 fn writePPM(data: [*]const u8, width: u32, height: u32, path: []const u8, format: c.VkFormat) void {
-    if (width > 16384) {
-        log.log.err("screenshot: width {} exceeds max supported 16384", .{width});
-        return;
-    }
-
     const file = std.fs.cwd().createFile(path, .{}) catch {
         log.log.err("screenshot: failed to create file '{s}'", .{path});
         return;
@@ -188,15 +181,14 @@ fn writePPM(data: [*]const u8, width: u32, height: u32, path: []const u8, format
 
     const is_bgra = format == c.VK_FORMAT_B8G8R8A8_UNORM or format == c.VK_FORMAT_B8G8R8A8_SRGB;
 
-    var row_buf: [16384 * 3]u8 = undefined;
-    const row_bytes: usize = @as(usize, width) * 3;
-
     var y: u32 = 0;
     while (y < height) : (y += 1) {
+        var row_buf: [4096 * 3]u8 = undefined;
+        const row_bytes = width * 3;
         var x: u32 = 0;
         while (x < width) : (x += 1) {
             const src_offset: usize = (@as(usize, y) * width + x) * 4;
-            const dst_offset: usize = @as(usize, x) * 3;
+            const dst_offset: usize = x * 3;
             if (is_bgra) {
                 row_buf[dst_offset] = data[src_offset + 2];
                 row_buf[dst_offset + 1] = data[src_offset + 1];
