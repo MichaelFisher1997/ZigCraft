@@ -203,20 +203,11 @@ pub const WorldRenderer = struct {
         self.mdi_command_offset = 0;
     }
 
-    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32, lod_manager: ?*LODManager, shadow_lod_enabled: bool) void {
-        const shadow_frustum = Frustum.fromViewProj(light_space_matrix);
+    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
+        const frustum = Frustum.fromViewProj(light_space_matrix);
 
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
-
-        if (shadow_lod_enabled) {
-            if (lod_manager) |lod_mgr| {
-                const shadow_lod_max_distance_chunks: i32 = @max(0, @as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X)));
-                lod_mgr.render(light_space_matrix, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, shadow_lod_max_distance_chunks);
-            }
-        }
-
-        const frustum = shadow_frustum;
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
