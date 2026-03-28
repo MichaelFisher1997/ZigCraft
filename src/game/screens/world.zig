@@ -19,6 +19,7 @@ const DebugFrustum = @import("../../engine/ui/debug_frustum.zig");
 const DebugFrustumOverlay = DebugFrustum.DebugFrustum;
 const FRUSTUM_VERTEX_COUNT = DebugFrustum.FRUSTUM_VERTEX_COUNT;
 const ChunkInspectorOverlay = @import("../../engine/ui/chunk_inspector_overlay.zig").ChunkInspectorOverlay;
+const WorldStateData = @import("../../engine/ui/chunk_inspector_overlay.zig").WorldStateData;
 const Font = @import("../../engine/ui/font.zig");
 const WorldStats = @import("../../engine/ui/timing_overlay.zig").WorldStats;
 const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDisplay;
@@ -397,10 +398,19 @@ pub const WorldScreen = struct {
         }
 
         if (self.chunk_inspector_overlay.enabled) {
+            const world_stats = self.session.world.getStats();
+            const world_state = WorldStateData{
+                .generator_name = self.session.world.generator.info.name,
+                .seed = self.session.world.generator.getSeed(),
+                .gen_queue = world_stats.gen_queue,
+                .mesh_queue = world_stats.mesh_queue,
+                .upload_queue = world_stats.upload_queue,
+            };
             self.chunk_inspector_overlay.draw(
                 ui,
                 self.session.world.getRenderStats(),
                 self.session.world.getChunkStateCounts(),
+                world_state,
             );
         }
 

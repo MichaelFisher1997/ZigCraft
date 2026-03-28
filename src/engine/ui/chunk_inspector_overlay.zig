@@ -14,6 +14,14 @@ pub const ChunkStateCounts = struct {
     dirty: u32 = 0,
 };
 
+pub const WorldStateData = struct {
+    generator_name: []const u8,
+    seed: u64,
+    gen_queue: usize,
+    mesh_queue: usize,
+    upload_queue: usize,
+};
+
 pub const ChunkInspectorOverlay = struct {
     enabled: bool = false,
 
@@ -21,7 +29,7 @@ pub const ChunkInspectorOverlay = struct {
         self.enabled = !self.enabled;
     }
 
-    pub fn draw(self: *ChunkInspectorOverlay, ui: *UISystem, render_stats: RenderStats, counts: ChunkStateCounts) void {
+    pub fn draw(self: *ChunkInspectorOverlay, ui: *UISystem, render_stats: RenderStats, counts: ChunkStateCounts, world_state: WorldStateData) void {
         if (!self.enabled) return;
 
         const x: f32 = 10;
@@ -29,7 +37,7 @@ pub const ChunkInspectorOverlay = struct {
         const width: f32 = 260;
         const line_height: f32 = 15;
         const scale: f32 = 1.0;
-        const num_lines = 13;
+        const num_lines = 21;
         const padding = 20;
 
         ui.drawRect(.{ .x = x, .y = y, .width = width, .height = num_lines * line_height + padding }, .{ .r = 0, .g = 0, .b = 0, .a = 0.6 });
@@ -54,7 +62,21 @@ pub const ChunkInspectorOverlay = struct {
         drawLine(ui, "RENDERABLE:", counts.renderable, x, &y, scale, line_height);
         drawLine(ui, "OTHER:", counts.other_states, x, &y, scale, line_height);
         drawLine(ui, "DIRTY*:", counts.dirty, x, &y, scale, line_height);
-        Font.drawText(ui, "* dirty is orthogonal to state", x + 10, y, scale * 0.8, Color.gray);
+        y += 5;
+
+        Font.drawText(ui, "STREAMING STATUS", x + 10, y, scale, Color.gray);
+        y += line_height;
+        drawLine(ui, "GEN QUEUE:", world_state.gen_queue, x, &y, scale, line_height);
+        drawLine(ui, "MESH QUEUE:", world_state.mesh_queue, x, &y, scale, line_height);
+        drawLine(ui, "UPLOAD QUEUE:", world_state.upload_queue, x, &y, scale, line_height);
+        y += 5;
+
+        Font.drawText(ui, "WORLD INFO", x + 10, y, scale, Color.gray);
+        y += line_height;
+        Font.drawText(ui, "GENERATOR:", x + 10, y, scale, Color.gray);
+        Font.drawText(ui, world_state.generator_name, x + 160, y, scale, Color.white);
+        y += line_height;
+        drawLine(ui, "SEED:", world_state.seed, x, &y, scale, line_height);
     }
 
     fn drawLine(ui: *UISystem, label: []const u8, value: u64, x: f32, y: *f32, scale: f32, line_height: f32) void {
