@@ -17,6 +17,7 @@ const native_access = @import("vulkan/rhi_native_access.zig");
 const render_state = @import("vulkan/rhi_render_state.zig");
 const init_deinit = @import("vulkan/rhi_init_deinit.zig");
 const rhi_timing = @import("vulkan/rhi_timing.zig");
+const screenshot = @import("vulkan/screenshot.zig");
 
 const QUERY_COUNT_PER_FRAME = rhi_timing.QUERY_COUNT_PER_FRAME;
 
@@ -267,6 +268,11 @@ fn setTAABlendFactor(ctx_ptr: *anyopaque, value: f32) void {
 fn setTAAVelocityRejection(ctx_ptr: *anyopaque, value: f32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.taa.velocity_rejection = std.math.clamp(value, 0.0, 0.25);
+}
+
+fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return screenshot.captureScreenshot(ctx, path);
 }
 
 fn endFrame(ctx_ptr: *anyopaque) void {
@@ -805,6 +811,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     .setColorGradingIntensity = setColorGradingIntensity,
     .setTAABlendFactor = setTAABlendFactor,
     .setTAAVelocityRejection = setTAAVelocityRejection,
+    .captureFrame = captureFrame,
 };
 
 fn beginPassTiming(ctx_ptr: *anyopaque, pass_name: []const u8) void {

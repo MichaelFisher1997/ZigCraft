@@ -823,6 +823,7 @@ pub const RHI = struct {
         setColorGradingIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
         setTAABlendFactor: *const fn (ctx: *anyopaque, value: f32) void,
         setTAAVelocityRejection: *const fn (ctx: *anyopaque, value: f32) void,
+        captureFrame: *const fn (ctx: *anyopaque, path: []const u8) bool,
     };
 
     pub fn factory(self: RHI) IResourceFactory {
@@ -1113,5 +1114,8 @@ pub const RHI = struct {
     }
     pub fn setTAAVelocityRejection(self: RHI, value: f32) void {
         self.vtable.setTAAVelocityRejection(self.ptr, value);
+    }
+    pub fn captureFrame(self: RHI, path: []const u8) bool {
+        return self.vtable.captureFrame(self.ptr, path);
     }
 };

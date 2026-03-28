@@ -107,11 +107,19 @@ pub const App = struct {
             app.render_system.getRHI().timing().setTimingEnabled(true);
         }
 
+        if (build_options.screenshot_path.len > 0) {
+            app.render_system.getRHI().timing().setTimingEnabled(true);
+        }
+
         const engine_ctx = app.engineContext();
         if (build_options.smoke_test) {
             log.log.info("SMOKE TEST MODE: Bypassing menu and loading world", .{});
             const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
             app.screen_manager.setScreen(world_screen.screen());
+        } else if (build_options.screenshot_path.len > 0) {
+            log.log.info("SCREENSHOT MODE: Loading menu for screenshot capture to '{s}'", .{build_options.screenshot_path});
+            const home_screen = try HomeScreen.init(allocator, engine_ctx);
+            app.screen_manager.setScreen(home_screen.screen());
         } else {
             const home_screen = try HomeScreen.init(allocator, engine_ctx);
             app.screen_manager.setScreen(home_screen.screen());
@@ -226,7 +234,7 @@ pub const App = struct {
 
         self.render_system.endFrame();
 
-        if (build_options.smoke_test) {
+        if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
             var target_frames: u32 = 120;
             if (std.posix.getenv("ZIGCRAFT_SMOKE_FRAMES")) |val| {
@@ -236,6 +244,12 @@ pub const App = struct {
             }
 
             if (self.smoke_test_frames >= target_frames) {
+                if (build_options.screenshot_path.len > 0) {
+                    log.log.info("SCREENSHOT: Capturing frame to '{s}'", .{build_options.screenshot_path});
+                    if (!self.render_system.getRHI().captureFrame(build_options.screenshot_path)) {
+                        log.log.err("SCREENSHOT: Failed to capture screenshot", .{});
+                    }
+                }
                 log.log.info("SMOKE TEST COMPLETE: {} frames rendered. Exiting.", .{target_frames});
                 self.input.should_quit = true;
             }
