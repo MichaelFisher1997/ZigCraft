@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Select module to scan
         id: select-module
+        env:
+          INPUT_MODULE: ${{ inputs.module }}
         run: |
           MODULES=(
             "engine/graphics"
@@ -42,13 +44,17 @@ jobs:
 
           COUNT=${#MODULES[@]}
 
-          if [ -n "${{ inputs.module }}" ]; then
-            SELECTED="${{ inputs.module }}"
+          if [ -n "$INPUT_MODULE" ]; then
+            if ! echo "$INPUT_MODULE" | grep -qE '^[a-zA-Z0-9_ /-]+$'; then
+              echo "ERROR: Invalid module input: '$INPUT_MODULE'" >&2
+              exit 1
+            fi
+            SELECTED="$INPUT_MODULE"
             echo "Manual dispatch: scanning ${SELECTED}"
           else
             DAY=$(date +%j)
             HOUR=$(date +%H)
-            SLOT=$((${DAY} * 2 + (${HOUR} < 12 ? 0 : 1)))
+            SLOT=$((DAY * 2 + HOUR / 12))
             INDEX=$((SLOT % COUNT))
             SELECTED="${MODULES[${INDEX}]}"
             echo "Scheduled run: day=${DAY} hour=${HOUR} slot=${SLOT} index=${INDEX} → ${SELECTED}"
@@ -60,17 +66,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
       - name: Ensure audit label exists
         run: |
-          gh label create "automated-audit" \
-            --description "Issues found by automated opencode audit scans" \
-            --color "1D76DB" \
-            --force || true
+          if ! gh label list --json name --jq '.[].name' | grep -q '^automated-audit$'; then
+            gh label create "automated-audit" \
+              --description "Issues found by automated opencode audit scans" \
+              --color "1D76DB"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
