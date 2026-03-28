@@ -92,6 +92,10 @@ pub const WorldRenderer = struct {
         return renderer;
     }
 
+    pub fn beginFrame(self: *WorldRenderer) void {
+        self.vertex_allocator.tick(self.query.getFrameIndex());
+    }
+
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
 

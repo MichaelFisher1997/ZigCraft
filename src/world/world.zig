@@ -14,7 +14,6 @@ const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const gen_interface = @import("worldgen/generator_interface.zig");
 const Generator = gen_interface.Generator;
 const registry = @import("worldgen/registry.zig");
-const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RHI = rhi_mod.RHI;
 const WorldLOD = @import("world_lod.zig").WorldLOD(RHI);
@@ -53,7 +52,6 @@ pub const World = struct {
     render_distance: i32,
     rhi: RHI,
     paused: bool = false,
-    max_uploads_per_frame: usize,
     safe_mode: bool,
     safe_render_distance: i32,
 
@@ -92,19 +90,19 @@ pub const World = struct {
             .generator = try registry.createGenerator(generator_index, seed, allocator),
             .rhi = rhi,
             .paused = false,
-            .max_uploads_per_frame = max_uploads,
             .safe_mode = safe_mode,
             .safe_render_distance = safe_render_distance,
             .lod = null,
             .lod_enabled = false,
         };
 
-        log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, render_distance);
-        errdefer world.streamer.deinit();
-
         log.log.info("World.initGen: initializing WorldRenderer", .{});
         world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage);
+        errdefer _ = world.renderer;
+
+        log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads);
+        errdefer world.streamer.deinit();
 
         return world;
     }
@@ -120,6 +118,7 @@ pub const World = struct {
 
         world.lod = try WorldLOD.init(allocator, rhi, lod_config, world.generator);
         world.lod_enabled = true;
+        world.streamer.setLODManager(world.lod.?.manager);
         return world;
     }
 
@@ -233,14 +232,8 @@ pub const World = struct {
     }
 
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
-        self.renderer.vertex_allocator.tick(self.renderer.query.getFrameIndex());
-
-        const lod_mgr: ?*LODManager = if (self.lod_enabled) self.lod.?.manager else null;
-        try self.streamer.update(player_pos, dt, lod_mgr);
-
-        self.streamer.processUploads(self.renderer.vertex_allocator, self.max_uploads_per_frame);
-
-        try self.streamer.processUnloads(player_pos, self.renderer.vertex_allocator, lod_mgr);
+        self.renderer.beginFrame();
+        try self.streamer.updateFrame(player_pos, dt);
     }
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
