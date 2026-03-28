@@ -1,5 +1,6 @@
 const Settings = @import("data.zig").Settings;
 const RHI = @import("../../engine/graphics/rhi.zig").RHI;
+const IRenderSettings = @import("../../engine/core/interfaces.zig").IRenderSettings;
 
 /// Applies settings that have direct RHI setters. Call this after any settings change.
 ///
@@ -42,4 +43,15 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setMSAA(settings.msaa_samples);
     rhi.setTAABlendFactor(settings.taa_blend_factor);
     rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
+}
+
+pub fn applyToRenderSettings(settings: *const Settings, rs: IRenderSettings) void {
+    rs.setVSync(settings.vsync);
+    rs.setWireframe(settings.wireframe_enabled);
+    rs.setTexturesEnabled(settings.textures_enabled);
+    rs.setDebugShadowView(settings.debug_shadows_active);
+    rs.setAnisotropicFiltering(settings.anisotropic_filtering);
+    rs.setMSAA(settings.msaa_samples);
+    rs.setTAABlendFactor(settings.taa_blend_factor);
+    rs.setTAAVelocityRejection(settings.taa_velocity_rejection);
 }

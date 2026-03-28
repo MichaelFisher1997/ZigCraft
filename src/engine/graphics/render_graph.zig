@@ -39,7 +39,7 @@
 const std = @import("std");
 const c = @import("../../c.zig").c;
 const Camera = @import("camera.zig").Camera;
-const World = @import("../../world/world.zig").World;
+const IWorld = @import("../../world/world.zig").IWorld;
 const shadow_scene = @import("shadow_scene.zig");
 const rhi_pkg = @import("rhi.zig");
 const RenderContext = rhi_pkg.RenderContext;
@@ -57,7 +57,7 @@ pub const SceneContext = struct {
     shadow_ctx: ShadowSystemWrapper,
     ssao_ctx: ISSAOContext,
     timing: IDeviceTiming,
-    world: *World,
+    world: IWorld,
     shadow_scene: shadow_scene.IShadowScene,
     camera: *Camera,
     atmosphere_system: *AtmosphereSystem,

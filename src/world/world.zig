@@ -42,6 +42,63 @@ const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 /// Prevents thrashing when player moves near chunk boundaries.
 // const CHUNK_UNLOAD_BUFFER: i32 = 1;
 
+/// Named statistics struct for World (extracted from anonymous return type for interface use).
+pub const WorldStatsData = struct {
+    chunks_loaded: usize,
+    total_vertices: u64,
+    gen_queue: usize,
+    mesh_queue: usize,
+    upload_queue: usize,
+};
+
+pub const IWorld = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        update: *const fn (ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void,
+        render: *const fn (ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void,
+        deinit: *const fn (ptr: *anyopaque) void,
+        getRenderStats: *const fn (ptr: *anyopaque) RenderStats,
+        getStats: *const fn (ptr: *anyopaque) WorldStatsData,
+        getLODStats: *const fn (ptr: *anyopaque) ?@import("lod_manager.zig").LODStats,
+        isLODEnabled: *const fn (ptr: *anyopaque) bool,
+        shadowScene: *const fn (ptr: *anyopaque) shadow_scene.IShadowScene,
+    };
+
+    pub fn update(self: IWorld, player_pos: Vec3, dt: f32) !void {
+        try self.vtable.update(self.ptr, player_pos, dt);
+    }
+
+    pub fn render(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        self.vtable.render(self.ptr, view_proj, camera_pos, render_lod);
+    }
+
+    pub fn deinit(self: IWorld) void {
+        self.vtable.deinit(self.ptr);
+    }
+
+    pub fn getRenderStats(self: IWorld) RenderStats {
+        return self.vtable.getRenderStats(self.ptr);
+    }
+
+    pub fn getStats(self: IWorld) WorldStatsData {
+        return self.vtable.getStats(self.ptr);
+    }
+
+    pub fn getLODStats(self: IWorld) ?@import("lod_manager.zig").LODStats {
+        return self.vtable.getLODStats(self.ptr);
+    }
+
+    pub fn isLODEnabled(self: IWorld) bool {
+        return self.vtable.isLODEnabled(self.ptr);
+    }
+
+    pub fn shadowScene(self: IWorld) shadow_scene.IShadowScene {
+        return self.vtable.shadowScene(self.ptr);
+    }
+};
+
 pub const ChunkPos = struct { x: i32, z: i32 };
 
 pub const World = struct {
@@ -290,7 +347,7 @@ pub const World = struct {
         return counts;
     }
 
-    pub fn getStats(self: *World) struct { chunks_loaded: usize, total_vertices: u64, gen_queue: usize, mesh_queue: usize, upload_queue: usize } {
+    pub fn getStats(self: *World) WorldStatsData {
         const total_verts = self.storage.totalVertexCount();
         const streamer_stats = self.streamer.getStats();
 
@@ -301,6 +358,61 @@ pub const World = struct {
             .mesh_queue = streamer_stats.mesh_queue,
             .upload_queue = streamer_stats.upload_queue,
         };
+    }
+
+    pub fn interface(self: *World) IWorld {
+        return .{ .ptr = self, .vtable = &IWORLD_VTABLE };
+    }
+
+    const IWORLD_VTABLE = IWorld.VTable{
+        .update = iupdate,
+        .render = irender,
+        .deinit = ideinit,
+        .getRenderStats = igetRenderStats,
+        .getStats = igetStats,
+        .getLODStats = igetLODStats,
+        .isLODEnabled = iisLODEnabled,
+        .shadowScene = ishadowScene,
+    };
+
+    fn iupdate(ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.update(player_pos, dt);
+    }
+
+    fn irender(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.render(view_proj, camera_pos, render_lod);
+    }
+
+    fn ideinit(ptr: *anyopaque) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.deinit();
+    }
+
+    fn igetRenderStats(ptr: *anyopaque) RenderStats {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getRenderStats();
+    }
+
+    fn igetStats(ptr: *anyopaque) WorldStatsData {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getStats();
+    }
+
+    fn igetLODStats(ptr: *anyopaque) ?@import("lod_manager.zig").LODStats {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getLODStats();
+    }
+
+    fn iisLODEnabled(ptr: *anyopaque) bool {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.isLODEnabled();
+    }
+
+    fn ishadowScene(ptr: *anyopaque) shadow_scene.IShadowScene {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.shadowScene();
     }
 
     /// Get LOD system statistics (returns null if LOD not enabled)

@@ -1,101 +1,93 @@
 //! Core engine interfaces following SOLID principles.
 //! These abstractions allow for dependency inversion and extensibility.
 
-const std = @import("std");
-const Mat4 = @import("../math/mat4.zig").Mat4;
-const Vec3 = @import("../math/vec3.zig").Vec3;
-
-/// Interface for anything that updates each frame
-pub const IUpdatable = struct {
+/// Interface for render settings (wireframe, vsync, bloom, etc.).
+/// Decouples screens and settings logic from the concrete RHI backend.
+pub const IRenderSettings = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        update: *const fn (ptr: *anyopaque, delta_time: f32) void,
+        setWireframe: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setVSync: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setTexturesEnabled: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setAnisotropicFiltering: *const fn (ptr: *anyopaque, level: u8) void,
+        setFXAA: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setBloom: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setBloomIntensity: *const fn (ptr: *anyopaque, intensity: f32) void,
+        setTAABlendFactor: *const fn (ptr: *anyopaque, value: f32) void,
+        setTAAVelocityRejection: *const fn (ptr: *anyopaque, value: f32) void,
+        setVignetteEnabled: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setVignetteIntensity: *const fn (ptr: *anyopaque, intensity: f32) void,
+        setFilmGrainEnabled: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setFilmGrainIntensity: *const fn (ptr: *anyopaque, intensity: f32) void,
+        setVolumetricDensity: *const fn (ptr: *anyopaque, density: f32) void,
+        setDebugShadowView: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setMSAA: *const fn (ptr: *anyopaque, samples: u8) void,
     };
 
-    pub fn update(self: IUpdatable, delta_time: f32) void {
-        self.vtable.update(self.ptr, delta_time);
-    }
-};
-
-/// Interface for anything that can be rendered
-pub const IRenderable = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        render: *const fn (ptr: *anyopaque, view_proj: Mat4) void,
-    };
-
-    pub fn render(self: IRenderable, view_proj: Mat4) void {
-        self.vtable.render(self.ptr, view_proj);
-    }
-};
-
-/// Interface for anything that handles input events
-pub const IInputHandler = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        handleInput: *const fn (ptr: *anyopaque, event: InputEvent) bool,
-    };
-
-    pub fn handleInput(self: IInputHandler, event: InputEvent) bool {
-        return self.vtable.handleInput(self.ptr, event);
-    }
-};
-
-/// Interface for UI widgets
-pub const IWidget = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        draw: *const fn (ptr: *anyopaque) void,
-        handleInput: *const fn (ptr: *anyopaque, event: InputEvent) bool,
-        getBounds: *const fn (ptr: *anyopaque) Rect,
-    };
-
-    pub fn draw(self: IWidget) void {
-        self.vtable.draw(self.ptr);
+    pub fn setWireframe(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setWireframe(self.ptr, enabled);
     }
 
-    pub fn handleInput(self: IWidget, event: InputEvent) bool {
-        return self.vtable.handleInput(self.ptr, event);
+    pub fn setVSync(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setVSync(self.ptr, enabled);
     }
 
-    pub fn getBounds(self: IWidget) Rect {
-        return self.vtable.getBounds(self.ptr);
+    pub fn setTexturesEnabled(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setTexturesEnabled(self.ptr, enabled);
     }
-};
 
-/// Interface for chunk data providers (world generation abstraction)
-pub const IChunkProvider = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        generateChunk: *const fn (ptr: *anyopaque, chunk_x: i32, chunk_z: i32, out_blocks: []u8) void,
-    };
-
-    pub fn generateChunk(self: IChunkProvider, chunk_x: i32, chunk_z: i32, out_blocks: []u8) void {
-        self.vtable.generateChunk(self.ptr, chunk_x, chunk_z, out_blocks);
+    pub fn setAnisotropicFiltering(self: IRenderSettings, level: u8) void {
+        self.vtable.setAnisotropicFiltering(self.ptr, level);
     }
-};
 
-/// Interface for mesh generation strategies (greedy, naive, etc.)
-pub const IMeshBuilder = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
+    pub fn setFXAA(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setFXAA(self.ptr, enabled);
+    }
 
-    pub const VTable = struct {
-        buildMesh: *const fn (ptr: *anyopaque, blocks: []const u8, out_vertices: *std.ArrayList(f32), out_indices: *std.ArrayList(u32)) void,
-    };
+    pub fn setBloom(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setBloom(self.ptr, enabled);
+    }
 
-    pub fn buildMesh(self: IMeshBuilder, blocks: []const u8, out_vertices: *std.ArrayList(f32), out_indices: *std.ArrayList(u32)) void {
-        self.vtable.buildMesh(self.ptr, blocks, out_vertices, out_indices);
+    pub fn setBloomIntensity(self: IRenderSettings, intensity: f32) void {
+        self.vtable.setBloomIntensity(self.ptr, intensity);
+    }
+
+    pub fn setTAABlendFactor(self: IRenderSettings, value: f32) void {
+        self.vtable.setTAABlendFactor(self.ptr, value);
+    }
+
+    pub fn setTAAVelocityRejection(self: IRenderSettings, value: f32) void {
+        self.vtable.setTAAVelocityRejection(self.ptr, value);
+    }
+
+    pub fn setVignetteEnabled(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setVignetteEnabled(self.ptr, enabled);
+    }
+
+    pub fn setVignetteIntensity(self: IRenderSettings, intensity: f32) void {
+        self.vtable.setVignetteIntensity(self.ptr, intensity);
+    }
+
+    pub fn setFilmGrainEnabled(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setFilmGrainEnabled(self.ptr, enabled);
+    }
+
+    pub fn setFilmGrainIntensity(self: IRenderSettings, intensity: f32) void {
+        self.vtable.setFilmGrainIntensity(self.ptr, intensity);
+    }
+
+    pub fn setVolumetricDensity(self: IRenderSettings, density: f32) void {
+        self.vtable.setVolumetricDensity(self.ptr, density);
+    }
+
+    pub fn setDebugShadowView(self: IRenderSettings, enabled: bool) void {
+        self.vtable.setDebugShadowView(self.ptr, enabled);
+    }
+
+    pub fn setMSAA(self: IRenderSettings, samples: u8) void {
+        self.vtable.setMSAA(self.ptr, samples);
     }
 };
 
