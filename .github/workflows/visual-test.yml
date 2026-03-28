@@ -76,7 +76,7 @@ jobs:
       - name: Convert PPM to PNG
         run: |
           if [ -f screenshot.ppm ]; then
-            nix develop --command convert screenshot.ppm screenshot.png
+            nix run nixpkgs#imagemagick -- screenshot.ppm screenshot.png
             echo "screenshot_exists=true" >> $GITHUB_OUTPUT
           else
             echo "screenshot_exists=false" >> $GITHUB_OUTPUT
