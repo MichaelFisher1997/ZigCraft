@@ -32,11 +32,22 @@
 //! - **paused**: Queue cleared, workers wait (used for world transitions)
 //! - **stopped**: Workers exit, queue drained (shutdown)
 //!
+//! ## Job Cleanup
+//!
+//! When jobs are removed from the queue without being processed (via `clear()`,
+//! `setPaused(true)`, or `stop()`), generic jobs with a `cleanup_fn` callback
+//! will have that callback invoked to release any owned resources. Callers
+//! creating generic jobs with heap-allocated context pointers MUST provide a
+//! `cleanup_fn` to avoid memory leaks.
+//!
 //! ## WorkerPool
 //!
 //! Worker threads pull jobs from a shared JobQueue and invoke the appropriate
 //! handler based on job type. The pool is initialized with a configurable worker
 //! count and a process function callback.
+//!
+//! **Precondition**: `queue.stop()` must be called before `pool.deinit()` to
+//! ensure all worker threads have exited before pool memory is freed.
 
 const std = @import("std");
 const Thread = std.Thread;
@@ -75,7 +86,19 @@ pub const Job = struct {
     pub const GenericJobData = struct {
         context: *anyopaque,
         process_fn: *const fn (*anyopaque) void,
+        cleanup_fn: ?*const fn (*anyopaque) void = null,
     };
+
+    pub fn cleanup(self: Job) void {
+        switch (self.type) {
+            .generic => {
+                if (self.data.generic.cleanup_fn) |cleanup_fn| {
+                    cleanup_fn(self.data.generic.context);
+                }
+            },
+            .chunk_generation, .chunk_meshing => {},
+        }
+    }
 
     // Comparison for min-heap (lower priority/dist = higher priority)
     pub fn compare(a: Job, b: Job) std.math.Order {
@@ -193,6 +216,7 @@ pub const JobQueue = struct {
 
             temp.append(self.allocator, updated_job) catch {
                 log.log.warn("Job queue: dropped job during priority update (allocation failed)", .{});
+                updated_job.cleanup();
                 continue;
             };
         }
@@ -232,7 +256,9 @@ pub const JobQueue = struct {
     pub fn clear(self: *JobQueue) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        while (self.jobs.removeOrNull()) |_| {}
+        while (self.jobs.removeOrNull()) |job| {
+            job.cleanup();
+        }
     }
 
     pub fn setPaused(self: *JobQueue, paused: bool) void {
@@ -241,7 +267,9 @@ pub const JobQueue = struct {
         self.paused = paused;
         self.abort_worker = paused or self.stopped;
         if (paused) {
-            while (self.jobs.removeOrNull()) |_| {}
+            while (self.jobs.removeOrNull()) |job| {
+                job.cleanup();
+            }
         } else {
             self.cond.broadcast();
         }
@@ -251,8 +279,9 @@ pub const JobQueue = struct {
         self.mutex.lock();
         self.stopped = true;
         self.abort_worker = true;
-        // Clear all pending jobs to allow workers to exit immediately
-        while (self.jobs.removeOrNull()) |_| {}
+        while (self.jobs.removeOrNull()) |job| {
+            job.cleanup();
+        }
         self.mutex.unlock();
         self.cond.broadcast();
     }
@@ -284,6 +313,9 @@ pub const WorkerPool = struct {
         return pool;
     }
 
+    /// Release worker pool resources. The associated JobQueue must have been
+    /// stopped via `queue.stop()` before calling this to ensure all worker
+    /// threads have exited their processing loops.
     pub fn deinit(self: *WorkerPool) void {
         for (self.threads) |t| {
             t.join();
@@ -306,3 +338,124 @@ pub const WorkerPool = struct {
         }
     }
 };
+
+const testing = std.testing;
+
+fn nopProcess(ctx: *anyopaque) void {
+    _ = ctx;
+}
+
+var cleanup_count: usize = 0;
+
+fn countingCleanup(ctx: *anyopaque) void {
+    _ = ctx;
+    cleanup_count += 1;
+}
+
+fn makeGenericJob() Job {
+    return Job{
+        .type = .generic,
+        .priority = 0,
+        .data = .{
+            .generic = .{
+                .context = undefined,
+                .process_fn = nopProcess,
+                .cleanup_fn = countingCleanup,
+            },
+        },
+    };
+}
+
+fn makeGenericJobNoCleanup() Job {
+    return Job{
+        .type = .generic,
+        .priority = 0,
+        .data = .{
+            .generic = .{
+                .context = undefined,
+                .process_fn = nopProcess,
+                .cleanup_fn = null,
+            },
+        },
+    };
+}
+
+test "Job.cleanup calls cleanup_fn for generic jobs" {
+    cleanup_count = 0;
+    var job = makeGenericJob();
+    job.cleanup();
+    try testing.expectEqual(@as(usize, 1), cleanup_count);
+}
+
+test "Job.cleanup is no-op for generic jobs without cleanup_fn" {
+    cleanup_count = 0;
+    var job = makeGenericJobNoCleanup();
+    job.cleanup();
+    try testing.expectEqual(@as(usize, 0), cleanup_count);
+}
+
+test "Job.cleanup is no-op for chunk jobs" {
+    cleanup_count = 0;
+    const job = Job{
+        .type = .chunk_generation,
+        .dist_sq = 0,
+        .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 1 } },
+    };
+    job.cleanup();
+    try testing.expectEqual(@as(usize, 0), cleanup_count);
+}
+
+test "JobQueue.clear calls cleanup on generic jobs" {
+    cleanup_count = 0;
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob()) catch unreachable;
+
+    queue.clear();
+    try testing.expectEqual(@as(usize, 3), cleanup_count);
+}
+
+test "JobQueue.stop calls cleanup on generic jobs" {
+    cleanup_count = 0;
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob()) catch unreachable;
+
+    queue.stop();
+    try testing.expectEqual(@as(usize, 2), cleanup_count);
+}
+
+test "JobQueue.setPaused true calls cleanup on generic jobs" {
+    cleanup_count = 0;
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob()) catch unreachable;
+
+    queue.setPaused(true);
+    try testing.expectEqual(@as(usize, 3), cleanup_count);
+}
+
+test "JobQueue.clear with mixed job types" {
+    cleanup_count = 0;
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(Job{
+        .type = .chunk_meshing,
+        .dist_sq = 0,
+        .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 1 } },
+    }) catch unreachable;
+    queue.push(makeGenericJob()) catch unreachable;
+
+    queue.clear();
+    try testing.expectEqual(@as(usize, 2), cleanup_count);
+}
