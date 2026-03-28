@@ -169,8 +169,6 @@ pub const ShadowConfig = struct {
     strength: f32 = 0.35,
     light_size: f32 = 3.0,
     caster_distance: f32 = 250.0,
-    lod_bias: f32 = 0.0,
-    lod_enabled: bool = true,
 };
 
 pub const ShadowParams = struct {

@@ -29,7 +29,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
     vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
     vec4 cloud_params; // x = cloud_height, y = cloud_shadows_enabled, z/w reserved
-    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z = lod_bias, w = lod_enabled
+    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
     vec4 viewport_size; // xy = width/height
