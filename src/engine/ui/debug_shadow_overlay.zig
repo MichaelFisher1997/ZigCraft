@@ -1,37 +1,59 @@
 const std = @import("std");
 const rhi = @import("../graphics/rhi.zig");
-const IUIContext = rhi.IUIContext;
+const UISystem = @import("ui_system.zig").UISystem;
 const ShadowSystemWrapper = rhi.ShadowSystemWrapper;
+const Font = @import("font.zig");
 
-/// System for rendering debug shadow cascade overlays.
 pub const DebugShadowOverlay = struct {
-    /// Layout configuration for the debug overlay.
     pub const Config = struct {
-        /// Default size of each shadow cascade thumbnail in pixels.
         size: f32 = 200.0,
-        /// Default spacing between cascade thumbnails and screen edges in pixels.
         spacing: f32 = 10.0,
+        show_labels: bool = true,
     };
 
-    /// Draws the shadow cascade thumbnails to the screen.
-    /// Requires an active UI context and a shadow system to retrieve handles.
-    pub fn draw(ui: IUIContext, shadow: ShadowSystemWrapper, screen_width: f32, screen_height: f32, config: Config) void {
-        ui.beginPass(screen_width, screen_height);
-        defer ui.endPass();
+    pub fn draw(
+        ui: *UISystem,
+        shadow: ShadowSystemWrapper,
+        _: f32,
+        _: f32,
+        config: Config,
+        cascade_splits: []const f32,
+    ) void {
+        ui.begin();
+        defer ui.end();
+
+        const label_height: f32 = 16.0;
 
         for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
             const handle = shadow.getShadowMapHandle(@intCast(i));
             if (handle == 0) continue;
 
-            const x = config.spacing + @as(f32, @floatFromInt(i)) * (config.size + config.spacing);
+            const extra_width: f32 = if (config.show_labels) @as(f32, 50.0) else @as(f32, 0.0);
+            const cell_width = config.size + extra_width;
+            const x = config.spacing + @as(f32, @floatFromInt(i)) * (cell_width + config.spacing);
             const y = config.spacing;
 
-            ui.drawDepthTexture(handle, .{
+            const tex_rect = rhi.Rect{
                 .x = x,
-                .y = y,
+                .y = if (config.show_labels) y + label_height else y,
                 .width = config.size,
                 .height = config.size,
-            });
+            };
+
+            ui.drawDepthTexture(handle, tex_rect);
+
+            if (config.show_labels) {
+                var idx_buf: [8]u8 = undefined;
+                const idx_text = std.fmt.bufPrint(&idx_buf, "C{d}", .{i}) catch "C?";
+                Font.drawText(ui, idx_text, x, y, 1.5, .{ .r = 0.95, .g = 0.95, .b = 1.0, .a = 1.0 });
+
+                if (i < cascade_splits.len) {
+                    var dist_buf: [16]u8 = undefined;
+                    const dist_val = @as(i32, @intFromFloat(@round(cascade_splits[i])));
+                    const dist_text = std.fmt.bufPrint(&dist_buf, "{d}m", .{dist_val}) catch "?m";
+                    Font.drawText(ui, dist_text, x, y + label_height + config.size, 1.2, .{ .r = 0.6, .g = 0.8, .b = 1.0, .a = 1.0 });
+                }
+            }
         }
     }
 };

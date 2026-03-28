@@ -13,14 +13,18 @@ const DebugShadowOverlay = @import("../../engine/ui/debug_shadow_overlay.zig").D
 const DebugLPVOverlay = @import("../../engine/ui/debug_lpv_overlay.zig").DebugLPVOverlay;
 const DebugMenuOverlay = @import("../../engine/ui/debug_menu.zig").DebugMenuOverlay;
 const DebugFeature = @import("../../engine/ui/debug_menu.zig").DebugFeature;
+const DebugFrustum = @import("../../engine/ui/debug_frustum.zig").DebugFrustum;
 const Font = @import("../../engine/ui/font.zig");
 const log = @import("../../engine/core/log.zig");
+const CSM = @import("../../engine/graphics/csm.zig");
 
 pub const WorldScreen = struct {
     context: EngineContext,
     session: *GameSession,
     last_debug_toggle_time: f32 = 0,
     debug_menu: DebugMenuOverlay,
+    frustum_buffer: rhi_pkg.BufferHandle = 0,
+    frustum_initialized: bool = false,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -47,6 +51,9 @@ pub const WorldScreen = struct {
 
     pub fn deinit(ptr: *anyopaque) void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
+        if (self.frustum_initialized) {
+            self.context.render_system.getRHI().resourceManager().destroyBuffer(self.frustum_buffer);
+        }
         self.session.deinit();
         self.context.allocator.destroy(self);
     }
@@ -135,6 +142,11 @@ pub const WorldScreen = struct {
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lpv_overlay)) {
             ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active;
             log.log.info("LPV overlay {s}", .{if (ctx.settings.debug_lpv_overlay_active) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_frustum_debug)) {
+            ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active;
+            log.log.info("Frustum debug {s}", .{if (ctx.settings.debug_frustum_active) "enabled" else "disabled"});
             self.last_debug_toggle_time = now;
         }
 
@@ -300,7 +312,19 @@ pub const WorldScreen = struct {
         try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
 
         if (ctx.settings.debug_shadows_active) {
-            DebugShadowOverlay.draw(rhi.ui(), rhi.shadowSystem(), screen_w, screen_h, .{});
+            const shadow_res = ctx.settings.getShadowResolution();
+            const shadow_dist = ctx.settings.shadow_distance;
+            const debug_cascades = CSM.computeCascades(
+                shadow_res,
+                camera.fov,
+                aspect,
+                0.1,
+                shadow_dist,
+                self.session.atmosphere.celestial.sun_dir,
+                camera.getViewMatrixOriginCentered(),
+                true,
+            );
+            DebugShadowOverlay.draw(ui, rhi.shadowSystem(), screen_w, screen_h, .{}, &debug_cascades.cascade_splits);
         }
         if (ctx.settings.debug_lpv_overlay_active) {
             const overlay_size = std.math.clamp(220.0 * ctx.settings.ui_scale, 160.0, screen_h * 0.4);
@@ -329,6 +353,30 @@ pub const WorldScreen = struct {
             Font.drawText(ui, line1, text_x, text_y + 10.0, 1.5, .{ .r = 0.95, .g = 0.98, .b = 1.0, .a = 1.0 });
             Font.drawText(ui, line2, text_x, text_y + 20.0, 1.5, .{ .r = 0.95, .g = 0.98, .b = 1.0, .a = 1.0 });
             Font.drawText(ui, line3, text_x, text_y + 30.0, 1.5, .{ .r = 0.95, .g = 0.98, .b = 1.0, .a = 1.0 });
+        }
+
+        if (ctx.settings.debug_frustum_active) {
+            if (!self.frustum_initialized) {
+                self.frustum_buffer = try render_system.getRHI().resourceManager().createBuffer(
+                    @sizeOf([DebugFrustum.FRUSTUM_VERTEX_COUNT]rhi_pkg.Vertex),
+                    .vertex,
+                );
+                self.frustum_initialized = true;
+            }
+
+            const corners = DebugFrustum.extractCorners(view_proj_render, camera.getViewMatrixOriginCentered());
+            const frustum_verts = DebugFrustum.buildLineVertices(corners, DebugFrustum.DefaultColor);
+            try render_system.getRHI().resourceManager().uploadBuffer(
+                self.frustum_buffer,
+                std.mem.asBytes(&frustum_verts),
+            );
+
+            DebugFrustum.draw(
+                rhi.renderContext(),
+                self.frustum_buffer,
+                DebugFrustum.FRUSTUM_VERTEX_COUNT,
+                camera.position,
+            );
         }
 
         if (self.debug_menu.enabled) {
@@ -369,6 +417,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.clouds)] = !render_system.getDisableClouds();
         states[@intFromEnum(DebugFeature.fog)] = self.session.atmosphere.fog_enabled;
         states[@intFromEnum(DebugFeature.lpv_overlay)] = ctx.settings.debug_lpv_overlay_active;
+        states[@intFromEnum(DebugFeature.frustum_debug)] = ctx.settings.debug_frustum_active;
         states[@intFromEnum(DebugFeature.creative_mode)] = self.session.creative_mode;
         states[@intFromEnum(DebugFeature.time_pause)] = self.session.atmosphere.time.time_scale == 0.0;
         return states;
@@ -427,6 +476,9 @@ pub const WorldScreen = struct {
             },
             .lpv_overlay => {
                 ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active;
+            },
+            .frustum_debug => {
+                ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active;
             },
             .creative_mode => {
                 self.session.creative_mode = !self.session.creative_mode;
