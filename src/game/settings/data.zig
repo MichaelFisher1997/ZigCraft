@@ -61,9 +61,7 @@ pub const Settings = struct {
     // Shadow Settings
     shadow_pcf_samples: u8 = 12, // 4, 8, 12, 16
     shadow_cascade_blend: bool = true,
-    shadow_caster_distance: f32 = 250.0, // Distance to render shadow casters (independent of cascade coverage)
-    shadow_lod_bias: f32 = 0.0, // LOD level offset for shadow meshes (0 = use base LOD)
-    shadow_lod_enabled: bool = true, // Enable LOD in shadow pass (independent of visual LOD)
+    shadow_caster_distance: f32 = 250.0,
 
     // Cloud Settings
     cloud_shadows_enabled: bool = true,
@@ -159,16 +157,6 @@ pub const Settings = struct {
             .label = "SHADOW CASTER DISTANCE",
             .description = "Distance from camera to render shadow-casting geometry",
             .kind = .{ .slider = .{ .min = 50.0, .max = 500.0, .step = 25.0 } },
-        };
-        pub const shadow_lod_bias = SettingMetadata{
-            .label = "SHADOW LOD BIAS",
-            .description = "LOD level offset for shadow meshes (higher = simpler meshes in shadows)",
-            .kind = .{ .slider = .{ .min = 0.0, .max = 3.0, .step = 1.0 } },
-        };
-        pub const shadow_lod_enabled = SettingMetadata{
-            .label = "SHADOW LOD",
-            .description = "Enable level-of-detail for shadow caster meshes (improves performance)",
-            .kind = .toggle,
         };
         pub const pbr_enabled = SettingMetadata{
             .label = "PBR RENDERING",

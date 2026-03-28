@@ -246,8 +246,6 @@ pub const WorldScreen = struct {
                     .pcf_samples = ctx.settings.shadow_pcf_samples,
                     .cascade_blend = ctx.settings.shadow_cascade_blend,
                     .caster_distance = ctx.settings.shadow_caster_distance,
-                    .lod_bias = ctx.settings.shadow_lod_bias,
-                    .lod_enabled = ctx.settings.shadow_lod_enabled,
                 },
                 .cloud_shadows = cloud_shadows_enabled,
                 .pbr_quality = ctx.settings.pbr_quality,
