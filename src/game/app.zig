@@ -8,6 +8,7 @@ const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const Input = @import("../engine/input/input.zig").Input;
 const Time = @import("../engine/core/time.zig").Time;
 const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
+const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const InputMapper = @import("input_mapper.zig").InputMapper;
@@ -161,6 +162,12 @@ pub const App = struct {
         };
     }
 
+    fn getWorldStats(self: *const App) ?WorldStats {
+        if (self.screen_manager.stack.items.len == 0) return null;
+        const top = self.screen_manager.stack.items[self.screen_manager.stack.items.len - 1];
+        return top.getWorldStats();
+    }
+
     pub fn runSingleFrame(self: *App) !void {
         self.time.update();
         self.audio_manager.update();
@@ -215,7 +222,9 @@ pub const App = struct {
             return;
         }
 
-        try self.ui_manager.draw(&self.screen_manager, self.render_system.getRHI());
+        const world_stats = self.getWorldStats();
+        const cpu_ms = self.time.delta_time * 1000.0;
+        try self.ui_manager.draw(&self.screen_manager, self.render_system.getRHI(), world_stats, cpu_ms, self.time.fps);
 
         self.render_system.endFrame();
 

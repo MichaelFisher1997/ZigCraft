@@ -10,6 +10,7 @@ const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
 const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
 const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
+const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
 
@@ -44,6 +45,7 @@ pub const IScreen = struct {
         draw: ?*const fn (ptr: *anyopaque, ui: *UISystem) anyerror!void = null,
         onEnter: ?*const fn (ptr: *anyopaque) void = null,
         onExit: ?*const fn (ptr: *anyopaque) void = null,
+        getWorldStats: ?*const fn (ptr: *anyopaque) ?WorldStats = null,
     };
 
     pub fn deinit(self: IScreen) void {
@@ -72,6 +74,13 @@ pub const IScreen = struct {
         if (self.vtable.onExit) |onExit_fn| {
             onExit_fn(self.ptr);
         }
+    }
+
+    pub fn getWorldStats(self: IScreen) ?WorldStats {
+        if (self.vtable.getWorldStats) |getStats_fn| {
+            return getStats_fn(self.ptr);
+        }
+        return null;
     }
 };
 

@@ -3,60 +3,147 @@ const UISystem = @import("ui_system.zig").UISystem;
 const Color = @import("ui_system.zig").Color;
 const Rect = @import("ui_system.zig").Rect;
 const rhi = @import("../graphics/rhi.zig");
+const RenderDeviceStats = @import("../graphics/render_device.zig").Stats;
 const font = @import("font.zig");
 
 pub const TimingOverlay = struct {
     enabled: bool = false,
 
-    pub fn draw(self: *TimingOverlay, ui: *UISystem, results: rhi.GpuTimingResults) void {
+    pub fn draw(self: *TimingOverlay, ui: *UISystem, data: PerformanceData) void {
         if (!self.enabled) return;
 
         const x: f32 = 10;
         var y: f32 = 10;
-        const width: f32 = 280;
+        const width: f32 = 340;
         const line_height: f32 = 15;
         const scale: f32 = 1.0;
-        const num_lines = 14; // Title + 12 passes + Total
-        const padding = 20; // Spacers and margins
+        const label_x = x + 10;
+        const value_x = x + width - 10;
 
-        // Background
-        ui.drawRect(.{ .x = x, .y = y, .width = width, .height = num_lines * line_height + padding }, .{ .r = 0, .g = 0, .b = 0, .a = 0.6 });
+        const num_lines = 2 + 1 + 13 + 1 + 6 + 1 + 8 + 1 + 4 + 1;
+        const padding = 25;
+
+        ui.drawRect(.{ .x = x, .y = y, .width = width, .height = num_lines * line_height + padding }, .{ .r = 0, .g = 0, .b = 0, .a = 0.7 });
         y += 5;
 
-        drawTimingLine(ui, "GPU PROFILER (MS)", -1.0, x + 10, &y, scale, Color.white);
-        y += 5;
-
-        drawTimingLine(ui, "SHADOW 0:", results.shadow_pass_ms[0], x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "SHADOW 1:", results.shadow_pass_ms[1], x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "SHADOW 2:", results.shadow_pass_ms[2], x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "G-PASS:", results.g_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "SSAO:", results.ssao_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "LPV:", results.lpv_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "SKY:", results.sky_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "OPAQUE:", results.opaque_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "CLOUDS:", results.cloud_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "BLOOM:", results.bloom_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "FXAA:", results.fxaa_pass_ms, x + 10, &y, scale, Color.gray);
-        drawTimingLine(ui, "POST PROC:", results.post_process_pass_ms, x + 10, &y, scale, Color.gray);
-
-        y += 5;
-        drawTimingLine(ui, "TOTAL GPU:", results.total_gpu_ms, x + 10, &y, scale, Color.white);
-    }
-
-    fn drawTimingLine(ui: *UISystem, label: []const u8, value: f32, x: f32, y: *f32, scale: f32, color: Color) void {
-        font.drawText(ui, label, x, y.*, scale, color);
-
-        if (value >= 0.0) {
-            var buffer: [16]u8 = undefined;
-            const val_str = std.fmt.bufPrint(&buffer, "{d:.2}", .{value}) catch "0.00";
-            const val_x = x + 180;
-            font.drawText(ui, val_str, val_x, y.*, scale, color);
+        drawSectionHeader(ui, "PERFORMANCE", x + 10, &y, scale, Color.white);
+        {
+            var buf: [16]u8 = undefined;
+            const cpu_str = std.fmt.bufPrint(&buf, "CPU: {d:.2}MS  FPS: {d:.0}", .{ data.cpu_frame_ms, data.fps }) catch "";
+            font.drawText(ui, cpu_str, x + 10, y, scale, Color.white);
+            y += line_height + 3;
         }
 
+        drawSectionHeader(ui, "GPU PASSES (MS)", label_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "SHADOW 0:", data.gpu.shadow_pass_ms[0], label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "SHADOW 1:", data.gpu.shadow_pass_ms[1], label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "SHADOW 2:", data.gpu.shadow_pass_ms[2], label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "G-PASS:", data.gpu.g_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "SSAO:", data.gpu.ssao_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "LPV:", data.gpu.lpv_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "SKY:", data.gpu.sky_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "OPAQUE:", data.gpu.opaque_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "CLOUDS:", data.gpu.cloud_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "MAIN:", data.gpu.main_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "BLOOM:", data.gpu.bloom_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "FXAA:", data.gpu.fxaa_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "POST PROC:", data.gpu.post_process_pass_ms, label_x, value_x, &y, scale, Color.gray);
+        y += 3;
+        drawGpuLine(ui, "TOTAL GPU:", data.gpu.total_gpu_ms, label_x, value_x, &y, scale, Color.white);
+
+        if (data.world) |ws| {
+            drawSectionHeader(ui, "RENDER STATS", label_x, &y, scale, Color.rgba(0.4, 0.9, 1.0, 1.0));
+            drawStatLine(ui, "CHUNKS:", ws.chunks_rendered, label_x, value_x, &y, scale, Color.white);
+            drawStatLine(ui, "CHUNKS T:", ws.chunks_total, label_x, value_x, &y, scale, Color.white);
+            drawStatLine(ui, "CULLED:", ws.chunks_culled, label_x, value_x, &y, scale, Color.white);
+            drawStatLine(ui, "VERTS:", ws.vertices_rendered, label_x, value_x, &y, scale, Color.white);
+            drawQueueLine(ui, "QUEUES:", ws.gen_queue, ws.mesh_queue, ws.upload_queue, label_x, value_x, &y, scale, Color.white);
+
+            if (ws.lod) |ls| {
+                drawSectionHeader(ui, "LOD DISTRIBUTION", label_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawStatLine(ui, "LOD0:", ls.loaded[0], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawStatLine(ui, "LOD1:", ls.loaded[1], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawStatLine(ui, "LOD2:", ls.loaded[2], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawStatLine(ui, "LOD3:", ls.loaded[3], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawStatLine(ui, "LOD MEM:", ls.memory_used_mb, label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+            }
+        }
+
+        drawSectionHeader(ui, "GPU MEMORY", label_x, &y, scale, Color.rgba(1.0, 0.5, 1.0, 1.0));
+        drawMemoryLine(ui, "BUFS:", data.gpu_stats.buffer_count, data.gpu_stats.total_buffer_memory, label_x, value_x, &y, scale, Color.white);
+        drawMemoryLine(ui, "TEX:", data.gpu_stats.texture_count, data.gpu_stats.total_texture_memory, label_x, value_x, &y, scale, Color.white);
+        drawStatLine(ui, "SHADERS:", data.gpu_stats.shader_count, label_x, value_x, &y, scale, Color.white);
+    }
+
+    fn drawSectionHeader(ui: *UISystem, label: []const u8, x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, x, y.*, scale, color);
+        y.* += 18;
+    }
+
+    fn drawGpuLine(ui: *UISystem, label: []const u8, value: f32, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, label_x, y.*, scale, color);
+        if (value >= 0.0) {
+            var buf: [16]u8 = undefined;
+            const val_str = std.fmt.bufPrint(&buf, "{d:.2}", .{value}) catch "0.00";
+            const val_w = font.measureTextWidth(val_str, scale);
+            font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
+        }
+        y.* += 15;
+    }
+
+    fn drawStatLine(ui: *UISystem, label: []const u8, value: u64, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, label_x, y.*, scale, color);
+        var buf: [32]u8 = undefined;
+        const val_str = std.fmt.bufPrint(&buf, "{d}", .{value}) catch "0";
+        const val_w = font.measureTextWidth(val_str, scale);
+        font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
+        y.* += 15;
+    }
+
+    fn drawQueueLine(ui: *UISystem, label: []const u8, g: usize, m: usize, u: usize, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, label_x, y.*, scale, color);
+        var buf: [48]u8 = undefined;
+        const val_str = std.fmt.bufPrint(&buf, "{d}/{d}/{d}", .{ g, m, u }) catch "";
+        const val_w = font.measureTextWidth(val_str, scale);
+        font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
+        y.* += 15;
+    }
+
+    fn drawMemoryLine(ui: *UISystem, label: []const u8, count: u32, bytes: usize, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, label_x, y.*, scale, color);
+        const mb = @as(f32, @floatFromInt(bytes)) / (1024.0 * 1024.0);
+        var buf: [32]u8 = undefined;
+        const val_str = std.fmt.bufPrint(&buf, "{d} ({d:.0}MB)", .{ count, mb }) catch "";
+        const val_w = font.measureTextWidth(val_str, scale);
+        font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
         y.* += 15;
     }
 
     pub fn toggle(self: *TimingOverlay) void {
         self.enabled = !self.enabled;
     }
+};
+
+pub const PerformanceData = struct {
+    gpu: rhi.GpuTimingResults,
+    cpu_frame_ms: f32,
+    fps: f32,
+    world: ?WorldStats,
+    gpu_stats: RenderDeviceStats,
+};
+
+pub const WorldStats = struct {
+    chunks_total: u32,
+    chunks_rendered: u32,
+    chunks_culled: u32,
+    vertices_rendered: u64,
+    gen_queue: usize,
+    mesh_queue: usize,
+    upload_queue: usize,
+    lod: ?LODStatsDisplay,
+};
+
+pub const LODStatsDisplay = struct {
+    loaded: [4]u32,
+    memory_used_mb: u32,
 };
