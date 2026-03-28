@@ -93,6 +93,15 @@ pub fn deriveSurfaceType(
     };
 }
 
+pub const DEFAULT_CELL: ClassCell = .{
+    .biome_id = .plains,
+    .surface_type = .grass,
+    .is_water = false,
+    .continental_zone = .inland_low,
+    .region_role = .transit,
+    .path_type = .none,
+};
+
 /// World Classification Map
 pub const WorldClassMap = struct {
     /// Grid dimensions
@@ -110,20 +119,12 @@ pub const WorldClassMap = struct {
         };
     }
 
-    /// Get classification cell at local grid coordinates
-    pub fn getCell(self: *const WorldClassMap, gx: u32, gz: u32) *const ClassCell {
+    /// Get classification cell at local grid coordinates.
+    /// Returns DEFAULT_CELL for out-of-bounds coordinates.
+    pub fn getCell(self: *const WorldClassMap, gx: u32, gz: u32) ClassCell {
         if (gx >= GRID_SIZE_X or gz >= GRID_SIZE_Z) {
-            // Return default cell for out of bounds
-            const default_cell = ClassCell{
-                .biome_id = .plains,
-                .surface_type = .grass,
-                .is_water = false,
-                .continental_zone = .inland_low,
-                .region_role = .transit,
-                .path_type = .none,
-            };
-            return &default_cell;
+            return DEFAULT_CELL;
         }
-        return &self.cells[gx + gz * GRID_SIZE_X];
+        return self.cells[gx + gz * GRID_SIZE_X];
     }
 };
