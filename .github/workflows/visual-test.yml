@@ -64,7 +64,7 @@ jobs:
         id: screenshot
         continue-on-error: true
         env:
-          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
+          ZIG_GLOBAL_CACHE_DIR: /tmp/zig-cache-global
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless
           ZIGCRAFT_SMOKE_FRAMES: "5"
