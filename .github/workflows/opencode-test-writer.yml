@@ -137,7 +137,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
 
       - name: Ensure test label exists
@@ -155,12 +155,12 @@ jobs:
         run: |
           MODULE="${{ steps.select-module.outputs.module }}"
           EXISTING=$(gh pr list \
-            --base dev \
+            --base ${{ github.event.repository.default_branch }} \
             --label "automated-test" \
             --state open \
             --limit 20 \
             --json title,headRefName \
-            --jq ".[] | select(.title | test(\"\\[${MODULE}\\]\")) | .headRefName" || echo "")
+            --jq ".[] | select(.title | startswith(\"test: [${MODULE}]\")) | .headRefName" || echo "")
           if [ -n "$EXISTING" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Existing PR found on branch: ${EXISTING}"
@@ -198,7 +198,7 @@ jobs:
             Analyze the module `${{ steps.select-module.outputs.module }}` for testing gaps and write 3-8 high-quality unit tests that increase coverage. Focus on untested public functions, error paths, edge cases, and crash-prone areas.
 
             **CRITICAL CONSTRAINTS:**
-            1. You MUST create a git branch, write test files, and open a pull request targeting `dev`.
+            1. You MUST create a git branch, write test files, and open a pull request targeting `${{ github.event.repository.default_branch }}`.
             2. Your tests MUST pass: run `nix develop --command zig build test` and verify zero failures before pushing.
             3. You MUST format your code: run `nix develop --command zig fmt src/` before committing.
             4. Only write tests for logic that can be tested WITHOUT a real GPU/window. Use mocks, stubs, or test pure logic only.
@@ -326,10 +326,10 @@ jobs:
             5. Run tests: `nix develop --command zig build test` — ALL tests must pass, not just yours
             6. Commit with message: `test: add {area} tests for {module}` (e.g., `test: add error mapping tests for vulkan-device`)
             7. Push the branch
-            8. Create a PR targeting `dev`:
+            8. Create a PR targeting `${{ github.event.repository.default_branch }}`:
                ```
                gh pr create \
-                 --base dev \
+                 --base ${{ github.event.repository.default_branch }} \
                  --title "test: [${{ steps.select-module.outputs.module }}] {brief description}" \
                  --body "..." \
                  --label "automated-test"
