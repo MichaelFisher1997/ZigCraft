@@ -333,7 +333,8 @@ pub const WorldScreen = struct {
 
         if (self.debug_menu.enabled) {
             const feature_states = self.collectDebugStates(ctx, render_system);
-            if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale)) |click| {
+            const scroll_delta = ctx.input.getScrollDelta();
+            if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale, scroll_delta.y)) |click| {
                 self.applyDebugFeatureToggle(click.feature, ctx, render_system, rhi, ctx.time.elapsed);
             }
         }
