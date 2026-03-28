@@ -40,6 +40,12 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 // Constants
 const float PI = 3.14159265359;
 
+const int DEBUG_OFF = 0;
+const int DEBUG_SHADOW_FACTOR = 1;
+const int DEBUG_CASCADE_INDEX = 2;
+const int DEBUG_CASTER_COVERAGE = 3;
+const int DEBUG_SEAM_DIAG = 4;
+
 // Cloud shadow noise functions
 float cloudHash(vec2 p) {
     p = fract(p * vec2(234.34, 435.345));
@@ -550,11 +556,11 @@ void main() {
 
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
-        if (debugChannel < 1.5) {
+        if (debugChannel < DEBUG_SHADOW_FACTOR + 0.5) {
             color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), totalShadow);
-        } else if (debugChannel < 2.5) {
+        } else if (debugChannel < DEBUG_CASCADE_INDEX + 0.5) {
             color = (layer == 0) ? vec3(1.0, 0.2, 0.2) : (layer == 1) ? vec3(0.2, 1.0, 0.2) : vec3(0.2, 0.4, 1.0);
-        } else if (debugChannel < 3.5) {
+        } else if (debugChannel < DEBUG_CASTER_COVERAGE + 0.5) {
             vec4 shadowCoord = shadows.light_space_matrices[layer] * vec4(vFragPosWorld, 1.0);
             vec3 projCoords = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
             float mapDepth = texture(uShadowMapsRegular, vec3(projCoords.xy, float(layer))).r;
@@ -562,7 +568,7 @@ void main() {
             float hasCaster = (mapDepth < 0.999) ? 1.0 : 0.0;
             float isInShadow = (fragDepth > mapDepth + 0.001) ? 1.0 : 0.0;
             color = vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth);
-        } else if (debugChannel < 4.5) {
+        } else if (debugChannel < DEBUG_SEAM_DIAG + 0.5) {
             float nextSplit = shadows.cascade_splits[layer];
             float blendStart = nextSplit * 0.8;
             float distToSplit = abs(vViewDepth - nextSplit) / max(nextSplit, 0.01);

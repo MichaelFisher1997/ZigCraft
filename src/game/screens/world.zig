@@ -618,9 +618,5 @@ fn resolveLPVQuality(preset: u32) LPVQualityResolved {
 }
 
 fn resolveShadowDebugChannel(settings: *const @import("../settings/data.zig").Settings) u32 {
-    if (settings.debug_shadow_seam_diag) return 4;
-    if (settings.debug_shadow_caster_coverage) return 3;
-    if (settings.debug_shadow_cascade_index) return 2;
-    if (settings.debug_shadows_active) return 1;
-    return 0;
+    return @intFromEnum(@import("../settings/data.zig").resolveShadowDebugChannel(settings));
 }

@@ -1,5 +1,21 @@
 const std = @import("std");
 
+pub const ShadowDebugChannel = enum(u32) {
+    off = 0,
+    shadow_factor = 1,
+    cascade_index = 2,
+    caster_coverage = 3,
+    seam_diagnostics = 4,
+};
+
+pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {
+    if (settings.debug_shadow_seam_diag) return .seam_diagnostics;
+    if (settings.debug_shadow_caster_coverage) return .caster_coverage;
+    if (settings.debug_shadow_cascade_index) return .cascade_index;
+    if (settings.debug_shadows_active) return .shadow_factor;
+    return .off;
+}
+
 pub const ShadowQuality = struct {
     resolution: u32,
     label: []const u8,
