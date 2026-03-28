@@ -51,6 +51,7 @@ pub const GraphicsScreen = struct {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
         const settings = ctx.settings;
+        const rhi = ctx.render_system.getRHI();
 
         // Draw background screen if it exists
         try ctx.screen_manager.drawParentScreen(ptr, ui);
@@ -98,15 +99,15 @@ pub const GraphicsScreen = struct {
                 const next_idx = (preset_idx + 1) % (settings_pkg.json_presets.graphics_presets.items.len + 1);
                 if (next_idx < settings_pkg.json_presets.graphics_presets.items.len) {
                     settings_pkg.json_presets.apply(settings, next_idx);
-                    ctx.rhi.*.setAnisotropicFiltering(settings.anisotropic_filtering);
-                    ctx.rhi.*.setTexturesEnabled(settings.textures_enabled);
-                    ctx.rhi.*.setTAABlendFactor(settings.taa_blend_factor);
-                    ctx.rhi.*.setTAAVelocityRejection(settings.taa_velocity_rejection);
+                    rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
+                    rhi.setTexturesEnabled(settings.textures_enabled);
+                    rhi.setTAABlendFactor(settings.taa_blend_factor);
+                    rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
                     if (settings.taa_enabled) {
                         settings.fxaa_enabled = false;
-                        ctx.rhi.*.setFXAA(false);
+                        rhi.setFXAA(false);
                     } else {
-                        ctx.rhi.*.setFXAA(settings.fxaa_enabled);
+                        rhi.setFXAA(settings.fxaa_enabled);
                     }
                 } else {
                     // Custom selected, nothing changes in values but UI label updates to CUSTOM (via getPresetIndex next frame)
@@ -214,41 +215,41 @@ pub const GraphicsScreen = struct {
             // Handle side effects
             if (val_ptr.* != old_val) {
                 if (std.mem.eql(u8, decl.name, "anisotropic_filtering")) {
-                    ctx.rhi.*.setAnisotropicFiltering(settings.anisotropic_filtering);
+                    rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
                 } else if (std.mem.eql(u8, decl.name, "textures_enabled")) {
-                    ctx.rhi.*.setTexturesEnabled(settings.textures_enabled);
+                    rhi.setTexturesEnabled(settings.textures_enabled);
                 } else if (std.mem.eql(u8, decl.name, "vsync")) {
-                    ctx.rhi.*.setVSync(settings.vsync);
+                    rhi.setVSync(settings.vsync);
                 } else if (std.mem.eql(u8, decl.name, "volumetric_density")) {
-                    ctx.rhi.*.setVolumetricDensity(settings.volumetric_density);
+                    rhi.setVolumetricDensity(settings.volumetric_density);
                 } else if (std.mem.eql(u8, decl.name, "taa_enabled")) {
                     if (settings.taa_enabled) {
                         settings.fxaa_enabled = false;
-                        ctx.rhi.*.setFXAA(false);
+                        rhi.setFXAA(false);
                     }
                 } else if (std.mem.eql(u8, decl.name, "taa_blend_factor")) {
-                    ctx.rhi.*.setTAABlendFactor(settings.taa_blend_factor);
+                    rhi.setTAABlendFactor(settings.taa_blend_factor);
                 } else if (std.mem.eql(u8, decl.name, "taa_velocity_rejection")) {
-                    ctx.rhi.*.setTAAVelocityRejection(settings.taa_velocity_rejection);
+                    rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
                 } else if (std.mem.eql(u8, decl.name, "fxaa_enabled")) {
                     if (settings.taa_enabled and settings.fxaa_enabled) {
                         settings.fxaa_enabled = false;
-                        ctx.rhi.*.setFXAA(false);
+                        rhi.setFXAA(false);
                     } else {
-                        ctx.rhi.*.setFXAA(settings.fxaa_enabled);
+                        rhi.setFXAA(settings.fxaa_enabled);
                     }
                 } else if (std.mem.eql(u8, decl.name, "bloom_enabled")) {
-                    ctx.rhi.*.setBloom(settings.bloom_enabled);
+                    rhi.setBloom(settings.bloom_enabled);
                 } else if (std.mem.eql(u8, decl.name, "bloom_intensity")) {
-                    ctx.rhi.*.setBloomIntensity(settings.bloom_intensity);
+                    rhi.setBloomIntensity(settings.bloom_intensity);
                 } else if (std.mem.eql(u8, decl.name, "vignette_enabled")) {
-                    ctx.rhi.*.setVignetteEnabled(settings.vignette_enabled);
+                    rhi.setVignetteEnabled(settings.vignette_enabled);
                 } else if (std.mem.eql(u8, decl.name, "vignette_intensity")) {
-                    ctx.rhi.*.setVignetteIntensity(settings.vignette_intensity);
+                    rhi.setVignetteIntensity(settings.vignette_intensity);
                 } else if (std.mem.eql(u8, decl.name, "film_grain_enabled")) {
-                    ctx.rhi.*.setFilmGrainEnabled(settings.film_grain_enabled);
+                    rhi.setFilmGrainEnabled(settings.film_grain_enabled);
                 } else if (std.mem.eql(u8, decl.name, "film_grain_intensity")) {
-                    ctx.rhi.*.setFilmGrainIntensity(settings.film_grain_intensity);
+                    rhi.setFilmGrainIntensity(settings.film_grain_intensity);
                 }
             }
 

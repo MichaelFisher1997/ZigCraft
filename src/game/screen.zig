@@ -7,49 +7,23 @@ const InputMapper = input_mapper_pkg.InputMapper;
 const IInputMapper = input_mapper_pkg.IInputMapper;
 const Time = @import("../engine/core/time.zig").Time;
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
-const ResourcePackManager = @import("../engine/graphics/resource_pack.zig").ResourcePackManager;
-const RHI = @import("../engine/graphics/rhi.zig").RHI;
+const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
+const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
-const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
-const RenderGraph = @import("../engine/graphics/render_graph.zig").RenderGraph;
-const AtmosphereSystem = @import("../engine/graphics/atmosphere_system.zig").AtmosphereSystem;
-const MaterialSystem = @import("../engine/graphics/material_system.zig").MaterialSystem;
-const LPVSystem = @import("../engine/graphics/lpv_system.zig").LPVSystem;
-const Texture = @import("../engine/graphics/texture.zig").Texture;
-const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
-const rhi_pkg = @import("../engine/graphics/rhi.zig");
 
 pub const EngineContext = struct {
     allocator: std.mem.Allocator,
     window_manager: *WindowManager,
-    rhi: *RHI,
-    resource_pack_manager: *ResourcePackManager,
-    atlas: *TextureAtlas,
-    render_graph: *RenderGraph,
-    atmosphere_system: *AtmosphereSystem,
-    material_system: *MaterialSystem,
-    lpv_system: *LPVSystem,
+    render_system: *RenderSystem,
     audio_system: *AudioSystem,
-    env_map_ptr: ?*?Texture,
-    shader: rhi_pkg.ShaderHandle,
-
     settings: *Settings,
     input: IRawInputProvider,
     input_mapper: IInputMapper,
     time: *Time,
-
     screen_manager: *ScreenManager,
-    safe_render_mode: bool,
     skip_world_update: bool,
-    skip_world_render: bool,
-    disable_shadow_draw: bool,
-    disable_gpass_draw: bool,
-    disable_ssao: bool,
-    disable_clouds: bool,
 
-    /// Saves all persistent application settings.
-    /// Screens should call this when settings are modified, typically on a 'Back' action.
     pub fn saveSettings(self: EngineContext) void {
         settings_pkg.persistence.save(self.settings, self.allocator);
         @import("input_settings.zig").InputSettings.saveFromMapper(self.allocator, self.input_mapper) catch |err| {
@@ -204,20 +178,14 @@ pub const ScreenManager = struct {
     }
 
     pub fn draw(self: *ScreenManager, ui: *UISystem) !void {
-        // We might want to draw multiple screens if they are transparent
-        // For now, just draw the top one
         if (self.stack.items.len > 0) {
             try self.stack.items[self.stack.items.len - 1].draw(ui);
         }
     }
 
-    /// Draws the screen directly below the given screen pointer in the stack.
-    /// Used by overlay screens (pause, settings) to render their parent screen as background.
     pub fn drawParentScreen(self: *ScreenManager, current_ptr: *anyopaque, ui: *UISystem) !void {
-        // Find this screen's index in the stack
         for (self.stack.items, 0..) |screen, i| {
             if (screen.ptr == current_ptr) {
-                // Found ourselves, draw the screen below us if it exists
                 if (i > 0) {
                     try self.stack.items[i - 1].draw(ui);
                 }

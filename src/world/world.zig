@@ -244,9 +244,9 @@ pub const World = struct {
         self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod);
     }
 
-    pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3) void {
+    pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        self.renderer.renderShadowPass(light_space_matrix, camera_pos, self.render_distance, lod_mgr);
+        self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance, lod_mgr);
     }
 
     pub fn shadowScene(self: *World) shadow_scene.IShadowScene {
