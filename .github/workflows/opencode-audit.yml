@@ -2,8 +2,8 @@ name: opencode-audit
 
 on:
   schedule:
-    - cron: '0 6 * * *'
-    - cron: '0 18 * * *'
+    - cron: '0 6 * * *'   # 06:00 UTC - Morning scan
+    - cron: '0 18 * * *'  # 18:00 UTC - Evening scan
   workflow_dispatch:
     inputs:
       module:
@@ -87,7 +87,7 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
 
       - name: Run opencode audit
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@v1.3.3
         env:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
