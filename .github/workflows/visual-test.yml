@@ -1,0 +1,162 @@
+name: visual-test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  visual-test:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix (primary)
+        id: nix_install_primary
+        continue-on-error: true
+        uses: DeterminateSystems/nix-installer-action@v16
+
+      - name: Install Nix (fallback)
+        if: steps.nix_install_primary.outcome == 'failure'
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Verify Nix installation
+        run: nix --version
+
+      - name: Cache Nix Store
+        continue-on-error: true
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          paths: ~/.cache/nix
+
+      - name: Start headless Wayland compositor
+        run: |
+          mkdir -p /tmp/runtime-runner
+          chmod 700 /tmp/runtime-runner
+          export XDG_RUNTIME_DIR=/tmp/runtime-runner
+          nix develop --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 &
+          echo "WAYLAND_DISPLAY=headless" >> $GITHUB_ENV
+          echo "XDG_RUNTIME_DIR=/tmp/runtime-runner" >> $GITHUB_ENV
+          sleep 5
+
+      - name: Ensure visual-test label exists
+        run: |
+          if ! gh label list --json name --jq '.[].name' | grep -q '^visual-test$'; then
+            gh label create "visual-test" \
+              --description "Issues from automated visual regression tests" \
+              --color "E06C75"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run menu screenshot capture
+        id: screenshot
+        env:
+          ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
+          XDG_RUNTIME_DIR: /tmp/runtime-runner
+          WAYLAND_DISPLAY: headless
+          ZIGCRAFT_SMOKE_FRAMES: "5"
+          ZIGCRAFT_SAFE_RENDER: "1"
+        run: |
+          LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
+          LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
+          export VK_ICD_FILENAMES=$LVP_PATH
+          export VK_LAYER_PATH=$LAYER_PATH
+          nix develop --command zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true
+
+      - name: Convert PPM to PNG
+        run: |
+          if [ -f screenshot.ppm ]; then
+            nix develop --command convert screenshot.ppm screenshot.png
+            echo "screenshot_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "screenshot_exists=false" >> $GITHUB_OUTPUT
+            echo "::error::Screenshot file not found - capture failed"
+            exit 1
+          fi
+
+      - name: Upload screenshot artifact
+        if: steps.screenshot.outputs.screenshot_exists == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: menu-screenshot
+          path: |
+            screenshot.png
+            screenshot.ppm
+          retention-days: 30
+
+      - name: Run opencode visual verification
+        if: steps.screenshot.outputs.screenshot_exists == 'true'
+        uses: anomalyco/opencode/github@v1.3.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        with:
+          model: kimi-for-coding/k2p5
+          prompt: |
+            You are a visual QA tester for a game engine. A screenshot of the main menu has been captured during a headless CI run using Lavapipe (software Vulkan).
+
+            ## YOUR TASK
+
+            1. Read the file `screenshot.png` in the workspace root. This is a screenshot of the ZigCraft main menu.
+
+            2. Analyze the screenshot and verify ALL of the following:
+               - The screen is NOT blank, black, or empty
+               - The title "ZIG VOXEL ENGINE" is visible at the top
+               - At least 2 menu buttons are visible (e.g., SINGLEPLAYER, SETTINGS, QUIT)
+               - The UI layout looks reasonable (buttons centered, not overlapping, not off-screen)
+               - There are no obvious rendering artifacts (complete blackness, garbled pixels, missing geometry)
+
+            3. If the screenshot passes ALL checks:
+               - Do nothing. A passing test means silence.
+               - Run: `echo "VISUAL TEST PASSED: Menu screenshot looks correct"`
+
+            4. If the screenshot FAILS any check:
+               - Create a GitHub issue with label `visual-test` describing exactly what is wrong.
+               - Use this title format: `[Visual Test] Menu screenshot shows {problem}`
+               - Include the check that failed and a description of what you see vs what you expected.
+
+            ## CRITICAL CONSTRAINTS
+            - You may ONLY create a single GitHub issue. Do NOT create branches, PRs, or modify files.
+            - If the screenshot looks correct, file NO issue. Silence is better than noise.
+            - Be lenient with software rendering artifacts (Lavapipe may not render identically to a real GPU).
+            - Font rendering may be slightly different in software mode - that is acceptable.
+            - The important thing is that the menu is FUNCTIONAL (visible text, clickable buttons, proper layout).
+
+      - name: Create failure issue on error
+        if: failure() && steps.screenshot.outputs.screenshot_exists != 'true'
+        run: |
+          gh issue create \
+            --title "[Visual Test] Menu screenshot capture failed" \
+            --label "visual-test" \
+            --body "$(cat <<'EOF'
+          ## Visual Test Failure
+
+          The automated visual test workflow failed to capture a screenshot of the main menu.
+
+          ### Possible Causes
+          - Vulkan initialization failed with Lavapipe
+          - The application crashed before rendering any frames
+          - The screenshot capture code failed to write the PPM file
+          - Build error in screenshot mode
+
+          ### Workflow Run
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ### Steps to Reproduce
+          1. Run: `zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true`
+          2. With Lavapipe ICD and headless Weston compositor
+          3. Check if `screenshot.ppm` is created
+          EOF
+          )"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

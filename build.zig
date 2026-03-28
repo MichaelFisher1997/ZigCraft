@@ -14,6 +14,9 @@ pub fn build(b: *std.Build) void {
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
 
+    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PPM screenshot after N frames and exit (menu mode)") orelse "";
+    options.addOption([]const u8, "screenshot_path", screenshot_path);
+
     const zig_math = b.createModule(.{
         .root_source_file = b.path("libs/zig-math/math.zig"),
         .target = target,
