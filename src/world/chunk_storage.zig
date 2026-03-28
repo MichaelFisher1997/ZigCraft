@@ -12,6 +12,7 @@ pub const IChunkStorage = struct {
         get: *const fn (ptr: *anyopaque, cx: i32, cz: i32) ?*ChunkData,
         count: *const fn (ptr: *anyopaque) usize,
         totalVertexCount: *const fn (ptr: *anyopaque) u64,
+        isChunkRenderable: *const fn (ptr: *anyopaque, cx: i32, cz: i32) bool,
     };
 
     pub fn get(self: IChunkStorage, cx: i32, cz: i32) ?*ChunkData {
@@ -24,6 +25,10 @@ pub const IChunkStorage = struct {
 
     pub fn totalVertexCount(self: IChunkStorage) u64 {
         return self.vtable.totalVertexCount(self.ptr);
+    }
+
+    pub fn isChunkRenderable(self: IChunkStorage, cx: i32, cz: i32) bool {
+        return self.vtable.isChunkRenderable(self.ptr, cx, cz);
     }
 };
 
@@ -82,6 +87,7 @@ pub const ChunkStorage = struct {
         .get = iget,
         .count = icount,
         .totalVertexCount = itotalVertexCount,
+        .isChunkRenderable = iisChunkRenderable,
     };
 
     fn iget(ptr: *anyopaque, cx: i32, cz: i32) ?*ChunkData {
@@ -97,6 +103,10 @@ pub const ChunkStorage = struct {
     fn itotalVertexCount(ptr: *anyopaque) u64 {
         const self: *ChunkStorage = @ptrCast(@alignCast(ptr));
         return self.totalVertexCount();
+    }
+
+    fn iisChunkRenderable(ptr: *anyopaque, cx: i32, cz: i32) bool {
+        return isChunkRenderable(cx, cz, ptr);
     }
 
     pub fn deinit(self: *ChunkStorage, vertex_allocator: anytype) void {

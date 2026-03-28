@@ -2315,8 +2315,10 @@ const MockChunkStorage = struct {
     get_calls: usize = 0,
     count_calls: usize = 0,
     total_calls: usize = 0,
+    renderable_calls: usize = 0,
     count_value: usize = 11,
     total_value: u64 = 22,
+    renderable_value: bool = true,
 
     pub fn interface(self: *MockChunkStorage) IChunkStorage {
         return .{ .ptr = self, .vtable = &VTABLE };
@@ -2326,6 +2328,7 @@ const MockChunkStorage = struct {
         .get = get,
         .count = count,
         .totalVertexCount = totalVertexCount,
+        .isChunkRenderable = isChunkRenderable,
     };
 
     fn get(ptr: *anyopaque, cx: i32, cz: i32) ?*ChunkData {
@@ -2346,6 +2349,14 @@ const MockChunkStorage = struct {
         const self: *MockChunkStorage = @ptrCast(@alignCast(ptr));
         self.total_calls += 1;
         return self.total_value;
+    }
+
+    fn isChunkRenderable(ptr: *anyopaque, cx: i32, cz: i32) bool {
+        _ = cx;
+        _ = cz;
+        const self: *MockChunkStorage = @ptrCast(@alignCast(ptr));
+        self.renderable_calls += 1;
+        return self.renderable_value;
     }
 };
 
@@ -2588,9 +2599,11 @@ test "IChunkStorage mock dispatch" {
     try testing.expect(storage_if.get(1, 2) == null);
     try testing.expectEqual(@as(usize, 11), storage_if.count());
     try testing.expectEqual(@as(u64, 22), storage_if.totalVertexCount());
+    try testing.expect(storage_if.isChunkRenderable(4, 5));
     try testing.expectEqual(@as(usize, 1), storage.get_calls);
     try testing.expectEqual(@as(usize, 1), storage.count_calls);
     try testing.expectEqual(@as(usize, 1), storage.total_calls);
+    try testing.expectEqual(@as(usize, 1), storage.renderable_calls);
 }
 
 test "ChunkStorage interface forwards empty storage" {
