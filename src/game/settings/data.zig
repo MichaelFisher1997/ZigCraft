@@ -35,7 +35,10 @@ pub const Settings = struct {
     fov: f32 = 45.0,
     textures_enabled: bool = true,
     wireframe_enabled: bool = false,
-    debug_shadows_active: bool = false, // Reverted to false for normal gameplay
+    debug_shadows_active: bool = false,
+    debug_shadow_cascade_index: bool = false,
+    debug_shadow_caster_coverage: bool = false,
+    debug_shadow_seam_diag: bool = false,
     debug_lpv_overlay_active: bool = false,
     debug_frustum_active: bool = false,
     shadow_quality: u32 = 2, // 0=Low, 1=Medium, 2=High, 3=Ultra

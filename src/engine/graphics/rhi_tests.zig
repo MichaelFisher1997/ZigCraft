@@ -327,6 +327,7 @@ const MockContext = struct {
         .setWireframe = undefined,
         .setTexturesEnabled = undefined,
         .setDebugShadowView = undefined,
+        .setShadowDebugChannel = undefined,
         .setVSync = undefined,
         .setAnisotropicFiltering = undefined,
         .setVolumetricDensity = undefined,

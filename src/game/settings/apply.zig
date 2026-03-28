@@ -39,6 +39,7 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setWireframe(settings.wireframe_enabled);
     rhi.setTexturesEnabled(settings.textures_enabled);
     rhi.setDebugShadowView(settings.debug_shadows_active);
+    rhi.setShadowDebugChannel(0);
     rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
     rhi.setMSAA(settings.msaa_samples);
     rhi.setTAABlendFactor(settings.taa_blend_factor);

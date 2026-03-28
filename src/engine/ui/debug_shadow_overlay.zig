@@ -3,6 +3,7 @@ const rhi = @import("../graphics/rhi.zig");
 const UISystem = @import("ui_system.zig").UISystem;
 const ShadowSystemWrapper = rhi.ShadowSystemWrapper;
 const Font = @import("font.zig");
+const Settings = @import("../../game/settings/data.zig").Settings;
 
 pub const DebugShadowOverlay = struct {
     pub const Config = struct {
@@ -18,6 +19,7 @@ pub const DebugShadowOverlay = struct {
         _: f32,
         config: Config,
         cascade_splits: []const f32,
+        settings: *const Settings,
     ) void {
         ui.begin();
         defer ui.end();
@@ -54,6 +56,20 @@ pub const DebugShadowOverlay = struct {
                     Font.drawText(ui, dist_text, x, y + label_height + config.size, 1.2, .{ .r = 0.6, .g = 0.8, .b = 1.0, .a = 1.0 });
                 }
             }
+        }
+
+        if (settings.debug_shadow_cascade_index) {
+            const legend_x = config.spacing;
+            const legend_y = config.spacing + config.size + label_height + 28.0;
+            Font.drawText(ui, "CASCADE INDEX  R=C0  G=C1  B=C2", legend_x, legend_y, 1.3, .{ .r = 1.0, .g = 1.0, .b = 0.6, .a = 1.0 });
+        } else if (settings.debug_shadow_caster_coverage) {
+            const legend_x = config.spacing;
+            const legend_y = config.spacing + config.size + label_height + 28.0;
+            Font.drawText(ui, "CASTER COVERAGE  R=caster  G=shadowed  B=depth", legend_x, legend_y, 1.3, .{ .r = 1.0, .g = 1.0, .b = 0.6, .a = 1.0 });
+        } else if (settings.debug_shadow_seam_diag) {
+            const legend_x = config.spacing;
+            const legend_y = config.spacing + config.size + label_height + 28.0;
+            Font.drawText(ui, "SEAM DIAG  R=split boundary  G=distance  B=blend", legend_x, legend_y, 1.3, .{ .r = 1.0, .g = 1.0, .b = 0.6, .a = 1.0 });
         }
     }
 };

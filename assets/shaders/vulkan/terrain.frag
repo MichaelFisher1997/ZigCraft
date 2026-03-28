@@ -32,7 +32,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
-    vec4 viewport_size; // xy = width/height
+    vec4 viewport_size; // xy = width/height, z = shadow debug active, w = shadow debug channel (0=off, 1=shadow_factor, 2=cascade_index, 3=caster_coverage, 4=seam_diag)
     vec4 lpv_params; // x = enabled, y = intensity, z = cell_size, w = grid_size
     vec4 lpv_origin; // xyz = world origin
 } global;
@@ -548,8 +548,28 @@ void main() {
         color = mix(color, global.fog_color.rgb, clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0));
     }
 
-    if (global.viewport_size.z > 0.5) {
-        color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), totalShadow);
+    float debugChannel = global.viewport_size.w;
+    if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
+        if (debugChannel < 1.5) {
+            color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), totalShadow);
+        } else if (debugChannel < 2.5) {
+            color = (layer == 0) ? vec3(1.0, 0.2, 0.2) : (layer == 1) ? vec3(0.2, 1.0, 0.2) : vec3(0.2, 0.4, 1.0);
+        } else if (debugChannel < 3.5) {
+            vec4 shadowCoord = shadows.light_space_matrices[layer] * vec4(vFragPosWorld, 1.0);
+            vec3 projCoords = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
+            float mapDepth = texture(uShadowMapsRegular, vec3(projCoords.xy, float(layer))).r;
+            float fragDepth = projCoords.z;
+            float hasCaster = (mapDepth < 0.999) ? 1.0 : 0.0;
+            float isInShadow = (fragDepth > mapDepth + 0.001) ? 1.0 : 0.0;
+            color = vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth);
+        } else if (debugChannel < 4.5) {
+            float nextSplit = shadows.cascade_splits[layer];
+            float blendStart = nextSplit * 0.8;
+            float distToSplit = abs(vViewDepth - nextSplit) / max(nextSplit, 0.01);
+            float inBlend = (vViewDepth > blendStart && layer < 2) ? (vViewDepth - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
+            float splitLine = 1.0 - smoothstep(0.0, 0.05, distToSplit);
+            color = vec3(splitLine, distToSplit * 2.0, clamp(inBlend, 0.0, 1.0));
+        }
     }
 
     FragColor = vec4(color, 1.0);
