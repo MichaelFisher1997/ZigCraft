@@ -4,6 +4,34 @@ const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
 
+pub const IChunkStorage = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        get: *const fn (ptr: *anyopaque, cx: i32, cz: i32) ?*ChunkData,
+        count: *const fn (ptr: *anyopaque) usize,
+        totalVertexCount: *const fn (ptr: *anyopaque) u64,
+        isChunkRenderable: *const fn (ptr: *anyopaque, cx: i32, cz: i32) bool,
+    };
+
+    pub fn get(self: IChunkStorage, cx: i32, cz: i32) ?*ChunkData {
+        return self.vtable.get(self.ptr, cx, cz);
+    }
+
+    pub fn count(self: IChunkStorage) usize {
+        return self.vtable.count(self.ptr);
+    }
+
+    pub fn totalVertexCount(self: IChunkStorage) u64 {
+        return self.vtable.totalVertexCount(self.ptr);
+    }
+
+    pub fn isChunkRenderable(self: IChunkStorage, cx: i32, cz: i32) bool {
+        return self.vtable.isChunkRenderable(self.ptr, cx, cz);
+    }
+};
+
 pub const ChunkKey = struct {
     x: i32,
     z: i32,
@@ -49,6 +77,36 @@ pub const ChunkStorage = struct {
             .allocator = allocator,
             .next_job_token = 1,
         };
+    }
+
+    pub fn interface(self: *ChunkStorage) IChunkStorage {
+        return .{ .ptr = self, .vtable = &ICHUNKSTORAGE_VTABLE };
+    }
+
+    const ICHUNKSTORAGE_VTABLE = IChunkStorage.VTable{
+        .get = iget,
+        .count = icount,
+        .totalVertexCount = itotalVertexCount,
+        .isChunkRenderable = iisChunkRenderable,
+    };
+
+    fn iget(ptr: *anyopaque, cx: i32, cz: i32) ?*ChunkData {
+        const self: *ChunkStorage = @ptrCast(@alignCast(ptr));
+        return self.get(cx, cz);
+    }
+
+    fn icount(ptr: *anyopaque) usize {
+        const self: *ChunkStorage = @ptrCast(@alignCast(ptr));
+        return self.count();
+    }
+
+    fn itotalVertexCount(ptr: *anyopaque) u64 {
+        const self: *ChunkStorage = @ptrCast(@alignCast(ptr));
+        return self.totalVertexCount();
+    }
+
+    fn iisChunkRenderable(ptr: *anyopaque, cx: i32, cz: i32) bool {
+        return isChunkRenderable(cx, cz, ptr);
     }
 
     pub fn deinit(self: *ChunkStorage, vertex_allocator: anytype) void {

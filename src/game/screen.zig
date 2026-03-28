@@ -1,9 +1,7 @@
 const std = @import("std");
 const UISystem = @import("../engine/ui/ui_system.zig").UISystem;
-const Input = @import("../engine/input/input.zig").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
 const input_mapper_pkg = @import("input_mapper.zig");
-const InputMapper = input_mapper_pkg.InputMapper;
 const IInputMapper = input_mapper_pkg.IInputMapper;
 const Time = @import("../engine/core/time.zig").Time;
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
@@ -11,6 +9,7 @@ const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSyste
 const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
 const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
 const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
+const IRenderSettings = @import("../engine/core/interfaces.zig").IRenderSettings;
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
 
@@ -26,6 +25,7 @@ pub const EngineContext = struct {
     time: *Time,
     screen_manager: *ScreenManager,
     skip_world_update: bool,
+    render_settings: IRenderSettings,
 
     pub fn saveSettings(self: EngineContext) void {
         settings_pkg.persistence.save(self.settings, self.allocator);

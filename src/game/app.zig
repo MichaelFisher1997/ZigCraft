@@ -1,6 +1,4 @@
 const std = @import("std");
-const c = @import("../c.zig").c;
-const builtin = @import("builtin");
 const build_options = @import("build_options");
 
 const log = @import("../engine/core/log.zig");
@@ -12,13 +10,9 @@ const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const InputMapper = @import("input_mapper.zig").InputMapper;
-const rhi_pkg = @import("../engine/graphics/rhi.zig");
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
-const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 
-const settings_pkg = @import("settings.zig");
-const Settings = settings_pkg.Settings;
 const SettingsManager = @import("settings_manager.zig").SettingsManager;
 const InputSettings = @import("input_settings.zig").InputSettings;
 
@@ -27,6 +21,7 @@ const ScreenManager = screen_pkg.ScreenManager;
 const EngineContext = screen_pkg.EngineContext;
 const HomeScreen = @import("screens/home.zig").HomeScreen;
 const WorldScreen = @import("screens/world.zig").WorldScreen;
+const RenderSettingsAdapter = @import("../engine/graphics/render_settings.zig").RenderSettingsAdapter;
 
 pub const App = struct {
     allocator: std.mem.Allocator,
@@ -41,6 +36,7 @@ pub const App = struct {
     screen_manager: ScreenManager,
     skip_world_update: bool,
     smoke_test_frames: u32 = 0,
+    render_settings_adapter: RenderSettingsAdapter,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -103,6 +99,7 @@ pub const App = struct {
             .screen_manager = ScreenManager.init(allocator),
             .skip_world_update = skip_world_update,
             .smoke_test_frames = 0,
+            .render_settings_adapter = RenderSettingsAdapter.init(render_system.getRHI()),
         };
         errdefer app.screen_manager.deinit();
 
@@ -152,6 +149,7 @@ pub const App = struct {
             .time = &self.time,
             .screen_manager = &self.screen_manager,
             .skip_world_update = self.skip_world_update,
+            .render_settings = self.render_settings_adapter.interface(),
         };
     }
 

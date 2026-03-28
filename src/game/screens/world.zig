@@ -4,7 +4,7 @@ const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const GameSession = @import("../session.zig").GameSession;
-const World = @import("../../world/world.zig").World;
+const IWorld = @import("../../world/world.zig").IWorld;
 const LODStats = @import("../../world/lod_manager.zig").LODStats;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
@@ -28,6 +28,7 @@ const CSM = @import("../../engine/graphics/csm.zig");
 pub const WorldScreen = struct {
     context: EngineContext,
     session: *GameSession,
+    world: IWorld,
     last_debug_toggle_time: f32 = 0,
     debug_menu: DebugMenuOverlay,
     frustum_buffer: rhi_pkg.BufferHandle = 0,
@@ -47,11 +48,13 @@ pub const WorldScreen = struct {
         const render_system = context.render_system;
         const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.lod_enabled, generator_index);
         errdefer session.deinit();
+        const world = session.world.interface();
 
         const self = try allocator.create(WorldScreen);
         self.* = .{
             .context = context,
             .session = session,
+            .world = world,
             .last_debug_toggle_time = 0,
             .debug_menu = .{},
         };
@@ -117,7 +120,7 @@ pub const WorldScreen = struct {
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
-            if (self.session.world.lod == null) {
+            if (!self.world.isLODEnabled()) {
                 log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
             } else {
                 self.session.world.lod_enabled = !self.session.world.lod_enabled;
@@ -277,8 +280,8 @@ pub const WorldScreen = struct {
                 .shadow_ctx = rhi.shadowSystem(),
                 .ssao_ctx = rhi.ssao(),
                 .timing = rhi.timing(),
-                .world = self.session.world,
-                .shadow_scene = self.session.world.shadowScene(),
+                .world = self.world,
+                .shadow_scene = self.world.shadowScene(),
                 .camera = camera,
                 .atmosphere_system = render_system.getAtmosphereSystem(),
                 .material_system = render_system.getMaterialSystem(),
@@ -425,7 +428,7 @@ pub const WorldScreen = struct {
     }
 
     pub fn getWorldStats(self: *WorldScreen) ?WorldStats {
-        const ws = self.session.world;
+        const ws = self.world;
         const rs = ws.getRenderStats();
         const stats = ws.getStats();
         var lod_display: ?LODStatsDisplay = null;
