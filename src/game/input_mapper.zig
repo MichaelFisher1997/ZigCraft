@@ -119,8 +119,10 @@ pub const GameAction = enum(u8) {
     cycle_cascade,
     /// Pause/resume time
     toggle_time_scale,
-    /// Toggle creative mode (Default: F3)
+    /// Toggle creative mode (Default: F12)
     toggle_creative,
+    /// Toggle debug menu overlay (Default: F3)
+    toggle_debug_menu,
 
     // Map controls
     /// Open/close world map
@@ -342,7 +344,8 @@ pub const DEFAULT_BINDINGS = blk: {
     bindings[@intFromEnum(GameAction.toggle_shadow_debug_vis)] = ActionBinding.init(.{ .key = .g });
     bindings[@intFromEnum(GameAction.cycle_cascade)] = ActionBinding.init(.{ .key = .k });
     bindings[@intFromEnum(GameAction.toggle_time_scale)] = ActionBinding.init(.{ .key = .n });
-    bindings[@intFromEnum(GameAction.toggle_creative)] = ActionBinding.init(.{ .key = .f3 });
+    bindings[@intFromEnum(GameAction.toggle_creative)] = ActionBinding.init(.{ .key = .f12 });
+    bindings[@intFromEnum(GameAction.toggle_debug_menu)] = ActionBinding.init(.{ .key = .f3 });
     bindings[@intFromEnum(GameAction.toggle_timing_overlay)] = ActionBinding.init(.{ .key = .f4 });
     bindings[@intFromEnum(GameAction.toggle_lod_render)] = ActionBinding.init(.{ .key = .f6 });
     bindings[@intFromEnum(GameAction.toggle_gpass_render)] = ActionBinding.init(.{ .key = .f7 });

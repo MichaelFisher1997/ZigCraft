@@ -6,10 +6,13 @@ const EngineContext = Screen.EngineContext;
 const GameSession = @import("../session.zig").GameSession;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
+const RenderSystem = @import("../../engine/graphics/render_system.zig").RenderSystem;
 const render_graph_pkg = @import("../../engine/graphics/render_graph.zig");
 const PausedScreen = @import("paused.zig").PausedScreen;
 const DebugShadowOverlay = @import("../../engine/ui/debug_shadow_overlay.zig").DebugShadowOverlay;
 const DebugLPVOverlay = @import("../../engine/ui/debug_lpv_overlay.zig").DebugLPVOverlay;
+const DebugMenuOverlay = @import("../../engine/ui/debug_menu.zig").DebugMenuOverlay;
+const DebugFeature = @import("../../engine/ui/debug_menu.zig").DebugFeature;
 const Font = @import("../../engine/ui/font.zig");
 const log = @import("../../engine/core/log.zig");
 
@@ -17,6 +20,7 @@ pub const WorldScreen = struct {
     context: EngineContext,
     session: *GameSession,
     last_debug_toggle_time: f32 = 0,
+    debug_menu: DebugMenuOverlay,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -36,6 +40,7 @@ pub const WorldScreen = struct {
             .context = context,
             .session = session,
             .last_debug_toggle_time = 0,
+            .debug_menu = .{},
         };
         return self;
     }
@@ -53,6 +58,16 @@ pub const WorldScreen = struct {
         const rhi = render_system.getRHI();
         const now = ctx.time.elapsed;
         const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
+
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_debug_menu)) {
+            self.debug_menu.toggle();
+            if (self.debug_menu.enabled) {
+                ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), false);
+            } else {
+                ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), true);
+            }
+            self.last_debug_toggle_time = now;
+        }
 
         if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
             const paused_screen = try PausedScreen.init(ctx.allocator, ctx);
@@ -280,8 +295,9 @@ pub const WorldScreen = struct {
         const mouse_x: f32 = @floatFromInt(mouse_pos.x);
         const mouse_y: f32 = @floatFromInt(mouse_pos.y);
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
+        const hud_clicked = if (self.debug_menu.enabled) false else mouse_clicked;
 
-        try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
+        try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
 
         if (ctx.settings.debug_shadows_active) {
             DebugShadowOverlay.draw(rhi.ui(), rhi.shadowSystem(), screen_w, screen_h, .{});
@@ -314,6 +330,14 @@ pub const WorldScreen = struct {
             Font.drawText(ui, line2, text_x, text_y + 20.0, 1.5, .{ .r = 0.95, .g = 0.98, .b = 1.0, .a = 1.0 });
             Font.drawText(ui, line3, text_x, text_y + 30.0, 1.5, .{ .r = 0.95, .g = 0.98, .b = 1.0, .a = 1.0 });
         }
+
+        if (self.debug_menu.enabled) {
+            const feature_states = self.collectDebugStates(ctx, render_system);
+            const scroll_delta = ctx.input.getScrollDelta();
+            if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale, scroll_delta.y)) |click| {
+                self.applyDebugFeatureToggle(click.feature, ctx, render_system, rhi, ctx.time.elapsed);
+            }
+        }
     }
 
     pub fn onEnter(ptr: *anyopaque) void {
@@ -328,6 +352,90 @@ pub const WorldScreen = struct {
 
     pub fn screen(self: *@This()) IScreen {
         return Screen.makeScreen(@This(), self);
+    }
+
+    fn collectDebugStates(self: *WorldScreen, ctx: EngineContext, render_system: *RenderSystem) [DebugFeature.count]bool {
+        var states: [DebugFeature.count]bool = @splat(false);
+        states[@intFromEnum(DebugFeature.wireframe)] = ctx.settings.wireframe_enabled;
+        states[@intFromEnum(DebugFeature.textures)] = ctx.settings.textures_enabled;
+        states[@intFromEnum(DebugFeature.vsync)] = ctx.settings.vsync;
+        states[@intFromEnum(DebugFeature.fps_counter)] = self.session.debug_show_fps;
+        states[@intFromEnum(DebugFeature.block_info)] = self.session.debug_show_block_info;
+        states[@intFromEnum(DebugFeature.shadow_debug)] = ctx.settings.debug_shadows_active;
+        states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
+        states[@intFromEnum(DebugFeature.lod_render)] = self.session.world.lod_enabled;
+        states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
+        states[@intFromEnum(DebugFeature.ssao)] = !render_system.getDisableSSAO();
+        states[@intFromEnum(DebugFeature.clouds)] = !render_system.getDisableClouds();
+        states[@intFromEnum(DebugFeature.fog)] = self.session.atmosphere.fog_enabled;
+        states[@intFromEnum(DebugFeature.lpv_overlay)] = ctx.settings.debug_lpv_overlay_active;
+        states[@intFromEnum(DebugFeature.creative_mode)] = self.session.creative_mode;
+        states[@intFromEnum(DebugFeature.time_pause)] = self.session.atmosphere.time.time_scale == 0.0;
+        return states;
+    }
+
+    fn applyDebugFeatureToggle(self: *WorldScreen, feature: DebugFeature, ctx: EngineContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI, now: f32) void {
+        self.last_debug_toggle_time = now;
+        switch (feature) {
+            .wireframe => {
+                ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
+                rhi.setWireframe(ctx.settings.wireframe_enabled);
+            },
+            .textures => {
+                ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
+                rhi.setTexturesEnabled(ctx.settings.textures_enabled);
+            },
+            .vsync => {
+                ctx.settings.vsync = !ctx.settings.vsync;
+                rhi.setVSync(ctx.settings.vsync);
+            },
+            .fps_counter => {
+                self.session.debug_show_fps = !self.session.debug_show_fps;
+            },
+            .block_info => {
+                self.session.debug_show_block_info = !self.session.debug_show_block_info;
+            },
+            .shadow_debug => {
+                ctx.settings.debug_shadows_active = !ctx.settings.debug_shadows_active;
+                rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
+            },
+            .timing_overlay => {
+                ctx.ui_manager.timing_overlay.toggle();
+                rhi.timing().setTimingEnabled(ctx.ui_manager.timing_overlay.enabled);
+            },
+            .lod_render => {
+                if (self.session.world.lod == null) {
+                    log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
+                } else {
+                    self.session.world.lod_enabled = !self.session.world.lod_enabled;
+                }
+            },
+            .gpass_render => {
+                const new_val = !render_system.getDisableGPassDraw();
+                render_system.setDisableGPassDraw(new_val);
+            },
+            .ssao => {
+                const new_val = !render_system.getDisableSSAO();
+                render_system.setDisableSSAO(new_val);
+            },
+            .clouds => {
+                const new_val = !render_system.getDisableClouds();
+                render_system.setDisableClouds(new_val);
+            },
+            .fog => {
+                self.session.atmosphere.fog_enabled = !self.session.atmosphere.fog_enabled;
+            },
+            .lpv_overlay => {
+                ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active;
+            },
+            .creative_mode => {
+                self.session.creative_mode = !self.session.creative_mode;
+                self.session.player.setCreativeMode(self.session.creative_mode);
+            },
+            .time_pause => {
+                self.session.atmosphere.time.time_scale = if (self.session.atmosphere.time.time_scale > 0) @as(f32, 0.0) else @as(f32, 1.0);
+            },
+        }
     }
 
     fn renderOverlay(scene_ctx: render_graph_pkg.SceneContext) void {

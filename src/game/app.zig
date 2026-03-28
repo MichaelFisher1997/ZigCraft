@@ -144,6 +144,7 @@ pub const App = struct {
             .window_manager = &self.window_manager,
             .render_system = self.render_system,
             .audio_system = self.audio_manager.audio_system,
+            .ui_manager = &self.ui_manager,
             .settings = self.settings_manager.ptr(),
             .input = self.input.interface(),
             .input_mapper = self.input_mapper.interface(),
