@@ -46,6 +46,10 @@ pub const UISystem = struct {
         self.renderer.drawTexture(texture_id, rect);
     }
 
+    pub fn drawDepthTexture(self: *UISystem, texture: rhi.TextureHandle, rect: Rect) void {
+        self.renderer.drawDepthTexture(texture, rect);
+    }
+
     /// Draw a rectangle outline
     pub fn drawRectOutline(self: *UISystem, rect: Rect, color: Color, thickness: f32) void {
         // Top

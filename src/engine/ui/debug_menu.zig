@@ -22,8 +22,10 @@ pub const DebugFeature = enum(u8) {
     clouds,
     fog,
     lpv_overlay,
+    frustum_debug,
     creative_mode,
     time_pause,
+    chunk_inspector,
 
     pub const count = @typeInfo(DebugFeature).@"enum".fields.len;
 };
@@ -49,8 +51,10 @@ pub const FEATURE_INFOS = [DebugFeature.count]FeatureInfo{
     .{ .label = "CLOUDS", .hotkey = "F9" },
     .{ .label = "FOG", .hotkey = "F10" },
     .{ .label = "LPV OVERLAY", .hotkey = "F11" },
+    .{ .label = "FRUSTUM DEBUG", .hotkey = "J" },
     .{ .label = "CREATIVE MODE", .hotkey = "F12" },
     .{ .label = "TIME PAUSE", .hotkey = "N" },
+    .{ .label = "CHUNK INSPECTOR", .hotkey = "J" },
 };
 
 pub const DebugMenuOverlay = struct {
