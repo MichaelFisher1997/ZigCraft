@@ -54,10 +54,7 @@ pub const UISystemManager = struct {
                 const timing = rhi_ptr.timing();
                 const gpu_timing = timing.getTimingResults();
 
-                var gpu_stats = std.mem.zeroes(RenderDeviceStats);
-                if (rhi_ptr.device) |device| {
-                    gpu_stats = device.getStats();
-                }
+                const gpu_stats = if (rhi_ptr.device) |device| device.getStats() else std.mem.zeroes(RenderDeviceStats);
 
                 const data = PerformanceData{
                     .gpu = gpu_timing,

@@ -20,15 +20,23 @@ pub const TimingOverlay = struct {
         const label_x = x + 10;
         const value_x = x + width - 10;
 
-        const num_lines = 2 + 1 + 13 + 1 + 6 + 1 + 8 + 1 + 4 + 1;
-        const padding = 25;
+        comptime std.debug.assert(rhi.SHADOW_CASCADE_COUNT >= 3);
+
+        var num_lines: f32 = 2 + 1 + 13 + 1 + 6 + 1 + 4 + 1;
+        if (data.world) |ws| {
+            num_lines += 1 + 6;
+            if (ws.lod != null) {
+                num_lines += 1 + 6;
+            }
+        }
+        const padding: f32 = 25;
 
         ui.drawRect(.{ .x = x, .y = y, .width = width, .height = num_lines * line_height + padding }, .{ .r = 0, .g = 0, .b = 0, .a = 0.7 });
         y += 5;
 
         drawSectionHeader(ui, "PERFORMANCE", x + 10, &y, scale, Color.white);
         {
-            var buf: [16]u8 = undefined;
+            var buf: [32]u8 = undefined;
             const cpu_str = std.fmt.bufPrint(&buf, "CPU: {d:.2}MS  FPS: {d:.0}", .{ data.cpu_frame_ms, data.fps }) catch "";
             font.drawText(ui, cpu_str, x + 10, y, scale, Color.white);
             y += line_height + 3;
@@ -113,7 +121,7 @@ pub const TimingOverlay = struct {
         font.drawText(ui, label, label_x, y.*, scale, color);
         const mb = @as(f32, @floatFromInt(bytes)) / (1024.0 * 1024.0);
         var buf: [32]u8 = undefined;
-        const val_str = std.fmt.bufPrint(&buf, "{d} ({d:.0}MB)", .{ count, mb }) catch "";
+        const val_str = std.fmt.bufPrint(&buf, "{d} ({d:.1}MB)", .{ count, mb }) catch "";
         const val_w = font.measureTextWidth(val_str, scale);
         font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
         y.* += 15;
