@@ -397,10 +397,12 @@ pub const WorldScreen = struct {
         }
 
         if (self.chunk_inspector_overlay.enabled) {
+            const world_state = self.session.world.getWorldStateData();
             self.chunk_inspector_overlay.draw(
                 ui,
                 self.session.world.getRenderStats(),
                 self.session.world.getChunkStateCounts(),
+                world_state,
             );
         }
 

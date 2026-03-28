@@ -117,6 +117,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             chunk_checker: ?ChunkChecker,
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
+            max_distance_chunks: ?i32,
         ) void {
             // Update frame index
             self.frame_index = self.rhi.getFrameIndex();
@@ -134,7 +135,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             // Process from highest LOD down
             var i: usize = LODLevel.count - 1;
             while (i > 0) : (i -= 1) {
-                self.collectVisibleMeshes(&meshes[i], &regions[i], config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum) catch |err| {
+                self.collectVisibleMeshes(&meshes[i], &regions[i], config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks) catch |err| {
                     log.log.errWithTrace("Failed to collect visible meshes for LOD{}: {}", .{ i, err });
                 };
             }
@@ -160,6 +161,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             chunk_checker: ?ChunkChecker,
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
+            max_distance_chunks: ?i32,
         ) !void {
             var iter = meshes.iterator();
             while (iter.next()) |entry| {
@@ -168,6 +170,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                 if (regions.get(entry.key_ptr.*)) |chunk| {
                     if (chunk.state != .renderable) continue;
                     const bounds = chunk.worldBounds();
+
+                    if (max_distance_chunks) |max_dist| {
+                        if (!isRegionInRange(bounds, camera_pos, max_dist)) continue;
+                    }
 
                     // Check if all underlying block chunks are loaded.
                     // We require a 1-chunk halo around the LOD region to avoid exposing
@@ -248,9 +254,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                     chunk_checker: ?ChunkChecker,
                     checker_ctx: ?*anyopaque,
                     use_frustum: bool,
+                    max_distance_chunks: ?i32,
                 ) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
-                    renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum);
+                    renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks);
                 }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
@@ -264,6 +271,32 @@ pub fn LODRenderer(comptime RHI: type) type {
             };
         }
     };
+}
+
+fn isRegionInRange(bounds: LODChunk.WorldBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
+    const cam_cx: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.x)), CHUNK_SIZE_X);
+    const cam_cz: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.z)), CHUNK_SIZE_X);
+
+    const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X);
+    const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X);
+    const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_X);
+    const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_X);
+
+    const dx: i32 = if (cam_cx < min_cx)
+        min_cx - cam_cx
+    else if (cam_cx > max_cx)
+        cam_cx - max_cx
+    else
+        0;
+
+    const dz: i32 = if (cam_cz < min_cz)
+        min_cz - cam_cz
+    else if (cam_cz > max_cz)
+        cam_cz - max_cz
+    else
+        0;
+
+    return @max(dx, dz) <= max_distance_chunks;
 }
 
 // Tests
@@ -383,7 +416,7 @@ test "LODRenderer render draw path" {
     const camera_pos = Vec3.zero;
 
     // Call render with explicit parameters
-    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, true);
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, true, null);
 
     // Verify draw was called with correct parameters
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
@@ -484,7 +517,7 @@ test "LODRenderer createGPUBridge and toInterface round-trip" {
     var mock_config = LODConfig{};
 
     // Render through the type-erased interface
-    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, true);
+    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, true, null);
 
     // Verify the real renderer's draw was invoked through the interface
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);

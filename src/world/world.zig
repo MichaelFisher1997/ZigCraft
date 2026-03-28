@@ -29,6 +29,7 @@ const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
 const RenderStats = @import("world_renderer.zig").RenderStats;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
 const ChunkStateCounts = @import("../engine/ui/chunk_inspector_overlay.zig").ChunkStateCounts;
+const WorldStateData = @import("../engine/ui/chunk_inspector_overlay.zig").WorldStateData;
 const JobQueue = @import("../engine/core/job_system.zig").JobQueue;
 const WorkerPool = @import("../engine/core/job_system.zig").WorkerPool;
 const Job = @import("../engine/core/job_system.zig").Job;
@@ -323,8 +324,14 @@ pub const World = struct {
         return self.renderer.last_render_stats;
     }
 
+    /// Shadow stats reset in `beginFrame()` and accumulate across all shadow passes until the next frame.
+    /// Call `resetShadowStats()` manually if you need per-cascade stats.
     pub fn getShadowStats(self: *const World) ShadowStats {
         return self.renderer.last_shadow_stats;
+    }
+
+    pub fn resetShadowStats(self: *World) void {
+        self.renderer.resetShadowStats();
     }
 
     /// Counts chunks by state for the debug inspector overlay.
@@ -362,6 +369,17 @@ pub const World = struct {
             .gen_queue = streamer_stats.gen_queue,
             .mesh_queue = streamer_stats.mesh_queue,
             .upload_queue = streamer_stats.upload_queue,
+        };
+    }
+
+    pub fn getWorldStateData(self: *World) WorldStateData {
+        const stats = self.getStats();
+        return .{
+            .generator_name = self.generator.info.name,
+            .seed = self.generator.getSeed(),
+            .gen_queue = @as(u32, @intCast(stats.gen_queue)),
+            .mesh_queue = @as(u32, @intCast(stats.mesh_queue)),
+            .upload_queue = @as(u32, @intCast(stats.upload_queue)),
         };
     }
 

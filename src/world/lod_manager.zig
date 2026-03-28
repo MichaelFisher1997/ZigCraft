@@ -732,11 +732,11 @@ pub const LODManager = struct {
     ///
     /// NOTE: Acquires a shared lock on LODManager. LODRenderer must NOT attempt to acquire
     /// a write lock on LODManager during rendering to avoid deadlocks.
-    pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool) void {
+    pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32) void {
         self.mutex.lockShared();
         defer self.mutex.unlockShared();
 
-        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum);
+        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks);
     }
 
     /// Free LOD meshes where all underlying chunks are loaded
@@ -1061,7 +1061,7 @@ test "LODManager initialization" {
     // Create mock render interface
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -1148,7 +1148,7 @@ test "LODManager end-to-end covered cleanup" {
     // Create mock render interface (no-op). Use a real pointer.
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}

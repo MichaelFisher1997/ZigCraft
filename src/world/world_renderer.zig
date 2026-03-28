@@ -27,7 +27,6 @@ pub const RenderStats = struct {
 pub const ShadowStats = struct {
     chunks_rendered: u32 = 0,
     chunks_culled: u32 = 0,
-    lod_regions_rendered: u32 = 0,
 };
 
 pub const WorldRenderer = struct {
@@ -101,7 +100,16 @@ pub const WorldRenderer = struct {
     }
 
     pub fn beginFrame(self: *WorldRenderer) void {
+        self.resetShadowStats();
         self.vertex_allocator.tick(self.query.getFrameIndex());
+    }
+
+    /// Reset shadow statistics before a new frame begins.
+    ///
+    /// `last_shadow_stats` then accumulates across all shadow passes in that frame.
+    /// If per-cascade statistics are needed, call this before each shadow pass.
+    pub fn resetShadowStats(self: *WorldRenderer) void {
+        self.last_shadow_stats = .{};
     }
 
     pub fn deinit(self: *WorldRenderer) void {
@@ -128,7 +136,7 @@ pub const WorldRenderer = struct {
 
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
-                lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true);
+                lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null);
             }
         }
 
@@ -201,28 +209,23 @@ pub const WorldRenderer = struct {
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
 
-        self.last_shadow_stats = .{};
-
         if (shadow_lod_enabled) {
             if (lod_manager) |lod_mgr| {
-                lod_mgr.render(light_space_matrix, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true);
+                const shadow_lod_max_distance_chunks: i32 = @max(0, @as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X)));
+                lod_mgr.render(light_space_matrix, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, shadow_lod_max_distance_chunks);
             }
         }
 
         const frustum = shadow_frustum;
 
-        // Safety: Check for NaN/Inf camera position
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        // Use i64 for calculations to avoid overflow
         const world_x: i64 = @intFromFloat(camera_pos.x);
         const world_z: i64 = @intFromFloat(camera_pos.z);
         const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
         const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
 
-        // Use shadow_caster_distance for render bounds (independent of visual render_distance)
-        const r_dist_val: i32 = if (lod_manager) |mgr| @min(@as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X)), @as(i32, @intCast(mgr.config.getRadii()[0]))) else @as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
-        const r_dist: i64 = @as(i64, @intCast(r_dist_val));
+        const r_dist: i64 = @as(i64, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
