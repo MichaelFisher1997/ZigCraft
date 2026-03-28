@@ -97,8 +97,13 @@ jobs:
             screenshot.ppm
           retention-days: 30
 
+      - name: Check build log exists
+        id: check_log
+        if: always()
+        run: 'test -f build-output.log && echo "exists=true" >> $GITHUB_OUTPUT || echo "exists=false" >> $GITHUB_OUTPUT'
+
       - name: Upload build log artifact
-        if: always() && hashFiles('build-output.log') != ''
+        if: always() && steps.check_log.outputs.exists == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: build-output-log
