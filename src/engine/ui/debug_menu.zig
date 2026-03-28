@@ -33,6 +33,8 @@ pub const FeatureInfo = struct {
     hotkey: []const u8,
 };
 
+/// Hotkey labels reflect the default bindings in `input_mapper.zig`.
+/// Shown for reference — features are toggled by clicking menu rows.
 pub const FEATURE_INFOS = [DebugFeature.count]FeatureInfo{
     .{ .label = "WIREFRAME", .hotkey = "F" },
     .{ .label = "TEXTURES", .hotkey = "T" },
