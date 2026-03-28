@@ -9,6 +9,7 @@ const Time = @import("../engine/core/time.zig").Time;
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
 const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
+const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
 
@@ -17,6 +18,7 @@ pub const EngineContext = struct {
     window_manager: *WindowManager,
     render_system: *RenderSystem,
     audio_system: *AudioSystem,
+    ui_manager: *UISystemManager,
     settings: *Settings,
     input: IRawInputProvider,
     input_mapper: IInputMapper,

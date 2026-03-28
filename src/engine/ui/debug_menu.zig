@@ -2,6 +2,7 @@
 //! Lists all debug features with toggle state and hotkey labels.
 //! Opened via F3 (toggle_debug_menu action).
 
+const std = @import("std");
 const UISystem = @import("ui_system.zig").UISystem;
 const Color = @import("ui_system.zig").Color;
 const Rect = @import("ui_system.zig").Rect;
@@ -53,14 +54,15 @@ pub const FEATURE_INFOS = [DebugFeature.count]FeatureInfo{
 pub const DebugMenuOverlay = struct {
     enabled: bool = false,
 
-    const PANEL_X: f32 = 10.0;
-    const PANEL_Y: f32 = 10.0;
-    const PANEL_WIDTH: f32 = 300.0;
-    const LINE_HEIGHT: f32 = 18.0;
-    const HEADER_HEIGHT: f32 = 28.0;
-    const PADDING: f32 = 8.0;
-    const TITLE_SCALE: f32 = 1.5;
-    const TEXT_SCALE: f32 = 1.2;
+    const BASE_PANEL_X: f32 = 10.0;
+    const BASE_PANEL_Y: f32 = 10.0;
+    const BASE_PANEL_WIDTH: f32 = 300.0;
+    const BASE_LINE_HEIGHT: f32 = 18.0;
+    const BASE_HEADER_HEIGHT: f32 = 28.0;
+    const BASE_PADDING: f32 = 8.0;
+    const BASE_TITLE_SCALE: f32 = 1.5;
+    const BASE_TEXT_SCALE: f32 = 1.2;
+    const MAX_VISIBLE_ROWS: usize = 15;
 
     pub fn toggle(self: *DebugMenuOverlay) void {
         self.enabled = !self.enabled;
@@ -70,26 +72,36 @@ pub const DebugMenuOverlay = struct {
         feature: DebugFeature,
     };
 
-    pub fn draw(self: *DebugMenuOverlay, ui: *UISystem, feature_states: [DebugFeature.count]bool, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) ?ClickResult {
+    pub fn draw(self: *DebugMenuOverlay, ui: *UISystem, feature_states: [DebugFeature.count]bool, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, ui_scale: f32) ?ClickResult {
         if (!self.enabled) return null;
 
-        const panel_height = HEADER_HEIGHT + PADDING * 2 + @as(f32, @floatFromInt(DebugFeature.count)) * LINE_HEIGHT;
-        const panel_rect = Rect{ .x = PANEL_X, .y = PANEL_Y, .width = PANEL_WIDTH, .height = panel_height };
+        const panel_x = BASE_PANEL_X * ui_scale;
+        const panel_y = BASE_PANEL_Y * ui_scale;
+        const panel_width = BASE_PANEL_WIDTH * ui_scale;
+        const line_height = BASE_LINE_HEIGHT * ui_scale;
+        const header_height = BASE_HEADER_HEIGHT * ui_scale;
+        const padding = BASE_PADDING * ui_scale;
+        const title_scale = BASE_TITLE_SCALE * ui_scale;
+        const text_scale = BASE_TEXT_SCALE * ui_scale;
+
+        const visible_rows = @min(DebugFeature.count, MAX_VISIBLE_ROWS);
+        const panel_height = header_height + padding * 2 + @as(f32, @floatFromInt(visible_rows)) * line_height;
+        const panel_rect = Rect{ .x = panel_x, .y = panel_y, .width = panel_width, .height = panel_height };
 
         ui.drawRect(panel_rect, Color.rgba(0.0, 0.0, 0.0, 0.7));
-        ui.drawRectOutline(panel_rect, Color.rgba(0.4, 0.6, 0.8, 0.8), 2.0);
+        ui.drawRectOutline(panel_rect, Color.rgba(0.4, 0.6, 0.8, 0.8), 2.0 * ui_scale);
 
-        var y = PANEL_Y + PADDING;
-        Font.drawText(ui, "DEBUG MENU", PANEL_X + PADDING, y, TITLE_SCALE, Color.rgba(0.95, 0.98, 1.0, 1.0));
-        y += HEADER_HEIGHT;
+        var y = panel_y + padding;
+        Font.drawText(ui, "DEBUG MENU", panel_x + padding, y, title_scale, Color.rgba(0.95, 0.98, 1.0, 1.0));
+        y += header_height;
 
         var result: ?ClickResult = null;
 
-        for (0..DebugFeature.count) |i| {
+        for (0..visible_rows) |i| {
             const feature: DebugFeature = @enumFromInt(i);
             const info = FEATURE_INFOS[i];
             const state = feature_states[i];
-            const row_rect = Rect{ .x = PANEL_X + 2, .y = y - 2, .width = PANEL_WIDTH - 4, .height = LINE_HEIGHT };
+            const row_rect = Rect{ .x = panel_x + 2 * ui_scale, .y = y - 2 * ui_scale, .width = panel_width - 4 * ui_scale, .height = line_height };
             const hovered = row_rect.contains(mouse_x, mouse_y);
 
             if (hovered) {
@@ -99,17 +111,17 @@ pub const DebugMenuOverlay = struct {
                 }
             }
 
-            Font.drawText(ui, info.label, PANEL_X + PADDING + 4, y, TEXT_SCALE, Color.rgba(0.85, 0.88, 0.92, 1.0));
+            Font.drawText(ui, info.label, panel_x + padding + 4 * ui_scale, y, text_scale, Color.rgba(0.85, 0.88, 0.92, 1.0));
 
             const state_text = if (state) "ON" else "OFF";
             const state_color = if (state) Color.rgba(0.3, 1.0, 0.4, 1.0) else Color.rgba(0.7, 0.35, 0.35, 1.0);
-            const state_x = PANEL_X + PANEL_WIDTH - PADDING - 4 - Font.measureTextWidth(state_text, TEXT_SCALE) - 50.0;
-            Font.drawText(ui, state_text, state_x, y, TEXT_SCALE, state_color);
+            const state_x = panel_x + panel_width - padding - 4 * ui_scale - Font.measureTextWidth(state_text, text_scale) - 50.0 * ui_scale;
+            Font.drawText(ui, state_text, state_x, y, text_scale, state_color);
 
-            const hotkey_x = PANEL_X + PANEL_WIDTH - PADDING - 4 - Font.measureTextWidth(info.hotkey, TEXT_SCALE);
-            Font.drawText(ui, info.hotkey, hotkey_x, y, TEXT_SCALE, Color.rgba(0.55, 0.58, 0.65, 1.0));
+            const hotkey_x = panel_x + panel_width - padding - 4 * ui_scale - Font.measureTextWidth(info.hotkey, text_scale);
+            Font.drawText(ui, info.hotkey, hotkey_x, y, text_scale, Color.rgba(0.55, 0.58, 0.65, 1.0));
 
-            y += LINE_HEIGHT;
+            y += line_height;
         }
 
         return result;

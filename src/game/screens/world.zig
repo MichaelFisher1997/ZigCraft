@@ -295,8 +295,9 @@ pub const WorldScreen = struct {
         const mouse_x: f32 = @floatFromInt(mouse_pos.x);
         const mouse_y: f32 = @floatFromInt(mouse_pos.y);
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
+        const hud_clicked = if (self.debug_menu.enabled) false else mouse_clicked;
 
-        try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
+        try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
 
         if (ctx.settings.debug_shadows_active) {
             DebugShadowOverlay.draw(rhi.ui(), rhi.shadowSystem(), screen_w, screen_h, .{});
@@ -332,8 +333,8 @@ pub const WorldScreen = struct {
 
         if (self.debug_menu.enabled) {
             const feature_states = self.collectDebugStates(ctx, render_system);
-            if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked)) |click| {
-                self.applyDebugFeatureToggle(click.feature, ctx, render_system, rhi);
+            if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale)) |click| {
+                self.applyDebugFeatureToggle(click.feature, ctx, render_system, rhi, ctx.time.elapsed);
             }
         }
     }
@@ -360,7 +361,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.fps_counter)] = self.session.debug_show_fps;
         states[@intFromEnum(DebugFeature.block_info)] = self.session.debug_show_block_info;
         states[@intFromEnum(DebugFeature.shadow_debug)] = ctx.settings.debug_shadows_active;
-        states[@intFromEnum(DebugFeature.timing_overlay)] = false;
+        states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
         states[@intFromEnum(DebugFeature.lod_render)] = self.session.world.lod_enabled;
         states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
         states[@intFromEnum(DebugFeature.ssao)] = !render_system.getDisableSSAO();
@@ -372,7 +373,8 @@ pub const WorldScreen = struct {
         return states;
     }
 
-    fn applyDebugFeatureToggle(self: *WorldScreen, feature: DebugFeature, ctx: EngineContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI) void {
+    fn applyDebugFeatureToggle(self: *WorldScreen, feature: DebugFeature, ctx: EngineContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI, now: f32) void {
+        self.last_debug_toggle_time = now;
         switch (feature) {
             .wireframe => {
                 ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
@@ -397,7 +399,8 @@ pub const WorldScreen = struct {
                 rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
             },
             .timing_overlay => {
-                log.log.info("Timing overlay toggle requested via debug menu", .{});
+                ctx.ui_manager.timing_overlay.toggle();
+                rhi.timing().setTimingEnabled(ctx.ui_manager.timing_overlay.enabled);
             },
             .lod_render => {
                 if (self.session.world.lod == null) {
