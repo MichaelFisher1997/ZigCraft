@@ -58,7 +58,7 @@ jobs:
         cp -L result/bin/zigcraft dist/zigcraft-linux
         
     - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: zigcraft
         path: dist/
