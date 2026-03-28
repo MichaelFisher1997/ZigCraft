@@ -24,6 +24,11 @@ pub const RenderStats = struct {
     vertices_rendered: u64 = 0,
 };
 
+pub const ShadowStats = struct {
+    chunks_rendered: u32 = 0,
+    chunks_culled: u32 = 0,
+};
+
 pub const WorldRenderer = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
@@ -34,6 +39,7 @@ pub const WorldRenderer = struct {
     vertex_allocator: *GlobalVertexAllocator,
     visible_chunks: std.ArrayListUnmanaged(*ChunkData),
     last_render_stats: RenderStats,
+    last_shadow_stats: ShadowStats,
 
     // MDI Resources
     instance_data: std.ArrayListUnmanaged(rhi_mod.InstanceData),
@@ -79,6 +85,7 @@ pub const WorldRenderer = struct {
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
             .last_render_stats = .{},
+            .last_shadow_stats = .{},
             .instance_data = .empty,
             .solid_commands = .empty,
             .fluid_commands = .empty,
@@ -93,7 +100,16 @@ pub const WorldRenderer = struct {
     }
 
     pub fn beginFrame(self: *WorldRenderer) void {
+        self.resetShadowStats();
         self.vertex_allocator.tick(self.query.getFrameIndex());
+    }
+
+    /// Reset shadow statistics before a new frame begins.
+    ///
+    /// `last_shadow_stats` then accumulates across all shadow passes in that frame.
+    /// If per-cascade statistics are needed, call this before each shadow pass.
+    pub fn resetShadowStats(self: *WorldRenderer) void {
+        self.last_shadow_stats = .{};
     }
 
     pub fn deinit(self: *WorldRenderer) void {
@@ -120,7 +136,7 @@ pub const WorldRenderer = struct {
 
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
-                lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true);
+                lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null);
             }
         }
 
@@ -187,32 +203,29 @@ pub const WorldRenderer = struct {
         self.mdi_command_offset = 0;
     }
 
-    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32, lod_manager: ?*LODManager) void {
+    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32, lod_manager: ?*LODManager, shadow_lod_enabled: bool) void {
         const shadow_frustum = Frustum.fromViewProj(light_space_matrix);
 
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
 
-        // FIX: Enable frustum culling for LOD chunks in shadow pass
-        // This ensures LOD chunks are properly culled using the light-space frustum
-        if (lod_manager) |lod_mgr| {
-            lod_mgr.render(light_space_matrix, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true);
+        if (shadow_lod_enabled) {
+            if (lod_manager) |lod_mgr| {
+                const shadow_lod_max_distance_chunks: i32 = @max(0, @as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X)));
+                lod_mgr.render(light_space_matrix, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, shadow_lod_max_distance_chunks);
+            }
         }
 
         const frustum = shadow_frustum;
 
-        // Safety: Check for NaN/Inf camera position
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        // Use i64 for calculations to avoid overflow
         const world_x: i64 = @intFromFloat(camera_pos.x);
         const world_z: i64 = @intFromFloat(camera_pos.z);
         const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
         const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
 
-        // Use shadow_caster_distance for render bounds (independent of visual render_distance)
-        const r_dist_val: i32 = if (lod_manager) |mgr| @min(@as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X)), @as(i32, @intCast(mgr.config.getRadii()[0]))) else @as(i32, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
-        const r_dist: i64 = @as(i64, @intCast(r_dist_val));
+        const r_dist: i64 = @as(i64, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -224,8 +237,11 @@ pub const WorldRenderer = struct {
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
 
                         if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
+                            self.last_shadow_stats.chunks_culled += 1;
                             continue;
                         }
+
+                        self.last_shadow_stats.chunks_rendered += 1;
 
                         const rel_x = chunk_world_x - camera_pos.x;
                         const rel_z = chunk_world_z - camera_pos.z;
