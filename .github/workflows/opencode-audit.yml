@@ -92,6 +92,7 @@ jobs:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
+          use_github_token: "true"
           prompt: |
             You are a senior Zig systems programming auditor performing a deep code audit.
 
