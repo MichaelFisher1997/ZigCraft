@@ -38,6 +38,7 @@ const MockRuntime = struct {
 const MockSwapchain = struct {
     skip_present: bool = true,
     msaa_samples: u8 = 1,
+    framebuffer_resized: bool = false,
 
     pub fn getExtent(_: MockSwapchain) c.VkExtent2D {
         return .{ .width = 1920, .height = 1080 };
@@ -238,6 +239,18 @@ test "rhi_state_control.setAnisotropicFiltering updates when changed" {
     rhi_state_control.setAnisotropicFiltering(&ctx, 16);
 
     try testing.expectEqual(@as(u8, 16), ctx.options.anisotropic_filtering);
+}
+
+test "rhi_state_control.requestSwapchainRecreate sets both resize flags" {
+    var ctx = MockSimpleContext{ .allocator = testing.allocator };
+
+    try testing.expect(!ctx.runtime.framebuffer_resized);
+    try testing.expect(!ctx.swapchain.framebuffer_resized);
+
+    rhi_state_control.requestSwapchainRecreate(&ctx);
+
+    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(ctx.swapchain.framebuffer_resized);
 }
 
 // ============================================================================
