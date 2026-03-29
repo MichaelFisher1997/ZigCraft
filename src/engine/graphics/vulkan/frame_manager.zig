@@ -1,5 +1,6 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
+const log = @import("../../core/log.zig");
 const rhi = @import("../rhi.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const SwapchainPresenter = @import("swapchain_presenter.zig").SwapchainPresenter;
@@ -107,6 +108,9 @@ pub const FrameManager = struct {
                 if (err == error.OutOfDate) {
                     swapchain.framebuffer_resized = true;
                     return false;
+                } else if (err == error.ValidationFailed) {
+                    log.log.err("beginFrame: validation failure while acquiring swapchain image", .{});
+                    return err;
                 }
                 return err;
             }

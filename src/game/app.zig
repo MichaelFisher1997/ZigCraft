@@ -37,8 +37,6 @@ pub const App = struct {
     skip_world_update: bool,
     smoke_test_frames: u32 = 0,
     render_settings_adapter: RenderSettingsAdapter,
-    last_window_width: u32,
-    last_window_height: u32,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -102,8 +100,6 @@ pub const App = struct {
             .skip_world_update = skip_world_update,
             .smoke_test_frames = 0,
             .render_settings_adapter = RenderSettingsAdapter.init(render_system.getRHI()),
-            .last_window_width = input.window_width,
-            .last_window_height = input.window_height,
         };
         errdefer app.screen_manager.deinit();
 
@@ -183,12 +179,9 @@ pub const App = struct {
 
         const window_width = self.input.interface().getWindowWidth();
         const window_height = self.input.interface().getWindowHeight();
-        if (window_width != self.last_window_width or window_height != self.last_window_height) {
-            if (window_width > 0 and window_height > 0) {
-                self.render_system.getRHI().renderContext().requestSwapchainRecreate();
-            }
-            self.last_window_width = window_width;
-            self.last_window_height = window_height;
+        const swapchain_extent = self.render_system.getRHI().renderContext().getNativeSwapchainExtent();
+        if ((window_width != swapchain_extent[0] or window_height != swapchain_extent[1]) and window_width > 0 and window_height > 0) {
+            self.render_system.getRHI().renderContext().requestSwapchainRecreate();
         }
 
         self.ui_manager.handleTimingToggle(self.input.interface(), self.input_mapper.interface(), &self.time, self.render_system.getRHI());
