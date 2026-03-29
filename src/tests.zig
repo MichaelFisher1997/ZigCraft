@@ -1285,6 +1285,39 @@ test "adjacent blocks share face (no internal faces)" {
     try testing.expect(total_verts < 72);
 }
 
+test "buildWithNeighbors returns OutOfMemory on allocation failure" {
+    var failing_alloc = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 3 });
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.state = .meshing;
+    chunk.setBlock(8, 64, 8, .stone);
+
+    var mesh = ChunkMesh.init(failing_alloc.allocator());
+    defer mesh.deinitWithoutRHI();
+
+    const result = mesh.buildWithNeighbors(&chunk, .empty, &atlas);
+    try testing.expectError(error.OutOfMemory, result);
+    try testing.expectEqual(Chunk.State.meshing, chunk.state);
+}
+
+test "buildWithNeighbors succeeds with valid allocator" {
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.state = .meshing;
+    chunk.setBlock(8, 64, 8, .stone);
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, .empty, &atlas);
+    try testing.expectEqual(Chunk.State.meshing, chunk.state);
+}
+
 test "adjacent transparent blocks share face" {
     var atlas: TextureAtlas = undefined;
     @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
