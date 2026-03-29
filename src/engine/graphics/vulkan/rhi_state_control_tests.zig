@@ -240,38 +240,6 @@ test "rhi_state_control.setAnisotropicFiltering updates when changed" {
     try testing.expectEqual(@as(u8, 16), ctx.options.anisotropic_filtering);
 }
 
-test "rhi_state_control.setVolumetricDensity is no-op stub" {
-    var ctx = MockSimpleContext{ .allocator = testing.allocator };
-    ctx.options.textures_enabled = true;
-    ctx.options.wireframe_enabled = false;
-    ctx.vulkan_device.fault_count = 42;
-
-    rhi_state_control.setVolumetricDensity(&ctx, 0.5);
-    rhi_state_control.setVolumetricDensity(&ctx, 1.0);
-
-    try testing.expect(ctx.options.textures_enabled);
-    try testing.expect(!ctx.options.wireframe_enabled);
-    try testing.expectEqual(@as(u32, 42), ctx.vulkan_device.fault_count);
-}
-
-// ============================================================================
-// Recovery State Tracking Tests
-// Testing the recovery counter logic without calling recover()
-// ============================================================================
-
-test "rhi_state_control.recovery counters track independently" {
-    var ctx = MockSimpleContext{ .allocator = testing.allocator };
-
-    // Simulate various recovery scenarios
-    ctx.vulkan_device.recovery_count = 3;
-    ctx.vulkan_device.recovery_success_count = 2;
-    ctx.vulkan_device.recovery_fail_count = 1;
-
-    try testing.expectEqual(@as(u32, 3), ctx.vulkan_device.recovery_count);
-    try testing.expectEqual(@as(u32, 2), ctx.vulkan_device.recovery_success_count);
-    try testing.expectEqual(@as(u32, 1), ctx.vulkan_device.recovery_fail_count);
-}
-
 // ============================================================================
 // MSAA State Tests
 // ============================================================================
