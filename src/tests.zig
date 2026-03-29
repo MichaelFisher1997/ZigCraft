@@ -67,6 +67,7 @@ test {
     _ = @import("ecs_tests.zig");
     _ = @import("engine/graphics/vulkan_device.zig");
     _ = @import("engine/graphics/vulkan_device_tests.zig");
+    _ = @import("engine/graphics/vulkan/rhi_state_control_tests.zig");
     _ = @import("engine/graphics/vulkan/ssao_system_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
