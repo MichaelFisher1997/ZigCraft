@@ -196,6 +196,49 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
     c.vkFreeCommandBuffers(ctx.vulkan_device.vk_device, ctx.frames.command_pool, 1, &cmd);
 }
 
+pub fn transitionImagesToPresent(ctx: anytype, images: []const c.VkImage) !void {
+    var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
+    alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandPool = ctx.frames.command_pool;
+    alloc_info.commandBufferCount = 1;
+
+    var cmd: c.VkCommandBuffer = null;
+    try Utils.checkVk(c.vkAllocateCommandBuffers(ctx.vulkan_device.vk_device, &alloc_info, &cmd));
+
+    var begin_info = std.mem.zeroes(c.VkCommandBufferBeginInfo);
+    begin_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    try Utils.checkVk(c.vkBeginCommandBuffer(cmd, &begin_info));
+
+    const count = images.len;
+    var barriers: [16]c.VkImageMemoryBarrier = undefined;
+    for (0..count) |i| {
+        barriers[i] = std.mem.zeroes(c.VkImageMemoryBarrier);
+        barriers[i].sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barriers[i].oldLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+        barriers[i].newLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barriers[i].srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        barriers[i].dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        barriers[i].image = images[i];
+        barriers[i].subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+        barriers[i].srcAccessMask = 0;
+        barriers[i].dstAccessMask = 0;
+    }
+
+    c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, null, 0, null, @intCast(count), &barriers[0]);
+
+    try Utils.checkVk(c.vkEndCommandBuffer(cmd));
+
+    var submit_info = std.mem.zeroes(c.VkSubmitInfo);
+    submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &cmd;
+    try ctx.vulkan_device.submitGuarded(submit_info, null);
+    try Utils.checkVk(c.vkQueueWaitIdle(ctx.vulkan_device.queue));
+    c.vkFreeCommandBuffers(ctx.vulkan_device.vk_device, ctx.frames.command_pool, 1, &cmd);
+}
+
 pub fn createHDRResources(ctx: anytype) !void {
     const extent = ctx.swapchain.getExtent();
     const format = c.VK_FORMAT_R16G16B16A16_SFLOAT;

@@ -27,6 +27,7 @@ layout(set = 0, binding = 1) uniform GlobalUniforms {
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
     vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
     vec4 cloud_params;
+    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation
     vec4 volumetric_params;
     vec4 viewport_size;
@@ -165,33 +166,5 @@ vec3 applyFilmGrain(vec3 color, vec2 uv, float intensity, float time) {
 }
 
 void main() {
-    vec3 hdrColor = texture(uHDRBuffer, inUV).rgb;
-    
-    // Add bloom contribution before tonemapping (in HDR space)
-    if (postParams.bloomEnabled > 0.5) {
-        vec3 bloom = texture(uBloomTexture, inUV).rgb;
-        hdrColor += bloom * postParams.bloomIntensity;
-    }
-    
-    vec3 color;
-    // Tone mapper selection: 0.0 (default) = AgX, 1.0 = AgX, 2.0 = ACES
-    // We use pbr_params.w as a spare field for this.
-    if (global.pbr_params.w < 1.5) {
-        color = agxToneMap(hdrColor, global.pbr_params.y, global.pbr_params.z);
-    } else {
-        color = ACESFilm(hdrColor * global.pbr_params.y);
-    }
-    
-    // Apply LUT-based color grading (after tone mapping, in [0,1] range)
-    if (postParams.colorGradingEnabled > 0.5) {
-        color = applyColorGrading(color, postParams.colorGradingIntensity);
-    }
-
-    // Apply vignette effect
-    color = applyVignette(color, inUV, postParams.vignetteIntensity);
-    
-    // Apply film grain effect
-    color = applyFilmGrain(color, inUV, postParams.filmGrainIntensity, global.params.x);
-    
-    outColor = vec4(color, 1.0);
+    outColor = vec4(texture(uHDRBuffer, inUV).rgb, 1.0);
 }

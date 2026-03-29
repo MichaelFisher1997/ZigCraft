@@ -12,7 +12,7 @@ pub const FrameManager = struct {
     command_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandBuffer,
 
     image_available_semaphores: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkSemaphore,
-    render_finished_semaphores: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkSemaphore,
+    render_finished_semaphores: [rhi.MAX_SWAPCHAIN_IMAGES]c.VkSemaphore,
     in_flight_fences: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkFence,
 
     current_frame: usize = 0,
@@ -56,8 +56,11 @@ pub const FrameManager = struct {
 
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
             try Utils.checkVk(c.vkCreateSemaphore(vulkan_device.vk_device, &semaphore_info, null, &self.image_available_semaphores[i]));
-            try Utils.checkVk(c.vkCreateSemaphore(vulkan_device.vk_device, &semaphore_info, null, &self.render_finished_semaphores[i]));
             try Utils.checkVk(c.vkCreateFence(vulkan_device.vk_device, &fence_info, null, &self.in_flight_fences[i]));
+        }
+
+        for (0..rhi.MAX_SWAPCHAIN_IMAGES) |i| {
+            try Utils.checkVk(c.vkCreateSemaphore(vulkan_device.vk_device, &semaphore_info, null, &self.render_finished_semaphores[i]));
         }
 
         return self;
@@ -68,9 +71,12 @@ pub const FrameManager = struct {
         _ = c.vkDeviceWaitIdle(device);
 
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
-            c.vkDestroySemaphore(device, self.render_finished_semaphores[i], null);
             c.vkDestroySemaphore(device, self.image_available_semaphores[i], null);
             c.vkDestroyFence(device, self.in_flight_fences[i], null);
+        }
+
+        for (0..rhi.MAX_SWAPCHAIN_IMAGES) |i| {
+            c.vkDestroySemaphore(device, self.render_finished_semaphores[i], null);
         }
 
         if (self.command_pool != null) {
@@ -98,7 +104,10 @@ pub const FrameManager = struct {
             if (result) |index| {
                 self.current_image_index = index;
             } else |err| {
-                if (err == error.OutOfDate) return false; // Needs recreate
+                if (err == error.OutOfDate) {
+                    swapchain.framebuffer_resized = true;
+                    return false;
+                }
                 return err;
             }
         }
@@ -167,14 +176,14 @@ pub const FrameManager = struct {
             // that crashes Lavapipe when any wait operation is called.
             if (!swapchain.skip_present) {
                 submit_info.signalSemaphoreCount = 1;
-                submit_info.pSignalSemaphores = &self.render_finished_semaphores[self.current_frame];
+                submit_info.pSignalSemaphores = &self.render_finished_semaphores[self.current_image_index];
             }
 
             try self.vulkan_device.submitGuarded(submit_info, self.in_flight_fences[self.current_frame]);
 
-            swapchain.present(self.render_finished_semaphores[self.current_frame], self.current_image_index) catch |err| {
+            swapchain.present(self.render_finished_semaphores[self.current_image_index], self.current_image_index) catch |err| {
                 if (err == error.OutOfDate) {
-                    // Resize needed, handled by next frame
+                    swapchain.framebuffer_resized = true;
                 } else {
                     return err;
                 }

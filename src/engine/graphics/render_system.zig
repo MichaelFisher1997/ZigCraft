@@ -171,7 +171,7 @@ pub const RenderSystem = struct {
             .cloud_pass = .{},
             .entity_pass = .{},
             .taa_pass = .{ .enabled = true },
-            .bloom_pass = .{ .enabled = true },
+            .bloom_pass = .{ .enabled = false },
             .post_process_pass = .{},
             .fxaa_pass = .{ .enabled = true },
             .safe_render_mode = safe_render_mode,
@@ -197,7 +197,7 @@ pub const RenderSystem = struct {
         errdefer self.lpv_system.deinit();
 
         self.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
-        self.rhi.setBloom(settings.bloom_enabled);
+        self.rhi.setBloom(false);
         self.rhi.setBloomIntensity(settings.bloom_intensity);
 
         settings_pkg.apply_logic.applyToRHI(settings, &self.rhi);

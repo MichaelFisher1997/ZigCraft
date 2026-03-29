@@ -25,6 +25,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 params;
     vec4 lighting;
     vec4 cloud_params;
+    vec4 shadow_params;
     vec4 pbr_params;
     vec4 volumetric_params;
     vec4 viewport_size;

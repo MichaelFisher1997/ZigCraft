@@ -539,7 +539,7 @@ void main() {
         }
     } else {
         if (vTileID < 0) {
-            color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+            color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
         } else {
             color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
         }

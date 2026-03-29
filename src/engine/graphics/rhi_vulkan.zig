@@ -67,7 +67,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (ctx.runtime.gpu_fault_detected) return;
     if (ctx.frames.frame_in_progress) return;
 
-    if (ctx.runtime.framebuffer_resized) {
+    if (ctx.runtime.framebuffer_resized or ctx.swapchain.framebuffer_resized) {
         log.log.info("beginFrame: triggering recreateSwapchainInternal (resize)", .{});
         frame_orchestration.recreateSwapchainInternal(ctx);
     }
@@ -127,8 +127,9 @@ fn abortFrame(ctx_ptr: *anyopaque) void {
     semaphore_info.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     _ = c.vkCreateSemaphore(device, &semaphore_info, null, &ctx.frames.image_available_semaphores[frame]);
 
-    c.vkDestroySemaphore(device, ctx.frames.render_finished_semaphores[frame], null);
-    _ = c.vkCreateSemaphore(device, &semaphore_info, null, &ctx.frames.render_finished_semaphores[frame]);
+    const image_idx = ctx.frames.current_image_index;
+    c.vkDestroySemaphore(device, ctx.frames.render_finished_semaphores[image_idx], null);
+    _ = c.vkCreateSemaphore(device, &semaphore_info, null, &ctx.frames.render_finished_semaphores[image_idx]);
 
     ctx.runtime.draw_call_count = 0;
     ctx.runtime.main_pass_active = false;
@@ -416,6 +417,11 @@ fn updateTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, data: []const u
 fn setViewport(ctx_ptr: *anyopaque, width: u32, height: u32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     state_control.setViewport(ctx, width, height);
+}
+
+fn requestSwapchainRecreate(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    state_control.requestSwapchainRecreate(ctx);
 }
 
 fn getAllocator(ctx_ptr: *anyopaque) std.mem.Allocator {
@@ -750,6 +756,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .endGPass = endGPass,
         .beginFXAAPass = beginFXAAPass,
         .endFXAAPass = endFXAAPass,
+        .requestSwapchainRecreate = requestSwapchainRecreate,
         .computeBloom = computeBloom,
         .computeTAA = computeTAA,
         .getEncoder = getEncoder,
