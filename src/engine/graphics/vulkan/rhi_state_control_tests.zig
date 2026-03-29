@@ -242,12 +242,16 @@ test "rhi_state_control.setAnisotropicFiltering updates when changed" {
 
 test "rhi_state_control.setVolumetricDensity is no-op stub" {
     var ctx = MockSimpleContext{ .allocator = testing.allocator };
+    ctx.options.textures_enabled = true;
+    ctx.options.wireframe_enabled = false;
+    ctx.vulkan_device.fault_count = 42;
 
-    // Should not panic or modify anything
     rhi_state_control.setVolumetricDensity(&ctx, 0.5);
     rhi_state_control.setVolumetricDensity(&ctx, 1.0);
 
-    try testing.expect(true); // Reached here without error
+    try testing.expect(ctx.options.textures_enabled);
+    try testing.expect(!ctx.options.wireframe_enabled);
+    try testing.expectEqual(@as(u32, 42), ctx.vulkan_device.fault_count);
 }
 
 // ============================================================================
@@ -266,20 +270,6 @@ test "rhi_state_control.recovery counters track independently" {
     try testing.expectEqual(@as(u32, 3), ctx.vulkan_device.recovery_count);
     try testing.expectEqual(@as(u32, 2), ctx.vulkan_device.recovery_success_count);
     try testing.expectEqual(@as(u32, 1), ctx.vulkan_device.recovery_fail_count);
-}
-
-test "rhi_state_control.max_recovery_attempts boundary check" {
-    var ctx = MockSimpleContext{ .allocator = testing.allocator };
-
-    ctx.vulkan_device.max_recovery_attempts = 5;
-    ctx.vulkan_device.recovery_count = 5;
-
-    // Recovery count at max should indicate no more attempts allowed
-    try testing.expect(ctx.vulkan_device.recovery_count >= ctx.vulkan_device.max_recovery_attempts);
-
-    // Reset and verify boundary
-    ctx.vulkan_device.recovery_count = 4;
-    try testing.expect(ctx.vulkan_device.recovery_count < ctx.vulkan_device.max_recovery_attempts);
 }
 
 // ============================================================================
@@ -330,11 +320,12 @@ test "rhi_state_control.setMSAA respects device limits" {
 test "rhi_state_control.waitIdle early exit in dry run mode" {
     var ctx = MockSimpleContext{ .allocator = testing.allocator };
     ctx.frames.dry_run = true;
+    ctx.vulkan_device.vk_device = @ptrFromInt(0xDEAD);
 
-    // Should not call vkDeviceWaitIdle in dry run mode
     rhi_state_control.waitIdle(&ctx);
 
-    try testing.expect(true); // Reached here without error
+    try testing.expect(ctx.frames.dry_run);
+    try testing.expectEqual(@as(u32, 0), ctx.vulkan_device.fault_count);
 }
 
 test "rhi_state_control.waitIdle early exit with null device" {
@@ -342,10 +333,10 @@ test "rhi_state_control.waitIdle early exit with null device" {
     ctx.frames.dry_run = false;
     ctx.vulkan_device.vk_device = null;
 
-    // Should not call vkDeviceWaitIdle with null device
     rhi_state_control.waitIdle(&ctx);
 
-    try testing.expect(true); // Reached here without error
+    try testing.expect(!ctx.frames.dry_run);
+    try testing.expect(ctx.vulkan_device.vk_device == null);
 }
 
 // ============================================================================
