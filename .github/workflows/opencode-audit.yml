@@ -104,6 +104,7 @@ jobs:
             1. You may ONLY create a single GitHub issue. Do NOT create branches, pull requests, or modify any files.
             2. If you find nothing meaningful, file NO issue. Silence is better than noise.
             3. Before filing, run `gh issue list --label "automated-audit" --state open --limit 50` and verify no existing issue already covers the same finding. If one exists, do NOT file a duplicate.
+            4. Before filing, run `gh pr list --state open --limit 50` and check if any open PR already addresses the same problem (e.g., PR title or description mentions the bug/area). If one exists, post a comment on that PR instead of filing a duplicate issue.
 
             ## CODEBASE CONTEXT
 
@@ -227,7 +228,7 @@ jobs:
             ## FINAL REMINDERS
 
             - **One issue maximum.** If you find multiple problems, file the one with the highest impact.
-            - **Check for duplicates first.** Run `gh issue list --label "automated-audit" --state open --limit 50` and compare before filing.
+            - **Check for duplicates first.** Run `gh issue list --label "automated-audit" --state open --limit 50` and compare before filing. Also run `gh pr list --state open --limit 50` to check if a fix is already in progress.
             - **No false positives.** If you're not confident an issue is real, don't file it. Verify by reading surrounding code.
             - **No action is valid.** If the module looks clean, that's a good outcome. Don't manufacture issues.
             - **Be specific.** Every claim must reference a specific file, line number, and code pattern. No vague statements.

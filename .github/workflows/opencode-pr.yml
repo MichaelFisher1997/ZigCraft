@@ -3,11 +3,22 @@ name: opencode
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review (triggered by test-writer)'
+        required: true
+        type: number
+      head_sha:
+        description: 'Head SHA of the PR to review'
+        required: true
+        type: string
 
 jobs:
   opencode:
-    # Don't run on draft PRs; do run when they become ready_for_review.
-    if: ${{ github.event.pull_request.draft == false }}
+    if: >
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -17,9 +28,21 @@ jobs:
       issues: read
 
     steps:
+      - name: Resolve PR context
+        id: resolve-pr
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "pr_number=${{ inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+            echo "pr_head_sha=${{ inputs.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "pr_head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.resolve-pr.outputs.pr_head_sha }}
           fetch-depth: 0
 
       - name: Configure git
@@ -31,7 +54,7 @@ jobs:
         id: previous-reviews
         run: |
           # Get PR number
-          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
           
           # Fetch review comments from opencode-agent
           echo "Fetching previous automated reviews..."
@@ -91,6 +114,9 @@ jobs:
           model: kimi-for-coding/k2p5
           prompt: |
             You are reviewing a pull request for the ZigCraft repository.
+
+            **PR to review:** #${{ steps.resolve-pr.outputs.pr_number }}
+            Use `gh pr diff ${{ steps.resolve-pr.outputs.pr_number }}` and `gh pr view ${{ steps.resolve-pr.outputs.pr_number }}` to examine the changes.
 
             ZigCraft is a high-performance Minecraft-style voxel engine built with Zig, SDL3, and Vulkan. It uses Nix for dependency management, a custom RHI (Render Hardware Interface) abstraction layer, and a multithreaded job system for world generation and meshing.
 
