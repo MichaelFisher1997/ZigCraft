@@ -385,3 +385,22 @@ jobs:
             - **Descriptive test names.** Use `test "ModuleName.functionName edge case description"` pattern.
             - **One PR per run.** Do not create multiple PRs.
             - **Skip if nothing to test.** If the module is already well-tested or has no testable logic, do not create a PR. It's better to skip than to write trivial tests.
+
+      - name: Trigger PR review workflow
+        if: steps.check-existing.outputs.skip != 'true'
+        run: |
+          BRANCH="${{ steps.select-module.outputs.branch }}"
+          PR_DATA=$(gh pr list --head "$BRANCH" --state open --json number,headRefOid --jq '.[0]')
+          PR_NUMBER=$(echo "$PR_DATA" | jq -r '.number // empty')
+          if [ -n "$PR_NUMBER" ]; then
+            HEAD_SHA=$(echo "$PR_DATA" | jq -r '.headRefOid')
+            echo "Triggering review for PR #${PR_NUMBER} (SHA: ${HEAD_SHA})"
+            gh workflow run opencode-pr.yml \
+              --ref "${{ github.event.repository.default_branch }}" \
+              -f pr_number="$PR_NUMBER" \
+              -f head_sha="$HEAD_SHA"
+          else
+            echo "No PR found on branch ${BRANCH}, skipping review trigger."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
