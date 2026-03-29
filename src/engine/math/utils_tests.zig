@@ -41,11 +41,10 @@ test "smoothstep with reversed edges interpolates backwards" {
 }
 
 test "smoothstep with equal edges handles division by zero" {
-    // When edge0 == edge1, division by zero occurs
-    // The clamp handles this by checking the comparison
+    // When edge0 == edge1, division by zero produces NaN (0/0).
+    // Zig's @min treats NaN as greater than all values, so clamp(NaN, 0, 1) = 1.
     const result = utils.smoothstep(0.5, 0.5, 0.5);
-    // NaN from 0/0 gets clamped - in practice this returns 0
-    _ = result;
+    try testing.expectApproxEqAbs(@as(f32, 1.0), result, 0.0001);
 }
 
 test "lerpVec3 at t=0 returns a" {
