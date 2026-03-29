@@ -345,6 +345,7 @@ const MockContext = struct {
         .setColorGradingIntensity = undefined,
         .setTAABlendFactor = undefined,
         .setTAAVelocityRejection = undefined,
+        .captureFrame = undefined,
     };
 
     const MOCK_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{

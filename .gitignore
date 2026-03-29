@@ -12,6 +12,8 @@ test_output.txt
 .env.*
 !.env.example
 *.log
+screenshot.ppm
+screenshot.png
 .vscode/
 .idea/
 *.swp
