@@ -19,6 +19,8 @@ vec3 sampleCurrent(vec2 uv) {
 }
 
 void main() {
+    // TODO: restore full temporal accumulation once the TAA output path is
+    // revalidated against the rest of the post-processing chain.
     vec3 current = sampleCurrent(outUV);
     outColor = vec4(current, 1.0);
 }
