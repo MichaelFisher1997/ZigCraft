@@ -70,6 +70,7 @@ test {
     _ = @import("engine/graphics/vulkan/ssao_system_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
+    _ = @import("engine/math/utils_tests.zig");
     _ = @import("world/worldgen/schematics.zig");
     _ = @import("world/worldgen/tree_registry.zig");
     _ = @import("world/lod_manager.zig");
