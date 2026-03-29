@@ -33,21 +33,33 @@ pub fn begin2DPass(ctx: anytype, screen_width: f32, screen_height: f32) void {
         return;
     }
 
-    const use_swapchain = ctx.runtime.post_process_ran_this_frame;
+    const direct_to_present = !ctx.runtime.post_process_ran_this_frame and !ctx.runtime.main_pass_active and ctx.runtime.draw_call_count == 0;
+    const use_swapchain = ctx.runtime.post_process_ran_this_frame or direct_to_present;
     const ui_pipeline = if (use_swapchain) ctx.pipeline_manager.ui_swapchain_pipeline else ctx.pipeline_manager.ui_pipeline;
-    if (ui_pipeline == null) return;
+    if (ui_pipeline == null) {
+        return;
+    }
 
     if (use_swapchain) {
         if (!ctx.fxaa.pass_active) {
             pass_orchestration.beginFXAAPassForUI(ctx);
         }
-        if (!ctx.fxaa.pass_active) return;
+        if (!ctx.fxaa.pass_active) {
+            return;
+        }
     } else {
         if (!ctx.runtime.main_pass_active) pass_orchestration.beginMainPassInternal(ctx);
-        if (!ctx.runtime.main_pass_active) return;
+        if (!ctx.runtime.main_pass_active) {
+            return;
+        }
     }
 
     ctx.ui.ui_using_swapchain = use_swapchain;
+
+    if (direct_to_present) {
+        ctx.runtime.post_process_ran_this_frame = true;
+        ctx.runtime.fxaa_ran_this_frame = true;
+    }
 
     ctx.ui.ui_screen_width = screen_width;
     ctx.ui.ui_screen_height = screen_height;

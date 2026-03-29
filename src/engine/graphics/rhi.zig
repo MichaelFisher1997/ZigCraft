@@ -70,6 +70,7 @@ pub const TextureHandle = rhi_types.TextureHandle;
 pub const InvalidTextureHandle = rhi_types.InvalidTextureHandle;
 
 pub const MAX_FRAMES_IN_FLIGHT = rhi_types.MAX_FRAMES_IN_FLIGHT;
+pub const MAX_SWAPCHAIN_IMAGES = rhi_types.MAX_SWAPCHAIN_IMAGES;
 pub const SHADOW_CASCADE_COUNT = rhi_types.SHADOW_CASCADE_COUNT;
 pub const BLOOM_MIP_COUNT = 5;
 
@@ -267,6 +268,9 @@ pub const RenderContext = struct {
     }
     pub fn computeTAA(self: RenderContext) void {
         self.render.computeTAA();
+    }
+    pub fn requestSwapchainRecreate(self: RenderContext) void {
+        self.render.requestSwapchainRecreate();
     }
     pub fn setClearColor(self: RenderContext, color: Vec3) void {
         self.render.vtable.setClearColor(self.render.ptr, color);
@@ -607,6 +611,7 @@ pub const IRenderContext = struct {
         // FXAA pass
         beginFXAAPass: *const fn (ptr: *anyopaque) void,
         endFXAAPass: *const fn (ptr: *anyopaque) void,
+        requestSwapchainRecreate: *const fn (ptr: *anyopaque) void,
         // Bloom pass
         computeBloom: *const fn (ptr: *anyopaque) void,
         // TAA pass
@@ -674,6 +679,9 @@ pub const IRenderContext = struct {
     }
     pub fn computeTAA(self: IRenderContext) void {
         self.vtable.computeTAA(self.ptr);
+    }
+    pub fn requestSwapchainRecreate(self: IRenderContext) void {
+        self.vtable.requestSwapchainRecreate(self.ptr);
     }
     pub fn getEncoder(self: IRenderContext) IGraphicsCommandEncoder {
         return self.vtable.getEncoder(self.ptr);

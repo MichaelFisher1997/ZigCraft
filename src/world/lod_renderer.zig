@@ -122,7 +122,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             // Update frame index
             self.frame_index = self.rhi.getFrameIndex();
 
-            // Set LOD mode on RHI
+            // Use the LOD descriptor set while issuing LOD draws, then restore
+            // normal terrain descriptor mode so the chunk pass keeps its textures.
+            defer if (@hasDecl(RHI, "setInstanceBuffer")) self.rhi.setInstanceBuffer(0);
             self.rhi.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
 
             const frustum = Frustum.fromViewProj(view_proj);

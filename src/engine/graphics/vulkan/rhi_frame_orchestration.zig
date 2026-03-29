@@ -33,6 +33,10 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         return;
     };
 
+    lifecycle.transitionImagesToPresent(ctx, ctx.swapchain.swapchain.images.items) catch |err| {
+        log.log.warn("Failed to transition swapchain images to PRESENT: {}", .{err});
+    };
+
     lifecycle.createHDRResources(ctx) catch |err| {
         log.log.errWithTrace("Failed to recreate HDR resources: {}", .{err});
         return;

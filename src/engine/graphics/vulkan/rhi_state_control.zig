@@ -15,19 +15,6 @@ pub fn setTextureUniforms(ctx: anytype, texture_enabled: bool) void {
 }
 
 pub fn setViewport(ctx: anytype, width: u32, height: u32) void {
-    const fb_w = width;
-    const fb_h = height;
-    _ = fb_w;
-    _ = fb_h;
-
-    var w: c_int = 0;
-    var h: c_int = 0;
-    _ = c.SDL_GetWindowSizeInPixels(ctx.window, &w, &h);
-
-    if (!ctx.swapchain.skip_present and (@as(u32, @intCast(w)) != ctx.swapchain.getExtent().width or @as(u32, @intCast(h)) != ctx.swapchain.getExtent().height)) {
-        ctx.runtime.framebuffer_resized = true;
-    }
-
     if (!ctx.frames.frame_in_progress) return;
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -45,6 +32,11 @@ pub fn setViewport(ctx: anytype, width: u32, height: u32) void {
     scissor.offset = .{ .x = 0, .y = 0 };
     scissor.extent = .{ .width = width, .height = height };
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+}
+
+pub fn requestSwapchainRecreate(ctx: anytype) void {
+    ctx.runtime.framebuffer_resized = true;
+    ctx.swapchain.framebuffer_resized = true;
 }
 
 pub fn getAllocator(ctx: anytype) std.mem.Allocator {
