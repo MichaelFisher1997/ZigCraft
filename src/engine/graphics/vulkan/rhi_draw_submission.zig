@@ -41,10 +41,7 @@ pub fn drawIndexed(ctx: anytype, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.B
                 ctx.draw.terrain_pipeline_bound = true;
             }
 
-            const descriptor_set = if (ctx.draw.lod_mode)
-                &ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame]
-            else
-                &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+            const descriptor_set = &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
             c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, descriptor_set, 0, null);
 
             const offset: c.VkDeviceSize = 0;
@@ -97,10 +94,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                 }
             }
 
-            const descriptor_set = if (!use_shadow and ctx.draw.lod_mode)
-                &ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame]
-            else
-                &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+            const descriptor_set = &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
             c.vkCmdBindDescriptorSets(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, descriptor_set, 0, null);
 
             if (use_shadow) {
@@ -194,10 +188,7 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
             }
         }
 
-        const descriptor_set = if (!use_shadow and ctx.draw.lod_mode)
-            &ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame]
-        else
-            &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+        const descriptor_set = &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
         c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, descriptor_set, 0, null);
 
         if (use_shadow) {
@@ -265,10 +256,7 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
             if (ctx.pipeline_manager.g_pipeline == null) return;
             c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.g_pipeline);
 
-            const descriptor_set = if (ctx.draw.lod_mode)
-                &ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame]
-            else
-                &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+            const descriptor_set = &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
             c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, descriptor_set, 0, null);
         } else {
             const needs_rebinding = !ctx.draw.terrain_pipeline_bound or ctx.ui.selection_mode or mode == .lines;

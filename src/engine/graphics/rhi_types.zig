@@ -35,6 +35,7 @@ pub const TextureHandle = u32;
 pub const InvalidTextureHandle: TextureHandle = 0;
 
 pub const MAX_FRAMES_IN_FLIGHT = 2;
+pub const MAX_SWAPCHAIN_IMAGES = 8;
 /// Number of cascaded shadow map splits.
 /// 4 cascades provide smoother transitions for large shadow distances (1000+) while maintaining quality.
 pub const SHADOW_CASCADE_COUNT = 4;

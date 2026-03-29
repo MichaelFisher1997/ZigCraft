@@ -20,6 +20,7 @@ const GlobalUniforms = extern struct {
     params: [4]f32,
     lighting: [4]f32,
     cloud_params: [4]f32,
+    shadow_params: [4]f32,
     pbr_params: [4]f32,
     volumetric_params: [4]f32,
     viewport_size: [4]f32,
