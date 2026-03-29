@@ -78,6 +78,10 @@ test {
     _ = @import("engine/atmosphere/tests.zig");
     _ = @import("game/settings/tests.zig");
     _ = @import("game/input_settings.zig");
+    _ = @import("game/player_tests.zig");
+    _ = @import("game/inventory_tests.zig");
+    _ = @import("game/screen_tests.zig");
+    _ = @import("game/session_tests.zig");
 }
 
 test "Vec3 addition" {
