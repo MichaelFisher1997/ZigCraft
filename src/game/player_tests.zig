@@ -163,7 +163,7 @@ test "Player constants are reasonable values" {
     // Jump velocity should be positive
     try testing.expect(Player.JUMP_VELOCITY > 0.0);
 
-    // Terminal velocity should be negative (downward)
+    // Terminal velocity magnitude should be positive
     try testing.expect(Player.TERMINAL_VELOCITY > 0.0);
 
     // Double tap threshold should be reasonable

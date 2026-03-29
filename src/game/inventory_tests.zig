@@ -1,7 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const inventory_module = @import("inventory.zig");
-const Inventory = inventory_module.Inventory;
+const Inventory = @import("inventory.zig").Inventory;
 const BlockType = @import("../world/block.zig").BlockType;
 
 test "Inventory.initEmpty creates empty inventory" {

@@ -2,7 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const session_module = @import("session.zig");
 const CloudState = session_module.CloudState;
-const Vec3 = @import("../engine/math/vec3.zig").Vec3;
+const Vec3 = @import("zig-math").Vec3;
 
 test "CloudState.init has default values" {
     const clouds = CloudState{};
