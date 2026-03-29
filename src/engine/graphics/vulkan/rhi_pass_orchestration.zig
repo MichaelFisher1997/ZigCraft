@@ -252,6 +252,7 @@ pub fn beginMainPassInternal(ctx: anytype) void {
             barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
             barrier.dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
+            // HDR is sampled by fragment-stage bloom/TAA/post-processing today.
             c.vkCmdPipelineBarrier(command_buffer, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, null, 0, null, 1, &barrier);
         }
 

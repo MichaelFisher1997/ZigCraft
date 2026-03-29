@@ -188,6 +188,9 @@ pub const FrameManager = struct {
             swapchain.present(self.render_finished_semaphores[self.current_image_index], self.current_image_index) catch |err| {
                 if (err == error.OutOfDate) {
                     swapchain.framebuffer_resized = true;
+                } else if (err == error.ValidationFailed) {
+                    log.log.err("endFrame: validation failure while presenting swapchain image", .{});
+                    return err;
                 } else {
                     return err;
                 }
