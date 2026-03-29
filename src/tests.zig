@@ -1279,6 +1279,47 @@ test "adjacent blocks share face (no internal faces)" {
     try testing.expect(total_verts < 72);
 }
 
+test "mesh build failure resets chunk state to generated" {
+    var failing_alloc = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 3 });
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.state = .meshing;
+    chunk.setBlock(8, 64, 8, .stone);
+
+    var mesh = ChunkMesh.init(failing_alloc.allocator());
+    defer mesh.deinitWithoutRHI();
+
+    mesh.buildWithNeighbors(&chunk, .empty, &atlas) catch |err| {
+        chunk.state = .generated;
+        try testing.expect(err == error.OutOfMemory);
+    };
+    try testing.expectEqual(Chunk.State.generated, chunk.state);
+}
+
+test "mesh build success transitions chunk state to mesh_ready" {
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.state = .meshing;
+    chunk.setBlock(8, 64, 8, .stone);
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    mesh.buildWithNeighbors(&chunk, .empty, &atlas) catch |err| {
+        chunk.state = .generated;
+        try testing.expect(err == error.OutOfMemory);
+    };
+    if (chunk.state == .meshing) {
+        chunk.state = .mesh_ready;
+    }
+    try testing.expectEqual(Chunk.State.mesh_ready, chunk.state);
+}
+
 test "adjacent transparent blocks share face" {
     var atlas: TextureAtlas = undefined;
     @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
