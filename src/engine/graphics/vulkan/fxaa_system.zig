@@ -338,6 +338,5 @@ pub const FXAASystem = struct {
         }
 
         self.pass_active = false;
-        self.enabled = false;
     }
 };

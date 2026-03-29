@@ -367,11 +367,11 @@ pub const RenderPassManager = struct {
         var color_attachment = std.mem.zeroes(c.VkAttachmentDescription);
         color_attachment.format = swapchain_format;
         color_attachment.samples = c.VK_SAMPLE_COUNT_1_BIT;
-        color_attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color_attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD;
         color_attachment.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
         color_attachment.stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color_attachment.stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color_attachment.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+        color_attachment.initialLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         color_attachment.finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
         var color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };

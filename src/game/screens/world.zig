@@ -5,7 +5,6 @@ const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const GameSession = @import("../session.zig").GameSession;
 const IWorld = @import("../../world/world.zig").IWorld;
-const LODStats = @import("../../world/lod_manager.zig").LODStats;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
 const RenderSystem = @import("../../engine/graphics/render_system.zig").RenderSystem;

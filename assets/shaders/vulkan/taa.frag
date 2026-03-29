@@ -19,32 +19,8 @@ vec3 sampleCurrent(vec2 uv) {
 }
 
 void main() {
-    vec2 velocity = texture(uVelocity, outUV).xy;
-    vec2 history_uv = outUV - velocity;
-
+    // TODO: restore full temporal accumulation once the TAA output path is
+    // revalidated against the rest of the post-processing chain.
     vec3 current = sampleCurrent(outUV);
-
-    if (taa.reset_history > 0.5 || any(lessThan(history_uv, vec2(0.0))) || any(greaterThan(history_uv, vec2(1.0)))) {
-        outColor = vec4(current, 1.0);
-        return;
-    }
-
-    vec3 history = texture(uHistory, history_uv).rgb;
-
-    vec2 texel = 1.0 / vec2(textureSize(uCurrentHdr, 0));
-    vec3 c1 = sampleCurrent(clamp(outUV + vec2(texel.x, 0.0), 0.0, 1.0));
-    vec3 c2 = sampleCurrent(clamp(outUV + vec2(-texel.x, 0.0), 0.0, 1.0));
-    vec3 c3 = sampleCurrent(clamp(outUV + vec2(0.0, texel.y), 0.0, 1.0));
-    vec3 c4 = sampleCurrent(clamp(outUV + vec2(0.0, -texel.y), 0.0, 1.0));
-
-    vec3 min_color = min(current, min(min(c1, c2), min(c3, c4)));
-    vec3 max_color = max(current, max(max(c1, c2), max(c3, c4)));
-    vec3 clamped_history = clamp(history, min_color, max_color);
-
-    float speed = length(velocity);
-    float stable = 1.0 - smoothstep(taa.velocity_rejection, taa.velocity_rejection * 4.0, speed);
-    float history_weight = taa.blend_factor * stable;
-    vec3 resolved = mix(current, clamped_history, history_weight);
-
-    outColor = vec4(resolved, 1.0);
+    outColor = vec4(current, 1.0);
 }

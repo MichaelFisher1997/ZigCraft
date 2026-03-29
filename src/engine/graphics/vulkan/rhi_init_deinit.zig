@@ -30,6 +30,8 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.swapchain = try SwapchainPresenter.init(allocator, &ctx.vulkan_device, ctx.window, ctx.options.msaa_samples);
     ctx.descriptors = try DescriptorManager.init(allocator, &ctx.vulkan_device, &ctx.resources);
 
+    try lifecycle.transitionImagesToPresent(ctx, ctx.swapchain.swapchain.images.items);
+
     ctx.pipeline_manager = try PipelineManager.init(&ctx.vulkan_device, &ctx.descriptors, null);
     ctx.render_pass_manager = RenderPassManager.init(ctx.allocator);
 

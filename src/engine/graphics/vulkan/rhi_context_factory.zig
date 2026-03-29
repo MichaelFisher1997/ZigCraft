@@ -160,7 +160,6 @@ pub fn createRHI(
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         ctx.frames.image_available_semaphores[i] = null;
-        ctx.frames.render_finished_semaphores[i] = null;
         ctx.frames.in_flight_fences[i] = null;
         ctx.descriptors.global_ubos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
         ctx.descriptors.shadow_ubos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
@@ -185,6 +184,11 @@ pub fn createRHI(
         ctx.resources.buffer_deletion_queue[i] = .empty;
         ctx.resources.image_deletion_queue[i] = .empty;
     }
+
+    for (0..rhi.MAX_SWAPCHAIN_IMAGES) |i| {
+        ctx.frames.render_finished_semaphores[i] = null;
+    }
+
     ctx.legacy.model_ubo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
     ctx.legacy.dummy_instance_buffer = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
     ctx.ui.ui_screen_width = 0;

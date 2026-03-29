@@ -81,6 +81,9 @@ pub const SwapchainPresenter = struct {
         } else if (result == c.VK_TIMEOUT) {
             log.log.err("vkAcquireNextImageKHR timed out (2s). Swapchain exhaustion?", .{});
             return error.Timeout;
+        } else if (result == c.VK_ERROR_VALIDATION_FAILED_EXT) {
+            log.log.err("vkAcquireNextImageKHR reported validation failure", .{});
+            return error.ValidationFailed;
         } else if (result != c.VK_SUCCESS and result != c.VK_SUBOPTIMAL_KHR) {
             log.log.err("vkAcquireNextImageKHR failed with result: {d}", .{result});
             return error.VulkanError;
@@ -113,6 +116,9 @@ pub const SwapchainPresenter = struct {
 
         if (result == c.VK_ERROR_OUT_OF_DATE_KHR or result == c.VK_SUBOPTIMAL_KHR or self.framebuffer_resized) {
             return error.OutOfDate;
+        } else if (result == c.VK_ERROR_VALIDATION_FAILED_EXT) {
+            log.log.err("vkQueuePresentKHR reported validation failure", .{});
+            return error.ValidationFailed;
         } else if (result != c.VK_SUCCESS) {
             return error.VulkanError;
         }

@@ -78,13 +78,21 @@ pub fn endGPassInternal(ctx: anytype) void {
 }
 
 pub fn beginFXAAPassInternal(ctx: anytype) void {
-    if (!ctx.fxaa.enabled) return;
+    if (!ctx.fxaa.enabled) {
+        return;
+    }
     if (ctx.fxaa.pass_active) return;
-    if (ctx.fxaa.pipeline == null) return;
-    if (ctx.fxaa.render_pass == null) return;
+    if (ctx.fxaa.pipeline == null) {
+        return;
+    }
+    if (ctx.fxaa.render_pass == null) {
+        return;
+    }
 
     const image_index = ctx.frames.current_image_index;
-    if (image_index >= ctx.fxaa.framebuffers.items.len) return;
+    if (image_index >= ctx.fxaa.framebuffers.items.len) {
+        return;
+    }
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     const extent = ctx.swapchain.getExtent();
@@ -135,18 +143,27 @@ pub fn beginFXAAPassInternal(ctx: anytype) void {
 }
 
 pub fn beginFXAAPassForUI(ctx: anytype) void {
-    if (!ctx.frames.frame_in_progress) return;
+    if (!ctx.frames.frame_in_progress) {
+        return;
+    }
     if (ctx.fxaa.pass_active) return;
-    if (ctx.render_pass_manager.ui_swapchain_render_pass == null) return;
-    if (ctx.render_pass_manager.ui_swapchain_framebuffers.items.len == 0) return;
+    if (ctx.render_pass_manager.ui_swapchain_render_pass == null) {
+        return;
+    }
+    if (ctx.render_pass_manager.ui_swapchain_framebuffers.items.len == 0) {
+        return;
+    }
 
     const image_index = ctx.frames.current_image_index;
-    if (image_index >= ctx.render_pass_manager.ui_swapchain_framebuffers.items.len) return;
+    if (image_index >= ctx.render_pass_manager.ui_swapchain_framebuffers.items.len) {
+        return;
+    }
 
     ensureNoRenderPassActiveInternal(ctx);
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     const extent = ctx.swapchain.getExtent();
+    const ui_only_frame = ctx.runtime.draw_call_count == 0;
 
     var clear_value = std.mem.zeroes(c.VkClearValue);
     clear_value.color.float32 = .{ 0.0, 0.0, 0.0, 1.0 };
@@ -160,6 +177,21 @@ pub fn beginFXAAPassForUI(ctx: anytype) void {
     rp_begin.pClearValues = &clear_value;
 
     c.vkCmdBeginRenderPass(command_buffer, &rp_begin, c.VK_SUBPASS_CONTENTS_INLINE);
+
+    if (ui_only_frame) {
+        var clear_attachment = std.mem.zeroes(c.VkClearAttachment);
+        clear_attachment.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
+        clear_attachment.colorAttachment = 0;
+        clear_attachment.clearValue.color.float32 = .{ 0.0, 0.0, 0.0, 1.0 };
+
+        var clear_rect = std.mem.zeroes(c.VkClearRect);
+        clear_rect.rect.offset = .{ .x = 0, .y = 0 };
+        clear_rect.rect.extent = extent;
+        clear_rect.baseArrayLayer = 0;
+        clear_rect.layerCount = 1;
+
+        c.vkCmdClearAttachments(command_buffer, 1, &clear_attachment, 1, &clear_rect);
+    }
 
     const viewport = c.VkViewport{
         .x = 0,
@@ -220,6 +252,7 @@ pub fn beginMainPassInternal(ctx: anytype) void {
             barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
             barrier.dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
+            // HDR is sampled by fragment-stage bloom/TAA/post-processing today.
             c.vkCmdPipelineBarrier(command_buffer, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, null, 0, null, 1, &barrier);
         }
 
@@ -268,9 +301,24 @@ pub fn endMainPassInternal(ctx: anytype) void {
 }
 
 pub fn beginPostProcessPassInternal(ctx: anytype) void {
-    if (!ctx.frames.frame_in_progress) return;
-    if (ctx.render_pass_manager.post_process_framebuffers.items.len == 0) return;
-    if (ctx.frames.current_image_index >= ctx.render_pass_manager.post_process_framebuffers.items.len) return;
+    if (!ctx.frames.frame_in_progress) {
+        return;
+    }
+    if (ctx.render_pass_manager.post_process_framebuffers.items.len == 0) {
+        return;
+    }
+    if (ctx.frames.current_image_index >= ctx.render_pass_manager.post_process_framebuffers.items.len) {
+        return;
+    }
+
+    if (ctx.post_process.pipeline == null) {
+        return;
+    }
+
+    const pp_ds = ctx.post_process.descriptor_sets[ctx.frames.current_frame];
+    if (pp_ds == null) {
+        return;
+    }
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     if (!ctx.post_process.pass_active) {
@@ -301,11 +349,6 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
         ctx.post_process.pass_active = true;
         ctx.runtime.post_process_ran_this_frame = true;
 
-        if (ctx.post_process.pipeline == null) {
-            log.log.err("Post-process pipeline is null, skipping draw", .{});
-            return;
-        }
-
         c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.post_process.pipeline);
 
         var source_view = ctx.hdr.hdr_view;
@@ -318,11 +361,6 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
         }
         ctx.post_process.updateSourceDescriptor(ctx.vulkan_device.vk_device, ctx.frames.current_frame, source_view, source_sampler);
 
-        const pp_ds = ctx.post_process.descriptor_sets[ctx.frames.current_frame];
-        if (pp_ds == null) {
-            log.log.err("Post-process descriptor set is null for frame {}", .{ctx.frames.current_frame});
-            return;
-        }
         c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.post_process.pipeline_layout, 0, 1, &pp_ds, 0, null);
 
         const push = PostProcessPushConstants{
@@ -379,9 +417,11 @@ pub fn endFrame(ctx: anytype) void {
 
     if (!ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
         beginPostProcessPassInternal(ctx);
-        const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
-        c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
-        ctx.runtime.draw_call_count += 1;
+        if (ctx.post_process.pass_active) {
+            const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+            c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
+            ctx.runtime.draw_call_count += 1;
+        }
     }
     if (ctx.post_process.pass_active) endPostProcessPassInternal(ctx);
 

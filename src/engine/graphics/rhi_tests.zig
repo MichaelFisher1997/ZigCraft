@@ -177,6 +177,7 @@ const MockContext = struct {
         .endGPass = undefined,
         .beginFXAAPass = undefined,
         .endFXAAPass = undefined,
+        .requestSwapchainRecreate = undefined,
         .computeBloom = undefined,
         .computeTAA = undefined,
         .getEncoder = MockContext.getEncoder,
