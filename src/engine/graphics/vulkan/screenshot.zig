@@ -65,12 +65,16 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
     begin_info.flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     _ = c.vkBeginCommandBuffer(cmd_buffer, &begin_info);
 
+    const is_headless = ctx.swapchain.swapchain.headless_mode;
+    const src_layout: c.VkImageLayout = if (is_headless) c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL else c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    const dst_layout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+
     var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
     barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.oldLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.oldLayout = src_layout;
+    barrier.newLayout = dst_layout;
     barrier.image = swapchain_image;
     barrier.subresourceRange = .{
         .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
@@ -116,9 +120,9 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
     );
 
     barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.dstAccessMask = c.VK_ACCESS_MEMORY_READ_BIT;
-    barrier.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    barrier.newLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.oldLayout = dst_layout;
+    barrier.newLayout = src_layout;
 
     c.vkCmdPipelineBarrier(
         cmd_buffer,
