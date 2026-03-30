@@ -145,14 +145,12 @@ pub const GlobalVertexAllocator = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Queue for the CURRENT frame slot.
-        // It will be reclaimed in the NEXT frame when we tick(current_frame).
-        // Since current_frame slot won't be reused by the GPU until we submit this frame
-        // and finish waiting for its fence, it's safe to free things from it.
-        // HOWEVER, we must be careful with reuse.
-        // A safer way is to queue for (frame_index + 1) % MAX_FRAMES_IN_FLIGHT.
-
-        const frame_idx = self.device_query.getFrameIndex();
+        // Queue for the NEXT frame slot to ensure GPU is done.
+        // tick(frame_index) is called at the start of each frame, freeing the previous
+        // frame's deferred allocations. By queuing to the next slot, we guarantee
+        // at least MAX_FRAMES_IN_FLIGHT frames of safety margin.
+        const current_frame = self.device_query.getFrameIndex();
+        const frame_idx = (current_frame + 1) % rhi_mod.MAX_FRAMES_IN_FLIGHT;
         self.deferred_frees[frame_idx].append(self.allocator, allocation) catch {
             // Fallback to immediate free if queue is full (better than leak, though slightly risky)
             log.log.warn("Deferred free queue full, falling back to immediate free", .{});
