@@ -74,7 +74,7 @@ jobs:
               --color "1D76DB"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v16
@@ -89,7 +89,7 @@ jobs:
       - name: Run opencode audit
         uses: anomalyco/opencode/github@v1.3.3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5

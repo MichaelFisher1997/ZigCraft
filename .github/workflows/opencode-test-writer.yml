@@ -140,6 +140,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
+          token: ${{ secrets.OPENCODE_PAT }}
 
       - name: Ensure test label exists
         run: |
@@ -149,7 +150,7 @@ jobs:
               --color "0E8A16"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Check for existing PR
         id: check-existing
@@ -169,7 +170,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Validate scan paths exist
         if: steps.check-existing.outputs.skip != 'true'
@@ -201,7 +202,7 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         uses: anomalyco/opencode/github@v1.3.3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
@@ -403,4 +404,4 @@ jobs:
             echo "No PR found on branch ${BRANCH}, skipping review trigger."
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
