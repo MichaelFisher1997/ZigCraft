@@ -530,6 +530,7 @@ pub const PipelineManager = struct {
 };
 
 /// Converts MSAA sample count (1, 2, 4, 8) to Vulkan sample count flag.
+/// Defaults to 1x for any invalid sample count.
 pub fn getMSAASampleCountFlag(samples: u8) c.VkSampleCountFlagBits {
     return switch (samples) {
         2 => c.VK_SAMPLE_COUNT_2_BIT,

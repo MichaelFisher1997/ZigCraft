@@ -66,7 +66,7 @@ test "PipelineManager handles null destruction gracefully" {
 test "getMSAASampleCountFlag converts valid sample counts correctly" {
     const getMSAASampleCountFlag = pipeline_manager.getMSAASampleCountFlag;
 
-    // Test standard MSAA values
+    // Test common MSAA values supported by the engine
     try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), getMSAASampleCountFlag(1));
     try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_2_BIT), getMSAASampleCountFlag(2));
     try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_4_BIT), getMSAASampleCountFlag(4));
