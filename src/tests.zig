@@ -69,6 +69,10 @@ test {
     _ = @import("engine/graphics/vulkan_device_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_state_control_tests.zig");
     _ = @import("engine/graphics/vulkan/ssao_system_tests.zig");
+    _ = @import("engine/graphics/vulkan/pipeline_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/descriptor_bindings_tests.zig");
+    _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
+    _ = @import("engine/graphics/vulkan/descriptor_manager_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
