@@ -44,6 +44,7 @@ jobs:
         with:
           ref: ${{ steps.resolve-pr.outputs.pr_head_sha }}
           fetch-depth: 0
+          token: ${{ secrets.OPENCODE_PAT }}
 
       - name: Configure git
         run: |
@@ -93,7 +94,7 @@ jobs:
           
           echo "Previous reviews fetched and formatted for context"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v16
@@ -108,7 +109,7 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
