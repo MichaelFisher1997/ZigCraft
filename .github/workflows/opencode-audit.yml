@@ -17,8 +17,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       id-token: write
-      contents: read
+      contents: write
       issues: write
+      pull-requests: write
 
     steps:
       - name: Select module to scan
@@ -100,7 +101,22 @@ jobs:
 
             Perform a thorough audit of the `${{ steps.select-module.outputs.module_path }}/` directory in this codebase. Your goal is to find the single most impactful issue or improvement opportunity and file a GitHub issue with full details.
 
-            **CRITICAL CONSTRAINTS:**
+            ## ⛔ ABSOLUTE RULES — READ THESE FIRST
+
+            **YOU MUST NOT:**
+            - Create branches (`git checkout -b`, `git branch`, `git push`)
+            - Create pull requests (`gh pr create`)
+            - Modify or create any files (no `git commit`, no file writes)
+            - Run any `git push` command for any reason
+
+            **YOU MUST ONLY:**
+            - Read source code files to understand the codebase
+            - Run read-only commands (`ls`, `cat`, `gh issue list`, `gh pr list`, `nix develop --command zig build test`)
+            - Create EXACTLY ONE GitHub issue using `gh issue create`
+
+            If you violate these rules, your output will be automatically reverted. No exceptions.
+
+            **Additional constraints:**
             1. You may ONLY create a single GitHub issue. Do NOT create branches, pull requests, or modify any files.
             2. If you find nothing meaningful, file NO issue. Silence is better than noise.
             3. Before filing, run `gh issue list --label "automated-audit" --state open --limit 50` and verify no existing issue already covers the same finding. If one exists, do NOT file a duplicate.
@@ -232,3 +248,81 @@ jobs:
             - **No false positives.** If you're not confident an issue is real, don't file it. Verify by reading surrounding code.
             - **No action is valid.** If the module looks clean, that's a good outcome. Don't manufacture issues.
             - **Be specific.** Every claim must reference a specific file, line number, and code pattern. No vague statements.
+
+            ## ⛔ REMINDER: ABSOLUTE RULES (REPEATED)
+
+            - Do NOT create branches. Do NOT push code. Do NOT create pull requests.
+            - Do NOT modify or create any files.
+            - ONLY use `gh issue create` to file your finding.
+            - If you feel tempted to create a PR or branch, STOP. Create an issue instead.
+
+      - name: Compliance guard — enforce issue-only output
+        if: always()
+        run: |
+          echo "=== Checking for audit compliance violations ==="
+
+          BOT_LOGIN="opencode-agent[bot]"
+
+          VIOLATIONS=0
+
+          # 1. Check for any PRs opened during this run by the bot
+          NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 10 \
+            --json number,title,headRefName,createdAt,body \
+            --jq --arg run_time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
+            '.[] | select(.createdAt >= $run_time)')
+
+          if [ -n "$NEW_PRS" ]; then
+            echo "::error::Compliance violation detected: agent created pull request(s) instead of issue(s)"
+            echo "$NEW_PRS" | jq -c '.number' | while read -r PR_NUM; do
+              PR_NUM=$(echo "$PR_NUM" | tr -d '"')
+              echo "  ❌ Closing rogue PR #$PR_NUM"
+
+              PR_BODY=$(gh pr view "$PR_NUM" --json body --jq '.body')
+              PR_TITLE=$(gh pr view "$PR_NUM" --json title --jq '.title')
+              BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName')
+
+              # Try to salvage the audit finding by creating an issue from the PR body
+              ISSUE_TITLE="[Audit] ${PR_TITLE}"
+              ISSUE_BODY=$(cat <<ISSUE_EOF
+          ## ⚠️ Auto-converted from rogue PR #$PR_NUM
+
+          The audit agent incorrectly created a pull request instead of a GitHub issue.
+          The finding has been automatically converted below.
+
+          ---
+
+          $PR_BODY
+          ISSUE_EOF
+          )
+
+              echo "  📝 Creating issue from PR content..."
+              gh issue create \
+                --label "automated-audit" \
+                --title "$ISSUE_TITLE" \
+                --body "$ISSUE_BODY" || echo "  ⚠️ Failed to create issue from PR"
+
+              # Close the rogue PR
+              gh pr close "$PR_NUM" --comment "Auto-closed by compliance guard: audit workflow must create issues, not PRs." --delete-branch
+
+              VIOLATIONS=$((VIOLATIONS + 1))
+            done
+          fi
+
+          # 2. Check for any new branches pushed by the bot
+          BOT_BRANCHES=$(gh api "repos/${{ github.repository }}/branches" \
+            --jq ".[] | select(.name | startswith(\"opencode/\")) | .name" 2>/dev/null || echo "")
+
+          if [ -n "$BOT_BRANCHES" ]; then
+            echo "::warning::Found opencode/ branches that may be audit violations:"
+            echo "$BOT_BRANCHES" | while read -r BRANCH; do
+              echo "  ⚠️ Branch: $BRANCH"
+            done
+          fi
+
+          if [ "$VIOLATIONS" -gt 0 ]; then
+            echo "::error::Compliance guard corrected $VIOLATIONS violation(s). PR(s) closed and converted to issue(s)."
+          else
+            echo "✅ No compliance violations detected."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
