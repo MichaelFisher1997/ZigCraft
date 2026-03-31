@@ -15,9 +15,29 @@ on:
         type: string
 
 jobs:
+  dispatch-review:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login == 'opencode-agent[bot]' &&
+      !startsWith(github.event.pull_request.head.ref, 'opencode/schedule-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Re-trigger via workflow_dispatch
+        run: |
+          echo "Bot-authored PR detected, re-triggering review via workflow_dispatch..."
+          gh workflow run opencode-pr.yml \
+            --ref ${{ github.event.repository.default_branch }} \
+            -f pr_number="${{ github.event.pull_request.number }}" \
+            -f head_sha="${{ github.event.pull_request.head.sha }}"
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+
   opencode:
     if: >
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false && !startsWith(github.event.pull_request.head.ref, 'opencode/schedule-')) ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false && github.event.pull_request.user.login != 'opencode-agent[bot]' && !startsWith(github.event.pull_request.head.ref, 'opencode/schedule-')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
