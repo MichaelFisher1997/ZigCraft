@@ -84,6 +84,7 @@ test {
     _ = @import("world/lod_renderer.zig");
     _ = @import("engine/atmosphere/tests.zig");
     _ = @import("game/settings/tests.zig");
+    _ = @import("game/settings/data_tests.zig");
     _ = @import("game/input_settings.zig");
     _ = @import("game/player_tests.zig");
     _ = @import("game/inventory_tests.zig");
