@@ -17,8 +17,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       id-token: write
-      contents: read
+      contents: write
       issues: write
+      pull-requests: write
 
     steps:
       - name: Select module to scan
@@ -260,14 +261,14 @@ jobs:
         run: |
           echo "=== Checking for audit compliance violations ==="
 
-          BOT_LOGIN="app/opencode-agent"
+          BOT_LOGIN="opencode-agent[bot]"
 
           VIOLATIONS=0
 
           # 1. Check for any PRs opened during this run by the bot
           NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 10 \
             --json number,title,headRefName,createdAt,body \
-            --jq --arg run_time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-30M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo '2020-01-01T00:00:00Z')" \
+            --jq --arg run_time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
             '.[] | select(.createdAt >= $run_time)')
 
           if [ -n "$NEW_PRS" ]; then
