@@ -78,6 +78,8 @@ test {
     _ = @import("engine/math/utils_tests.zig");
     _ = @import("world/worldgen/schematics.zig");
     _ = @import("world/worldgen/tree_registry.zig");
+    _ = @import("world/worldgen/caves_tests.zig");
+    _ = @import("world/worldgen/coastal_generator_tests.zig");
     _ = @import("world/lod_manager.zig");
     _ = @import("world/lod_renderer.zig");
     _ = @import("engine/atmosphere/tests.zig");
