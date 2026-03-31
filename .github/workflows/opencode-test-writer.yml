@@ -3,6 +3,8 @@ name: opencode-test-writer
 on:
   schedule:
     - cron: '0 4 * * *'
+    - cron: '0 12 * * *'
+    - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
       module:
