@@ -148,12 +148,13 @@ pub const GlobalVertexAllocator = struct {
         // Queue for the NEXT frame slot to ensure GPU is done.
         // tick(frame_index) is called at the start of each frame, freeing the previous
         // frame's deferred allocations. By queuing to the next slot, we guarantee
-        // at least MAX_FRAMES_IN_FLIGHT frames of safety margin.
+        // at least 1 frame of safety margin (with MAX_FRAMES_IN_FLIGHT=2, queued in frame N
+        // and freed at start of frame N+2).
         const current_frame = self.device_query.getFrameIndex();
         const frame_idx = (current_frame + 1) % rhi_mod.MAX_FRAMES_IN_FLIGHT;
         self.deferred_frees[frame_idx].append(self.allocator, allocation) catch {
             // Fallback to immediate free if queue is full (better than leak, though slightly risky)
-            log.log.warn("Deferred free queue full, falling back to immediate free", .{});
+            log.log.err("Deferred free queue full, falling back to immediate free", .{});
             self.freeImmediateUnlocked(allocation);
         };
     }
