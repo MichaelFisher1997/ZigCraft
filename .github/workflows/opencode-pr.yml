@@ -113,7 +113,6 @@ jobs:
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
-          use_github_token: true
           prompt: |
             You are reviewing a pull request for the ZigCraft repository.
 
