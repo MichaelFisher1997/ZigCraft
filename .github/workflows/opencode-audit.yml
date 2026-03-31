@@ -78,11 +78,18 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
 
+      # Workaround: opencode binary from actions/cache may have wrong permissions
+      # preventing mkdir of ~/.cache/opencode. Pre-create dirs and redirect cache
+      # to /tmp (non-persistent — opencode binary itself is already cached separately).
+      - name: Ensure opencode cache dir exists
+        run: mkdir -p ~/.cache/opencode ~/.local/share/opencode
+
       - name: Run opencode audit
         uses: anomalyco/opencode/github@v1.3.3
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          XDG_CACHE_HOME: /tmp/opencode-cache
         with:
           model: kimi-for-coding/k2p5
           prompt: |
@@ -256,10 +263,10 @@ jobs:
 
           VIOLATIONS=0
 
+          CUTOFF=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
           NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 10 \
             --json number,title,headRefName,createdAt,body \
-            --jq --arg run_time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
-            '.[] | select(.createdAt >= $run_time)')
+            --jq '.[] | select(.createdAt >= "'"$CUTOFF"'")')
 
           if [ -n "$NEW_PRS" ]; then
             echo "::error::Compliance violation detected: agent created pull request(s) instead of issue(s)"

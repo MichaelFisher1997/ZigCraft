@@ -160,7 +160,7 @@ jobs:
             --state open \
             --limit 20 \
             --json title,headRefName \
-            --jq --arg m "$MODULE" '.[] | select(.title | startswith("test: [\($m)]")) | .headRefName' || echo "")
+            --jq '.[] | select(.title | startswith("test: ['"$MODULE"']")) | .headRefName' || echo "")
           if [ -n "$EXISTING" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Existing PR found on branch: ${EXISTING}"
@@ -188,12 +188,14 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         uses: ./.github/actions/setup-nix
 
+      # XDG_CACHE_HOME=/tmp — non-persistent but avoids permission issues (see opencode-audit.yml)
       - name: Run opencode test writer
         if: steps.check-existing.outputs.skip != 'true'
         uses: anomalyco/opencode/github@v1.3.3
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          XDG_CACHE_HOME: /tmp/opencode-cache
         with:
           model: kimi-for-coding/k2p5
           prompt: |
