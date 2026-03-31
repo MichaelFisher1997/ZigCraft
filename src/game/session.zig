@@ -146,16 +146,16 @@ pub const GameSession = struct {
             try World.initGen(generator_index, allocator, effective_render_distance, seed, rhi.*, atlas);
         errdefer world.deinit();
 
-        const world_map = try WorldMap.init(rhi.resourceManager(), 256, 256);
+        var world_map = try WorldMap.init(rhi.resourceManager(), 256, 256);
         errdefer world_map.deinit();
 
-        const block_outline = try BlockOutline.init(rhi.resourceManager());
+        var block_outline = try BlockOutline.init(rhi.resourceManager());
         errdefer block_outline.deinit();
 
-        const hand_renderer = try HandRenderer.init(rhi.resourceManager());
+        var hand_renderer = try HandRenderer.init(rhi.resourceManager());
         errdefer hand_renderer.deinit();
 
-        const ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
+        var ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
         errdefer ecs_render_system.deinit();
 
         const player = Player.init(Vec3.init(8, 100, 8), true);
