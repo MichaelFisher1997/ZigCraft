@@ -80,6 +80,7 @@ jobs:
 
       - name: Ensure opencode cache dir exists
         run: |
+          # Nix installer may restrict ~/.cache permissions; restore and use /tmp for non-persistent cache
           sudo chmod u+w ~/.cache 2>/dev/null || true
           mkdir -p /tmp/opencode-cache ~/.local/share/opencode
 
