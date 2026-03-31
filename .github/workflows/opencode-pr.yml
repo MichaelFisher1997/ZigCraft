@@ -14,6 +14,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
 jobs:
   opencode:
     if: >
@@ -54,25 +58,18 @@ jobs:
       - name: Fetch previous opencode reviews
         id: previous-reviews
         run: |
-          # Get PR number
           PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
           
-          # Fetch review comments from opencode-agent
           echo "Fetching previous automated reviews..."
           
-          # Get all reviews
           gh api /repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews \
             --jq '.[] | select(.user.login == "opencode-agent[bot]") | {body: .body, submitted_at: .submitted_at}' > /tmp/opencode_reviews.json 2>/dev/null || echo "[]" > /tmp/opencode_reviews.json
           
-          # Get all PR review comments (inline comments)
           gh api /repos/${{ github.repository }}/pulls/${PR_NUMBER}/comments \
             --jq '.[] | select(.user.login == "opencode-agent[bot]") | {body: .body, path: .path, line: .line, created_at: .created_at}' > /tmp/opencode_comments.json 2>/dev/null || echo "[]" > /tmp/opencode_comments.json
           
-          # Format the previous reviews for the prompt
-          # Use a simpler approach without heredoc to avoid delimiter issues
           REVIEW_CONTENT="## Previous Automated Reviews from opencode-agent:\n\n"
           
-          # Process reviews
           if [ -s /tmp/opencode_reviews.json ] && [ "$(cat /tmp/opencode_reviews.json)" != "[]" ]; then
             while IFS= read -r review; do
               if [ -n "$review" ] && [ "$review" != "null" ]; then
@@ -87,7 +84,6 @@ jobs:
             REVIEW_CONTENT="${REVIEW_CONTENT}No previous automated reviews found.\n"
           fi
           
-          # Write to environment file using proper escaping
           echo "PREVIOUS_REVIEWS<<EOF" >> $GITHUB_ENV
           printf '%s\n' "$REVIEW_CONTENT" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
@@ -96,15 +92,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v16
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
 
-      - name: Cache Nix Store
-        continue-on-error: true
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Prepare opencode cache
+        run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> $GITHUB_ENV
 
       - name: Run opencode
         uses: anomalyco/opencode/github@latest

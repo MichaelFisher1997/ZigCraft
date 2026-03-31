@@ -2,8 +2,8 @@ name: opencode-audit
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # 06:00 UTC - Morning scan
-    - cron: '0 18 * * *'  # 18:00 UTC - Evening scan
+    - cron: '0 6 * * *'
+    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       module:
@@ -54,11 +54,9 @@ jobs:
             echo "Manual dispatch: scanning ${SELECTED}"
           else
             DAY=$(date +%j)
-            HOUR=$(date +%H)
-            SLOT=$((DAY * 2 + HOUR / 12))
-            INDEX=$((SLOT % COUNT))
+            INDEX=$((DAY % COUNT))
             SELECTED="${MODULES[${INDEX}]}"
-            echo "Scheduled run: day=${DAY} hour=${HOUR} slot=${SLOT} index=${INDEX} → ${SELECTED}"
+            echo "Scheduled run: day=${DAY} index=${INDEX} → ${SELECTED}"
           fi
 
           echo "module=${SELECTED}" >> "$GITHUB_OUTPUT"
@@ -77,15 +75,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v16
-
-      - name: Cache Nix Store
-        continue-on-error: true
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Run opencode audit
         uses: anomalyco/opencode/github@v1.3.3
@@ -265,7 +256,6 @@ jobs:
 
           VIOLATIONS=0
 
-          # 1. Check for any PRs opened during this run by the bot
           NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 10 \
             --json number,title,headRefName,createdAt,body \
             --jq --arg run_time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
@@ -281,7 +271,6 @@ jobs:
               PR_TITLE=$(gh pr view "$PR_NUM" --json title --jq '.title')
               BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName')
 
-              # Try to salvage the audit finding by creating an issue from the PR body
               ISSUE_TITLE="[Audit] ${PR_TITLE}"
               ISSUE_BODY=$(cat <<ISSUE_EOF
           ## ⚠️ Auto-converted from rogue PR #$PR_NUM
@@ -301,14 +290,12 @@ jobs:
                 --title "$ISSUE_TITLE" \
                 --body "$ISSUE_BODY" || echo "  ⚠️ Failed to create issue from PR"
 
-              # Close the rogue PR
               gh pr close "$PR_NUM" --comment "Auto-closed by compliance guard: audit workflow must create issues, not PRs." --delete-branch
 
               VIOLATIONS=$((VIOLATIONS + 1))
             done
           fi
 
-          # 2. Check for any new branches pushed by the bot
           BOT_BRANCHES=$(gh api "repos/${{ github.repository }}/branches" \
             --jq ".[] | select(.name | startswith(\"opencode/\")) | .name" 2>/dev/null || echo "")
 

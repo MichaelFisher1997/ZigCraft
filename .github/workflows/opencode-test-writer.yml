@@ -2,9 +2,9 @@ name: opencode-test-writer
 
 on:
   schedule:
-    - cron: '0 4 * * *'   # 04:00 UTC
-    - cron: '0 12 * * *'  # 12:00 UTC
-    - cron: '0 20 * * *'  # 20:00 UTC
+    - cron: '0 4 * * *'
+    - cron: '0 12 * * *'
+    - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
       module:
@@ -79,8 +79,6 @@ jobs:
           echo "module=${SELECTED}" >> "$GITHUB_OUTPUT"
           echo "branch=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
 
-          # NOTE: These scan paths must be kept in sync with actual source layout.
-          # When adding/removing/renaming source files, update the corresponding case entry.
           case "$SELECTED" in
             graphics/vulkan-device)
               echo "scan_paths=src/engine/graphics/vulkan_device.zig src/engine/graphics/vulkan/device.zig src/engine/graphics/vulkan/rhi_state_control.zig" >> "$GITHUB_OUTPUT"
@@ -186,17 +184,9 @@ jobs:
             echo "::warning::$MISSING scan path(s) missing — the scan_paths case statement in this workflow may need updating"
           fi
 
-      - name: Install Nix
+      - name: Setup Nix
         if: steps.check-existing.outputs.skip != 'true'
-        uses: DeterminateSystems/nix-installer-action@v16
-
-      - name: Cache Nix Store
-        if: steps.check-existing.outputs.skip != 'true'
-        continue-on-error: true
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
+        uses: ./.github/actions/setup-nix
 
       - name: Run opencode test writer
         if: steps.check-existing.outputs.skip != 'true'
@@ -252,7 +242,6 @@ jobs:
             ```zig
             const std = @import("std");
             const testing = std.testing;
-            // Import the module being tested
             const swapchain = @import("swapchain.zig");
 
             test "descriptive test name" {
@@ -386,22 +375,3 @@ jobs:
             - **Descriptive test names.** Use `test "ModuleName.functionName edge case description"` pattern.
             - **One PR per run.** Do not create multiple PRs.
             - **Skip if nothing to test.** If the module is already well-tested or has no testable logic, do not create a PR. It's better to skip than to write trivial tests.
-
-      - name: Trigger PR review workflow
-        if: steps.check-existing.outputs.skip != 'true'
-        run: |
-          BRANCH="${{ steps.select-module.outputs.branch }}"
-          PR_DATA=$(gh pr list --head "$BRANCH" --state open --json number,headRefOid --jq '.[0]')
-          PR_NUMBER=$(echo "$PR_DATA" | jq -r '.number // empty')
-          if [ -n "$PR_NUMBER" ]; then
-            HEAD_SHA=$(echo "$PR_DATA" | jq -r '.headRefOid')
-            echo "Triggering review for PR #${PR_NUMBER} (SHA: ${HEAD_SHA})"
-            gh workflow run opencode-pr.yml \
-              --ref "${{ github.event.repository.default_branch }}" \
-              -f pr_number="$PR_NUMBER" \
-              -f head_sha="$HEAD_SHA"
-          else
-            echo "No PR found on branch ${BRANCH}, skipping review trigger."
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}

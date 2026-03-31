@@ -15,28 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix (primary)
-        id: nix_install_primary
-        continue-on-error: true
-        uses: DeterminateSystems/nix-installer-action@v16
-
-      - name: Install Nix (fallback)
-        if: steps.nix_install_primary.outcome == 'failure'
-        uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Verify Nix installation
-        run: nix --version
-
-      - name: Cache Nix Store
-        continue-on-error: true
-        uses: nix-community/cache-nix-action@v7
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          paths: ~/.cache/nix
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Start headless Wayland compositor
         run: |
@@ -176,7 +156,7 @@ jobs:
             2. **Check for common failure patterns** in the log:
                - Vulkan instance/device creation failures
                - Swapchain creation errors (especially in headless mode)
-               - Shader compilation failures
+               - Shader compiling failures
                - Screenshot capture errors (staging buffer, fence timeout, PPM write)
                - Application panics or segfaults
                - Missing files or environment issues
