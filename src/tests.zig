@@ -89,6 +89,7 @@ test {
     _ = @import("game/inventory_tests.zig");
     _ = @import("game/screen_tests.zig");
     _ = @import("game/session_tests.zig");
+    _ = @import("game/input_mapper_tests.zig");
 }
 
 test "Vec3 addition" {
