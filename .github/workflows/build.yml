@@ -16,12 +16,12 @@ env:
   GIT_CONFIG_VALUE_0: main
 
 jobs:
-  ci:
+  build:
     permissions:
       contents: read
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
 
@@ -30,12 +30,6 @@ jobs:
 
     - name: Build
       run: nix build -L
-
-    - name: Run unit tests
-      id: unit_tests
-      run: nix develop --command zig build test
-      env:
-        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
 
     - name: Prepare Artifact
       run: |
@@ -49,8 +43,38 @@ jobs:
         path: dist/
         retention-days: 7
 
+  unit-test:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Nix
+      uses: ./.github/actions/setup-nix
+
+    - name: Run unit tests
+      run: nix develop --command zig build test
+      env:
+        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
+
+  integration-test:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    needs: unit-test
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Nix
+      uses: ./.github/actions/setup-nix
+
     - name: Start headless Wayland compositor
-      if: steps.unit_tests.outcome == 'success'
       run: |
         mkdir -p /tmp/runtime-runner
         chmod 700 /tmp/runtime-runner
@@ -61,14 +85,12 @@ jobs:
         sleep 5
 
     - name: Run integration smoke test
-      if: steps.unit_tests.outcome == 'success'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
       run: |
         nix develop --command zig build test-integration
 
     - name: Run world load smoke test (headless)
-      if: steps.unit_tests.outcome == 'success'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
         XDG_RUNTIME_DIR: /tmp/runtime-runner
