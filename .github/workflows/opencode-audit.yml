@@ -53,7 +53,7 @@ jobs:
             SELECTED="$INPUT_MODULE"
             echo "Manual dispatch: scanning ${SELECTED}"
           else
-            DAY=$(date +%j)
+            DAY=$((10#$(date +%j)))
             INDEX=$((DAY % COUNT))
             SELECTED="${MODULES[${INDEX}]}"
             echo "Scheduled run: day=${DAY} index=${INDEX} → ${SELECTED}"
@@ -78,11 +78,11 @@ jobs:
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
 
-      # Workaround: opencode binary from actions/cache may have wrong permissions
-      # preventing mkdir of ~/.cache/opencode. Pre-create dirs and redirect cache
-      # to /tmp (non-persistent — opencode binary itself is already cached separately).
       - name: Ensure opencode cache dir exists
-        run: mkdir -p ~/.cache/opencode ~/.local/share/opencode
+        run: |
+          # Nix installer may restrict ~/.cache permissions; restore and use /tmp for non-persistent cache
+          sudo chmod u+w ~/.cache 2>/dev/null || true
+          mkdir -p /tmp/opencode-cache ~/.local/share/opencode
 
       - name: Run opencode audit
         uses: anomalyco/opencode/github@v1.3.3
