@@ -1,0 +1,39 @@
+name: Setup Nix
+description: Install Nix with primary/fallback strategy and restore cache
+
+inputs:
+  cache-key-prefix:
+    description: Prefix for the cache primary key
+    required: false
+    default: nix
+  cache-paths:
+    description: Paths to cache
+    required: false
+    default: ~/.cache/nix
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix (primary)
+      id: nix_install_primary
+      continue-on-error: true
+      uses: DeterminateSystems/nix-installer-action@v16
+
+    - name: Install Nix (fallback)
+      if: steps.nix_install_primary.outcome == 'failure'
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Verify Nix installation
+      shell: bash
+      run: nix --version
+
+    - name: Cache Nix Store
+      continue-on-error: true
+      uses: nix-community/cache-nix-action@v7
+      with:
+        primary-key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+        restore-prefixes-first-match: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+        paths: ${{ inputs.cache-paths }}

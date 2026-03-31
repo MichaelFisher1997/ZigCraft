@@ -11,52 +11,37 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Suppress git hints in checkout
   GIT_CONFIG_COUNT: 1
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
 
 jobs:
-  build:
+  ci:
     permissions:
       contents: read
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Nix (primary)
-      id: nix_install_primary
-      continue-on-error: true
-      uses: DeterminateSystems/nix-installer-action@v16
-
-    - name: Install Nix (fallback)
-      if: steps.nix_install_primary.outcome == 'failure'
-      uses: cachix/install-nix-action@v31
-      with:
-        extra_nix_config: |
-          experimental-features = nix-command flakes
-
-    - name: Verify Nix installation
-      run: nix --version
-
-    - name: Cache Nix Store
-      continue-on-error: true
-      uses: nix-community/cache-nix-action@v7
-      with:
-        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-
-        paths: ~/.cache/nix
+    - name: Setup Nix
+      uses: ./.github/actions/setup-nix
 
     - name: Build
       run: nix build -L
+
+    - name: Run unit tests
+      id: unit_tests
+      run: nix develop --command zig build test
+      env:
+        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
 
     - name: Prepare Artifact
       run: |
         mkdir -p dist
         cp -L result/bin/zigcraft dist/zigcraft-linux
-        
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
@@ -64,76 +49,8 @@ jobs:
         path: dist/
         retention-days: 7
 
-  unit-test:
-    permissions:
-      contents: read
-      id-token: write
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Nix (primary)
-      id: nix_install_primary
-      continue-on-error: true
-      uses: DeterminateSystems/nix-installer-action@v16
-
-    - name: Install Nix (fallback)
-      if: steps.nix_install_primary.outcome == 'failure'
-      uses: cachix/install-nix-action@v31
-      with:
-        extra_nix_config: |
-          experimental-features = nix-command flakes
-
-    - name: Verify Nix installation
-      run: nix --version
-
-    - name: Cache Nix Store
-      continue-on-error: true
-      uses: nix-community/cache-nix-action@v7
-      with:
-        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-
-        paths: ~/.cache/nix
-
-    - name: Run unit tests
-      run: nix develop --command zig build test
-      env:
-        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
-
-  integration-test:
-    permissions:
-      contents: read
-      id-token: write
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 30
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Nix (primary)
-      id: nix_install_primary
-      continue-on-error: true
-      uses: DeterminateSystems/nix-installer-action@v16
-
-    - name: Install Nix (fallback)
-      if: steps.nix_install_primary.outcome == 'failure'
-      uses: cachix/install-nix-action@v31
-      with:
-        extra_nix_config: |
-          experimental-features = nix-command flakes
-
-    - name: Verify Nix installation
-      run: nix --version
-
-    - name: Cache Nix Store
-      continue-on-error: true
-      uses: nix-community/cache-nix-action@v7
-      with:
-        primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-        restore-prefixes-first-match: nix-${{ runner.os }}-
-        paths: ~/.cache/nix
-
     - name: Start headless Wayland compositor
+      if: steps.unit_tests.outcome == 'success'
       run: |
         mkdir -p /tmp/runtime-runner
         chmod 700 /tmp/runtime-runner
@@ -141,27 +58,24 @@ jobs:
         nix develop --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 &
         echo "WAYLAND_DISPLAY=headless" >> $GITHUB_ENV
         echo "XDG_RUNTIME_DIR=/tmp/runtime-runner" >> $GITHUB_ENV
-        sleep 5 # Wait for Weston to start up properly
+        sleep 5
 
     - name: Run integration smoke test
+      if: steps.unit_tests.outcome == 'success'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
       run: |
         nix develop --command zig build test-integration
 
     - name: Run world load smoke test (headless)
+      if: steps.unit_tests.outcome == 'success'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
         XDG_RUNTIME_DIR: /tmp/runtime-runner
         WAYLAND_DISPLAY: headless
-        VK_ICD_FILENAMES: /run/opengl-driver/share/vulkan/icd.d/lvp_icd.x86_64.json
-        # Skip presentation and use dry-run mode to avoid driver crashes in CI
-        # Using build option -Dskip-present=true to guarantee it's baked in
-        # 3 frames is enough to test multi-frame synchronization logic in dry-run
         ZIGCRAFT_SMOKE_FRAMES: "3"
         ZIGCRAFT_SAFE_MODE: "1"
       run: |
-        # Find the actual path to the mesa driver and validation layers in the nix store
         LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
         LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
         export VK_ICD_FILENAMES=$LVP_PATH
