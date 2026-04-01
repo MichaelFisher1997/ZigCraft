@@ -129,8 +129,10 @@ jobs:
         chmod 700 /tmp/runtime-runner
         export XDG_RUNTIME_DIR=/tmp/runtime-runner
         nix develop --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 &
-        echo "WAYLAND_DISPLAY=headless" >> $GITHUB_ENV
-        echo "XDG_RUNTIME_DIR=/tmp/runtime-runner" >> $GITHUB_ENV
+        {
+          echo "WAYLAND_DISPLAY=headless"
+          echo "XDG_RUNTIME_DIR=/tmp/runtime-runner"
+        } >> "$GITHUB_ENV"
         sleep 5
 
     - name: Run integration smoke test

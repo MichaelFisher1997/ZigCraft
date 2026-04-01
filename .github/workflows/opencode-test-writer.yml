@@ -59,7 +59,6 @@ jobs:
           else
             GRAPHICS_COUNT=${#GRAPHICS_MODULES[@]}
             OTHER_COUNT=${#OTHER_MODULES[@]}
-            TOTAL=$((GRAPHICS_COUNT + OTHER_COUNT))
 
             SLOT=$(($(date +%s) / 28800))
             PARITY=$((SLOT % 2))
