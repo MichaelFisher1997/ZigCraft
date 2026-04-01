@@ -1,7 +1,7 @@
 .{
-    .name = .zig_opengl,
+    .name = .zigcraft,
     .version = "0.1.0",
-    .fingerprint = 0xddeb166c51f2eefd,
+    .fingerprint = 0x6113d97cc091a348,
     .minimum_zig_version = "0.14.0",
     .paths = .{
         "src",
