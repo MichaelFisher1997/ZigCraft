@@ -89,6 +89,7 @@ test {
     _ = @import("game/inventory_tests.zig");
     _ = @import("game/screen_tests.zig");
     _ = @import("game/session_tests.zig");
+    _ = @import("world/persistence/region_file.zig");
 }
 
 test "Vec3 addition" {
