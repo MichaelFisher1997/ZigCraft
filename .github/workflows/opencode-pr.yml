@@ -84,9 +84,11 @@ jobs:
             REVIEW_CONTENT="${REVIEW_CONTENT}No previous automated reviews found.\n"
           fi
           
-          echo "PREVIOUS_REVIEWS<<EOF" >> $GITHUB_ENV
-          printf '%s\n' "$REVIEW_CONTENT" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          {
+            echo "PREVIOUS_REVIEWS<<EOF"
+            printf '%s\n' "$REVIEW_CONTENT"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
           
           echo "Previous reviews fetched and formatted for context"
         env:
