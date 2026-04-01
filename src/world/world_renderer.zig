@@ -17,6 +17,8 @@ const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
 
+const MAX_MDI_CHUNKS: usize = 16384;
+
 pub const RenderStats = struct {
     chunks_total: u32 = 0,
     chunks_rendered: u32 = 0,
@@ -43,13 +45,9 @@ pub const WorldRenderer = struct {
 
     // MDI Resources
     instance_data: std.ArrayListUnmanaged(rhi_mod.InstanceData),
-    solid_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
-    fluid_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
+    draw_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
     instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
     indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
-    frame_index: usize,
-    mdi_instance_offset: usize,
-    mdi_command_offset: usize,
 
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
@@ -68,12 +66,12 @@ pub const WorldRenderer = struct {
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
-        const max_chunks = 16384;
+        const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         var indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
             instance_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.InstanceData), .storage);
-            indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 2, .indirect);
+            indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 3, .indirect);
         }
 
         renderer.* = .{
@@ -87,13 +85,9 @@ pub const WorldRenderer = struct {
             .last_render_stats = .{},
             .last_shadow_stats = .{},
             .instance_data = .empty,
-            .solid_commands = .empty,
-            .fluid_commands = .empty,
+            .draw_commands = .empty,
             .instance_buffers = instance_buffers,
             .indirect_buffers = indirect_buffers,
-            .frame_index = 0,
-            .mdi_instance_offset = 0,
-            .mdi_command_offset = 0,
         };
 
         return renderer;
@@ -120,8 +114,7 @@ pub const WorldRenderer = struct {
             if (self.indirect_buffers[i] != 0) self.rm.destroyBuffer(self.indirect_buffers[i]);
         }
         self.instance_data.deinit(self.allocator);
-        self.solid_commands.deinit(self.allocator);
-        self.fluid_commands.deinit(self.allocator);
+        self.draw_commands.deinit(self.allocator);
 
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
@@ -141,13 +134,13 @@ pub const WorldRenderer = struct {
         }
 
         self.visible_chunks.clearRetainingCapacity();
+        self.instance_data.clearRetainingCapacity();
+        self.draw_commands.clearRetainingCapacity();
 
         const frustum = Frustum.fromViewProj(view_proj);
 
-        // Safety: Check for NaN/Inf camera position
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        // Use i64 for calculations to avoid overflow
         const world_x: i64 = @intFromFloat(camera_pos.x);
         const world_z: i64 = @intFromFloat(camera_pos.z);
         const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
@@ -163,7 +156,9 @@ pub const WorldRenderer = struct {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.visible_chunks.append(self.allocator, data) catch {};
+                            self.visible_chunks.append(self.allocator, data) catch |err| {
+                                log.log.debug("MDI: visible_chunks append failed: {}", .{err});
+                            };
                         } else {
                             self.last_render_stats.chunks_culled += 1;
                         }
@@ -174,6 +169,8 @@ pub const WorldRenderer = struct {
 
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
 
+        const vertex_size = @sizeOf(rhi_mod.Vertex);
+
         for (self.visible_chunks.items) |data| {
             self.last_render_stats.chunks_rendered += 1;
             const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
@@ -183,24 +180,83 @@ pub const WorldRenderer = struct {
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
-            self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+            const instance_idx: u32 = @intCast(self.instance_data.items.len);
+
+            self.instance_data.append(self.allocator, .{
+                .model = model,
+                .mask_radius = 0,
+                .padding = .{ 0, 0, 0 },
+            }) catch |err| {
+                log.log.debug("MDI: instance append failed: {}", .{err});
+                continue;
+            };
 
             if (data.mesh.solid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.draw_commands.append(self.allocator, .{
+                    .vertexCount = alloc.count,
+                    .instanceCount = 1,
+                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                    .firstInstance = instance_idx,
+                }) catch |err| log.log.debug("MDI: solid cmd append failed: {}", .{err});
             }
             if (data.mesh.cutout_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.draw_commands.append(self.allocator, .{
+                    .vertexCount = alloc.count,
+                    .instanceCount = 1,
+                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                    .firstInstance = instance_idx,
+                }) catch |err| log.log.debug("MDI: cutout cmd append failed: {}", .{err});
             }
             if (data.mesh.fluid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.draw_commands.append(self.allocator, .{
+                    .vertexCount = alloc.count,
+                    .instanceCount = 1,
+                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                    .firstInstance = instance_idx,
+                }) catch |err| log.log.debug("MDI: fluid cmd append failed: {}", .{err});
             }
         }
 
-        self.mdi_instance_offset = 0;
-        self.mdi_command_offset = 0;
+        if (self.instance_data.items.len > 0 and self.draw_commands.items.len > 0) {
+            const fi = self.query.getFrameIndex();
+
+            const max_instances: usize = MAX_MDI_CHUNKS;
+            const max_commands: usize = MAX_MDI_CHUNKS * 3;
+
+            if (self.instance_data.items.len > max_instances) {
+                log.log.warn("MDI: instance overflow ({} > {}), truncating", .{ self.instance_data.items.len, max_instances });
+                self.instance_data.shrinkRetainingCapacity(max_instances);
+            }
+            if (self.draw_commands.items.len > max_commands) {
+                log.log.warn("MDI: command overflow ({} > {}), truncating", .{ self.draw_commands.items.len, max_commands });
+                self.draw_commands.shrinkRetainingCapacity(max_commands);
+            }
+
+            const instance_bytes = std.mem.sliceAsBytes(self.instance_data.items);
+            self.rm.updateBuffer(self.instance_buffers[fi], 0, instance_bytes) catch |err| {
+                log.log.err("MDI: failed to update instance buffer: {}", .{err});
+                return;
+            };
+
+            const cmd_bytes = std.mem.sliceAsBytes(self.draw_commands.items);
+            self.rm.updateBuffer(self.indirect_buffers[fi], 0, cmd_bytes) catch |err| {
+                log.log.err("MDI: failed to update indirect buffer: {}", .{err});
+                return;
+            };
+
+            self.render_ctx.setInstanceBuffer(self.instance_buffers[fi]);
+
+            self.render_ctx.drawIndirect(
+                self.vertex_allocator.buffer,
+                self.indirect_buffers[fi],
+                0,
+                @intCast(self.draw_commands.items.len),
+                @sizeOf(rhi_mod.DrawIndirectCommand),
+            );
+        }
     }
 
     /// Intentionally excludes visual LOD meshes to prevent LOD offset/morphing
@@ -254,8 +310,5 @@ pub const WorldRenderer = struct {
                 }
             }
         }
-
-        self.mdi_instance_offset = 0;
-        self.mdi_command_offset = 0;
     }
 };

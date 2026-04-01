@@ -109,7 +109,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                 const uniforms = ModelUniforms{
                     .model = Mat4.identity,
                     .color = .{ 1.0, 1.0, 1.0 },
-                    .mask_radius = 0,
+                    .mask_radius = -1.0,
                 };
                 c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
             }

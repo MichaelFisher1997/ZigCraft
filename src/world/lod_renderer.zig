@@ -156,7 +156,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             meshes: *const MeshMap,
             regions: *const RegionMap,
             config: ILODConfig,
-            view_proj: Mat4,
+            _: Mat4,
             camera_pos: Vec3,
             frustum: Frustum,
             lod_y_offset: f32,
@@ -209,7 +209,6 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     const mask_radius = config.calculateMaskRadius() * @as(f32, @floatFromInt(CHUNK_SIZE_X));
                     try self.instance_data.append(self.allocator, .{
-                        .view_proj = view_proj,
                         .model = model,
                         .mask_radius = mask_radius,
                         .padding = .{ 0, 0, 0 },
