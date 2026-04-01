@@ -337,3 +337,55 @@ test "rhi_state_control.setVSync no-op when unchanged" {
 
 // Note: setVSync when changed cannot be tested without a real GPU
 // because it calls vkGetPhysicalDeviceSurfacePresentModesKHR
+
+// Note: rhi_state_control.recover() cannot be tested without a full GPU context
+// because it calls frame_orchestration.recreateSwapchainInternal() which requires
+// extensive mocking of swapchain, render passes, pipelines, and other resources.
+
+test "rhi_state_control.setVolumetricDensity is no-op" {
+    // This function currently does nothing (ctx and density ignored)
+    var ctx = MockSimpleContext{ .allocator = testing.allocator };
+
+    // Should not panic or change any state
+    rhi_state_control.setVolumetricDensity(&ctx, 0.5);
+    rhi_state_control.setVolumetricDensity(&ctx, 1.0);
+    rhi_state_control.setVolumetricDensity(&ctx, 0.0);
+
+    // No state changes to verify - function is intentionally empty
+    try testing.expect(true);
+}
+
+// ============================================================================
+// Frame Index Edge Cases
+// ============================================================================
+
+test "rhi_state_control.getFrameIndex with max frame value" {
+    var ctx = MockSimpleContext{ .allocator = testing.allocator };
+
+    // Test with high frame indices
+    ctx.frames.current_frame = 1000;
+    try testing.expectEqual(@as(usize, 1000), rhi_state_control.getFrameIndex(&ctx));
+
+    ctx.frames.current_frame = std.math.maxInt(u32);
+    try testing.expectEqual(@as(usize, std.math.maxInt(u32)), rhi_state_control.getFrameIndex(&ctx));
+}
+
+// ============================================================================
+// Combined State Tests
+// ============================================================================
+
+test "rhi_state_control.multiple state changes accumulate" {
+    var ctx = MockSimpleContext{ .allocator = testing.allocator };
+
+    // Apply multiple state changes
+    rhi_state_control.setWireframe(&ctx, true);
+    rhi_state_control.setTexturesEnabled(&ctx, false);
+    rhi_state_control.setDebugShadowView(&ctx, true);
+    rhi_state_control.setShadowDebugChannel(&ctx, 2);
+
+    // Verify all changes applied
+    try testing.expect(ctx.options.wireframe_enabled);
+    try testing.expect(!ctx.options.textures_enabled);
+    try testing.expect(ctx.options.debug_shadows_active);
+    try testing.expectEqual(@as(u32, 2), ctx.options.shadow_debug_channel);
+}
