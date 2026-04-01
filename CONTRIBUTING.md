@@ -1,6 +1,6 @@
 # Contributing to ZigCraft
 
-Thank you for your interest in contributing to ZigCraft! This document covers the development workflow, coding conventions, and how to get started.
+Thank you for your interest in contributing to ZigCraft! This is primarily a solo, AI-assisted project, but well-scoped contributions are welcome. This document covers the development workflow, coding conventions, and how to get started.
 
 ---
 
@@ -138,7 +138,7 @@ git checkout -b ci/workflow-change
 
 ### 2. Make Changes
 
-Follow the coding conventions in [AGENTS.md](AGENTS.md) and [Code Style](#code-style) below.
+Follow the coding conventions in [Code Style](#code-style) below. The [AGENTS.md](AGENTS.md) file contains detailed internal guidelines used by AI coding agents and may also be a useful reference.
 
 ```bash
 # Format your code before committing
@@ -248,7 +248,7 @@ const log = @import("../engine/core/log.zig");
 - Log errors: `log.log.err("msg: {}", .{err})`
 - Use `//!` for module-level docs, `///` for public API docs
 
-For full coding guidelines, see [AGENTS.md](AGENTS.md).
+For full coding guidelines, see [AGENTS.md](AGENTS.md) (internal AI agent reference, contains detailed conventions).
 
 ---
 
