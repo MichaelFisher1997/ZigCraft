@@ -20,6 +20,7 @@ const VertexAllocation = chunk_alloc_mod.VertexAllocation;
 
 // Meshing stage modules
 const greedy_mesher = @import("meshing/greedy_mesher.zig");
+const cross_mesher = @import("meshing/cross_mesher.zig");
 const boundary = @import("meshing/boundary.zig");
 
 // Re-export public types for external consumers
@@ -139,6 +140,9 @@ pub const ChunkMesh = struct {
         while (sz <= CHUNK_SIZE_Z) : (sz += 1) {
             try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .south, sz, si, &solid_verts, &cutout_verts, &fluid_verts, atlas);
         }
+
+        // Mesh cross/billboard blocks (flowers, saplings, etc.)
+        try cross_mesher.meshCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
 
         // Store subchunk data temporarily (will be merged later)
         self.mutex.lock();
