@@ -141,13 +141,13 @@ pub const WorldRenderer = struct {
         }
 
         self.visible_chunks.clearRetainingCapacity();
+        self.instance_data.clearRetainingCapacity();
+        self.solid_commands.clearRetainingCapacity();
 
         const frustum = Frustum.fromViewProj(view_proj);
 
-        // Safety: Check for NaN/Inf camera position
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        // Use i64 for calculations to avoid overflow
         const world_x: i64 = @intFromFloat(camera_pos.x);
         const world_z: i64 = @intFromFloat(camera_pos.z);
         const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
@@ -174,6 +174,8 @@ pub const WorldRenderer = struct {
 
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
 
+        const vertex_size = @sizeOf(rhi_mod.Vertex);
+
         for (self.visible_chunks.items) |data| {
             self.last_render_stats.chunks_rendered += 1;
             const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
@@ -183,24 +185,63 @@ pub const WorldRenderer = struct {
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
-            self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+            const instance_idx: u32 = @intCast(self.instance_data.items.len);
+
+            self.instance_data.append(self.allocator, .{
+                .view_proj = view_proj,
+                .model = model,
+                .mask_radius = 0,
+                .padding = .{ 0, 0, 0 },
+            }) catch continue;
 
             if (data.mesh.solid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.solid_commands.append(self.allocator, .{
+                    .vertexCount = alloc.count,
+                    .instanceCount = 1,
+                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                    .firstInstance = instance_idx,
+                }) catch {};
             }
             if (data.mesh.cutout_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.solid_commands.append(self.allocator, .{
+                    .vertexCount = alloc.count,
+                    .instanceCount = 1,
+                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                    .firstInstance = instance_idx,
+                }) catch {};
             }
             if (data.mesh.fluid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                self.solid_commands.append(self.allocator, .{
+                    .vertexCount = alloc.count,
+                    .instanceCount = 1,
+                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                    .firstInstance = instance_idx,
+                }) catch {};
             }
         }
 
-        self.mdi_instance_offset = 0;
-        self.mdi_command_offset = 0;
+        if (self.instance_data.items.len > 0 and self.solid_commands.items.len > 0) {
+            const fi = self.query.getFrameIndex();
+
+            const instance_bytes = std.mem.sliceAsBytes(self.instance_data.items);
+            self.rm.updateBuffer(self.instance_buffers[fi], 0, instance_bytes) catch return;
+
+            const cmd_bytes = std.mem.sliceAsBytes(self.solid_commands.items);
+            self.rm.updateBuffer(self.indirect_buffers[fi], 0, cmd_bytes) catch return;
+
+            self.render_ctx.setInstanceBuffer(self.instance_buffers[fi]);
+
+            self.render_ctx.drawIndirect(
+                self.vertex_allocator.buffer,
+                self.indirect_buffers[fi],
+                0,
+                @intCast(self.solid_commands.items.len),
+                @sizeOf(rhi_mod.DrawIndirectCommand),
+            );
+        }
     }
 
     /// Intentionally excludes visual LOD meshes to prevent LOD offset/morphing
