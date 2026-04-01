@@ -17,31 +17,16 @@
 
   [![Zig](https://img.shields.io/badge/Zig-0.14.0--dev-orange.svg?logo=zig)](https://ziglang.org/)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-  [![Build Status](https://github.com/MichaelFisher1997/ZigCraft/actions/workflows/build.yml/badge.svg)](https://github.com/MichaelFisher1997/ZigCraft/actions)
-  [![Tests](https://img.shields.io/badge/Tests-58%20Passed-success.svg)](src/tests.zig)
+  [![Build Status](https://github.com/OpenStaticFish/ZigCraft/actions/workflows/build.yml/badge.svg)](https://github.com/OpenStaticFish/ZigCraft/actions)
 
   A high-performance Minecraft-style voxel engine built with **Zig**, **SDL3**, and a modern **Vulkan** graphics pipeline.
 </div>
 
 ---
 
-## 💻 System Requirements
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| **OS** | Linux (NixOS), Windows (WSL2) | Linux (NixOS) |
-| **GPU** | Vulkan 1.2, 4GB VRAM | Vulkan 1.3, 8GB+ VRAM |
-| **RAM** | 8 GB | 16 GB |
-| **Storage** | 2 GB | 4 GB SSD |
-| **Build Tools** | Nix package manager | Nix (latest) |
-
-> **Note**: All builds require Nix for reproducible dependency management (SDL3, Vulkan, glslang).
-
----
-
 ## 🚀 Overview
 
-**ZigCraft** is a technical exploration of high-performance voxel rendering techniques. It features a custom-built graphics abstraction layer, advanced terrain generation, and a multithreaded job system to handle massive world streaming with zero hitching.
+**ZigCraft** is a technical exploration of high-performance voxel rendering techniques, developed primarily as an AI-assisted solo project. It features a custom-built graphics abstraction layer, advanced terrain generation, and a multithreaded job system to handle massive world streaming with zero hitching.
 
 ## ✨ Key Features
 
@@ -64,17 +49,12 @@
 ### 🛠️ Engine Core
 - **Multithreaded Pipeline**: Dedicated worker pools for generation (4 threads) and meshing (3 threads).
 - **Job Prioritization**: Proximity-based task scheduling ensures immediate loading of local chunks.
-- **Comprehensive Testing**: 58+ unit tests covering math, worldgen, and core engine modules.
+- **Comprehensive Testing**: Unit tests covering math, worldgen, and core engine modules.
 - **Refined App Lifecycle**: Modular architecture with extracted systems for rendering, input, and world management.
 
-### 📊 Performance Benchmarks
-| Render Distance | FPS (ReleaseFast) | GPU Used |
-|-----------------|-------------------|----------|
-| 32 chunks | 120+ | RTX 3060 |
-| 64 chunks | 90+ | RTX 3060 |
-| 128 chunks | 60+ | RTX 3060 |
+### 📊 Performance
 
-*Benchmarks measured on RTX 3060 @ 1080p with HIGH quality preset*
+Optimized for high chunk render distances with greedy meshing, job-based multithreading, and a Vulkan RHI backend. Build with `-Doptimize=ReleaseFast` for best results.
 
 ## 🖼️ Screenshots
 
@@ -106,7 +86,7 @@
 | **F5** | Toggle Block Info |
 | **Esc** | Menu / Pause |
 
-> **Note**: Time of day can be set via the inventory screen (buttons for DAWN, NOON, DUSK, NIGHT) |
+> **Note**: Time of day can be set via the inventory screen (buttons for DAWN, NOON, DUSK, NIGHT).
 
 ## 🏗️ Build & Run
 
@@ -141,7 +121,7 @@ To bypass in emergencies: `git push --no-verify`
 - `src/world/worldgen/`: Procedural terrain, noise, and biome systems.
 - `assets/`: GLSL shaders and textures.
 - `scripts/`: Helper scripts for asset processing.
-- `libs/`: (Planned) Extracted standalone math and noise libraries.
+- `libs/`: Local dependencies (zig-math, zig-noise, stb).
 
 
 ## 🛠️ Texture Pipeline
@@ -157,7 +137,7 @@ The script automatically handles resizing and naming conventions for `_diff`, `_
 
 ## 🤝 Contributing
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
+This is primarily a solo, AI-assisted project. Contributions are welcome but the scope and direction are tightly focused. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
 
 ### Quick Start for Contributors
 
@@ -226,7 +206,7 @@ nix develop  # glslang is included in the dev shell
 
 **[⬆ Back to Top](#-zigcraft-)**
 
-Built with ❤️ by the OpenStaticFish community
+Built by [OpenStaticFish](https://github.com/OpenStaticFish)
 
 </div>
 
