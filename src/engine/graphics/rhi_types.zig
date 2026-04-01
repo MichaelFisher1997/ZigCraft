@@ -137,6 +137,8 @@ pub const Vertex = extern struct {
     }
 };
 
+/// Encode RGB float color to RGBA8. Alpha is always 255.
+/// Precision: 1/255 per channel (~0.4% steps). Banding may be visible on smooth gradients.
 pub fn encodeColor(c: [3]f32) u32 {
     const r: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, c[0])) * 255.0));
     const g: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, c[1])) * 255.0));
@@ -144,6 +146,9 @@ pub fn encodeColor(c: [3]f32) u32 {
     return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16) | (@as(u32, @as(u8, 255)) << 24);
 }
 
+/// Encode a unit normal via octahedral mapping to 2×i16 packed in a u32.
+/// Precision: ~0.1° angular error for axis-aligned normals, up to ~0.3° for diagonals.
+/// Zero-length normals encode as 0 (decode as up).
 pub fn encodeNormal(n: [3]f32) u32 {
     const l1 = @abs(n[0]) + @abs(n[1]) + @abs(n[2]);
     if (l1 < 0.0001) return 0;
@@ -166,12 +171,16 @@ pub fn encodeNormal(n: [3]f32) u32 {
     return @as(u32, ux) | (@as(u32, uy) << 16);
 }
 
+/// Pack tile_id (u16), skylight (u8), and AO (u8) into a single u32.
+/// Skylight and AO precision: 1/255 (~0.4% steps). Tile IDs 0-65534 valid; 0xFFFF is LOD sentinel.
 pub fn encodeMeta(tile_id: u16, skylight: f32, ao: f32) u32 {
     const sl: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, skylight)) * 255.0));
     const ao_u8: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, ao)) * 255.0));
     return @as(u32, tile_id) | (@as(u32, sl) << 16) | (@as(u32, ao_u8) << 24);
 }
 
+/// Encode RGB blocklight float values to RGB8 u32 (upper 8 bits unused).
+/// Precision: 1/255 per channel. Sufficient for per-vertex lighting where values blend smoothly.
 pub fn encodeBlocklight(bl: [3]f32) u32 {
     const r: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[0])) * 255.0));
     const g: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[1])) * 255.0));
