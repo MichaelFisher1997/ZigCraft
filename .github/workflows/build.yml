@@ -3,8 +3,26 @@ name: Build
 on:
   push:
     branches: [ main, dev ]
+    paths:
+      - 'src/**'
+      - 'libs/**'
+      - 'assets/shaders/**'
+      - 'build.zig'
+      - 'build.zig.zon'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/actions/setup-nix/**'
   pull_request:
     branches: [ main, dev ]
+    paths:
+      - 'src/**'
+      - 'libs/**'
+      - 'assets/shaders/**'
+      - 'build.zig'
+      - 'build.zig.zon'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/actions/setup-nix/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
