@@ -1,13 +1,11 @@
 #version 450
 
 layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aColor;
-layout(location = 2) in vec3 aNormal;
+layout(location = 1) in uint aColor;
+layout(location = 2) in uint aNormal;
 layout(location = 3) in vec2 aTexCoord;
-layout(location = 4) in float aTileID;
-layout(location = 5) in float aSkyLight;
-layout(location = 6) in vec3 aBlockLight;
-layout(location = 7) in float aAO;
+layout(location = 4) in uint aPackedMeta;
+layout(location = 5) in uint aBlockLight;
 
 layout(location = 0) out vec3 vColor;
 layout(location = 1) flat out vec3 vNormal;
@@ -62,6 +60,27 @@ layout(push_constant) uniform ModelUniforms {
     float mask_radius;
 } model_data;
 
+vec3 decodeColor(uint c) {
+    return vec3(
+        float(c & 0xFFu) / 255.0,
+        float((c >> 8u) & 0xFFu) / 255.0,
+        float((c >> 16u) & 0xFFu) / 255.0
+    );
+}
+
+vec3 decodeNormal(uint packed) {
+    vec2 oct = unpackSnorm2x16(packed);
+    float px = oct.x;
+    float py = oct.y;
+    float pz = 1.0 - abs(px) - abs(py);
+    if (pz < 0.0) {
+        float orig_px = px;
+        px = (1.0 - abs(py)) * (px >= 0.0 ? 1.0 : -1.0);
+        py = (1.0 - abs(orig_px)) * (py >= 0.0 ? 1.0 : -1.0);
+    }
+    return normalize(vec3(px, py, pz));
+}
+
 void main() {
     mat4 model;
     float mask_radius;
@@ -88,28 +107,41 @@ void main() {
     vClipPosCurrent = vec4(clipPos.x, -clipPos.y, clipPos.z, clipPos.w);
     vClipPosPrev = vec4(clipPosPrev.x, -clipPosPrev.y, clipPosPrev.z, clipPosPrev.w);
 
-    vColor = aColor * color_override;
-    vNormal = aNormal;
+    vec3 decodedColor = decodeColor(aColor);
+    vec3 decodedNormal = decodeNormal(aNormal);
+
+    uint tile_id_u16 = aPackedMeta & 0xFFFFu;
+    float skylight = float((aPackedMeta >> 16u) & 0xFFu) / 255.0;
+    float ao = float((aPackedMeta >> 24u) & 0xFFu) / 255.0;
+
+    vec3 blocklight = vec3(
+        float(aBlockLight & 0xFFu) / 255.0,
+        float((aBlockLight >> 8u) & 0xFFu) / 255.0,
+        float((aBlockLight >> 16u) & 0xFFu) / 255.0
+    );
+
+    vColor = decodedColor * color_override;
+    vNormal = decodedNormal;
     vTexCoord = aTexCoord;
-    vTileID = int(aTileID);
+    vTileID = (tile_id_u16 == 0xFFFFu) ? -1 : int(tile_id_u16);
     vDistance = length(worldPos.xyz);
-    vSkyLight = aSkyLight;
-    vBlockLight = aBlockLight;
+    vSkyLight = skylight;
+    vBlockLight = blocklight;
 
     vFragPosWorld = worldPos.xyz;
     vViewDepth = -clipPos.w;
-    vAO = aAO;
+    vAO = ao;
     vMaskRadius = mask_radius;
 
-    vec3 absNormal = abs(aNormal);
+    vec3 absNormal = abs(decodedNormal);
     if (absNormal.y > 0.9) {
         vTangent = vec3(1.0, 0.0, 0.0);
-        vBitangent = vec3(0.0, 0.0, aNormal.y > 0.0 ? 1.0 : -1.0);
+        vBitangent = vec3(0.0, 0.0, decodedNormal.y > 0.0 ? 1.0 : -1.0);
     } else if (absNormal.x > 0.9) {
-        vTangent = vec3(0.0, 0.0, aNormal.x > 0.0 ? -1.0 : 1.0);
+        vTangent = vec3(0.0, 0.0, decodedNormal.x > 0.0 ? -1.0 : 1.0);
         vBitangent = vec3(0.0, 1.0, 0.0);
     } else {
-        vTangent = vec3(aNormal.z > 0.0 ? 1.0 : -1.0, 0.0, 0.0);
+        vTangent = vec3(decodedNormal.z > 0.0 ? 1.0 : -1.0, 0.0, 0.0);
         vBitangent = vec3(0.0, 1.0, 0.0);
     }
 }
