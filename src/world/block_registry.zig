@@ -28,6 +28,13 @@ pub const RenderPass = enum {
     translucent,
 };
 
+pub const RenderShape = enum {
+    /// Standard 6-face cube (default)
+    cube,
+    /// 2 diagonal quads crossing at center (flowers, saplings, dead bush)
+    cross,
+};
+
 pub const BlockDefinition = struct {
     id: BlockType,
     name: []const u8,
@@ -36,7 +43,8 @@ pub const BlockDefinition = struct {
     is_tintable: bool,
     is_fluid: bool,
     render_pass: RenderPass,
-    light_emission: [3]u4, // RGB light emission
+    render_shape: RenderShape,
+    light_emission: [3]u4,
     default_color: [3]f32,
     texture_top: []const u8,
     texture_bottom: []const u8,
@@ -103,9 +111,10 @@ pub const BLOCK_REGISTRY = blk: {
             .is_transparent = true,
             .is_tintable = false,
             .is_fluid = false,
-            .render_pass = .solid, // Default, though air isn't drawn
+            .render_pass = .solid,
+            .render_shape = .cube,
             .light_emission = .{ 0, 0, 0 },
-            .default_color = .{ 1, 0, 1 }, // Magenta for unknown
+            .default_color = .{ 1, 0, 1 },
             .texture_top = "unknown",
             .texture_bottom = "unknown",
             .texture_side = "unknown",
@@ -126,13 +135,14 @@ pub const BLOCK_REGISTRY = blk: {
         var def = BlockDefinition{
             .id = id,
             .name = field.name,
-            .is_solid = true, // Default
-            .is_transparent = false, // Default
-            .is_tintable = false, // Default
-            .is_fluid = false, // Default
-            .render_pass = .solid, // Default
-            .light_emission = .{ 0, 0, 0 }, // Default
-            .default_color = .{ 1, 1, 1 }, // Default
+            .is_solid = true,
+            .is_transparent = false,
+            .is_tintable = false,
+            .is_fluid = false,
+            .render_pass = .solid,
+            .render_shape = .cube,
+            .light_emission = .{ 0, 0, 0 },
+            .default_color = .{ 1, 1, 1 },
             .texture_top = field.name,
             .texture_bottom = field.name,
             .texture_side = field.name,
@@ -306,10 +316,16 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 7. Light Emission (RGB values 0-15)
         def.light_emission = switch (id) {
-            .glowstone => .{ 15, 14, 10 }, // Warm yellow
-            .torch => .{ 15, 11, 6 }, // Warm orange
-            .lava => .{ 15, 8, 3 }, // Red-orange
+            .glowstone => .{ 15, 14, 10 },
+            .torch => .{ 15, 11, 6 },
+            .lava => .{ 15, 8, 3 },
             else => .{ 0, 0, 0 },
+        };
+
+        // 8. Render Shape
+        def.render_shape = switch (id) {
+            .flower_red, .flower_yellow, .tall_grass, .dead_bush, .acacia_sapling, .bamboo, .torch => .cross,
+            else => .cube,
         };
 
         definitions[int_id] = def;
