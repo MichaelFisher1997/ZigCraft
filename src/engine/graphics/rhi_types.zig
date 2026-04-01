@@ -122,7 +122,6 @@ pub const DrawIndirectCommand = extern struct {
 };
 
 pub const InstanceData = extern struct {
-    view_proj: Mat4,
     model: Mat4,
     mask_radius: f32,
     padding: [3]f32,

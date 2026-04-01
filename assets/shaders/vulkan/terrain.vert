@@ -45,7 +45,6 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 } global;
 
 struct InstanceData {
-    mat4 view_proj;
     mat4 model;
     float mask_radius;
     float _pad0;

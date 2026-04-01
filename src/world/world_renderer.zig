@@ -69,7 +69,7 @@ pub const WorldRenderer = struct {
         var indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
             instance_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.InstanceData), .storage);
-            indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 2, .indirect);
+            indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 3, .indirect);
         }
 
         renderer.* = .{
@@ -179,11 +179,13 @@ pub const WorldRenderer = struct {
             const instance_idx: u32 = @intCast(self.instance_data.items.len);
 
             self.instance_data.append(self.allocator, .{
-                .view_proj = view_proj,
                 .model = model,
                 .mask_radius = 0,
                 .padding = .{ 0, 0, 0 },
-            }) catch continue;
+            }) catch |err| {
+                log.log.debug("MDI: instance append failed: {}", .{err});
+                continue;
+            };
 
             if (data.mesh.solid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
@@ -192,7 +194,7 @@ pub const WorldRenderer = struct {
                     .instanceCount = 1,
                     .firstVertex = @intCast(alloc.offset / vertex_size),
                     .firstInstance = instance_idx,
-                }) catch {};
+                }) catch |err| log.log.debug("MDI: solid cmd append failed: {}", .{err});
             }
             if (data.mesh.cutout_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
@@ -201,7 +203,7 @@ pub const WorldRenderer = struct {
                     .instanceCount = 1,
                     .firstVertex = @intCast(alloc.offset / vertex_size),
                     .firstInstance = instance_idx,
-                }) catch {};
+                }) catch |err| log.log.debug("MDI: cutout cmd append failed: {}", .{err});
             }
             if (data.mesh.fluid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
@@ -210,7 +212,7 @@ pub const WorldRenderer = struct {
                     .instanceCount = 1,
                     .firstVertex = @intCast(alloc.offset / vertex_size),
                     .firstInstance = instance_idx,
-                }) catch {};
+                }) catch |err| log.log.debug("MDI: fluid cmd append failed: {}", .{err});
             }
         }
 
