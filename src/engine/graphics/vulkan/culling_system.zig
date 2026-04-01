@@ -3,12 +3,13 @@ const c = @import("../../c.zig").c;
 const rhi_pkg = @import("../rhi.zig");
 const log = @import("../core/log.zig");
 const Mat4 = @import("../math/mat4.zig").Mat4;
-const VulkanContext = @import("vulkan/rhi_context_types.zig").VulkanContext;
-const Utils = @import("vulkan/utils.zig");
+const VulkanContext = @import("rhi_context_types.zig").VulkanContext;
+const Utils = @import("utils.zig");
 
 pub const CULLING_SHADER_PATH = "assets/shaders/vulkan/culling.comp.spv";
 pub const MAX_CULLABLE_CHUNKS: usize = 16384;
 pub const WORKGROUP_SIZE: u32 = 64;
+const MAX_FRAMES_IN_FLIGHT = rhi_pkg.MAX_FRAMES_IN_FLIGHT;
 
 pub const ChunkCullData = extern struct {
     min_point: [4]f32,
@@ -24,14 +25,14 @@ pub const CullingSystem = struct {
     rhi: rhi_pkg.RHI,
     vk_ctx: *VulkanContext,
 
-    aabb_buffer: Utils.VulkanBuffer = .{},
-    command_buffer: Utils.VulkanBuffer = .{},
-    counter_buffer: Utils.VulkanBuffer = .{},
-    counter_readback_buffer: Utils.VulkanBuffer = .{},
+    aabb_buffers: [MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer,
+    command_buffers: [MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer,
+    counter_buffers: [MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer,
+    counter_readback_buffers: [MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer,
 
     descriptor_pool: c.VkDescriptorPool = null,
     descriptor_set_layout: c.VkDescriptorSetLayout = null,
-    descriptor_set: c.VkDescriptorSet = null,
+    descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet,
     pipeline_layout: c.VkPipelineLayout = null,
     pipeline: c.VkPipeline = null,
 
@@ -53,41 +54,46 @@ pub const CullingSystem = struct {
             .rhi = rhi,
             .vk_ctx = vk_ctx,
             .max_chunks = clamped_max,
+            .aabb_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
+            .command_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
+            .counter_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
+            .counter_readback_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
+            .descriptor_sets = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet),
         };
 
+        errdefer self.destroyAllBuffers();
         const aabb_size = clamped_max * @sizeOf(ChunkCullData);
-        self.aabb_buffer = try Utils.createVulkanBuffer(
-            &vk_ctx.vulkan_device,
-            aabb_size,
-            c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        );
-        errdefer self.destroyBuffers();
-
         const cmd_size = @sizeOf(u32) * 4 + clamped_max * @sizeOf(c.VkDrawIndirectCommand);
-        self.command_buffer = try Utils.createVulkanBuffer(
-            &vk_ctx.vulkan_device,
-            cmd_size,
-            c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
-            c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        );
-        errdefer self.destroyBuffers();
 
-        self.counter_buffer = try Utils.createVulkanBuffer(
-            &vk_ctx.vulkan_device,
-            16,
-            c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        );
-        errdefer self.destroyBuffers();
+        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+            self.aabb_buffers[i] = try Utils.createVulkanBuffer(
+                &vk_ctx.vulkan_device,
+                aabb_size,
+                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            );
 
-        self.counter_readback_buffer = try Utils.createVulkanBuffer(
-            &vk_ctx.vulkan_device,
-            16,
-            c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        );
-        errdefer self.destroyBuffers();
+            self.command_buffers[i] = try Utils.createVulkanBuffer(
+                &vk_ctx.vulkan_device,
+                cmd_size,
+                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            );
+
+            self.counter_buffers[i] = try Utils.createVulkanBuffer(
+                &vk_ctx.vulkan_device,
+                16,
+                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            );
+
+            self.counter_readback_buffers[i] = try Utils.createVulkanBuffer(
+                &vk_ctx.vulkan_device,
+                16,
+                c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            );
+        }
 
         try ensureShaderFileExists(CULLING_SHADER_PATH);
 
@@ -99,16 +105,17 @@ pub const CullingSystem = struct {
 
     pub fn deinit(self: *CullingSystem) void {
         self.deinitComputeResources();
-        self.destroyBuffers();
+        self.destroyAllBuffers();
         self.allocator.destroy(self);
     }
 
-    pub fn updateAABBData(self: *CullingSystem, chunks: []const ChunkCullData) void {
-        if (self.aabb_buffer.mapped_ptr == null) return;
+    pub fn updateAABBData(self: *CullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
+        const buf = &self.aabb_buffers[frame_index];
+        if (buf.mapped_ptr == null) return;
         const copy_len = @min(chunks.len, self.max_chunks) * @sizeOf(ChunkCullData);
         if (copy_len == 0) return;
         @memcpy(
-            @as([*]u8, @ptrCast(self.aabb_buffer.mapped_ptr.?))[0..copy_len],
+            @as([*]u8, @ptrCast(buf.mapped_ptr.?))[0..copy_len],
             @as([*]const u8, @ptrCast(chunks.ptr))[0..copy_len],
         );
     }
@@ -119,10 +126,28 @@ pub const CullingSystem = struct {
         chunk_count: u32,
     ) void {
         if (chunk_count == 0) return;
-        const cmd = self.vk_ctx.frames.command_buffers[self.vk_ctx.frames.current_frame];
+        const fi = self.vk_ctx.frames.current_frame;
+        const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
 
-        self.resetCounter(cmd);
+        var prev_barrier = std.mem.zeroes(c.VkMemoryBarrier);
+        prev_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        prev_barrier.srcAccessMask = c.VK_ACCESS_SHADER_WRITE_BIT;
+        prev_barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        c.vkCmdPipelineBarrier(
+            cmd,
+            c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0,
+            1,
+            &prev_barrier,
+            0,
+            null,
+            0,
+            null,
+        );
+
+        self.resetCounter(cmd, fi);
 
         var host_barrier = std.mem.zeroes(c.VkMemoryBarrier);
         host_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -144,7 +169,7 @@ pub const CullingSystem = struct {
         const push = extractFrustumPlanes(view_proj);
 
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
-        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_set, 0, null);
+        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[fi], 0, null);
         c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(FrustumPushConstants), &push);
 
         const groups = divCeil(chunk_count, WORKGROUP_SIZE);
@@ -166,17 +191,48 @@ pub const CullingSystem = struct {
             0,
             null,
         );
+
+        self.copyCounterToReadback(cmd, fi);
     }
 
-    pub fn readVisibleCount(self: *CullingSystem) u32 {
-        if (self.counter_readback_buffer.mapped_ptr == null) return 0;
-        const ptr: *align(1) u32 = @ptrCast(@alignCast(self.counter_readback_buffer.mapped_ptr.?));
+    pub fn readVisibleCount(self: *CullingSystem, frame_index: usize) u32 {
+        const buf = &self.counter_readback_buffers[frame_index];
+        if (buf.mapped_ptr == null) return 0;
+        const ptr: *align(1) u32 = @ptrCast(@alignCast(buf.mapped_ptr.?));
         return ptr.*;
     }
 
-    fn resetCounter(self: *CullingSystem, cmd: c.VkCommandBuffer) void {
+    fn copyCounterToReadback(self: *CullingSystem, cmd: c.VkCommandBuffer, frame_index: usize) void {
+        const src = self.counter_buffers[frame_index];
+        const dst = self.counter_readback_buffers[frame_index];
+
+        var copy_region = std.mem.zeroes(c.VkBufferCopy);
+        copy_region.srcOffset = 0;
+        copy_region.dstOffset = 0;
+        copy_region.size = 16;
+        c.vkCmdCopyBuffer(cmd, src.buffer, dst.buffer, 1, &copy_region);
+
+        var copy_barrier = std.mem.zeroes(c.VkMemoryBarrier);
+        copy_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        copy_barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        copy_barrier.dstAccessMask = c.VK_ACCESS_HOST_READ_BIT;
+        c.vkCmdPipelineBarrier(
+            cmd,
+            c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+            c.VK_PIPELINE_STAGE_HOST_BIT,
+            0,
+            1,
+            &copy_barrier,
+            0,
+            null,
+            0,
+            null,
+        );
+    }
+
+    fn resetCounter(self: *CullingSystem, cmd: c.VkCommandBuffer, frame_index: usize) void {
         const zero: u32 = 0;
-        c.vkCmdFillBuffer(cmd, self.counter_buffer.buffer, 0, 16, zero);
+        c.vkCmdFillBuffer(cmd, self.counter_buffers[frame_index].buffer, 0, 16, zero);
 
         var fill_barrier = std.mem.zeroes(c.VkMemoryBarrier);
         fill_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -200,12 +256,12 @@ pub const CullingSystem = struct {
         const vk = self.vk_ctx.vulkan_device.vk_device;
 
         var pool_sizes = [_]c.VkDescriptorPoolSize{
-            .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 3 },
+            .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 3 * MAX_FRAMES_IN_FLIGHT },
         };
 
         var pool_info = std.mem.zeroes(c.VkDescriptorPoolCreateInfo);
         pool_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_info.maxSets = 1;
+        pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
         pool_info.poolSizeCount = pool_sizes.len;
         pool_info.pPoolSizes = &pool_sizes;
         try Utils.checkVk(c.vkCreateDescriptorPool(vk, &pool_info, null, &self.descriptor_pool));
@@ -222,14 +278,17 @@ pub const CullingSystem = struct {
         layout_info.pBindings = &bindings;
         try Utils.checkVk(c.vkCreateDescriptorSetLayout(vk, &layout_info, null, &self.descriptor_set_layout));
 
+        var layouts = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSetLayout);
+        for (&layouts) |*l| l.* = self.descriptor_set_layout;
+
         var alloc_info = std.mem.zeroes(c.VkDescriptorSetAllocateInfo);
         alloc_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         alloc_info.descriptorPool = self.descriptor_pool;
-        alloc_info.descriptorSetCount = 1;
-        alloc_info.pSetLayouts = &self.descriptor_set_layout;
-        try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &alloc_info, &self.descriptor_set));
+        alloc_info.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+        alloc_info.pSetLayouts = &layouts;
+        try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &alloc_info, &self.descriptor_sets));
 
-        self.updateDescriptorSets();
+        self.updateAllDescriptorSets();
 
         var pc_range = std.mem.zeroes(c.VkPushConstantRange);
         pc_range.stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT;
@@ -260,52 +319,62 @@ pub const CullingSystem = struct {
         try Utils.checkVk(c.vkCreateComputePipelines(vk, null, 1, &pipeline_info, null, &self.pipeline));
     }
 
-    fn updateDescriptorSets(self: *CullingSystem) void {
+    fn updateAllDescriptorSets(self: *CullingSystem) void {
         const vk = self.vk_ctx.vulkan_device.vk_device;
+        const aabb_range = self.max_chunks * @sizeOf(ChunkCullData);
 
-        var aabb_info = c.VkDescriptorBufferInfo{
-            .buffer = self.aabb_buffer.buffer,
-            .offset = 0,
-            .range = self.max_chunks * @sizeOf(ChunkCullData),
-        };
-        var cmd_info = c.VkDescriptorBufferInfo{
-            .buffer = self.command_buffer.buffer,
-            .offset = 0,
-            .range = c.VK_WHOLE_SIZE,
-        };
-        var counter_info = c.VkDescriptorBufferInfo{
-            .buffer = self.counter_buffer.buffer,
-            .offset = 0,
-            .range = 16,
-        };
+        var writes: [3 * MAX_FRAMES_IN_FLIGHT]c.VkWriteDescriptorSet = undefined;
+        var aabb_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorBufferInfo = undefined;
+        var cmd_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorBufferInfo = undefined;
+        var counter_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorBufferInfo = undefined;
+        var n: usize = 0;
 
-        var writes: [3]c.VkWriteDescriptorSet = undefined;
+        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+            aabb_infos[i] = c.VkDescriptorBufferInfo{
+                .buffer = self.aabb_buffers[i].buffer,
+                .offset = 0,
+                .range = aabb_range,
+            };
+            cmd_infos[i] = c.VkDescriptorBufferInfo{
+                .buffer = self.command_buffers[i].buffer,
+                .offset = 0,
+                .range = c.VK_WHOLE_SIZE,
+            };
+            counter_infos[i] = c.VkDescriptorBufferInfo{
+                .buffer = self.counter_buffers[i].buffer,
+                .offset = 0,
+                .range = 16,
+            };
 
-        writes[0] = std.mem.zeroes(c.VkWriteDescriptorSet);
-        writes[0].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = self.descriptor_set;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[0].descriptorCount = 1;
-        writes[0].pBufferInfo = &aabb_info;
+            writes[n] = std.mem.zeroes(c.VkWriteDescriptorSet);
+            writes[n].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[n].dstSet = self.descriptor_sets[i];
+            writes[n].dstBinding = 0;
+            writes[n].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[n].descriptorCount = 1;
+            writes[n].pBufferInfo = &aabb_infos[i];
+            n += 1;
 
-        writes[1] = std.mem.zeroes(c.VkWriteDescriptorSet);
-        writes[1].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = self.descriptor_set;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[1].descriptorCount = 1;
-        writes[1].pBufferInfo = &cmd_info;
+            writes[n] = std.mem.zeroes(c.VkWriteDescriptorSet);
+            writes[n].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[n].dstSet = self.descriptor_sets[i];
+            writes[n].dstBinding = 1;
+            writes[n].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[n].descriptorCount = 1;
+            writes[n].pBufferInfo = &cmd_infos[i];
+            n += 1;
 
-        writes[2] = std.mem.zeroes(c.VkWriteDescriptorSet);
-        writes[2].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = self.descriptor_set;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[2].descriptorCount = 1;
-        writes[2].pBufferInfo = &counter_info;
+            writes[n] = std.mem.zeroes(c.VkWriteDescriptorSet);
+            writes[n].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[n].dstSet = self.descriptor_sets[i];
+            writes[n].dstBinding = 2;
+            writes[n].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[n].descriptorCount = 1;
+            writes[n].pBufferInfo = &counter_infos[i];
+            n += 1;
+        }
 
-        c.vkUpdateDescriptorSets(vk, writes.len, &writes[0], 0, null);
+        c.vkUpdateDescriptorSets(vk, @intCast(n), &writes[0], 0, null);
     }
 
     fn deinitComputeResources(self: *CullingSystem) void {
@@ -319,27 +388,35 @@ pub const CullingSystem = struct {
         self.pipeline_layout = null;
         self.descriptor_set_layout = null;
         self.descriptor_pool = null;
-        self.descriptor_set = null;
+        self.descriptor_sets = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet);
     }
 
-    fn destroyBuffers(self: *CullingSystem) void {
+    fn destroyAllBuffers(self: *CullingSystem) void {
         const vk = self.vk_ctx.vulkan_device.vk_device;
 
-        if (self.aabb_buffer.buffer != null) c.vkDestroyBuffer(vk, self.aabb_buffer.buffer, null);
-        if (self.aabb_buffer.memory != null) c.vkFreeMemory(vk, self.aabb_buffer.memory, null);
-        if (self.command_buffer.buffer != null) c.vkDestroyBuffer(vk, self.command_buffer.buffer, null);
-        if (self.command_buffer.memory != null) c.vkFreeMemory(vk, self.command_buffer.memory, null);
-        if (self.counter_buffer.buffer != null) c.vkDestroyBuffer(vk, self.counter_buffer.buffer, null);
-        if (self.counter_buffer.memory != null) c.vkFreeMemory(vk, self.counter_buffer.memory, null);
-        if (self.counter_readback_buffer.buffer != null) c.vkDestroyBuffer(vk, self.counter_readback_buffer.buffer, null);
-        if (self.counter_readback_buffer.memory != null) c.vkFreeMemory(vk, self.counter_readback_buffer.memory, null);
+        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+            unmapAndDestroy(vk, &self.aabb_buffers[i]);
+            unmapAndDestroy(vk, &self.command_buffers[i]);
+            unmapAndDestroy(vk, &self.counter_buffers[i]);
+            unmapAndDestroy(vk, &self.counter_readback_buffers[i]);
+        }
 
-        self.aabb_buffer = .{};
-        self.command_buffer = .{};
-        self.counter_buffer = .{};
-        self.counter_readback_buffer = .{};
+        self.aabb_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
+        self.command_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
+        self.counter_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
+        self.counter_readback_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
     }
 };
+
+fn unmapAndDestroy(vk: c.VkDevice, buf: *Utils.VulkanBuffer) void {
+    if (buf.mapped_ptr != null) {
+        c.vkUnmapMemory(vk, buf.memory);
+        buf.mapped_ptr = null;
+    }
+    if (buf.buffer != null) c.vkDestroyBuffer(vk, buf.buffer, null);
+    if (buf.memory != null) c.vkFreeMemory(vk, buf.memory, null);
+    buf.* = .{};
+}
 
 fn extractFrustumPlanes(vp: Mat4) FrustumPushConstants {
     const m = vp.data;
