@@ -98,7 +98,7 @@ jobs:
         uses: ./.github/actions/setup-nix
 
       - name: Prepare opencode cache
-        run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> $GITHUB_ENV
+        run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> "$GITHUB_ENV"
 
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
