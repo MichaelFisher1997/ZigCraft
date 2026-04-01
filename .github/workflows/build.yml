@@ -16,27 +16,62 @@ env:
   GIT_CONFIG_VALUE_0: main
 
 jobs:
+  changes:
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    outputs:
+      code_changes: ${{ steps.filter.outputs.code_changes }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Detect build-relevant changes
+      id: filter
+      uses: dorny/paths-filter@v3
+      with:
+        filters: |
+          code_changes:
+            - 'src/**'
+            - 'libs/**'
+            - 'assets/shaders/**'
+            - 'build.zig'
+            - 'build.zig.zon'
+            - 'flake.nix'
+            - 'flake.lock'
+            - '.github/actions/setup-nix/**'
+
   build:
     permissions:
       contents: read
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
+    needs: changes
     steps:
     - uses: actions/checkout@v4
 
+    - name: Skip build for workflow-only changes
+      if: needs.changes.outputs.code_changes != 'true'
+      run: |
+        echo "No build-relevant changes detected. Skipping binary build."
+
     - name: Setup Nix
+      if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/setup-nix
 
     - name: Build
+      if: needs.changes.outputs.code_changes == 'true'
       run: nix build -L
 
     - name: Prepare Artifact
+      if: needs.changes.outputs.code_changes == 'true'
       run: |
         mkdir -p dist
         cp -L result/bin/zigcraft dist/zigcraft-linux
 
     - name: Upload Artifact
+      if: needs.changes.outputs.code_changes == 'true'
       uses: actions/upload-artifact@v7
       with:
         name: zigcraft
@@ -49,14 +84,21 @@ jobs:
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
-    needs: build
+    needs: [changes, build]
     steps:
     - uses: actions/checkout@v4
 
+    - name: Skip unit tests for workflow-only changes
+      if: needs.changes.outputs.code_changes != 'true'
+      run: |
+        echo "No build-relevant changes detected. Skipping unit tests."
+
     - name: Setup Nix
+      if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/setup-nix
 
     - name: Run unit tests
+      if: needs.changes.outputs.code_changes == 'true'
       run: nix develop --command zig build test
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
@@ -67,14 +109,21 @@ jobs:
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
-    needs: unit-test
+    needs: [changes, unit-test]
     steps:
     - uses: actions/checkout@v4
 
+    - name: Skip integration tests for workflow-only changes
+      if: needs.changes.outputs.code_changes != 'true'
+      run: |
+        echo "No build-relevant changes detected. Skipping integration tests."
+
     - name: Setup Nix
+      if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/setup-nix
 
     - name: Start headless Wayland compositor
+      if: needs.changes.outputs.code_changes == 'true'
       run: |
         mkdir -p /tmp/runtime-runner
         chmod 700 /tmp/runtime-runner
@@ -85,12 +134,14 @@ jobs:
         sleep 5
 
     - name: Run integration smoke test
+      if: needs.changes.outputs.code_changes == 'true'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
       run: |
         nix develop --command zig build test-integration
 
     - name: Run world load smoke test (headless)
+      if: needs.changes.outputs.code_changes == 'true'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
         XDG_RUNTIME_DIR: /tmp/runtime-runner

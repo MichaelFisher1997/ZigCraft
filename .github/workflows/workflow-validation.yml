@@ -1,0 +1,45 @@
+name: Workflow Validation
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  pull_request:
+    branches: [ main, dev ]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run actionlint
+        uses: reviewdog/action-actionlint@v1
+        with:
+          fail_level: error
+
+  yaml-parse:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse workflow YAML
+        run: |
+          ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].sort.each { |f| YAML.load_file(f); puts "OK #{f}" }'
+
+      - name: Parse composite action YAML
+        run: |
+          ruby -e 'require "yaml"; Dir[".github/actions/**/action.{yml,yaml}"].sort.each { |f| YAML.load_file(f); puts "OK #{f}" }'

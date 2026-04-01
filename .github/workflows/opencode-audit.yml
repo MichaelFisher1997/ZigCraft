@@ -93,6 +93,7 @@ jobs:
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
           model: kimi-for-coding/k2p5
+          use_github_token: true
           prompt: |
             You are a senior Zig systems programming auditor performing a deep code audit.
 
