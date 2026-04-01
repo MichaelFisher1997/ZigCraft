@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.resolve-pr.outputs.pr_head_sha }}
-          fetch-depth: 0
+          fetch-depth: 1
           token: ${{ secrets.OPENCODE_PAT }}
 
       - name: Configure git

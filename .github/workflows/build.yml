@@ -3,8 +3,24 @@ name: Build
 on:
   push:
     branches: [ main, dev ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/opencode.yml'
+      - '.github/workflows/opencode-*.yml'
+      - '.github/workflows/visual-test.yml'
+      - '.github/workflows/repo-automation.yml'
+      - 'LICENSE'
   pull_request:
     branches: [ main, dev ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/opencode.yml'
+      - '.github/workflows/opencode-*.yml'
+      - '.github/workflows/visual-test.yml'
+      - '.github/workflows/repo-automation.yml'
+      - 'LICENSE'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,6 +32,29 @@ env:
   GIT_CONFIG_VALUE_0: main
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      integration: ${{ steps.filter.outputs.integration }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          integration:
+            - 'src/engine/graphics/**'
+            - 'src/world/**'
+            - 'src/game/**'
+            - 'assets/shaders/**'
+            - 'src/engine/core/window.zig'
+            - 'src/c.zig'
+            - 'build.zig'
+            - 'flake.nix'
+            - 'flake.lock'
+
   build:
     permissions:
       contents: read
@@ -47,7 +86,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build
     steps:
@@ -65,9 +104,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: unit-test
+    needs: [build, changes]
+    if: needs.changes.outputs.integration == 'true'
     steps:
     - uses: actions/checkout@v4
 
