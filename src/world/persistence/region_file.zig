@@ -8,6 +8,8 @@
 //!   [Chunk Data: variable] 4-byte length + 1-byte compression type + compressed payload
 //!
 //! Sectors are 4096 bytes. Chunks may span multiple sectors.
+//!
+//! Thread safety: RegionFile is not thread-safe. Caller must ensure exclusive access.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -16,6 +18,7 @@ const flate = std.compress.flate;
 const SECTOR_SIZE: u32 = 4096;
 const HEADER_ENTRIES: u32 = 1024;
 const HEADER_SIZE: u32 = HEADER_ENTRIES * 4;
+// Matches Minecraft Anvil format: 1=GZip, 2=Zlib, 3=Uncompressed
 const COMPRESSION_ZLIB: u8 = 2;
 const MAX_SECTOR_OFFSET: u32 = (1 << 24) - 1;
 
@@ -25,8 +28,6 @@ const LocationEntry = packed struct(u32) {
 };
 
 pub const RegionError = error{
-    InvalidLocalX,
-    InvalidLocalZ,
     ChunkNotFound,
     InvalidHeader,
     CompressionError,
@@ -165,12 +166,14 @@ pub const RegionFile = struct {
         };
 
         try self.writeHeader();
+        try self.file.sync();
     }
 
     pub fn deleteChunk(self: *RegionFile, local_x: u5, local_z: u5) !void {
         const idx = @as(u32, local_z) * 32 + @as(u32, local_x);
         self.header[idx] = .{ .offset = 0, .sector_count = 0 };
         try self.writeHeader();
+        try self.file.sync();
     }
 
     fn readHeader(self: *RegionFile) !void {
@@ -192,7 +195,7 @@ pub const RegionFile = struct {
             const raw: u32 = @bitCast(entry);
             std.mem.writeInt(u32, buf[i * 4 ..][0..4], raw, .big);
         }
-        _ = self.file.pwriteAll(&buf, 0) catch return;
+        try self.file.pwriteAll(&buf, 0);
     }
 
     fn findEndSector(self: *RegionFile) u32 {
