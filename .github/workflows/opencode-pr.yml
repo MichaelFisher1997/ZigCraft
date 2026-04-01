@@ -29,7 +29,7 @@ jobs:
       id-token: write
       contents: write
       pull-requests: write
-      issues: read
+      issues: write
 
     steps:
       - name: Resolve PR context
@@ -102,14 +102,18 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
+          use_github_token: true
           prompt: |
             You are reviewing a pull request for the ZigCraft repository.
 
             **PR to review:** #${{ steps.resolve-pr.outputs.pr_number }}
             Use `gh pr diff ${{ steps.resolve-pr.outputs.pr_number }}` and `gh pr view ${{ steps.resolve-pr.outputs.pr_number }}` to examine the changes.
+
+            Give full review coverage to PRs created by the automated test writer, especially PRs labeled `automated-test`, and verify whether any linked issues are fully addressed.
 
             ZigCraft is a high-performance Minecraft-style voxel engine built with Zig, SDL3, and Vulkan. It uses Nix for dependency management, a custom RHI (Render Hardware Interface) abstraction layer, and a multithreaded job system for world generation and meshing.
 

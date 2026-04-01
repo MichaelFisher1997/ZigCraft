@@ -19,6 +19,16 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const trustedBots = new Set([
+              'opencode-agent[bot]',
+              'github-actions[bot]',
+            ]);
+            const labels = (context.payload.issue.labels || []).map(label => label.name);
+
+            if (trustedBots.has(context.payload.issue.user.login) || labels.includes('automated-audit')) {
+              return true;
+            }
+
             const user = await github.rest.users.getByUsername({
               username: context.payload.issue.user.login
             });
@@ -42,12 +52,16 @@ jobs:
         if: steps.check.outputs.result == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
+          use_github_token: true
           prompt: |
             Analyze this issue. You have access to the codebase context.
             **CRITICAL: Your only allowed action is to post a COMMENT on the issue. DO NOT create branches, pull requests, or attempt to modify the codebase.**
+
+            If this issue has the `automated-audit` label, treat it as a trusted machine-generated finding and focus on validating the report, checking for duplicates or related PRs, and suggesting the clearest next implementation steps.
 
             1. **Classify**: Determine if this is a Bug, Feature Request, or Question.
             2. **Validate & Request Info**:
