@@ -27,7 +27,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.OPENCODE_PAT }}
+          token: ${{ github.token }}
 
       - name: Configure git
         run: |
@@ -43,8 +43,8 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
-          GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k2p5
