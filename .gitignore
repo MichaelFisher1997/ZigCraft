@@ -26,3 +26,4 @@ wiki/
 *.hdr
 # Exclude large 4k source textures
 *_4k.*
+shader
