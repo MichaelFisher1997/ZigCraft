@@ -3,12 +3,12 @@
 //! Converts between in-memory `Chunk` structs and a compact binary format
 //! suitable for storage in region files (`region_file.zig`).
 //!
-//! Wire format (version 1, little-endian):
-//!   [Header: 16 bytes]
+//! Wire format (version 2, little-endian):
+//!   [Header: 18 bytes]
 //!     magic:       u32  = 0x5A434B00 ("ZCK\0")
-//!     version:     u8   = 1
+//!     version:     u8   = 2
 //!     flags:       u8   (has_light | has_biome_data | has_heightmap)
-//!     reserved:    u16  = 0
+//!     crc32:       u32  (over all data after header)
 //!     chunk_x:     i32
 //!     chunk_z:     i32
 //!
@@ -38,7 +38,8 @@ const CHUNK_SIZE_X = @import("../chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("../chunk.zig").CHUNK_SIZE_Z;
 
 pub const CHUNK_MAGIC: u32 = 0x5A434B00;
-pub const CHUNK_DATA_VERSION: u8 = 1;
+pub const CHUNK_DATA_VERSION: u8 = 2;
+pub const BIOME_COUNT: usize = @typeInfo(BiomeId).@"enum".fields.len;
 
 pub const HeaderFlags = packed struct(u8) {
     has_light: bool = false,
@@ -47,13 +48,14 @@ pub const HeaderFlags = packed struct(u8) {
     _reserved: u5 = 0,
 };
 
-pub const HEADER_SIZE: usize = 16;
+pub const HEADER_SIZE: usize = 18;
 
 pub const SerializeError = error{
     InvalidMagic,
     UnsupportedVersion,
     DataTooShort,
     InvalidBiomeData,
+    ChecksumMismatch,
 };
 
 const BlockDataSize = CHUNK_VOLUME;
@@ -61,22 +63,40 @@ const LightDataSize = CHUNK_VOLUME * @sizeOf(PackedLight);
 const BiomeDataSize = CHUNK_SIZE_X * CHUNK_SIZE_Z;
 const HeightmapDataSize = (CHUNK_SIZE_X * CHUNK_SIZE_Z) * @sizeOf(i16);
 
+pub fn computeFlags(chunk: *const Chunk) HeaderFlags {
+    var flags = HeaderFlags{ .has_biome_data = true, .has_heightmap = true };
+
+    const light_bytes = std.mem.sliceAsBytes(&chunk.light);
+    for (light_bytes) |b| {
+        if (b != 0) {
+            flags.has_light = true;
+            break;
+        }
+    }
+
+    return flags;
+}
+
 pub fn serializedSize(chunk: *const Chunk) usize {
-    const flags = computeFlags(chunk);
-    var size: usize = HEADER_SIZE + BlockDataSize;
+    return dataPayloadSize(computeFlags(chunk)) + HEADER_SIZE;
+}
+
+fn dataPayloadSize(flags: HeaderFlags) usize {
+    var size: usize = BlockDataSize;
     if (flags.has_light) size += LightDataSize;
     if (flags.has_biome_data) size += BiomeDataSize;
     if (flags.has_heightmap) size += HeightmapDataSize;
     return size;
 }
 
+fn isValidBiome(byte: u8) bool {
+    return byte < BIOME_COUNT;
+}
+
 pub fn serializeChunk(chunk: *const Chunk, allocator: Allocator) ![]u8 {
     const flags = computeFlags(chunk);
-
-    var total_size: usize = HEADER_SIZE + BlockDataSize;
-    if (flags.has_light) total_size += LightDataSize;
-    if (flags.has_biome_data) total_size += BiomeDataSize;
-    if (flags.has_heightmap) total_size += HeightmapDataSize;
+    const payload_size = dataPayloadSize(flags);
+    const total_size = HEADER_SIZE + payload_size;
 
     const buf = try allocator.alloc(u8, total_size);
     errdefer allocator.free(buf);
@@ -89,8 +109,8 @@ pub fn serializeChunk(chunk: *const Chunk, allocator: Allocator) ![]u8 {
     off += 1;
     buf[off] = @bitCast(flags);
     off += 1;
-    std.mem.writeInt(u16, buf[off..][0..2], 0, .little);
-    off += 2;
+    std.mem.writeInt(u32, buf[off..][0..4], 0, .little);
+    off += 4;
     std.mem.writeInt(i32, buf[off..][0..4], chunk.chunk_x, .little);
     off += 4;
     std.mem.writeInt(i32, buf[off..][0..4], chunk.chunk_z, .little);
@@ -116,6 +136,9 @@ pub fn serializeChunk(chunk: *const Chunk, allocator: Allocator) ![]u8 {
 
     std.debug.assert(off == total_size);
 
+    const crc = std.hash.Crc32.hash(buf[HEADER_SIZE..]);
+    std.mem.writeInt(u32, buf[6..][0..4], crc, .little);
+
     return buf;
 }
 
@@ -136,18 +159,19 @@ pub fn deserializeChunk(data: []const u8, chunk: *Chunk) !void {
     off += 1;
     const flags: HeaderFlags = @bitCast(flags_byte);
 
-    off += 2;
+    const stored_crc = std.mem.readInt(u32, data[off..][0..4], .little);
+    off += 4;
 
     chunk.chunk_x = std.mem.readInt(i32, data[off..][0..4], .little);
     off += 4;
     chunk.chunk_z = std.mem.readInt(i32, data[off..][0..4], .little);
     off += 4;
 
-    var expected: usize = HEADER_SIZE + BlockDataSize;
-    if (flags.has_light) expected += LightDataSize;
-    if (flags.has_biome_data) expected += BiomeDataSize;
-    if (flags.has_heightmap) expected += HeightmapDataSize;
+    const expected: usize = HEADER_SIZE + dataPayloadSize(flags);
     if (data.len < expected) return SerializeError.DataTooShort;
+
+    const computed_crc = std.hash.Crc32.hash(data[HEADER_SIZE..]);
+    if (stored_crc != computed_crc) return SerializeError.ChecksumMismatch;
 
     @memcpy(std.mem.sliceAsBytes(&chunk.blocks), data[off..][0..BlockDataSize]);
     off += BlockDataSize;
@@ -162,6 +186,7 @@ pub fn deserializeChunk(data: []const u8, chunk: *Chunk) !void {
     if (flags.has_biome_data) {
         const biome_slice = data[off..][0..BiomeDataSize];
         for (biome_slice, 0..) |byte, i| {
+            if (!isValidBiome(byte)) return SerializeError.InvalidBiomeData;
             chunk.biomes[i] = std.meta.intToEnum(BiomeId, byte) catch
                 return SerializeError.InvalidBiomeData;
         }
@@ -178,20 +203,6 @@ pub fn deserializeChunk(data: []const u8, chunk: *Chunk) !void {
     }
 
     chunk.dirty = true;
-}
-
-fn computeFlags(chunk: *const Chunk) HeaderFlags {
-    var flags = HeaderFlags{ .has_biome_data = true, .has_heightmap = true };
-
-    const light_bytes = std.mem.sliceAsBytes(&chunk.light);
-    for (light_bytes) |b| {
-        if (b != 0) {
-            flags.has_light = true;
-            break;
-        }
-    }
-
-    return flags;
 }
 
 const testing = std.testing;
@@ -295,7 +306,8 @@ test "empty chunk serializes without light data" {
     const min_size = HEADER_SIZE + BlockDataSize + BiomeDataSize + HeightmapDataSize;
     try testing.expectEqual(min_size, data.len);
 
-    const flags: HeaderFlags = @bitCast(data[5]);
+    const flags_byte = data[5];
+    const flags: HeaderFlags = @bitCast(flags_byte);
     try testing.expect(!flags.has_light);
     try testing.expect(flags.has_biome_data);
     try testing.expect(flags.has_heightmap);
@@ -311,7 +323,8 @@ test "chunk with light includes light section" {
     const expected = HEADER_SIZE + BlockDataSize + LightDataSize + BiomeDataSize + HeightmapDataSize;
     try testing.expectEqual(expected, data.len);
 
-    const flags: HeaderFlags = @bitCast(data[5]);
+    const flags_byte = data[5];
+    const flags: HeaderFlags = @bitCast(flags_byte);
     try testing.expect(flags.has_light);
 }
 
@@ -391,10 +404,13 @@ test "invalid biome byte returns InvalidBiomeData" {
     const data = try serializeChunk(&chunk, testing.allocator);
     defer testing.allocator.free(data);
 
-    const flags: HeaderFlags = @bitCast(data[5]);
+    const flags_byte = data[5];
+    const flags: HeaderFlags = @bitCast(flags_byte);
     var biome_off: usize = HEADER_SIZE + BlockDataSize;
     if (flags.has_light) biome_off += LightDataSize;
     data[biome_off] = 255;
+
+    std.mem.writeInt(u32, data[6..][0..4], std.hash.Crc32.hash(data[HEADER_SIZE..]), .little);
 
     var result = Chunk.init(0, 0);
     const res = deserializeChunk(data, &result);
@@ -438,16 +454,14 @@ test "deserialize without light defaults to zero light" {
     var trunc = try testing.allocator.alloc(u8, data.len - LightDataSize);
     defer testing.allocator.free(trunc);
 
-    var off: usize = 0;
-    var src_off: usize = 0;
-
     const header_copy = HEADER_SIZE + BlockDataSize;
     @memcpy(trunc[0..header_copy], data[0..header_copy]);
-    off = header_copy;
-    src_off = header_copy + LightDataSize;
+    const src_off = header_copy + LightDataSize;
 
     const remaining = data.len - src_off;
-    @memcpy(trunc[off..][0..remaining], data[src_off..][0..remaining]);
+    @memcpy(trunc[header_copy..][0..remaining], data[src_off..][0..remaining]);
+
+    std.mem.writeInt(u32, trunc[6..][0..4], std.hash.Crc32.hash(trunc[HEADER_SIZE..]), .little);
 
     var result = Chunk.init(0, 0);
     try deserializeChunk(trunc, &result);
@@ -492,4 +506,32 @@ test "integration: serialize to region file and back" {
     try testing.expectEqual(BiomeId.forest, result.getBiome(4, 4));
     try testing.expectEqual(@as(u4, 15), result.getSkyLight(8, 100, 8));
     try testing.expectEqual(@as(i16, 64), result.getSurfaceHeight(4, 4));
+}
+
+test "corrupt payload returns ChecksumMismatch" {
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(5, 64, 10, .stone);
+
+    const data = try serializeChunk(&chunk, testing.allocator);
+    defer testing.allocator.free(data);
+
+    data[HEADER_SIZE + 100] +%= 1;
+
+    var result = Chunk.init(0, 0);
+    const res = deserializeChunk(data, &result);
+    try testing.expectError(SerializeError.ChecksumMismatch, res);
+}
+
+test "CRC32 is deterministic for same chunk" {
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(3, 50, 7, .dirt);
+
+    const data1 = try serializeChunk(&chunk, testing.allocator);
+    defer testing.allocator.free(data1);
+    const data2 = try serializeChunk(&chunk, testing.allocator);
+    defer testing.allocator.free(data2);
+
+    const crc1 = std.mem.readInt(u32, data1[6..][0..4], .little);
+    const crc2 = std.mem.readInt(u32, data2[6..][0..4], .little);
+    try testing.expectEqual(crc1, crc2);
 }
