@@ -17,6 +17,8 @@ const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
 
+const MAX_MDI_CHUNKS: usize = 16384;
+
 pub const RenderStats = struct {
     chunks_total: u32 = 0,
     chunks_rendered: u32 = 0,
@@ -64,7 +66,7 @@ pub const WorldRenderer = struct {
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
-        const max_chunks = 16384;
+        const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         var indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
@@ -154,7 +156,9 @@ pub const WorldRenderer = struct {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.visible_chunks.append(self.allocator, data) catch {};
+                            self.visible_chunks.append(self.allocator, data) catch |err| {
+                                log.log.debug("MDI: visible_chunks append failed: {}", .{err});
+                            };
                         } else {
                             self.last_render_stats.chunks_culled += 1;
                         }
@@ -219,11 +223,29 @@ pub const WorldRenderer = struct {
         if (self.instance_data.items.len > 0 and self.draw_commands.items.len > 0) {
             const fi = self.query.getFrameIndex();
 
+            const max_instances: usize = MAX_MDI_CHUNKS;
+            const max_commands: usize = MAX_MDI_CHUNKS * 3;
+
+            if (self.instance_data.items.len > max_instances) {
+                log.log.warn("MDI: instance overflow ({} > {}), truncating", .{ self.instance_data.items.len, max_instances });
+                self.instance_data.shrinkRetainingCapacity(max_instances);
+            }
+            if (self.draw_commands.items.len > max_commands) {
+                log.log.warn("MDI: command overflow ({} > {}), truncating", .{ self.draw_commands.items.len, max_commands });
+                self.draw_commands.shrinkRetainingCapacity(max_commands);
+            }
+
             const instance_bytes = std.mem.sliceAsBytes(self.instance_data.items);
-            self.rm.updateBuffer(self.instance_buffers[fi], 0, instance_bytes) catch return;
+            self.rm.updateBuffer(self.instance_buffers[fi], 0, instance_bytes) catch |err| {
+                log.log.err("MDI: failed to update instance buffer: {}", .{err});
+                return;
+            };
 
             const cmd_bytes = std.mem.sliceAsBytes(self.draw_commands.items);
-            self.rm.updateBuffer(self.indirect_buffers[fi], 0, cmd_bytes) catch return;
+            self.rm.updateBuffer(self.indirect_buffers[fi], 0, cmd_bytes) catch |err| {
+                log.log.err("MDI: failed to update indirect buffer: {}", .{err});
+                return;
+            };
 
             self.render_ctx.setInstanceBuffer(self.instance_buffers[fi]);
 
