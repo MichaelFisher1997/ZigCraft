@@ -43,13 +43,9 @@ pub const WorldRenderer = struct {
 
     // MDI Resources
     instance_data: std.ArrayListUnmanaged(rhi_mod.InstanceData),
-    solid_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
-    fluid_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
+    draw_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
     instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
     indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
-    frame_index: usize,
-    mdi_instance_offset: usize,
-    mdi_command_offset: usize,
 
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
@@ -87,13 +83,9 @@ pub const WorldRenderer = struct {
             .last_render_stats = .{},
             .last_shadow_stats = .{},
             .instance_data = .empty,
-            .solid_commands = .empty,
-            .fluid_commands = .empty,
+            .draw_commands = .empty,
             .instance_buffers = instance_buffers,
             .indirect_buffers = indirect_buffers,
-            .frame_index = 0,
-            .mdi_instance_offset = 0,
-            .mdi_command_offset = 0,
         };
 
         return renderer;
@@ -120,8 +112,7 @@ pub const WorldRenderer = struct {
             if (self.indirect_buffers[i] != 0) self.rm.destroyBuffer(self.indirect_buffers[i]);
         }
         self.instance_data.deinit(self.allocator);
-        self.solid_commands.deinit(self.allocator);
-        self.fluid_commands.deinit(self.allocator);
+        self.draw_commands.deinit(self.allocator);
 
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
@@ -142,7 +133,7 @@ pub const WorldRenderer = struct {
 
         self.visible_chunks.clearRetainingCapacity();
         self.instance_data.clearRetainingCapacity();
-        self.solid_commands.clearRetainingCapacity();
+        self.draw_commands.clearRetainingCapacity();
 
         const frustum = Frustum.fromViewProj(view_proj);
 
@@ -196,7 +187,7 @@ pub const WorldRenderer = struct {
 
             if (data.mesh.solid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.solid_commands.append(self.allocator, .{
+                self.draw_commands.append(self.allocator, .{
                     .vertexCount = alloc.count,
                     .instanceCount = 1,
                     .firstVertex = @intCast(alloc.offset / vertex_size),
@@ -205,7 +196,7 @@ pub const WorldRenderer = struct {
             }
             if (data.mesh.cutout_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.solid_commands.append(self.allocator, .{
+                self.draw_commands.append(self.allocator, .{
                     .vertexCount = alloc.count,
                     .instanceCount = 1,
                     .firstVertex = @intCast(alloc.offset / vertex_size),
@@ -214,7 +205,7 @@ pub const WorldRenderer = struct {
             }
             if (data.mesh.fluid_allocation) |alloc| {
                 self.last_render_stats.vertices_rendered += alloc.count;
-                self.solid_commands.append(self.allocator, .{
+                self.draw_commands.append(self.allocator, .{
                     .vertexCount = alloc.count,
                     .instanceCount = 1,
                     .firstVertex = @intCast(alloc.offset / vertex_size),
@@ -223,13 +214,13 @@ pub const WorldRenderer = struct {
             }
         }
 
-        if (self.instance_data.items.len > 0 and self.solid_commands.items.len > 0) {
+        if (self.instance_data.items.len > 0 and self.draw_commands.items.len > 0) {
             const fi = self.query.getFrameIndex();
 
             const instance_bytes = std.mem.sliceAsBytes(self.instance_data.items);
             self.rm.updateBuffer(self.instance_buffers[fi], 0, instance_bytes) catch return;
 
-            const cmd_bytes = std.mem.sliceAsBytes(self.solid_commands.items);
+            const cmd_bytes = std.mem.sliceAsBytes(self.draw_commands.items);
             self.rm.updateBuffer(self.indirect_buffers[fi], 0, cmd_bytes) catch return;
 
             self.render_ctx.setInstanceBuffer(self.instance_buffers[fi]);
@@ -238,7 +229,7 @@ pub const WorldRenderer = struct {
                 self.vertex_allocator.buffer,
                 self.indirect_buffers[fi],
                 0,
-                @intCast(self.solid_commands.items.len),
+                @intCast(self.draw_commands.items.len),
                 @sizeOf(rhi_mod.DrawIndirectCommand),
             );
         }
@@ -295,8 +286,5 @@ pub const WorldRenderer = struct {
                 }
             }
         }
-
-        self.mdi_instance_offset = 0;
-        self.mdi_command_offset = 0;
     }
 };

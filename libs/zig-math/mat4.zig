@@ -2,7 +2,7 @@ const std = @import("std");
 const Vec3 = @import("vec3.zig").Vec3;
 
 pub const Mat4 = extern struct {
-    data: [4][4]f32,
+    data: [4][4]f32 align(16),
 
     pub const identity = Mat4{
         .data = .{
