@@ -172,7 +172,8 @@ pub const CullingSystem = struct {
         c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[fi], 0, null);
         c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(FrustumPushConstants), &push);
 
-        const groups = divCeil(chunk_count, WORKGROUP_SIZE);
+        const clamped_count = @min(chunk_count, @as(u32, @intCast(self.max_chunks)));
+        const groups = divCeil(clamped_count, WORKGROUP_SIZE);
         c.vkCmdDispatch(cmd, groups, 1, 1);
 
         var compute_barrier = std.mem.zeroes(c.VkMemoryBarrier);

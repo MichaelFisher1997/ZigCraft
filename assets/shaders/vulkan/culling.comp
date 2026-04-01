@@ -68,9 +68,11 @@ void main() {
     if (aabbVisible(aabb_min, aabb_max)) {
         uint slot = atomicAdd(visible_counter.count, 1);
 
-        cmd_buffer.commands[slot].vertexCount = 0;
-        cmd_buffer.commands[slot].instanceCount = 1;
-        cmd_buffer.commands[slot].firstVertex = 0;
-        cmd_buffer.commands[slot].firstInstance = idx;
+        if (slot < cmd_buffer.commands.length()) {
+            cmd_buffer.commands[slot].vertexCount = 0;
+            cmd_buffer.commands[slot].instanceCount = 1;
+            cmd_buffer.commands[slot].firstVertex = 0;
+            cmd_buffer.commands[slot].firstInstance = idx;
+        }
     }
 }
