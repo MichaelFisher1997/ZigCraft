@@ -90,6 +90,7 @@ test {
     _ = @import("game/screen_tests.zig");
     _ = @import("game/session_tests.zig");
     _ = @import("world/persistence/region_file.zig");
+    _ = @import("world/meshing/quadric_simplifier.zig");
 }
 
 test "Vec3 addition" {
