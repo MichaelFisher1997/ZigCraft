@@ -183,6 +183,7 @@ pub fn build(b: *std.Build) void {
     const validate_vulkan_taa_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/taa.frag" });
     const validate_vulkan_lpv_inject_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/lpv_inject.comp" });
     const validate_vulkan_lpv_propagate_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/lpv_propagate.comp" });
+    const validate_vulkan_culling_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/culling.comp" });
 
     test_step.dependOn(&validate_vulkan_terrain_vert.step);
     test_step.dependOn(&validate_vulkan_terrain_frag.step);
@@ -206,4 +207,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&validate_vulkan_taa_frag.step);
     test_step.dependOn(&validate_vulkan_lpv_inject_comp.step);
     test_step.dependOn(&validate_vulkan_lpv_propagate_comp.step);
+    test_step.dependOn(&validate_vulkan_culling_comp.step);
 }
