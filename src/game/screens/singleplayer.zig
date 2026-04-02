@@ -13,6 +13,8 @@ const Key = @import("../../engine/core/interfaces.zig").Key;
 const IRawInputProvider = @import("../../engine/input/interfaces.zig").IRawInputProvider;
 const Input = @import("../../engine/input/input.zig").Input;
 const WorldScreen = @import("world.zig").WorldScreen;
+const WorldListScreen = @import("world_list.zig").WorldListScreen;
+const world_list = @import("world_list.zig");
 const registry = @import("../../world/worldgen/registry.zig");
 const gen_interface = @import("../../world/worldgen/generator_interface.zig");
 
@@ -127,16 +129,25 @@ pub const SingleplayerScreen = struct {
         }
         Font.drawText(ui, g_info.description, px + 30.0 * ui_scale, g_rect.y + g_rect.height + 10.0 * ui_scale, label_scale * 0.7, LABEL_COLOR);
 
-        const byy: f32 = py + ph - 80.0 * ui_scale;
+        const byy: f32 = py + ph - 135.0 * ui_scale;
         const hw: f32 = (pw - 30.0 * ui_scale - 15.0 * ui_scale - 30.0 * ui_scale) / 2.0;
-        const btn_h: f32 = 50.0 * ui_scale;
-        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale, .y = byy, .width = hw, .height = btn_h }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+        const btn_h: f32 = 45.0 * ui_scale;
+        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale, .y = byy, .width = pw - 60.0 * ui_scale, .height = btn_h }, "LOAD WORLD", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+            const wl_screen = try WorldListScreen.init(ctx.allocator, ctx);
+            errdefer wl_screen.deinit(wl_screen);
+            ctx.screen_manager.pushScreen(wl_screen.screen());
+        }
+
+        const byy2: f32 = byy + btn_h + 15.0 * ui_scale;
+        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale, .y = byy2, .width = hw, .height = btn_h }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
             ctx.screen_manager.popScreen();
         }
-        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale + hw + 15.0 * ui_scale, .y = byy, .width = hw, .height = btn_h }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
-            // Seed is a 64-bit unsigned integer. If left blank, a random one is generated.
+        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale + hw + 15.0 * ui_scale, .y = byy2, .width = hw, .height = btn_h }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
             const seed = try seed_gen.resolveSeed(&self.seed_input, ctx.allocator);
             log.log.info("World seed: {} | Type: {s}", .{ seed, registry.getGeneratorInfo(self.selected_generator_index).name });
+            saveNewWorld(ctx.allocator, seed, self.selected_generator_index) catch |err| {
+                log.log.warn("Failed to save level.dat for new world: {}", .{err});
+            };
             const world_screen = try WorldScreen.init(ctx.allocator, ctx, seed, self.selected_generator_index);
             errdefer world_screen.deinit(world_screen);
             ctx.screen_manager.setScreen(world_screen.screen());
@@ -147,6 +158,39 @@ pub const SingleplayerScreen = struct {
         return Screen.makeScreen(@This(), self);
     }
 };
+
+fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize) !void {
+    const home = std.posix.getenv("HOME") orelse {
+        log.log.warn("Cannot save world: HOME not set", .{});
+        return;
+    };
+    var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
+        log.log.warn("Cannot save world: failed to open home dir: {}", .{err});
+        return;
+    };
+    defer home_dir.close();
+    home_dir.makePath(world_list.SAVE_DIR) catch |err| {
+        log.log.warn("Cannot save world: failed to create saves dir: {}", .{err});
+        return;
+    };
+    var dir_name_buf: [128]u8 = undefined;
+    const timestamp: i64 = @as(i64, @bitCast(seed_gen.randomSeedValue()));
+    const dir_name = std.fmt.bufPrint(&dir_name_buf, "world_{}", .{timestamp}) catch "world_new";
+    const world_dir_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ world_list.SAVE_DIR, dir_name });
+    defer allocator.free(world_dir_path);
+    home_dir.makePath(world_dir_path) catch |err| {
+        log.log.warn("Cannot save world: failed to create world dir: {}", .{err});
+        return;
+    };
+    var save_dir = home_dir.openDir(world_dir_path, .{}) catch |err| {
+        log.log.warn("Cannot save world: failed to open world dir: {}", .{err});
+        return;
+    };
+    defer save_dir.close();
+    world_list.writeLevelDat(allocator, save_dir, dir_name, seed, generator_index, timestamp) catch |err| {
+        log.log.warn("Cannot save world: failed to write level.dat: {}", .{err});
+    };
+}
 
 fn handleSeedTyping(seed_input: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, input: IRawInputProvider, max_len: usize) !void {
     if (input.isKeyPressed(.backspace)) {
