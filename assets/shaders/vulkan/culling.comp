@@ -1,0 +1,78 @@
+#version 450
+
+layout(local_size_x = 64) in;
+
+struct DrawIndirectCommand {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
+};
+
+struct ChunkAABB {
+    vec4 min_point;
+    vec4 max_point;
+};
+
+layout(std430, binding = 0) readonly buffer ChunkAABBs {
+    ChunkAABB chunks[];
+} aabb_buffer;
+
+layout(std430, binding = 1) coherent writeonly buffer DrawCommands {
+    uint visible_count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    DrawIndirectCommand commands[];
+} cmd_buffer;
+
+layout(std430, binding = 2) coherent buffer VisibleCountBuffer {
+    uint count;
+    uint _pad_v0;
+    uint _pad_v1;
+    uint _pad_v2;
+} visible_counter;
+
+layout(push_constant) uniform FrustumPlanes {
+    vec4 planes[6];
+} frustum;
+
+bool aabbVisible(vec3 aabb_min, vec3 aabb_max) {
+    for (int i = 0; i < 6; i++) {
+        vec3 normal = frustum.planes[i].xyz;
+        float dist = frustum.planes[i].w;
+
+        vec3 positive_vertex = vec3(
+            (normal.x > 0.0) ? aabb_max.x : aabb_min.x,
+            (normal.y > 0.0) ? aabb_max.y : aabb_min.y,
+            (normal.z > 0.0) ? aabb_max.z : aabb_min.z
+        );
+
+        if (dot(normal, positive_vertex) + dist < 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+
+    if (idx >= aabb_buffer.chunks.length()) {
+        return;
+    }
+
+    vec3 aabb_min = aabb_buffer.chunks[idx].min_point.xyz;
+    vec3 aabb_max = aabb_buffer.chunks[idx].max_point.xyz;
+
+    if (aabbVisible(aabb_min, aabb_max)) {
+        uint slot = atomicAdd(visible_counter.count, 1);
+
+        if (slot < cmd_buffer.commands.length()) {
+            cmd_buffer.commands[slot].vertexCount = 0;
+            cmd_buffer.commands[slot].instanceCount = 1;
+            cmd_buffer.commands[slot].firstVertex = 0;
+            cmd_buffer.commands[slot].firstInstance = idx;
+        }
+    }
+}
