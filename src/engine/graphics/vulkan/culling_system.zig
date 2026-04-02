@@ -36,6 +36,10 @@ pub const CullingSystem = struct {
     pipeline_layout: c.VkPipelineLayout = null,
     pipeline: c.VkPipeline = null,
 
+    cached_view_proj: Mat4 = Mat4.zero,
+    cached_planes: FrustumPushConstants = undefined,
+    planes_cached: bool = false,
+
     max_chunks: usize,
 
     pub fn init(
@@ -59,6 +63,7 @@ pub const CullingSystem = struct {
             .counter_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
             .counter_readback_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
             .descriptor_sets = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet),
+            .planes_cached = false,
         };
 
         errdefer self.destroyAllBuffers();
@@ -82,14 +87,14 @@ pub const CullingSystem = struct {
 
             self.counter_buffers[i] = try Utils.createVulkanBuffer(
                 &vk_ctx.vulkan_device,
-                16,
+                @sizeOf(u32),
                 c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                 c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             );
 
             self.counter_readback_buffers[i] = try Utils.createVulkanBuffer(
                 &vk_ctx.vulkan_device,
-                16,
+                @sizeOf(u32),
                 c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             );
@@ -166,7 +171,12 @@ pub const CullingSystem = struct {
             null,
         );
 
-        const push = extractFrustumPlanes(view_proj);
+        if (!self.planes_cached or !mat4Equal(self.cached_view_proj, view_proj)) {
+            self.cached_planes = extractFrustumPlanes(view_proj);
+            self.cached_view_proj = view_proj;
+            self.planes_cached = true;
+        }
+        const push = self.cached_planes;
 
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
         c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[fi], 0, null);
@@ -210,7 +220,7 @@ pub const CullingSystem = struct {
         var copy_region = std.mem.zeroes(c.VkBufferCopy);
         copy_region.srcOffset = 0;
         copy_region.dstOffset = 0;
-        copy_region.size = 16;
+        copy_region.size = @sizeOf(u32);
         c.vkCmdCopyBuffer(cmd, src.buffer, dst.buffer, 1, &copy_region);
 
         var copy_barrier = std.mem.zeroes(c.VkMemoryBarrier);
@@ -233,7 +243,7 @@ pub const CullingSystem = struct {
 
     fn resetCounter(self: *CullingSystem, cmd: c.VkCommandBuffer, frame_index: usize) void {
         const zero: u32 = 0;
-        c.vkCmdFillBuffer(cmd, self.counter_buffers[frame_index].buffer, 0, 16, zero);
+        c.vkCmdFillBuffer(cmd, self.counter_buffers[frame_index].buffer, 0, @sizeOf(u32), zero);
 
         var fill_barrier = std.mem.zeroes(c.VkMemoryBarrier);
         fill_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -344,7 +354,7 @@ pub const CullingSystem = struct {
             counter_infos[i] = c.VkDescriptorBufferInfo{
                 .buffer = self.counter_buffers[i].buffer,
                 .offset = 0,
-                .range = 16,
+                .range = @sizeOf(u32),
             };
 
             writes[n] = std.mem.zeroes(c.VkWriteDescriptorSet);
@@ -408,6 +418,15 @@ pub const CullingSystem = struct {
         self.counter_readback_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
     }
 };
+
+fn mat4Equal(a: Mat4, b: Mat4) bool {
+    for (0..4) |col| {
+        for (0..4) |row| {
+            if (a.data[col][row] != b.data[col][row]) return false;
+        }
+    }
+    return true;
+}
 
 fn unmapAndDestroy(vk: c.VkDevice, buf: *Utils.VulkanBuffer) void {
     if (buf.mapped_ptr != null) {
