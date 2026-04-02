@@ -91,6 +91,7 @@ test {
     _ = @import("game/session_tests.zig");
     _ = @import("world/persistence/region_file.zig");
     _ = @import("world/persistence/chunk_serializer.zig");
+    _ = @import("world/meshing/quadric_simplifier.zig");
 }
 
 test "Vec3 addition" {
