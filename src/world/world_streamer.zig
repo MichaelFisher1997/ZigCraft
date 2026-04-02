@@ -560,12 +560,19 @@ pub const WorldStreamer = struct {
 
         sm.markAutoSaved();
 
+        const failed = sm.flush();
+
+        self.storage.chunks_mutex.lockShared();
         for (dirty_keys.items) |key| {
             if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = false;
+                const should_remark = for (failed) |f| {
+                    if (f.x == key.x and f.z == key.z) break true;
+                } else false;
+                if (!should_remark) data.chunk.modified = false;
                 data.chunk.unpin();
             }
         }
+        self.storage.chunks_mutex.unlockShared();
     }
 
     pub fn getStats(self: *WorldStreamer) struct { gen_queue: usize, mesh_queue: usize, upload_queue: usize } {

@@ -7,6 +7,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = @import("../../engine/core/log.zig");
+const timestampMs = @import("../../engine/core/time.zig").timestampMs;
 const Chunk = @import("../chunk.zig").Chunk;
 const ChunkKey = @import("../chunk_storage.zig").ChunkKey;
 const RegionFile = @import("region_file.zig").RegionFile;
@@ -22,15 +23,6 @@ const CHUNK_SIZE_Z = @import("../chunk.zig").CHUNK_SIZE_Z;
 const SAVE_THREAD_INTERVAL_NS: u64 = 100 * std.time.ns_per_ms;
 const AUTO_SAVE_INTERVAL_MS: i64 = 60_000;
 const MAX_OPEN_REGIONS: usize = 16;
-
-fn currentTimestampMs() i64 {
-    const inst = std.time.Instant.now() catch return 0;
-    const sec: i64 = inst.timestamp.sec;
-    const nsec: i64 = inst.timestamp.nsec;
-    const ms_from_sec = std.math.mul(i64, sec, std.time.ms_per_s) catch return std.math.maxInt(i64);
-    const ms_from_nsec = @divTrunc(nsec, std.time.ns_per_ms);
-    return ms_from_sec +| ms_from_nsec;
-}
 
 pub const LoadResult = enum {
     success,
@@ -105,12 +97,11 @@ pub const SaveManager = struct {
             .failed_mutex = .{},
             .failed_chunks = .empty,
             .level_data = blk: {
-                var ld = LevelData.init(seed, "");
                 const generator_copy = try allocator.dupe(u8, generator_name);
-                ld.generator_name = generator_copy;
-                break :blk ld;
+                errdefer allocator.free(generator_copy);
+                break :blk LevelData.init(seed, generator_copy);
             },
-            .last_auto_save_ms = currentTimestampMs(),
+            .last_auto_save_ms = timestampMs(),
         };
 
         try sm.level_data.saveToFile(allocator, sm.save_dir);
@@ -211,12 +202,12 @@ pub const SaveManager = struct {
     }
 
     pub fn shouldAutoSave(self: *const SaveManager) bool {
-        const now = currentTimestampMs();
+        const now = timestampMs();
         return (now - self.last_auto_save_ms) >= AUTO_SAVE_INTERVAL_MS;
     }
 
     pub fn markAutoSaved(self: *SaveManager) void {
-        self.last_auto_save_ms = currentTimestampMs();
+        self.last_auto_save_ms = timestampMs();
     }
 
     pub fn flush(self: *SaveManager) []ChunkKey {
@@ -321,7 +312,7 @@ pub const SaveManager = struct {
     }
 
     fn getOrOpenRegion(self: *SaveManager, rx: i32, rz: i32) !*RegionFile {
-        const now_ms = currentTimestampMs();
+        const now_ms = timestampMs();
 
         for (self.region_cache.items) |*entry| {
             if (entry.region_x == rx and entry.region_z == rz) {

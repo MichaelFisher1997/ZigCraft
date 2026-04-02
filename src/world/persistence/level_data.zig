@@ -6,15 +6,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = @import("../../engine/core/log.zig");
-
-fn currentTimestampMs() i64 {
-    const inst = std.time.Instant.now() catch return 0;
-    const sec: i64 = inst.timestamp.sec;
-    const nsec: i64 = inst.timestamp.nsec;
-    const ms_from_sec = std.math.mul(i64, sec, std.time.ms_per_s) catch return std.math.maxInt(i64);
-    const ms_from_nsec = @divTrunc(nsec, std.time.ns_per_ms);
-    return ms_from_sec +| ms_from_nsec;
-}
+const timestampMs = @import("../../engine/core/time.zig").timestampMs;
 
 pub const LevelData = struct {
     seed: u64,
@@ -25,7 +17,7 @@ pub const LevelData = struct {
     spawn_z: i32,
 
     pub fn init(seed: u64, generator_name: []const u8) LevelData {
-        const now = currentTimestampMs();
+        const now = timestampMs();
         return .{
             .seed = seed,
             .generator_name = generator_name,
@@ -110,7 +102,7 @@ pub const LevelData = struct {
     }
 
     pub fn touchLastPlayed(self: *LevelData) void {
-        self.last_played_timestamp = currentTimestampMs();
+        self.last_played_timestamp = timestampMs();
     }
 };
 
