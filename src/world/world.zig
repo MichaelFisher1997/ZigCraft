@@ -7,6 +7,7 @@ const NeighborChunks = @import("chunk_mesh.zig").NeighborChunks;
 const BlockType = @import("block.zig").BlockType;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
 const ChunkData = @import("chunk_storage.zig").ChunkData;
+const ChunkKey = @import("chunk_storage.zig").ChunkKey;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const worldToLocal = @import("chunk.zig").worldToLocal;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
@@ -40,6 +41,7 @@ const LODConfig = @import("lod_chunk.zig").LODConfig;
 const ILODConfig = @import("lod_chunk.zig").ILODConfig;
 const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
+const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -239,40 +241,60 @@ pub const World = struct {
     pub fn saveAllModifiedChunks(self: *World) void {
         const sm = self.save_manager orelse return;
 
+        var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
+        defer dirty_keys.deinit(self.allocator);
+
         self.storage.chunks_mutex.lockShared();
         var iter = self.storage.iteratorUnsafe();
         while (iter.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
                 sm.enqueueSave(chunk);
-                chunk.modified = false;
+                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
             }
         }
         self.storage.chunks_mutex.unlockShared();
 
         sm.flush();
+
+        self.storage.chunks_mutex.lockShared();
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = false;
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
     }
 
     pub fn checkAutoSave(self: *World) void {
         const sm = self.save_manager orelse return;
         if (!sm.shouldAutoSave()) return;
 
+        var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
+        defer dirty_keys.deinit(self.allocator);
+
         self.storage.chunks_mutex.lockShared();
         var iter = self.storage.iteratorUnsafe();
         while (iter.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
                 sm.enqueueSave(chunk);
-                chunk.modified = false;
+                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
             }
         }
         self.storage.chunks_mutex.unlockShared();
 
         sm.markAutoSaved();
+
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = false;
+            }
+        }
     }
 
-    pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) bool {
-        const sm = self.save_manager orelse return false;
+    pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
+        const sm = self.save_manager orelse return .not_found;
         return sm.loadChunk(cx, cz, out_chunk);
     }
 

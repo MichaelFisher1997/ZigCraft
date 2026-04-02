@@ -62,6 +62,7 @@ const LODManager = @import("lod_manager.zig").LODManager;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const log = @import("../engine/core/log.zig");
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
+const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -396,9 +397,11 @@ pub const WorldStreamer = struct {
                 if (self.storage.chunks.get(key)) |data| {
                     if (data.chunk.modified and data.chunk.generated) {
                         sm.enqueueSave(&data.chunk);
-                        data.chunk.modified = false;
                     }
                 }
+            }
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = false;
             }
             _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
         }
@@ -433,19 +436,25 @@ pub const WorldStreamer = struct {
         defer chunk_data.chunk.unpin();
 
         if (chunk_data.chunk.state == .generating and chunk_data.chunk.job_token == job.data.chunk.job_token) {
-            const loaded_from_save = blk: {
-                const sm = self.save_manager orelse break :blk false;
+            const load_result = blk: {
+                const sm = self.save_manager orelse break :blk LoadResult.not_found;
                 break :blk sm.loadChunk(cx, cz, &chunk_data.chunk);
             };
 
-            if (!loaded_from_save) {
+            if (load_result != .success) {
+                if (load_result == .read_error or load_result == .corrupt_data) {
+                    log.log.warn("Save load failed for chunk ({}, {}): {}, regenerating", .{ cx, cz, load_result });
+                }
                 self.generator.generate(&chunk_data.chunk, &self.gen_queue.abort_worker);
                 if (self.gen_queue.abort_worker) {
                     chunk_data.chunk.state = .missing;
                     return;
                 }
             }
+
+            self.storage.chunks_mutex.lockShared();
             chunk_data.chunk.state = .generated;
+            self.storage.chunks_mutex.unlockShared();
             self.markNeighborsForRemesh(cx, cz);
         }
     }
@@ -534,18 +543,27 @@ pub const WorldStreamer = struct {
         const sm = self.save_manager orelse return;
         if (!sm.shouldAutoSave()) return;
 
+        var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
+        defer dirty_keys.deinit(self.allocator);
+
         self.storage.chunks_mutex.lockShared();
         var iter = self.storage.iteratorUnsafe();
         while (iter.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
                 sm.enqueueSave(chunk);
-                chunk.modified = false;
+                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
             }
         }
         self.storage.chunks_mutex.unlockShared();
 
         sm.markAutoSaved();
+
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = false;
+            }
+        }
     }
 
     pub fn getStats(self: *WorldStreamer) struct { gen_queue: usize, mesh_queue: usize, upload_queue: usize } {

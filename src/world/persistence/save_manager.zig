@@ -28,9 +28,11 @@ fn currentTimestampMs() i64 {
     return @as(i64, @intCast(inst.timestamp.sec)) * std.time.ms_per_s + @divTrunc(@as(i64, @intCast(inst.timestamp.nsec)), @as(i64, std.time.ns_per_ms));
 }
 
-pub const SaveManagerError = error{
-    SaveDirNotFound,
-    SaveThreadFailed,
+pub const LoadResult = enum {
+    success,
+    not_found,
+    read_error,
+    corrupt_data,
 };
 
 pub const SaveQueueEntry = struct {
@@ -93,12 +95,14 @@ pub const SaveManager = struct {
             .thread = undefined,
             .region_cache_mutex = .{},
             .region_cache = .empty,
-            .level_data = LevelData.init(seed, generator_name),
+            .level_data = blk: {
+                var ld = LevelData.init(seed, "");
+                const generator_copy = try allocator.dupe(u8, generator_name);
+                ld.generator_name = generator_copy;
+                break :blk ld;
+            },
             .last_auto_save_ms = currentTimestampMs(),
         };
-
-        const generator_copy = try allocator.dupe(u8, generator_name);
-        sm.level_data.generator_name = generator_copy;
 
         try sm.level_data.saveToFile(allocator, sm.save_dir);
 
@@ -134,32 +138,31 @@ pub const SaveManager = struct {
     }
 
     pub fn enqueueSave(self: *SaveManager, chunk: *const Chunk) void {
-        self.queue_mutex.lock();
-        defer self.queue_mutex.unlock();
-
-        for (self.queue.items) |*entry| {
-            if (entry.chunk_x == chunk.chunk_x and entry.chunk_z == chunk.chunk_z) {
-                entry.blocks = chunk.blocks;
-                entry.light = chunk.light;
-                entry.biomes = chunk.biomes;
-                entry.heightmap = chunk.heightmap;
-                return;
-            }
-        }
-
-        self.queue.append(self.allocator, .{
+        const snapshot = SaveQueueEntry{
             .chunk_x = chunk.chunk_x,
             .chunk_z = chunk.chunk_z,
             .blocks = chunk.blocks,
             .light = chunk.light,
             .biomes = chunk.biomes,
             .heightmap = chunk.heightmap,
-        }) catch |err| {
-            log.log.err("Failed to enqueue chunk ({}, {}) for save: {}", .{ chunk.chunk_x, chunk.chunk_z, err });
+        };
+
+        self.queue_mutex.lock();
+        defer self.queue_mutex.unlock();
+
+        for (self.queue.items) |*entry| {
+            if (entry.chunk_x == snapshot.chunk_x and entry.chunk_z == snapshot.chunk_z) {
+                entry.* = snapshot;
+                return;
+            }
+        }
+
+        self.queue.append(self.allocator, snapshot) catch |err| {
+            log.log.err("Failed to enqueue chunk ({}, {}) for save: {}", .{ snapshot.chunk_x, snapshot.chunk_z, err });
         };
     }
 
-    pub fn loadChunk(self: *SaveManager, cx: i32, cz: i32, out_chunk: *Chunk) bool {
+    pub fn loadChunk(self: *SaveManager, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
         const rx: i32 = @divFloor(cx, 32);
         const rz: i32 = @divFloor(cz, 32);
 
@@ -168,23 +171,23 @@ pub const SaveManager = struct {
 
         var region = self.getOrOpenRegion(rx, rz) catch |err| {
             log.log.debug("No saved chunk at ({}, {}): region error: {}", .{ cx, cz, err });
-            return false;
+            return .not_found;
         };
 
         const local_x: u5 = @intCast(@mod(cx, 32));
         const local_z: u5 = @intCast(@mod(cz, 32));
 
-        if (!region.hasChunk(local_x, local_z)) return false;
+        if (!region.hasChunk(local_x, local_z)) return .not_found;
 
         const data = region.readChunk(local_x, local_z, self.allocator) catch |err| {
             log.log.err("Failed to read chunk ({}, {}) from region: {}", .{ cx, cz, err });
-            return false;
+            return .read_error;
         };
         defer self.allocator.free(data);
 
         chunk_serializer.deserializeChunk(data, out_chunk) catch |err| {
             log.log.err("Failed to deserialize chunk ({}, {}): {}", .{ cx, cz, err });
-            return false;
+            return .corrupt_data;
         };
 
         out_chunk.chunk_x = cx;
@@ -192,7 +195,7 @@ pub const SaveManager = struct {
         out_chunk.generated = true;
 
         log.log.debug("Loaded chunk ({}, {}) from save", .{ cx, cz });
-        return true;
+        return .success;
     }
 
     pub fn shouldAutoSave(self: *const SaveManager) bool {
@@ -206,7 +209,7 @@ pub const SaveManager = struct {
 
     pub fn flush(self: *SaveManager) void {
         var spins: u32 = 0;
-        while (spins < 2000) : (spins += 1) {
+        while (spins < 12000) : (spins += 1) {
             self.queue_mutex.lock();
             const count = self.queue.items.len;
             self.queue_mutex.unlock();
@@ -310,18 +313,23 @@ pub const SaveManager = struct {
             self.evictOldestRegion();
         }
 
-        var rel_buf: [512]u8 = undefined;
+        var rel_buf: [std.fs.max_path_bytes]u8 = undefined;
         const region_filename = std.fmt.bufPrint(&rel_buf, "regions/r.{}.{}.mca", .{ rx, rz }) catch unreachable;
 
         const region = blk: {
-            var abs_buf_open: [std.fs.max_path_bytes]u8 = undefined;
-            if (self.save_dir.realpath(region_filename, &abs_buf_open)) |abs_path| {
+            var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
+            if (self.save_dir.realpath(region_filename, &abs_buf)) |abs_path| {
                 break :blk try RegionFile.open(self.allocator, abs_path);
             } else |_| {
-                var abs_buf_create: [std.fs.max_path_bytes]u8 = undefined;
-                const file = try self.save_dir.createFile(region_filename, .{ .read = true, .truncate = true });
+                const file = self.save_dir.createFile(region_filename, .{ .read = true, .exclusive = true }) catch |err| {
+                    if (err == error.PathAlreadyExists) {
+                        const abs_path = try self.save_dir.realpath(region_filename, &abs_buf);
+                        break :blk try RegionFile.open(self.allocator, abs_path);
+                    }
+                    return err;
+                };
                 file.close();
-                break :blk try RegionFile.create(self.allocator, try self.save_dir.realpath(region_filename, &abs_buf_create));
+                break :blk try RegionFile.create(self.allocator, try self.save_dir.realpath(region_filename, &abs_buf));
             }
         };
 
@@ -403,7 +411,7 @@ test "SaveManager enqueue and flush processes chunks" {
     sm.flush();
 
     var loaded = Chunk.init(5, -3);
-    try testing.expect(sm.loadChunk(5, -3, &loaded));
+    try testing.expect(sm.loadChunk(5, -3, &loaded) == .success);
     try testing.expectEqual(BlockType.stone, loaded.getBlock(8, 64, 8));
     try testing.expectEqual(BiomeId.forest, loaded.getBiome(0, 0));
 }
@@ -422,7 +430,7 @@ test "SaveManager loadChunk returns false for non-existent chunk" {
     defer sm.deinit();
 
     var chunk = Chunk.init(100, 200);
-    try testing.expect(!sm.loadChunk(100, 200, &chunk));
+    try testing.expect(sm.loadChunk(100, 200, &chunk) == .not_found);
 }
 
 test "SaveManager duplicate enqueue overwrites previous" {
@@ -449,6 +457,6 @@ test "SaveManager duplicate enqueue overwrites previous" {
     sm.flush();
 
     var loaded = Chunk.init(0, 0);
-    try testing.expect(sm.loadChunk(0, 0, &loaded));
+    try testing.expect(sm.loadChunk(0, 0, &loaded) == .success);
     try testing.expectEqual(BlockType.gold_ore, loaded.getBlock(5, 5, 5));
 }
