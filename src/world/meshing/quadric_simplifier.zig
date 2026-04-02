@@ -584,16 +584,9 @@ fn collectResults(
 }
 
 fn makeVertex(x: f32, y: f32, z: f32) Vertex {
-    return .{
-        .pos = .{ x, y, z },
-        .color = .{ 1.0, 1.0, 1.0 },
-        .normal = .{ 0.0, 1.0, 0.0 },
-        .uv = .{ 0.0, 0.0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0.0, 0.0, 0.0 },
-        .ao = 1.0,
-    };
+    var v: Vertex = std.mem.zeroes(Vertex);
+    v.pos = .{ x, y, z };
+    return v;
 }
 
 fn createCube(allocator: Allocator) !struct { vertices: []Vertex, indices: []u32 } {
