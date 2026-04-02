@@ -9,7 +9,11 @@ const log = @import("../../engine/core/log.zig");
 
 fn currentTimestampMs() i64 {
     const inst = std.time.Instant.now() catch return 0;
-    return @as(i64, inst.timestamp.sec) * std.time.ms_per_s + @divTrunc(@as(i64, inst.timestamp.nsec), @as(i64, std.time.ns_per_ms));
+    const sec: i64 = inst.timestamp.sec;
+    const nsec: i64 = inst.timestamp.nsec;
+    const ms_from_sec = std.math.mul(i64, sec, std.time.ms_per_s) catch return std.math.maxInt(i64);
+    const ms_from_nsec = @divTrunc(nsec, std.time.ns_per_ms);
+    return ms_from_sec +| ms_from_nsec;
 }
 
 pub const LevelData = struct {

@@ -249,18 +249,25 @@ pub const World = struct {
         while (iter.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
+                chunk.pin();
                 sm.enqueueSave(chunk);
                 dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
             }
         }
         self.storage.chunks_mutex.unlockShared();
 
-        sm.flush();
+        const failed = sm.flush();
 
         self.storage.chunks_mutex.lockShared();
         for (dirty_keys.items) |key| {
             if (self.storage.chunks.get(key)) |data| {
                 data.chunk.modified = false;
+                data.chunk.unpin();
+            }
+        }
+        for (failed) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = true;
             }
         }
         self.storage.chunks_mutex.unlockShared();
@@ -274,10 +281,11 @@ pub const World = struct {
         defer dirty_keys.deinit(self.allocator);
 
         self.storage.chunks_mutex.lockShared();
-        var iter = self.storage.iteratorUnsafe();
-        while (iter.next()) |entry| {
+        var iter_a = self.storage.iteratorUnsafe();
+        while (iter_a.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
+                chunk.pin();
                 sm.enqueueSave(chunk);
                 dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
             }
@@ -289,6 +297,7 @@ pub const World = struct {
         for (dirty_keys.items) |key| {
             if (self.storage.chunks.get(key)) |data| {
                 data.chunk.modified = false;
+                data.chunk.unpin();
             }
         }
     }

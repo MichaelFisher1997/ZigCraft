@@ -396,12 +396,12 @@ pub const WorldStreamer = struct {
             if (self.save_manager) |sm| {
                 if (self.storage.chunks.get(key)) |data| {
                     if (data.chunk.modified and data.chunk.generated) {
+                        data.chunk.pin();
                         sm.enqueueSave(&data.chunk);
+                        data.chunk.modified = false;
+                        data.chunk.unpin();
                     }
                 }
-            }
-            if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = false;
             }
             _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
         }
@@ -551,6 +551,7 @@ pub const WorldStreamer = struct {
         while (iter.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
+                chunk.pin();
                 sm.enqueueSave(chunk);
                 dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
             }
@@ -562,6 +563,7 @@ pub const WorldStreamer = struct {
         for (dirty_keys.items) |key| {
             if (self.storage.chunks.get(key)) |data| {
                 data.chunk.modified = false;
+                data.chunk.unpin();
             }
         }
     }

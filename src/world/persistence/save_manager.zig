@@ -25,7 +25,11 @@ const MAX_OPEN_REGIONS: usize = 16;
 
 fn currentTimestampMs() i64 {
     const inst = std.time.Instant.now() catch return 0;
-    return @as(i64, @intCast(inst.timestamp.sec)) * std.time.ms_per_s + @divTrunc(@as(i64, @intCast(inst.timestamp.nsec)), @as(i64, std.time.ns_per_ms));
+    const sec: i64 = inst.timestamp.sec;
+    const nsec: i64 = inst.timestamp.nsec;
+    const ms_from_sec = std.math.mul(i64, sec, std.time.ms_per_s) catch return std.math.maxInt(i64);
+    const ms_from_nsec = @divTrunc(nsec, std.time.ns_per_ms);
+    return ms_from_sec +| ms_from_nsec;
 }
 
 pub const LoadResult = enum {
@@ -62,6 +66,9 @@ pub const SaveManager = struct {
     running: std.atomic.Value(bool),
     pending_saves: std.atomic.Value(usize),
 
+    failed_mutex: std.Thread.Mutex,
+    failed_chunks: std.ArrayListUnmanaged(ChunkKey),
+
     thread: std.Thread,
 
     region_cache_mutex: std.Thread.Mutex,
@@ -95,6 +102,8 @@ pub const SaveManager = struct {
             .thread = undefined,
             .region_cache_mutex = .{},
             .region_cache = .empty,
+            .failed_mutex = .{},
+            .failed_chunks = .empty,
             .level_data = blk: {
                 var ld = LevelData.init(seed, "");
                 const generator_copy = try allocator.dupe(u8, generator_name);
@@ -115,7 +124,7 @@ pub const SaveManager = struct {
     }
 
     pub fn deinit(self: *SaveManager) void {
-        self.flush();
+        _ = self.flush();
 
         self.running.store(false, .release);
         self.thread.join();
@@ -128,6 +137,7 @@ pub const SaveManager = struct {
         };
 
         self.queue.deinit(self.allocator);
+        self.failed_chunks.deinit(self.allocator);
 
         self.save_dir.close();
 
@@ -138,6 +148,8 @@ pub const SaveManager = struct {
     }
 
     pub fn enqueueSave(self: *SaveManager, chunk: *const Chunk) void {
+        std.debug.assert(chunk.pin_count.load(.acquire) > 0);
+
         const snapshot = SaveQueueEntry{
             .chunk_x = chunk.chunk_x,
             .chunk_z = chunk.chunk_z,
@@ -207,7 +219,7 @@ pub const SaveManager = struct {
         self.last_auto_save_ms = currentTimestampMs();
     }
 
-    pub fn flush(self: *SaveManager) void {
+    pub fn flush(self: *SaveManager) []ChunkKey {
         var spins: u32 = 0;
         while (spins < 12000) : (spins += 1) {
             self.queue_mutex.lock();
@@ -217,6 +229,12 @@ pub const SaveManager = struct {
             if (count == 0 and saving == 0) break;
             std.posix.nanosleep(0, 10 * std.time.ns_per_ms);
         }
+
+        self.failed_mutex.lock();
+        const failed = self.failed_chunks.items;
+        self.failed_chunks = .empty;
+        self.failed_mutex.unlock();
+        return failed;
     }
 
     fn saveThreadFn(self: *SaveManager) void {
@@ -261,6 +279,9 @@ pub const SaveManager = struct {
         for (batch[0..count]) |entry| {
             self.saveOneChunk(&entry) catch |err| {
                 log.log.err("Failed to save chunk ({}, {}): {}", .{ entry.chunk_x, entry.chunk_z, err });
+                self.failed_mutex.lock();
+                self.failed_chunks.append(self.allocator, .{ .x = entry.chunk_x, .z = entry.chunk_z }) catch {};
+                self.failed_mutex.unlock();
             };
         }
         self.pending_saves.store(0, .release);
@@ -406,9 +427,11 @@ test "SaveManager enqueue and flush processes chunks" {
     chunk.setBlock(8, 64, 8, .stone);
     chunk.setBiome(0, 0, .forest);
     chunk.generated = true;
+    chunk.pin();
 
     sm.enqueueSave(&chunk);
-    sm.flush();
+    chunk.unpin();
+    _ = sm.flush();
 
     var loaded = Chunk.init(5, -3);
     try testing.expect(sm.loadChunk(5, -3, &loaded) == .success);
@@ -448,13 +471,17 @@ test "SaveManager duplicate enqueue overwrites previous" {
 
     var chunk1 = Chunk.init(0, 0);
     chunk1.setBlock(5, 5, 5, .dirt);
+    chunk1.pin();
 
     var chunk2 = Chunk.init(0, 0);
     chunk2.setBlock(5, 5, 5, .gold_ore);
+    chunk2.pin();
 
     sm.enqueueSave(&chunk1);
+    chunk1.unpin();
     sm.enqueueSave(&chunk2);
-    sm.flush();
+    chunk2.unpin();
+    _ = sm.flush();
 
     var loaded = Chunk.init(0, 0);
     try testing.expect(sm.loadChunk(0, 0, &loaded) == .success);
