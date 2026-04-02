@@ -4,6 +4,9 @@
 //! for mesh simplification. Iteratively collapses edges based on quadric error cost
 //! to produce simplified meshes that preserve silhouettes and geometric features
 //! better than uniform downsampling.
+//!
+//! Memory ownership: All slices returned in `SimplifiedMesh` are owned by the caller
+//! and must be freed with the same allocator passed to `simplify()`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -17,6 +20,7 @@ pub const SimplifiedMesh = struct {
     original_triangle_count: u32,
     simplified_triangle_count: u32,
     error_estimate: f64,
+    skipped_collapses: u32,
 };
 
 const QuadricMatrix = struct {
@@ -68,7 +72,7 @@ const QuadricMatrix = struct {
             a01 * (a01 * a22 - a12 * a02) +
             a02 * (a01 * a12 - a11 * a02);
 
-        if (@abs(det) < 1e-10) {
+        if (@abs(det) < DETERMINANT_EPSILON) {
             return .{
                 .pos = .{
                     (fa[0] + fb[0]) * 0.5,
@@ -93,6 +97,8 @@ const QuadricMatrix = struct {
         return .{ .pos = .{ dx, dy, dz }, .solvable = true };
     }
 };
+
+const DETERMINANT_EPSILON: f64 = 1e-10;
 
 fn edgeKey(v1: u32, v2: u32) u64 {
     const lo = @min(v1, v2);
@@ -130,6 +136,7 @@ pub const QuadricSimplifier = struct {
                 .original_triangle_count = 0,
                 .simplified_triangle_count = 0,
                 .error_estimate = 0,
+                .skipped_collapses = 0,
             };
         }
 
@@ -137,12 +144,14 @@ pub const QuadricSimplifier = struct {
             const out_v = try allocator.dupe(Vertex, vertices);
             errdefer allocator.free(out_v);
             const out_i = try allocator.dupe(u32, indices);
+            errdefer allocator.free(out_i);
             return .{
                 .vertices = out_v,
                 .indices = out_i,
                 .original_triangle_count = num_triangles,
                 .simplified_triangle_count = num_triangles,
                 .error_estimate = 0,
+                .skipped_collapses = 0,
             };
         }
 
@@ -216,8 +225,12 @@ pub const QuadricSimplifier = struct {
             }
         }
 
+        var neighbor_buf = try allocator.alloc(u32, n);
+        defer allocator.free(neighbor_buf);
+
         var current_tri_count = num_triangles;
         var max_error: f64 = 0;
+        var skipped_collapses: u32 = 0;
 
         while (current_tri_count > target_triangles) {
             var entry: ?EdgeEntry = null;
@@ -243,7 +256,10 @@ pub const QuadricSimplifier = struct {
                     (pos[e.v1][1] + pos[e.v2][1]) * 0.5,
                     (pos[e.v1][2] + pos[e.v2][2]) * 0.5,
                 };
-                if (wouldFlipNormal(pos, tris, tri_active, e.v1, e.v2, mid)) continue;
+                if (wouldFlipNormal(pos, tris, tri_active, e.v1, e.v2, mid)) {
+                    skipped_collapses += 1;
+                    continue;
+                }
                 pos[e.v1] = mid;
             } else {
                 pos[e.v1] = result.pos;
@@ -255,7 +271,6 @@ pub const QuadricSimplifier = struct {
             quadrics[e.v1] = combined;
             active[e.v2] = false;
 
-            var neighbor_buf: [512]u32 = undefined;
             var neighbor_count: usize = 0;
 
             for (tris, 0..) |tri, ti| {
@@ -273,7 +288,7 @@ pub const QuadricSimplifier = struct {
                 } else if (has_v2) {
                     for (tri) |v| {
                         if (v != e.v1 and v != e.v2) {
-                            addToList(&neighbor_buf, &neighbor_count, v);
+                            addUnique(neighbor_buf, &neighbor_count, v);
                         }
                     }
                     for (0..3) |j| {
@@ -294,7 +309,7 @@ pub const QuadricSimplifier = struct {
                 if (!has_v1) continue;
                 for (tri) |v| {
                     if (v != e.v1) {
-                        addToList(&neighbor_buf, &neighbor_count, v);
+                        addUnique(neighbor_buf, &neighbor_count, v);
                     }
                 }
             }
@@ -318,7 +333,7 @@ pub const QuadricSimplifier = struct {
             }
         }
 
-        return collectResults(allocator, vertices, pos, active, tris, tri_active, num_triangles, current_tri_count, max_error);
+        return collectResults(allocator, vertices, pos, active, tris, tri_active, num_triangles, current_tri_count, max_error, skipped_collapses);
     }
 };
 
@@ -368,11 +383,12 @@ fn canCollapse(
     v1: u32,
     v2: u32,
 ) bool {
-    var link_edge: [128]u32 = undefined;
+    const MAX_VALENCE: usize = 512;
+    var link_edge: [MAX_VALENCE]u32 = undefined;
     var link_edge_len: usize = 0;
-    var link_v1: [256]u32 = undefined;
+    var link_v1: [MAX_VALENCE]u32 = undefined;
     var link_v1_len: usize = 0;
-    var link_v2: [256]u32 = undefined;
+    var link_v2: [MAX_VALENCE]u32 = undefined;
     var link_v2_len: usize = 0;
 
     for (tris, 0..) |tri, ti| {
@@ -386,9 +402,15 @@ fn canCollapse(
         for (tri) |v| {
             if (v == v1 or v == v2) continue;
 
-            if (has_v1 and has_v2) addToSet(&link_edge, &link_edge_len, v);
-            if (has_v1) addToSet(&link_v1, &link_v1_len, v);
-            if (has_v2) addToSet(&link_v2, &link_v2_len, v);
+            if (has_v1 and has_v2) {
+                if (!addToSetChecked(&link_edge, &link_edge_len, v)) return true;
+            }
+            if (has_v1) {
+                if (!addToSetChecked(&link_v1, &link_v1_len, v)) return true;
+            }
+            if (has_v2) {
+                if (!addToSetChecked(&link_v2, &link_v2_len, v)) return true;
+            }
         }
     }
 
@@ -409,21 +431,23 @@ fn canCollapse(
     return true;
 }
 
-fn addToSet(buf: []u32, len: *usize, val: u32) void {
+fn addToSetChecked(buf: []u32, len: *usize, val: u32) bool {
+    for (buf[0..len.*]) |v| {
+        if (v == val) return true;
+    }
+    if (len.* >= buf.len) return false;
+    buf[len.*] = val;
+    len.* += 1;
+    return true;
+}
+
+fn addUnique(buf: []u32, len: *usize, val: u32) void {
+    std.debug.assert(len.* < buf.len);
     for (buf[0..len.*]) |v| {
         if (v == val) return;
     }
-    if (len.* < buf.len) {
-        buf[len.*] = val;
-        len.* += 1;
-    }
-}
-
-fn addToList(buf: []u32, len: *usize, val: u32) void {
-    if (len.* < buf.len) {
-        buf[len.*] = val;
-        len.* += 1;
-    }
+    buf[len.*] = val;
+    len.* += 1;
 }
 
 fn wouldFlipNormal(
@@ -488,6 +512,7 @@ fn collectResults(
     num_tris: u32,
     current_tri_count: u32,
     max_error: f64,
+    skipped: u32,
 ) !SimplifiedMesh {
     const n = active.len;
 
@@ -504,6 +529,17 @@ fn collectResults(
         }
     }
 
+    if (vertex_count == 0) {
+        return .{
+            .vertices = &.{},
+            .indices = &.{},
+            .original_triangle_count = num_tris,
+            .simplified_triangle_count = 0,
+            .error_estimate = max_error,
+            .skipped_collapses = skipped,
+        };
+    }
+
     const out_verts = try allocator.alloc(Vertex, vertex_count);
     var vi: u32 = 0;
     for (active, 0..) |is_active, i| {
@@ -517,7 +553,20 @@ fn collectResults(
         vi += 1;
     }
 
-    const out_indices = try allocator.alloc(u32, @as(usize, @intCast(current_tri_count)) * 3);
+    const index_count: usize = @as(usize, @intCast(current_tri_count)) * 3;
+    if (index_count == 0) {
+        allocator.free(out_verts);
+        return .{
+            .vertices = &.{},
+            .indices = &.{},
+            .original_triangle_count = num_tris,
+            .simplified_triangle_count = 0,
+            .error_estimate = max_error,
+            .skipped_collapses = skipped,
+        };
+    }
+
+    const out_indices = try allocator.alloc(u32, index_count);
     var ii: usize = 0;
     for (tris, 0..) |tri, ti| {
         if (ti >= num_tris) break;
@@ -534,6 +583,7 @@ fn collectResults(
         .original_triangle_count = num_tris,
         .simplified_triangle_count = current_tri_count,
         .error_estimate = max_error,
+        .skipped_collapses = skipped,
     };
 }
 
