@@ -15,11 +15,17 @@ const rhi_types = @import("../../engine/graphics/rhi_types.zig");
 const Vertex = rhi_types.Vertex;
 
 pub const SimplifiedMesh = struct {
+    /// Caller owns these slices and must free them with the same allocator.
     vertices: []Vertex,
+    /// Caller owns these slices and must free them with the same allocator.
     indices: []u32,
+    /// Number of triangles in the input mesh.
     original_triangle_count: u32,
+    /// Number of triangles in the simplified output.
     simplified_triangle_count: u32,
+    /// Maximum quadric error observed during simplification.
     error_estimate: f64,
+    /// Number of candidate collapses rejected by normal-flip checks.
     skipped_collapses: u32,
 };
 
@@ -101,6 +107,10 @@ const QuadricMatrix = struct {
 /// Epsilon for determinant check in optimal position solver.
 /// Safe for mesh vertices in [0.001, 1000.0] range -- voxel chunks use block-unit coordinates.
 const DETERMINANT_EPSILON: f64 = 1e-10;
+
+/// Skip-collapse guard multiplier. The simplifier stops after
+/// `num_triangles * MAX_SKIP_MULTIPLIER` rejected collapses.
+const MAX_SKIP_MULTIPLIER: u32 = 2;
 
 fn edgeKey(v1: u32, v2: u32) u64 {
     const lo = @min(v1, v2);
@@ -235,7 +245,7 @@ pub const QuadricSimplifier = struct {
         var skipped_collapses: u32 = 0;
 
         while (current_tri_count > target_triangles) {
-            if (skipped_collapses > num_triangles * 2) break;
+            if (skipped_collapses > num_triangles * MAX_SKIP_MULTIPLIER) break;
 
             var entry: ?EdgeEntry = null;
             while (heap.removeOrNull()) |e| {
@@ -292,7 +302,7 @@ pub const QuadricSimplifier = struct {
                 } else if (has_v2) {
                     for (tri) |v| {
                         if (v != e.v1 and v != e.v2) {
-                            addUnique(neighbor_buf, &neighbor_count, v);
+                            try addUnique(neighbor_buf, &neighbor_count, v);
                         }
                     }
                     for (0..3) |j| {
@@ -313,7 +323,7 @@ pub const QuadricSimplifier = struct {
                 if (!has_v1) continue;
                 for (tri) |v| {
                     if (v != e.v1) {
-                        addUnique(neighbor_buf, &neighbor_count, v);
+                        try addUnique(neighbor_buf, &neighbor_count, v);
                     }
                 }
             }
@@ -436,8 +446,8 @@ fn addUniqueGrowable(allocator: Allocator, list: *std.ArrayListUnmanaged(u32), v
     try list.append(allocator, val);
 }
 
-fn addUnique(buf: []u32, len: *usize, val: u32) void {
-    std.debug.assert(len.* < buf.len);
+fn addUnique(buf: []u32, len: *usize, val: u32) !void {
+    if (len.* >= buf.len) return error.BufferOverflow;
     for (buf[0..len.*]) |v| {
         if (v == val) return;
     }
@@ -584,9 +594,7 @@ fn collectResults(
 }
 
 fn makeVertex(x: f32, y: f32, z: f32) Vertex {
-    var v: Vertex = std.mem.zeroes(Vertex);
-    v.pos = .{ x, y, z };
-    return v;
+    return Vertex.init(.{ x, y, z }, .{ 1.0, 1.0, 1.0 }, .{ 0.0, 1.0, 0.0 }, .{ 0.0, 0.0 }, 0, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0);
 }
 
 fn createCube(allocator: Allocator) !struct { vertices: []Vertex, indices: []u32 } {
