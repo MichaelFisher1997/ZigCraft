@@ -85,7 +85,7 @@ jobs:
           mkdir -p /tmp/opencode-cache ~/.local/share/opencode
 
       - name: Run opencode audit
-        uses: anomalyco/opencode/github@v1.3.3
+        uses: anomalyco/opencode/github@v1.3.13
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}

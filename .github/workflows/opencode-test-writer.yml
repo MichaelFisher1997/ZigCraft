@@ -190,7 +190,7 @@ jobs:
       # XDG_CACHE_HOME=/tmp — non-persistent but avoids permission issues (see opencode-audit.yml)
       - name: Run opencode test writer
         if: steps.check-existing.outputs.skip != 'true'
-        uses: anomalyco/opencode/github@v1.3.3
+        uses: anomalyco/opencode/github@v1.3.13
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
