@@ -842,7 +842,9 @@ pub const LODManager = struct {
         switch (chunk.data) {
             .simplified => |*data| {
                 const bounds = chunk.worldBounds();
-                try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z);
+                const target_tris = self.config.getQEMTarget(chunk.lod_level);
+                const min_tris = self.config.getQEMMinInputTriangles();
+                try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target_tris, min_tris);
             },
             .full => {
                 // LOD0 meshes handled by World, not LODManager
