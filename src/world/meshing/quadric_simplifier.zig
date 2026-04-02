@@ -105,6 +105,7 @@ const QuadricMatrix = struct {
 };
 
 /// Epsilon for determinant check in optimal position solver.
+/// Chosen for double-precision stability with unit-scale meshes.
 /// Safe for mesh vertices in [0.001, 1000.0] range -- voxel chunks use block-unit coordinates.
 const DETERMINANT_EPSILON: f64 = 1e-10;
 
@@ -137,6 +138,16 @@ pub const QuadricSimplifier = struct {
         vertices: []const Vertex,
         indices: []const u32,
         target_triangles: u32,
+    ) !SimplifiedMesh {
+        return simplifyWithOptions(allocator, vertices, indices, target_triangles, MAX_SKIP_MULTIPLIER);
+    }
+
+    pub fn simplifyWithOptions(
+        allocator: Allocator,
+        vertices: []const Vertex,
+        indices: []const u32,
+        target_triangles: u32,
+        max_skip_multiplier: u32,
     ) !SimplifiedMesh {
         if (indices.len % 3 != 0) return error.InvalidIndexCount;
         const num_triangles: u32 = @intCast(indices.len / 3);
@@ -245,7 +256,7 @@ pub const QuadricSimplifier = struct {
         var skipped_collapses: u32 = 0;
 
         while (current_tri_count > target_triangles) {
-            if (skipped_collapses > num_triangles * MAX_SKIP_MULTIPLIER) break;
+            if (skipped_collapses > num_triangles * max_skip_multiplier) break;
 
             var entry: ?EdgeEntry = null;
             while (heap.removeOrNull()) |e| {
