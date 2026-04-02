@@ -165,6 +165,10 @@ pub const LODMesh = struct {
             self.allocator.free(full_mesh.indices);
         }
 
+        if (full_mesh.indices.len % 3 != 0) {
+            log.log.warn("LOD{} mesh has invalid index count {}, falling back", .{ @intFromEnum(self.lod_level), full_mesh.indices.len });
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        }
         const input_triangles: u32 = @intCast(full_mesh.indices.len / 3);
         if (input_triangles < min_input_triangles) {
             return self.buildFromSimplifiedData(data, world_x, world_z);
