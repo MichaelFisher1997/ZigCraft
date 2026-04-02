@@ -223,7 +223,7 @@ pub const LODMesh = struct {
         const expanded = try self.allocator.alloc(Vertex, indices.len);
         for (expanded, 0..) |*dst, i| {
             const idx = indices[i];
-            std.debug.assert(idx < vertices.len);
+            if (idx >= vertices.len) return error.InvalidIndex;
             dst.* = vertices[idx];
         }
         self.pending_vertices = expanded;
