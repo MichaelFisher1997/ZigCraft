@@ -170,11 +170,12 @@ pub const LODMesh = struct {
             return self.buildFromSimplifiedData(data, world_x, world_z);
         }
 
-        const effective_target = @min(target_triangles, input_triangles);
-        if (effective_target >= input_triangles) {
+        // No simplification needed — target already meets or exceeds input
+        if (target_triangles >= input_triangles) {
             try self.setPendingFromIndexed(full_mesh.vertices, full_mesh.indices);
             return;
         }
+        const effective_target = target_triangles;
 
         const simplified = QuadricSimplifier.simplify(
             self.allocator,
@@ -221,7 +222,9 @@ pub const LODMesh = struct {
 
         const expanded = try self.allocator.alloc(Vertex, indices.len);
         for (expanded, 0..) |*dst, i| {
-            dst.* = vertices[indices[i]];
+            const idx = indices[i];
+            std.debug.assert(idx < vertices.len);
+            dst.* = vertices[idx];
         }
         self.pending_vertices = expanded;
     }
@@ -436,6 +439,7 @@ fn buildFullDetailHeightmapMesh(
 
     const region_size_32: u32 = 32;
     const cell_size: u32 = if (w > 0 and w <= region_size_32) region_size_32 / w else 2;
+    std.debug.assert(cell_size >= 1);
 
     var vertices = std.ArrayListUnmanaged(Vertex){};
     errdefer vertices.deinit(allocator);
