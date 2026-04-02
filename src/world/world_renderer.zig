@@ -295,39 +295,26 @@ pub const WorldRenderer = struct {
         }
     }
 
+    fn chunkAABB(chunk_x: i32, chunk_z: i32, camera_pos: Vec3) ChunkCullData {
+        const world_x: f32 = @floatFromInt(chunk_x * CHUNK_SIZE_X);
+        const world_z: f32 = @floatFromInt(chunk_z * CHUNK_SIZE_Z);
+        return .{
+            .min_point = .{ world_x - camera_pos.x, -camera_pos.y, world_z - camera_pos.z, 0.0 },
+            .max_point = .{
+                world_x - camera_pos.x + @as(f32, @floatFromInt(CHUNK_SIZE_X)),
+                -camera_pos.y + @as(f32, @floatFromInt(CHUNK_SIZE_Y)),
+                world_z - camera_pos.z + @as(f32, @floatFromInt(CHUNK_SIZE_Z)),
+                0.0,
+            },
+        };
+    }
+
     fn renderGpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
-        const cs = self.culling_system orelse unreachable;
-
-        self.aabb_data.clearRetainingCapacity();
-        self.chunk_lookup.clearRetainingCapacity();
-
-        var cz = pc_z - r_dist;
-        while (cz <= pc_z + r_dist) : (cz += 1) {
-            var cx = pc_x - r_dist;
-            while (cx <= pc_x + r_dist) : (cx += 1) {
-                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
-                        const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
-                        const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
-
-                        const min_x = chunk_world_x - camera_pos.x;
-                        const min_z = chunk_world_z - camera_pos.z;
-                        const max_x = min_x + @as(f32, @floatFromInt(CHUNK_SIZE_X));
-                        const max_y = -camera_pos.y + @as(f32, @floatFromInt(CHUNK_SIZE_Y));
-                        const max_z = min_z + @as(f32, @floatFromInt(CHUNK_SIZE_Z));
-
-                        self.aabb_data.append(self.allocator, .{
-                            .min_point = .{ min_x, -camera_pos.y, min_z, 0.0 },
-                            .max_point = .{ max_x, max_y, max_z, 0.0 },
-                        }) catch continue;
-                        self.chunk_lookup.append(self.allocator, data) catch continue;
-                    }
-                }
-            }
-        }
-
-        const chunk_count: u32 = @intCast(self.aabb_data.items.len);
-        if (chunk_count == 0) return;
+        const cs = self.culling_system orelse {
+            log.log.err("GPU culling enabled but system is null, falling back to CPU", .{});
+            self.use_gpu_culling = false;
+            return self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist);
+        };
 
         const fi = self.query.getFrameIndex();
 
@@ -345,7 +332,28 @@ pub const WorldRenderer = struct {
             }
         }
 
-        self.last_render_stats.chunks_culled += @intCast(chunk_count - @min(@as(u32, @intCast(self.visible_chunks.items.len)), chunk_count));
+        const prev_rendered: u32 = @intCast(self.visible_chunks.items.len);
+
+        self.aabb_data.clearRetainingCapacity();
+        self.chunk_lookup.clearRetainingCapacity();
+
+        var cz = pc_z - r_dist;
+        while (cz <= pc_z + r_dist) : (cz += 1) {
+            var cx = pc_x - r_dist;
+            while (cx <= pc_x + r_dist) : (cx += 1) {
+                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                        self.aabb_data.append(self.allocator, chunkAABB(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos)) catch continue;
+                        self.chunk_lookup.append(self.allocator, data) catch continue;
+                    }
+                }
+            }
+        }
+
+        const chunk_count: u32 = @intCast(self.aabb_data.items.len);
+        if (chunk_count == 0) return;
+
+        self.last_render_stats.chunks_culled += chunk_count - @min(prev_rendered, chunk_count);
 
         cs.updateAABBData(fi, self.aabb_data.items);
         cs.dispatch(view_proj, chunk_count);
