@@ -172,7 +172,7 @@ pub const LODMesh = struct {
 
         const effective_target = @min(target_triangles, input_triangles);
         if (effective_target >= input_triangles) {
-            self.setPendingFromIndexed(full_mesh.vertices, full_mesh.indices);
+            try self.setPendingFromIndexed(full_mesh.vertices, full_mesh.indices);
             return;
         }
 
@@ -201,19 +201,25 @@ pub const LODMesh = struct {
             simplified.error_estimate,
         });
 
-        self.setPendingFromIndexed(simplified.vertices, simplified.indices);
+        self.setPendingFromIndexed(simplified.vertices, simplified.indices) catch |err| {
+            log.log.warn("LOD{} failed to expand simplified mesh, falling back: {}", .{ @intFromEnum(self.lod_level), err });
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        };
     }
 
     /// Convert indexed triangle mesh to non-indexed vertex list and store as pending.
-    fn setPendingFromIndexed(self: *LODMesh, vertices: []const Vertex, indices: []const u32) void {
+    fn setPendingFromIndexed(self: *LODMesh, vertices: []const Vertex, indices: []const u32) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         if (self.pending_vertices) |p| {
             self.allocator.free(p);
+            self.pending_vertices = null;
         }
 
-        const expanded = self.allocator.alloc(Vertex, indices.len) catch return;
+        if (indices.len == 0) return;
+
+        const expanded = try self.allocator.alloc(Vertex, indices.len);
         for (expanded, 0..) |*dst, i| {
             dst.* = vertices[indices[i]];
         }
@@ -352,6 +358,73 @@ const FullDetailMesh = struct {
 /// Produces fine-grained quads with per-vertex heights suitable for QEM simplification.
 /// The mesh uses 1-block resolution: each cell in the heightmap grid becomes a quad
 /// subdivided into 2 triangles with separate indices for QEM edge collapse.
+fn appendIndexedQuad(
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    indices: *std.ArrayListUnmanaged(u32),
+    allocator: std.mem.Allocator,
+    quad: *const [4]Vertex,
+) !void {
+    const base: u32 = @intCast(vertices.items.len);
+    try vertices.appendSlice(allocator, quad);
+    try indices.appendSlice(allocator, &.{
+        base, base + 1, base + 2,
+        base, base + 2, base + 3,
+    });
+}
+
+const SkirtParams = struct {
+    x: f32,
+    z: f32,
+    size: f32,
+    avg_h: f32,
+    avg_c: u32,
+    brightness: f32,
+    dir: SkirtDir,
+};
+
+const SkirtDir = enum { north, south, east, west };
+
+fn makeSkirtQuad(params: SkirtParams) [4]Vertex {
+    const p = params;
+    const cr = unpackR(p.avg_c) * p.brightness;
+    const cg = unpackG(p.avg_c) * p.brightness;
+    const cb = unpackB(p.avg_c) * p.brightness;
+    const skirt_bottom = p.avg_h - p.size * 4.0;
+    const normal: [3]f32 = switch (p.dir) {
+        .north => .{ 0, 0, -1 },
+        .south => .{ 0, 0, 1 },
+        .west => .{ -1, 0, 0 },
+        .east => .{ 1, 0, 0 },
+    };
+    const col = [3]f32{ cr, cg, cb };
+    return switch (p.dir) {
+        .north => .{
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, .{ 0, 1 }),
+        },
+        .south => .{
+            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, .{ 0, 1 }),
+        },
+        .west => .{
+            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, .{ 0, 1 }),
+        },
+        .east => .{
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, .{ 0, 1 }),
+        },
+    };
+}
+
 fn buildFullDetailHeightmapMesh(
     allocator: std.mem.Allocator,
     data: *const LODSimplifiedData,
@@ -359,6 +432,7 @@ fn buildFullDetailHeightmapMesh(
     const w = data.width;
     const grid_total = w * w;
     if (grid_total == 0) return error.EmptyData;
+    std.debug.assert(w <= data.heightmap.len and w <= data.biomes.len);
 
     const region_size_32: u32 = 32;
     const cell_size: u32 = if (w > 0 and w <= region_size_32) region_size_32 / w else 2;
@@ -386,84 +460,50 @@ fn buildFullDetailHeightmapMesh(
             const wz: f32 = @floatFromInt(gz * cell_size);
             const size: f32 = @floatFromInt(cell_size);
 
-            const base: u32 = @intCast(vertices.items.len);
-
-            try vertices.appendSlice(allocator, &.{
+            const top_quad = [4]Vertex{
                 makeLODVertex(.{ wx, h00, wz }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, .{ 0, 1, 0 }, .{ 0, 0 }),
                 makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, .{ 0, 1, 0 }, .{ 1, 0 }),
                 makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, .{ 0, 1, 0 }, .{ 1, 1 }),
                 makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, .{ 0, 1, 0 }, .{ 0, 1 }),
-            });
+            };
+            try appendIndexedQuad(&vertices, &indices, allocator, &top_quad);
 
-            try indices.appendSlice(allocator, &.{
-                base, base + 1, base + 2,
-                base, base + 2, base + 3,
-            });
-
-            if (gz == 0) {
-                const avg_h = (h00 + h10) * 0.5;
-                const avg_c = averageColor(c00, c10, c00, c10);
-                const skirt_bottom = avg_h - size * 4.0;
-                const side_base: u32 = @intCast(vertices.items.len);
-                try vertices.appendSlice(allocator, &.{
-                    makeLODVertex(.{ wx + size, skirt_bottom, wz }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, -1 }, .{ 0, 0 }),
-                    makeLODVertex(.{ wx, skirt_bottom, wz }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, -1 }, .{ 1, 0 }),
-                    makeLODVertex(.{ wx, avg_h, wz }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, -1 }, .{ 1, 1 }),
-                    makeLODVertex(.{ wx + size, avg_h, wz }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, -1 }, .{ 0, 1 }),
-                });
-                try indices.appendSlice(allocator, &.{
-                    side_base, side_base + 1, side_base + 2,
-                    side_base, side_base + 2, side_base + 3,
-                });
-            }
-            if (gz == w - 1) {
-                const avg_h = (h01 + h11) * 0.5;
-                const avg_c = averageColor(c01, c11, c01, c11);
-                const skirt_bottom = avg_h - size * 4.0;
-                const side_base: u32 = @intCast(vertices.items.len);
-                try vertices.appendSlice(allocator, &.{
-                    makeLODVertex(.{ wx, skirt_bottom, wz + size }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, 1 }, .{ 0, 0 }),
-                    makeLODVertex(.{ wx + size, skirt_bottom, wz + size }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, 1 }, .{ 1, 0 }),
-                    makeLODVertex(.{ wx + size, avg_h, wz + size }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, 1 }, .{ 1, 1 }),
-                    makeLODVertex(.{ wx, avg_h, wz + size }, .{ unpackR(avg_c) * 0.7, unpackG(avg_c) * 0.7, unpackB(avg_c) * 0.7 }, .{ 0, 0, 1 }, .{ 0, 1 }),
-                });
-                try indices.appendSlice(allocator, &.{
-                    side_base, side_base + 1, side_base + 2,
-                    side_base, side_base + 2, side_base + 3,
-                });
-            }
-            if (gx == 0) {
-                const avg_h = (h00 + h01) * 0.5;
-                const avg_c = averageColor(c00, c01, c00, c01);
-                const skirt_bottom = avg_h - size * 4.0;
-                const side_base: u32 = @intCast(vertices.items.len);
-                try vertices.appendSlice(allocator, &.{
-                    makeLODVertex(.{ wx, skirt_bottom, wz }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ -1, 0, 0 }, .{ 0, 0 }),
-                    makeLODVertex(.{ wx, skirt_bottom, wz + size }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ -1, 0, 0 }, .{ 1, 0 }),
-                    makeLODVertex(.{ wx, avg_h, wz + size }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ -1, 0, 0 }, .{ 1, 1 }),
-                    makeLODVertex(.{ wx, avg_h, wz }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ -1, 0, 0 }, .{ 0, 1 }),
-                });
-                try indices.appendSlice(allocator, &.{
-                    side_base, side_base + 1, side_base + 2,
-                    side_base, side_base + 2, side_base + 3,
-                });
-            }
-            if (gx == w - 1) {
-                const avg_h = (h10 + h11) * 0.5;
-                const avg_c = averageColor(c10, c11, c10, c11);
-                const skirt_bottom = avg_h - size * 4.0;
-                const side_base: u32 = @intCast(vertices.items.len);
-                try vertices.appendSlice(allocator, &.{
-                    makeLODVertex(.{ wx + size, skirt_bottom, wz + size }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ 1, 0, 0 }, .{ 0, 0 }),
-                    makeLODVertex(.{ wx + size, skirt_bottom, wz }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ 1, 0, 0 }, .{ 1, 0 }),
-                    makeLODVertex(.{ wx + size, avg_h, wz }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ 1, 0, 0 }, .{ 1, 1 }),
-                    makeLODVertex(.{ wx + size, avg_h, wz + size }, .{ unpackR(avg_c) * 0.6, unpackG(avg_c) * 0.6, unpackB(avg_c) * 0.6 }, .{ 1, 0, 0 }, .{ 0, 1 }),
-                });
-                try indices.appendSlice(allocator, &.{
-                    side_base, side_base + 1, side_base + 2,
-                    side_base, side_base + 2, side_base + 3,
-                });
-            }
+            if (gz == 0) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h00 + h10) * 0.5,
+                .avg_c = averageColor(c00, c10, c00, c10),
+                .brightness = 0.7,
+                .dir = .north,
+            }));
+            if (gz == w - 1) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h01 + h11) * 0.5,
+                .avg_c = averageColor(c01, c11, c01, c11),
+                .brightness = 0.7,
+                .dir = .south,
+            }));
+            if (gx == 0) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h00 + h01) * 0.5,
+                .avg_c = averageColor(c00, c01, c00, c01),
+                .brightness = 0.6,
+                .dir = .west,
+            }));
+            if (gx == w - 1) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h10 + h11) * 0.5,
+                .avg_c = averageColor(c10, c11, c10, c11),
+                .brightness = 0.6,
+                .dir = .east,
+            }));
         }
     }
 

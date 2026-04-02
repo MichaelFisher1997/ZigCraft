@@ -345,7 +345,8 @@ pub const LODConfig = struct {
     fog_transitions: bool = true,
 
     /// Target triangle count per LOD region for QEM simplification.
-    /// Index 0 (LOD0) is unused. Higher LOD levels get fewer triangles.
+    /// LOD0 is unused. Targets based on % of typical ~8000 tri input:
+    /// LOD1=~25% (2000), LOD2=~12% (800), LOD3=~3% (200)
     qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
 
     /// Minimum triangles required to attempt QEM simplification.
