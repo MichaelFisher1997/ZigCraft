@@ -57,7 +57,7 @@ pub const WorldRenderer = struct {
     // GPU Culling
     culling_system: ?*CullingSystem,
     aabb_data: std.ArrayListUnmanaged(ChunkCullData),
-    chunk_lookup: std.ArrayListUnmanaged(*ChunkData),
+    chunk_lookup: [rhi_mod.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(*ChunkData),
     gpu_visible_indices: std.ArrayListUnmanaged(u32),
     use_gpu_culling: bool,
 
@@ -112,10 +112,12 @@ pub const WorldRenderer = struct {
             .indirect_buffers = indirect_buffers,
             .culling_system = culling_system,
             .aabb_data = .empty,
-            .chunk_lookup = .empty,
+            .chunk_lookup = undefined,
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
         };
+
+        for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
 
         return renderer;
     }
@@ -132,7 +134,7 @@ pub const WorldRenderer = struct {
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
         self.aabb_data.deinit(self.allocator);
-        self.chunk_lookup.deinit(self.allocator);
+        for (&self.chunk_lookup) |*lookup| lookup.deinit(self.allocator);
         self.gpu_visible_indices.deinit(self.allocator);
 
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
@@ -317,17 +319,18 @@ pub const WorldRenderer = struct {
         };
 
         const fi = self.query.getFrameIndex();
+        const prev_fi = (fi + rhi_mod.MAX_FRAMES_IN_FLIGHT - 1) % rhi_mod.MAX_FRAMES_IN_FLIGHT;
 
-        const prev_visible_count = cs.readVisibleCount(fi);
+        const prev_visible_count = cs.readVisibleCount(prev_fi);
         self.gpu_visible_indices.clearRetainingCapacity();
         if (prev_visible_count > 0) {
             self.gpu_visible_indices.resize(self.allocator, prev_visible_count) catch return;
-            cs.readVisibleIndices(fi, prev_visible_count, self.gpu_visible_indices.items);
+            cs.readVisibleIndices(prev_fi, prev_visible_count, self.gpu_visible_indices.items);
 
             const limit = @min(@as(usize, @intCast(prev_visible_count)), self.gpu_visible_indices.items.len);
             for (self.gpu_visible_indices.items[0..limit]) |idx| {
-                if (idx < self.chunk_lookup.items.len) {
-                    self.visible_chunks.append(self.allocator, self.chunk_lookup.items[idx]) catch continue;
+                if (idx < self.chunk_lookup[prev_fi].items.len) {
+                    self.visible_chunks.append(self.allocator, self.chunk_lookup[prev_fi].items[idx]) catch continue;
                 }
             }
         }
@@ -335,7 +338,7 @@ pub const WorldRenderer = struct {
         const prev_rendered: u32 = @intCast(self.visible_chunks.items.len);
 
         self.aabb_data.clearRetainingCapacity();
-        self.chunk_lookup.clearRetainingCapacity();
+        self.chunk_lookup[fi].clearRetainingCapacity();
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -344,7 +347,7 @@ pub const WorldRenderer = struct {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         self.aabb_data.append(self.allocator, chunkAABB(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos)) catch continue;
-                        self.chunk_lookup.append(self.allocator, data) catch continue;
+                        self.chunk_lookup[fi].append(self.allocator, data) catch continue;
                     }
                 }
             }
