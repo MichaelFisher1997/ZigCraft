@@ -54,21 +54,19 @@ pub fn createTerrainPipeline(
 
     const binding_description = c.VkVertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(rhi.Vertex), .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX };
 
-    var attribute_descriptions: [8]c.VkVertexInputAttributeDescription = undefined;
+    var attribute_descriptions: [6]c.VkVertexInputAttributeDescription = undefined;
     attribute_descriptions[0] = .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 };
-    attribute_descriptions[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 3 * 4 };
-    attribute_descriptions[2] = .{ .binding = 0, .location = 2, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 6 * 4 };
-    attribute_descriptions[3] = .{ .binding = 0, .location = 3, .format = c.VK_FORMAT_R32G32_SFLOAT, .offset = 9 * 4 };
-    attribute_descriptions[4] = .{ .binding = 0, .location = 4, .format = c.VK_FORMAT_R32_SFLOAT, .offset = 11 * 4 };
-    attribute_descriptions[5] = .{ .binding = 0, .location = 5, .format = c.VK_FORMAT_R32_SFLOAT, .offset = 12 * 4 };
-    attribute_descriptions[6] = .{ .binding = 0, .location = 6, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 13 * 4 };
-    attribute_descriptions[7] = .{ .binding = 0, .location = 7, .format = c.VK_FORMAT_R32_SFLOAT, .offset = 16 * 4 };
+    attribute_descriptions[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32_UINT, .offset = 12 };
+    attribute_descriptions[2] = .{ .binding = 0, .location = 2, .format = c.VK_FORMAT_R32_UINT, .offset = 16 };
+    attribute_descriptions[3] = .{ .binding = 0, .location = 3, .format = c.VK_FORMAT_R16G16_SFLOAT, .offset = 20 };
+    attribute_descriptions[4] = .{ .binding = 0, .location = 4, .format = c.VK_FORMAT_R32_UINT, .offset = 24 };
+    attribute_descriptions[5] = .{ .binding = 0, .location = 5, .format = c.VK_FORMAT_R32_UINT, .offset = 28 };
 
     var vertex_input_info = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
     vertex_input_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;
     vertex_input_info.pVertexBindingDescriptions = &binding_description;
-    vertex_input_info.vertexAttributeDescriptionCount = 8;
+    vertex_input_info.vertexAttributeDescriptionCount = 6;
     vertex_input_info.pVertexAttributeDescriptions = &attribute_descriptions[0];
 
     var pipeline_info = std.mem.zeroes(c.VkGraphicsPipelineCreateInfo);

@@ -59,14 +59,14 @@ pub fn meshCrossBlocks(
                 };
 
                 const tiles = atlas.getTilesForBlock(@intFromEnum(block));
-                const tid: f32 = @floatFromInt(tiles.side);
+                const tile_id: u16 = @intCast(tiles.side);
 
                 const xf: f32 = @floatFromInt(x);
                 const yf: f32 = @floatFromInt(y);
                 const zf: f32 = @floatFromInt(z);
 
-                try emitCrossQuad(allocator, cutout_list, .{ xf, yf, zf }, .{ xf + 1, yf + 1, zf + 1 }, col, norm_light, tid);
-                try emitCrossQuad(allocator, cutout_list, .{ xf + 1, yf, zf }, .{ xf, yf + 1, zf + 1 }, col, norm_light, tid);
+                try emitCrossQuad(allocator, cutout_list, .{ xf, yf, zf }, .{ xf + 1, yf + 1, zf + 1 }, col, norm_light, tile_id);
+                try emitCrossQuad(allocator, cutout_list, .{ xf + 1, yf, zf }, .{ xf, yf + 1, zf + 1 }, col, norm_light, tile_id);
             }
         }
     }
@@ -79,7 +79,7 @@ fn emitCrossQuad(
     p1: [3]f32,
     col: [3]f32,
     light: lighting_sampler.NormalizedLight,
-    tid: f32,
+    tile_id: u16,
 ) !void {
     const bl = [3]f32{ p0[0], p0[1], p0[2] };
     const br = [3]f32{ p1[0], p0[1], p1[2] };
@@ -97,19 +97,17 @@ fn emitCrossQuad(
     const positions = [4][3]f32{ bl, br, tr, tl };
     const uv = [4][2]f32{ .{ 0, 1 }, .{ 1, 1 }, .{ 1, 0 }, .{ 0, 0 } };
 
-    // Front face (2 triangles)
-    try verts.append(allocator, Vertex{ .pos = positions[0], .color = col, .normal = nf_front, .uv = uv[0], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[1], .color = col, .normal = nf_front, .uv = uv[1], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[2], .color = col, .normal = nf_front, .uv = uv[2], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[0], .color = col, .normal = nf_front, .uv = uv[0], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[2], .color = col, .normal = nf_front, .uv = uv[2], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[3], .color = col, .normal = nf_front, .uv = uv[3], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
+    const v = [6][3]f32{ positions[0], positions[1], positions[2], positions[0], positions[2], positions[3] };
+    const u = [6][2]f32{ uv[0], uv[1], uv[2], uv[0], uv[2], uv[3] };
+    const n_front = [6][3]f32{ nf_front, nf_front, nf_front, nf_front, nf_front, nf_front };
 
-    // Back face (2 triangles, reversed winding)
-    try verts.append(allocator, Vertex{ .pos = positions[1], .color = col, .normal = nf_back, .uv = uv[1], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[0], .color = col, .normal = nf_back, .uv = uv[0], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[3], .color = col, .normal = nf_back, .uv = uv[3], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[1], .color = col, .normal = nf_back, .uv = uv[1], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[3], .color = col, .normal = nf_back, .uv = uv[3], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
-    try verts.append(allocator, Vertex{ .pos = positions[2], .color = col, .normal = nf_back, .uv = uv[2], .tile_id = tid, .skylight = light.skylight, .blocklight = light.blocklight, .ao = ao });
+    for (0..6) |i| {
+        try verts.append(allocator, Vertex.init(v[i], col, n_front[i], u[i], tile_id, light.skylight, light.blocklight, ao));
+    }
+
+    const n_back = [6][3]f32{ nf_back, nf_back, nf_back, nf_back, nf_back, nf_back };
+    const back_order = [6]usize{ 1, 0, 3, 1, 3, 2 };
+    for (0..6) |i| {
+        try verts.append(allocator, Vertex.init(positions[back_order[i]], col, n_back[i], uv[back_order[i]], tile_id, light.skylight, light.blocklight, ao));
+    }
 }

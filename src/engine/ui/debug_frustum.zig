@@ -12,16 +12,7 @@ pub const FRUSTUM_EDGE_COUNT: u32 = 12;
 pub const FRUSTUM_VERTEX_COUNT: u32 = FRUSTUM_EDGE_COUNT * 2;
 
 fn makeVertex(x: f32, y: f32, z: f32, r: f32, g: f32, b: f32) Vertex {
-    return .{
-        .pos = .{ x, y, z },
-        .color = .{ r, g, b },
-        .normal = .{ 0, 1, 0 },
-        .uv = .{ 0, 0 },
-        .tile_id = 0,
-        .skylight = 15,
-        .blocklight = .{ 15, 15, 15 },
-        .ao = 1.0,
-    };
+    return Vertex.init(.{ x, y, z }, .{ r, g, b }, .{ 0, 1, 0 }, .{ 0, 0 }, 0, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
 }
 
 pub const DebugFrustum = struct {
