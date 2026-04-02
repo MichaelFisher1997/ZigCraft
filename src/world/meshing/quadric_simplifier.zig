@@ -98,6 +98,8 @@ const QuadricMatrix = struct {
     }
 };
 
+/// Epsilon for determinant check in optimal position solver.
+/// Safe for mesh vertices in [0.001, 1000.0] range -- voxel chunks use block-unit coordinates.
 const DETERMINANT_EPSILON: f64 = 1e-10;
 
 fn edgeKey(v1: u32, v2: u32) u64 {
@@ -233,6 +235,8 @@ pub const QuadricSimplifier = struct {
         var skipped_collapses: u32 = 0;
 
         while (current_tri_count > target_triangles) {
+            if (skipped_collapses > num_triangles * 2) break;
+
             var entry: ?EdgeEntry = null;
             while (heap.removeOrNull()) |e| {
                 if (!active[e.v1] or !active[e.v2]) continue;
@@ -240,7 +244,7 @@ pub const QuadricSimplifier = struct {
                 const key = edgeKey(e.v1, e.v2);
                 const ver = edge_versions.get(key) orelse continue;
                 if (e.version != ver) continue;
-                if (!canCollapse(tris, tri_active, e.v1, e.v2)) continue;
+                if (!try canCollapse(allocator, tris, tri_active, e.v1, e.v2)) continue;
                 entry = e;
                 break;
             }
@@ -378,18 +382,18 @@ fn computeQuadrics(
 }
 
 fn canCollapse(
+    allocator: Allocator,
     tris: []const [3]u32,
     tri_active: []const bool,
     v1: u32,
     v2: u32,
-) bool {
-    const MAX_VALENCE: usize = 512;
-    var link_edge: [MAX_VALENCE]u32 = undefined;
-    var link_edge_len: usize = 0;
-    var link_v1: [MAX_VALENCE]u32 = undefined;
-    var link_v1_len: usize = 0;
-    var link_v2: [MAX_VALENCE]u32 = undefined;
-    var link_v2_len: usize = 0;
+) !bool {
+    var link_edge = std.ArrayListUnmanaged(u32){};
+    defer link_edge.deinit(allocator);
+    var link_v1 = std.ArrayListUnmanaged(u32){};
+    defer link_v1.deinit(allocator);
+    var link_v2 = std.ArrayListUnmanaged(u32){};
+    defer link_v2.deinit(allocator);
 
     for (tris, 0..) |tri, ti| {
         if (!tri_active[ti]) continue;
@@ -402,23 +406,17 @@ fn canCollapse(
         for (tri) |v| {
             if (v == v1 or v == v2) continue;
 
-            if (has_v1 and has_v2) {
-                if (!addToSetChecked(&link_edge, &link_edge_len, v)) return true;
-            }
-            if (has_v1) {
-                if (!addToSetChecked(&link_v1, &link_v1_len, v)) return true;
-            }
-            if (has_v2) {
-                if (!addToSetChecked(&link_v2, &link_v2_len, v)) return true;
-            }
+            if (has_v1 and has_v2) try addUniqueGrowable(allocator, &link_edge, v);
+            if (has_v1) try addUniqueGrowable(allocator, &link_v1, v);
+            if (has_v2) try addUniqueGrowable(allocator, &link_v2, v);
         }
     }
 
-    for (link_v1[0..link_v1_len]) |n1| {
-        for (link_v2[0..link_v2_len]) |n2| {
+    for (link_v1.items) |n1| {
+        for (link_v2.items) |n2| {
             if (n1 != n2) continue;
             var found = false;
-            for (link_edge[0..link_edge_len]) |le| {
+            for (link_edge.items) |le| {
                 if (le == n1) {
                     found = true;
                     break;
@@ -431,14 +429,11 @@ fn canCollapse(
     return true;
 }
 
-fn addToSetChecked(buf: []u32, len: *usize, val: u32) bool {
-    for (buf[0..len.*]) |v| {
-        if (v == val) return true;
+fn addUniqueGrowable(allocator: Allocator, list: *std.ArrayListUnmanaged(u32), val: u32) !void {
+    for (list.items) |v| {
+        if (v == val) return;
     }
-    if (len.* >= buf.len) return false;
-    buf[len.*] = val;
-    len.* += 1;
-    return true;
+    try list.append(allocator, val);
 }
 
 fn addUnique(buf: []u32, len: *usize, val: u32) void {
@@ -541,6 +536,7 @@ fn collectResults(
     }
 
     const out_verts = try allocator.alloc(Vertex, vertex_count);
+    errdefer allocator.free(out_verts);
     var vi: u32 = 0;
     for (active, 0..) |is_active, i| {
         if (!is_active) continue;
