@@ -220,7 +220,7 @@ pub const CullingSystem = struct {
         const copy_count = @min(@as(usize, @intCast(count)), @min(out.len, self.max_chunks));
         if (copy_count == 0) return;
         const src: [*]const u32 = @ptrCast(@alignCast(buf.mapped_ptr.?));
-        @memcpy(out[0..copy_count], src[2 .. 2 + copy_count]);
+        @memcpy(out[0..copy_count], src[4 .. 4 + copy_count]);
     }
 
     fn copyCounterToReadback(self: *CullingSystem, cmd: c.VkCommandBuffer, frame_index: usize) void {

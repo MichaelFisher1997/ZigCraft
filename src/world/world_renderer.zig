@@ -92,8 +92,8 @@ pub const WorldRenderer = struct {
             culling_system = cs;
             use_gpu = true;
             log.log.info("GPU frustum culling initialized (max_chunks={})", .{max_chunks});
-        } else |_| {
-            log.log.warn("GPU culling init failed, falling back to CPU culling", .{});
+        } else |err| {
+            log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
         }
 
         renderer.* = .{
@@ -310,9 +310,15 @@ pub const WorldRenderer = struct {
                         const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
 
+                        const min_x = chunk_world_x - camera_pos.x;
+                        const min_z = chunk_world_z - camera_pos.z;
+                        const max_x = min_x + @as(f32, @floatFromInt(CHUNK_SIZE_X));
+                        const max_y = -camera_pos.y + @as(f32, @floatFromInt(CHUNK_SIZE_Y));
+                        const max_z = min_z + @as(f32, @floatFromInt(CHUNK_SIZE_Z));
+
                         self.aabb_data.append(self.allocator, .{
-                            .min_point = .{ chunk_world_x - camera_pos.x, -camera_pos.y, chunk_world_z - camera_pos.z, 0.0 },
-                            .max_point = .{ chunk_world_x - camera_pos.x + @as(f32, @floatFromInt(CHUNK_SIZE_X)), -camera_pos.y + @as(f32, @floatFromInt(CHUNK_SIZE_Y)), chunk_world_z - camera_pos.z + @as(f32, @floatFromInt(CHUNK_SIZE_Z)), 0.0 },
+                            .min_point = .{ min_x, -camera_pos.y, min_z, 0.0 },
+                            .max_point = .{ max_x, max_y, max_z, 0.0 },
                         }) catch continue;
                         self.chunk_lookup.append(self.allocator, data) catch continue;
                     }
@@ -324,16 +330,15 @@ pub const WorldRenderer = struct {
         if (chunk_count == 0) return;
 
         const fi = self.query.getFrameIndex();
-        cs.updateAABBData(fi, self.aabb_data.items);
-        cs.dispatch(view_proj, chunk_count);
 
-        const visible_count = cs.readVisibleCount(fi);
+        const prev_visible_count = cs.readVisibleCount(fi);
         self.gpu_visible_indices.clearRetainingCapacity();
-        if (visible_count > 0) {
-            self.gpu_visible_indices.resize(self.allocator, visible_count) catch return;
-            cs.readVisibleIndices(fi, visible_count, self.gpu_visible_indices.items);
+        if (prev_visible_count > 0) {
+            self.gpu_visible_indices.resize(self.allocator, prev_visible_count) catch return;
+            cs.readVisibleIndices(fi, prev_visible_count, self.gpu_visible_indices.items);
 
-            for (self.gpu_visible_indices.items[0..@min(@as(usize, @intCast(visible_count)), self.gpu_visible_indices.items.len)]) |idx| {
+            const limit = @min(@as(usize, @intCast(prev_visible_count)), self.gpu_visible_indices.items.len);
+            for (self.gpu_visible_indices.items[0..limit]) |idx| {
                 if (idx < self.chunk_lookup.items.len) {
                     self.visible_chunks.append(self.allocator, self.chunk_lookup.items[idx]) catch continue;
                 }
@@ -341,6 +346,9 @@ pub const WorldRenderer = struct {
         }
 
         self.last_render_stats.chunks_culled += @intCast(chunk_count - @min(@as(u32, @intCast(self.visible_chunks.items.len)), chunk_count));
+
+        cs.updateAABBData(fi, self.aabb_data.items);
+        cs.dispatch(view_proj, chunk_count);
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
