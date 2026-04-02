@@ -17,16 +17,7 @@ const EXPAND: f32 = 0.004;
 
 /// Create a vertex with the given position
 fn makeVertex(x: f32, y: f32, z: f32) Vertex {
-    return .{
-        .pos = .{ x, y, z },
-        .color = .{ 0.0, 0.0, 0.0 }, // Black outline
-        .normal = .{ 0, 1, 0 },
-        .uv = .{ 0, 0 },
-        .tile_id = 0,
-        .skylight = 15,
-        .blocklight = .{ 15, 15, 15 },
-        .ao = 1.0,
-    };
+    return Vertex.init(.{ x, y, z }, .{ 0.0, 0.0, 0.0 }, .{ 0, 1, 0 }, .{ 0, 0 }, 0, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
 }
 
 /// Generate vertices for a thin quad (2 triangles = 6 vertices)

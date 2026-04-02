@@ -144,7 +144,7 @@ pub fn createShadowResources(ctx: anytype) !void {
     const shadow_binding = c.VkVertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(rhi.Vertex), .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX };
     var shadow_attrs: [2]c.VkVertexInputAttributeDescription = undefined;
     shadow_attrs[0] = .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 };
-    shadow_attrs[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 24 };
+    shadow_attrs[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32_UINT, .offset = 16 };
 
     var shadow_vertex_input = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
     shadow_vertex_input.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;

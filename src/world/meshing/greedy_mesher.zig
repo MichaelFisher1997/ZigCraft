@@ -276,15 +276,15 @@ fn addGreedyFace(
     const norm_light = lighting_sampler.normalizeLightValues(light);
 
     for (idxs) |i| {
-        try verts.append(allocator, Vertex{
-            .pos = p[i],
-            .color = col,
-            .normal = nf,
-            .uv = uv[i],
-            .tile_id = tid,
-            .skylight = norm_light.skylight,
-            .blocklight = norm_light.blocklight,
-            .ao = ao[i],
-        });
+        try verts.append(allocator, Vertex.init(
+            p[i],
+            col,
+            nf,
+            uv[i],
+            @as(u16, @intFromFloat(@round(@max(0, @min(65534, tid))))),
+            norm_light.skylight,
+            norm_light.blocklight,
+            ao[i],
+        ));
     }
 }

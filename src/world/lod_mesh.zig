@@ -22,6 +22,10 @@ const rhi_types = @import("../engine/graphics/rhi_types.zig");
 const Vertex = rhi_types.Vertex;
 const BufferHandle = rhi_types.BufferHandle;
 const RhiError = rhi_types.RhiError;
+const encodeColor = rhi_types.encodeColor;
+const encodeNormal = rhi_types.encodeNormal;
+const encodeMeta = rhi_types.encodeMeta;
+const encodeBlocklight = rhi_types.encodeBlocklight;
 
 /// Size of each LOD mesh grid cell in blocks
 pub fn getCellSize(lod: LODLevel) u32 {
@@ -287,6 +291,17 @@ fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     return (r_avg << 16) | (g_avg << 8) | b_avg;
 }
 
+fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32) Vertex {
+    return Vertex{
+        .pos = pos,
+        .color = encodeColor(col),
+        .normal = encodeNormal(norm),
+        .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
+        .packed_meta = encodeMeta(Vertex.LOD_TILE_ID, 1.0, 1.0),
+        .blocklight = 0,
+    };
+}
+
 /// Add a smooth quad with per-vertex heights and colors
 fn addSmoothQuad(
     allocator: std.mem.Allocator,
@@ -340,68 +355,13 @@ fn addSmoothQuad(
     }
 
     // Triangle 1: (0,0), (1,1), (1,0)
-    try vertices.append(allocator, .{
-        .pos = .{ x, y00, z },
-        .color = .{ unpackR(c00), unpackG(c00), unpackB(c00) },
-        .normal = n1,
-        .uv = .{ 0, 0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x + size, y11, z + size },
-        .color = .{ unpackR(c11), unpackG(c11), unpackB(c11) },
-        .normal = n1,
-        .uv = .{ 1, 1 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x + size, y10, z },
-        .color = .{ unpackR(c10), unpackG(c10), unpackB(c10) },
-        .normal = n1,
-        .uv = .{ 1, 0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
+    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n1, .{ 0, 0 }));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n1, .{ 1, 1 }));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y10, z }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, n1, .{ 1, 0 }));
 
-    // Triangle 2: (0,0), (0,1), (1,1)
-    try vertices.append(allocator, .{
-        .pos = .{ x, y00, z },
-        .color = .{ unpackR(c00), unpackG(c00), unpackB(c00) },
-        .normal = n2,
-        .uv = .{ 0, 0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x, y01, z + size },
-        .color = .{ unpackR(c01), unpackG(c01), unpackB(c01) },
-        .normal = n2,
-        .uv = .{ 0, 1 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x + size, y11, z + size },
-        .color = .{ unpackR(c11), unpackG(c11), unpackB(c11) },
-        .normal = n2,
-        .uv = .{ 1, 1 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
+    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n2, .{ 0, 0 }));
+    try vertices.append(allocator, makeLODVertex(.{ x, y01, z + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, n2, .{ 0, 1 }));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n2, .{ 1, 1 }));
 }
 
 /// Add a top-facing quad (two triangles)
@@ -409,71 +369,13 @@ fn addTopFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanage
     const normal = [3]f32{ 0, 1, 0 };
     const color = [3]f32{ r, g, b };
 
-    // Triangle 1: (0,0), (1,1), (0,1) - CCW for Up Normal
-    try vertices.append(allocator, .{
-        .pos = .{ x, y, z },
-        .color = color,
-        .normal = normal,
-        .uv = .{ 0, 0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x + size, y, z + size },
-        .color = color,
-        .normal = normal,
-        .uv = .{ 1, 1 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x, y, z + size },
-        .color = color,
-        .normal = normal,
-        .uv = .{ 0, 1 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, .{ 0, 0 }));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, .{ 1, 1 }));
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z + size }, color, normal, .{ 0, 1 }));
 
-    // Triangle 2: (0,0), (1,0), (1,1) - CCW for Up Normal (Need 0->2->1 order from original points)
-    // Original points: 0(0,0), 1(1,0), 2(1,1). 0->1->2 is CW. 0->2->1 is CCW.
-    // So: (0,0), (1,1), (1,0).
-    try vertices.append(allocator, .{
-        .pos = .{ x, y, z },
-        .color = color,
-        .normal = normal,
-        .uv = .{ 0, 0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x + size, y, z + size },
-        .color = color,
-        .normal = normal,
-        .uv = .{ 1, 1 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
-    try vertices.append(allocator, .{
-        .pos = .{ x + size, y, z },
-        .color = color,
-        .normal = normal,
-        .uv = .{ 1, 0 },
-        .tile_id = -1.0,
-        .skylight = 1.0,
-        .blocklight = .{ 0, 0, 0 },
-        .ao = 1.0,
-    });
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, .{ 0, 0 }));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, .{ 1, 1 }));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z }, color, normal, .{ 1, 0 }));
 }
 
 /// Add a side-facing quad for cliff faces
@@ -515,15 +417,13 @@ fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanag
         },
     };
 
-    // Triangle 1
-    try vertices.append(allocator, .{ .pos = corners[0], .color = color, .normal = normal, .uv = .{ 0, 0 }, .tile_id = -1.0, .skylight = 1.0, .blocklight = .{ 0, 0, 0 }, .ao = 1.0 });
-    try vertices.append(allocator, .{ .pos = corners[1], .color = color, .normal = normal, .uv = .{ 1, 0 }, .tile_id = -1.0, .skylight = 1.0, .blocklight = .{ 0, 0, 0 }, .ao = 1.0 });
-    try vertices.append(allocator, .{ .pos = corners[2], .color = color, .normal = normal, .uv = .{ 1, 1 }, .tile_id = -1.0, .skylight = 1.0, .blocklight = .{ 0, 0, 0 }, .ao = 1.0 });
+    try vertices.append(allocator, makeLODVertex(corners[0], color, normal, .{ 0, 0 }));
+    try vertices.append(allocator, makeLODVertex(corners[1], color, normal, .{ 1, 0 }));
+    try vertices.append(allocator, makeLODVertex(corners[2], color, normal, .{ 1, 1 }));
 
-    // Triangle 2
-    try vertices.append(allocator, .{ .pos = corners[0], .color = color, .normal = normal, .uv = .{ 0, 0 }, .tile_id = -1.0, .skylight = 1.0, .blocklight = .{ 0, 0, 0 }, .ao = 1.0 });
-    try vertices.append(allocator, .{ .pos = corners[2], .color = color, .normal = normal, .uv = .{ 1, 1 }, .tile_id = -1.0, .skylight = 1.0, .blocklight = .{ 0, 0, 0 }, .ao = 1.0 });
-    try vertices.append(allocator, .{ .pos = corners[3], .color = color, .normal = normal, .uv = .{ 0, 1 }, .tile_id = -1.0, .skylight = 1.0, .blocklight = .{ 0, 0, 0 }, .ao = 1.0 });
+    try vertices.append(allocator, makeLODVertex(corners[0], color, normal, .{ 0, 0 }));
+    try vertices.append(allocator, makeLODVertex(corners[2], color, normal, .{ 1, 1 }));
+    try vertices.append(allocator, makeLODVertex(corners[3], color, normal, .{ 0, 1 }));
 }
 
 /// LOD Mesh Builder - builds meshes for LOD regions
