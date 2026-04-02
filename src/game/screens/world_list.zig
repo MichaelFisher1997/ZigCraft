@@ -72,6 +72,7 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: std.fs.Dir) ?LevelDa
         else => return null,
     };
     const name_copy = allocator.dupe(u8, name_str) catch return null;
+    errdefer allocator.free(name_copy);
     return .{
         .name = name_copy,
         .seed = switch (seed_val) {
@@ -111,6 +112,7 @@ pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
         errdefer allocator.free(name_alloc);
         const level = readLevelDat(allocator, saves_dir);
         const dir_buf = std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ home, SAVE_DIR, entry.name }) catch continue;
+        errdefer allocator.free(dir_buf);
         if (level) |ld| {
             try entries.append(allocator, .{
                 .name = ld.name,
@@ -138,12 +140,12 @@ fn compareWorldsByLastPlayed(_: void, a: WorldEntry, b: WorldEntry) bool {
     return a.last_played > b.last_played;
 }
 
-pub fn deleteWorld(allocator: std.mem.Allocator, dir_path: []const u8) !void {
+pub fn deleteWorld(allocator: std.mem.Allocator, dir_path: []const u8) void {
     const parent_path = std.fs.path.dirname(dir_path) orelse return;
     const base = std.fs.path.basename(dir_path);
     var parent = std.fs.openDirAbsolute(parent_path, .{ .iterate = true }) catch |err| {
         log.log.err("Failed to open parent dir for deletion: {}", .{err});
-        return err;
+        return;
     };
     defer parent.close();
     parent.deleteTree(base) catch |err| {
@@ -237,10 +239,6 @@ pub const WorldListScreen = struct {
             Font.drawTextCentered(ui, "NO SAVED WORLDS FOUND", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.4, label_scale, LABEL_COLOR);
             Font.drawTextCentered(ui, "CREATE A NEW WORLD FIRST", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.4 + 25.0 * ui_scale, label_scale * 0.7, Color.rgba(0.5, 0.55, 0.6, 1.0));
         }
-        const clip_top = list_top;
-        const clip_bottom = list_bottom;
-        _ = clip_top;
-        _ = clip_bottom;
         var i: usize = 0;
         while (i < self.worlds.len) : (i += 1) {
             const ry: f32 = list_top + @as(f32, @floatFromInt(i)) * row_h - self.scroll_offset;
@@ -347,9 +345,7 @@ pub const WorldListScreen = struct {
         const entry_name = allocator.dupe(u8, self.worlds[idx].name) catch "<unknown>";
         defer allocator.free(entry_name);
         const dir_path = self.worlds[idx].dir_path;
-        deleteWorld(allocator, dir_path) catch {
-            log.log.err("Failed to delete world: {s}", .{entry_name});
-        };
+        deleteWorld(allocator, dir_path);
         for (self.worlds) |e| {
             allocator.free(e.name);
         }
