@@ -61,6 +61,7 @@ const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocat
 const LODManager = @import("lod_manager.zig").LODManager;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const log = @import("../engine/core/log.zig");
+const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -146,6 +147,7 @@ pub const WorldStreamer = struct {
     max_uploads_per_frame: usize,
 
     paused: bool = false,
+    save_manager: ?*SaveManager = null,
 
     const GEN_WORKERS = 4;
     const MESH_WORKERS = 3;
@@ -235,12 +237,17 @@ pub const WorldStreamer = struct {
         self.lod_manager = lod_manager;
     }
 
+    pub fn setSaveManager(self: *WorldStreamer, sm: ?*SaveManager) void {
+        self.save_manager = sm;
+    }
+
     pub fn updateFrame(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         if (self.paused) return;
 
         try self.updateStreaming(player_pos, dt);
         self.processUploads();
         try self.processUnloads(player_pos);
+        self.checkAutoSave();
     }
 
     fn updateStreaming(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
@@ -385,6 +392,14 @@ pub const WorldStreamer = struct {
         }
 
         for (to_remove.items) |key| {
+            if (self.save_manager) |sm| {
+                if (self.storage.chunks.get(key)) |data| {
+                    if (data.chunk.modified and data.chunk.generated) {
+                        sm.enqueueSave(&data.chunk);
+                        data.chunk.modified = false;
+                    }
+                }
+            }
             _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
         }
         self.storage.chunks_mutex.unlock();
@@ -418,10 +433,17 @@ pub const WorldStreamer = struct {
         defer chunk_data.chunk.unpin();
 
         if (chunk_data.chunk.state == .generating and chunk_data.chunk.job_token == job.data.chunk.job_token) {
-            self.generator.generate(&chunk_data.chunk, &self.gen_queue.abort_worker);
-            if (self.gen_queue.abort_worker) {
-                chunk_data.chunk.state = .missing;
-                return;
+            const loaded_from_save = blk: {
+                const sm = self.save_manager orelse break :blk false;
+                break :blk sm.loadChunk(cx, cz, &chunk_data.chunk);
+            };
+
+            if (!loaded_from_save) {
+                self.generator.generate(&chunk_data.chunk, &self.gen_queue.abort_worker);
+                if (self.gen_queue.abort_worker) {
+                    chunk_data.chunk.state = .missing;
+                    return;
+                }
             }
             chunk_data.chunk.state = .generated;
             self.markNeighborsForRemesh(cx, cz);
@@ -506,6 +528,24 @@ pub const WorldStreamer = struct {
                 }
             }
         }
+    }
+
+    fn checkAutoSave(self: *WorldStreamer) void {
+        const sm = self.save_manager orelse return;
+        if (!sm.shouldAutoSave()) return;
+
+        self.storage.chunks_mutex.lockShared();
+        var iter = self.storage.iteratorUnsafe();
+        while (iter.next()) |entry| {
+            const chunk = &entry.value_ptr.*.chunk;
+            if (chunk.modified and chunk.generated) {
+                sm.enqueueSave(chunk);
+                chunk.modified = false;
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+
+        sm.markAutoSaved();
     }
 
     pub fn getStats(self: *WorldStreamer) struct { gen_queue: usize, mesh_queue: usize, upload_queue: usize } {

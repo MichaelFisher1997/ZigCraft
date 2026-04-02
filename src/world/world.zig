@@ -39,6 +39,7 @@ const log = @import("../engine/core/log.zig");
 const LODConfig = @import("lod_chunk.zig").LODConfig;
 const ILODConfig = @import("lod_chunk.zig").ILODConfig;
 const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
+const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -119,6 +120,9 @@ pub const World = struct {
     lod: ?*WorldLOD,
     lod_enabled: bool, // Runtime toggle for LOD rendering
 
+    // Save system (Issue #380)
+    save_manager: ?*SaveManager,
+
     pub fn init(allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, atlas: *const TextureAtlas) !*World {
         return initGen(0, allocator, render_distance, seed, rhi, atlas);
     }
@@ -154,6 +158,7 @@ pub const World = struct {
             .safe_render_distance = safe_render_distance,
             .lod = null,
             .lod_enabled = false,
+            .save_manager = null,
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
@@ -184,6 +189,12 @@ pub const World = struct {
 
     pub fn deinit(self: *World) void {
         self.rhi.waitIdle();
+
+        if (self.save_manager) |sm| {
+            self.saveAllModifiedChunks();
+            sm.deinit();
+        }
+
         self.streamer.deinit();
 
         // Storage must be deinitialized before renderer because it uses the renderer's vertex_allocator
@@ -217,6 +228,52 @@ pub const World = struct {
         if (self.lod) |lod| {
             lod.unpause();
         }
+    }
+
+    pub fn enableSaveManager(self: *World, save_dir_path: []const u8, world_name: []const u8) !void {
+        const seed = self.generator.getSeed();
+        const gen_name = self.generator.info.name;
+        self.save_manager = try SaveManager.init(self.allocator, save_dir_path, world_name, seed, gen_name);
+    }
+
+    pub fn saveAllModifiedChunks(self: *World) void {
+        const sm = self.save_manager orelse return;
+
+        self.storage.chunks_mutex.lockShared();
+        var iter = self.storage.iteratorUnsafe();
+        while (iter.next()) |entry| {
+            const chunk = &entry.value_ptr.*.chunk;
+            if (chunk.modified and chunk.generated) {
+                sm.enqueueSave(chunk);
+                chunk.modified = false;
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+
+        sm.flush();
+    }
+
+    pub fn checkAutoSave(self: *World) void {
+        const sm = self.save_manager orelse return;
+        if (!sm.shouldAutoSave()) return;
+
+        self.storage.chunks_mutex.lockShared();
+        var iter = self.storage.iteratorUnsafe();
+        while (iter.next()) |entry| {
+            const chunk = &entry.value_ptr.*.chunk;
+            if (chunk.modified and chunk.generated) {
+                sm.enqueueSave(chunk);
+                chunk.modified = false;
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+
+        sm.markAutoSaved();
+    }
+
+    pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) bool {
+        const sm = self.save_manager orelse return false;
+        return sm.loadChunk(cx, cz, out_chunk);
     }
 
     /// Set render distance and trigger chunk loading/unloading update
