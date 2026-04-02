@@ -71,22 +71,25 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: std.fs.Dir) ?LevelDa
         .string => |s| s,
         else => return null,
     };
+    const seed: u64 = switch (seed_val) {
+        .integer => |i| @intCast(i),
+        else => return null,
+    };
+    const last_played: i64 = if (last_val) |lv| switch (lv) {
+        .integer => |i| i,
+        else => 0,
+    } else 0;
+    const generator_index: usize = switch (gen_val) {
+        .integer => |i| @intCast(i),
+        else => 0,
+    };
     const name_copy = allocator.dupe(u8, name_str) catch return null;
     errdefer allocator.free(name_copy);
     return .{
         .name = name_copy,
-        .seed = switch (seed_val) {
-            .integer => |i| @intCast(i),
-            else => return null,
-        },
-        .last_played = if (last_val) |lv| switch (lv) {
-            .integer => |i| i,
-            else => 0,
-        } else 0,
-        .generator_index = switch (gen_val) {
-            .integer => |i| @intCast(i),
-            else => 0,
-        },
+        .seed = seed,
+        .last_played = last_played,
+        .generator_index = generator_index,
     };
 }
 
@@ -111,7 +114,10 @@ pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
         const name_alloc = allocator.dupe(u8, entry.name) catch continue;
         errdefer allocator.free(name_alloc);
         const level = readLevelDat(allocator, saves_dir);
-        const dir_buf = std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ home, SAVE_DIR, entry.name }) catch continue;
+        const dir_buf = std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ home, SAVE_DIR, entry.name }) catch {
+            allocator.free(name_alloc);
+            continue;
+        };
         errdefer allocator.free(dir_buf);
         if (level) |ld| {
             try entries.append(allocator, .{
@@ -140,6 +146,8 @@ fn compareWorldsByLastPlayed(_: void, a: WorldEntry, b: WorldEntry) bool {
     return a.last_played > b.last_played;
 }
 
+/// Deletes a world directory and frees dir_path.
+/// Logs errors but does not return them. Caller must not use dir_path after call.
 pub fn deleteWorld(allocator: std.mem.Allocator, dir_path: []const u8) void {
     const parent_path = std.fs.path.dirname(dir_path) orelse return;
     const base = std.fs.path.basename(dir_path);
