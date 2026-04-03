@@ -1,4 +1,5 @@
 //! World renderer - handles chunk rendering, culling, and MDI.
+//! Integrates GPU compute frustum culling (CullingSystem) with CPU fallback.
 
 const std = @import("std");
 const log = @import("../engine/core/log.zig");
@@ -7,6 +8,7 @@ const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
+const CHUNK_SIZE_Y = @import("chunk.zig").CHUNK_SIZE_Y;
 const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const ResourceManager = rhi_mod.ResourceManager;
@@ -16,6 +18,8 @@ const LODManager = @import("lod_manager.zig").LODManager;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
+const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").CullingSystem;
+const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -24,6 +28,7 @@ pub const RenderStats = struct {
     chunks_rendered: u32 = 0,
     chunks_culled: u32 = 0,
     vertices_rendered: u64 = 0,
+    gpu_culling: bool = false,
 };
 
 pub const ShadowStats = struct {
@@ -49,7 +54,14 @@ pub const WorldRenderer = struct {
     instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
     indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
 
-    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage) !*WorldRenderer {
+    // GPU Culling
+    culling_system: ?*CullingSystem,
+    aabb_data: std.ArrayListUnmanaged(ChunkCullData),
+    chunk_lookup: [rhi_mod.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(*ChunkData),
+    gpu_visible_indices: std.ArrayListUnmanaged(u32),
+    use_gpu_culling: bool,
+
+    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
         const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
@@ -74,6 +86,16 @@ pub const WorldRenderer = struct {
             indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 3, .indirect);
         }
 
+        var culling_system: ?*CullingSystem = null;
+        var use_gpu = false;
+        if (CullingSystem.init(allocator, rhi, max_chunks)) |cs| {
+            culling_system = cs;
+            use_gpu = true;
+            log.log.info("GPU frustum culling initialized (max_chunks={})", .{max_chunks});
+        } else |err| {
+            log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
+        }
+
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
@@ -88,7 +110,14 @@ pub const WorldRenderer = struct {
             .draw_commands = .empty,
             .instance_buffers = instance_buffers,
             .indirect_buffers = indirect_buffers,
+            .culling_system = culling_system,
+            .aabb_data = .empty,
+            .chunk_lookup = undefined,
+            .gpu_visible_indices = .empty,
+            .use_gpu_culling = use_gpu,
         };
+
+        for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
 
         return renderer;
     }
@@ -98,16 +127,15 @@ pub const WorldRenderer = struct {
         self.vertex_allocator.tick(self.query.getFrameIndex());
     }
 
-    /// Reset shadow statistics before a new frame begins.
-    ///
-    /// `last_shadow_stats` then accumulates across all shadow passes in that frame.
-    /// If per-cascade statistics are needed, call this before each shadow pass.
     pub fn resetShadowStats(self: *WorldRenderer) void {
         self.last_shadow_stats = .{};
     }
 
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
+        self.aabb_data.deinit(self.allocator);
+        for (&self.chunk_lookup) |*lookup| lookup.deinit(self.allocator);
+        self.gpu_visible_indices.deinit(self.allocator);
 
         for (0..rhi_mod.MAX_FRAMES_IN_FLIGHT) |i| {
             if (self.instance_buffers[i] != 0) self.rm.destroyBuffer(self.instance_buffers[i]);
@@ -116,13 +144,15 @@ pub const WorldRenderer = struct {
         self.instance_data.deinit(self.allocator);
         self.draw_commands.deinit(self.allocator);
 
+        if (self.culling_system) |cs| cs.deinit();
+
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
         self.allocator.destroy(self);
     }
 
     pub fn render(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, render_distance: i32, lod_manager: ?*LODManager, render_lod: bool) void {
-        self.last_render_stats = .{};
+        self.last_render_stats = .{ .gpu_culling = self.use_gpu_culling };
 
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
@@ -137,8 +167,6 @@ pub const WorldRenderer = struct {
         self.instance_data.clearRetainingCapacity();
         self.draw_commands.clearRetainingCapacity();
 
-        const frustum = Frustum.fromViewProj(view_proj);
-
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
         const world_x: i64 = @intFromFloat(camera_pos.x);
@@ -149,22 +177,10 @@ pub const WorldRenderer = struct {
         const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, @as(i32, @intCast(mgr.config.getRadii()[0]))) else render_distance;
         const r_dist: i64 = @as(i64, @intCast(r_dist_val));
 
-        var cz = pc_z - r_dist;
-        while (cz <= pc_z + r_dist) : (cz += 1) {
-            var cx = pc_x - r_dist;
-            while (cx <= pc_x + r_dist) : (cx += 1) {
-                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
-                        if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.visible_chunks.append(self.allocator, data) catch |err| {
-                                log.log.debug("MDI: visible_chunks append failed: {}", .{err});
-                            };
-                        } else {
-                            self.last_render_stats.chunks_culled += 1;
-                        }
-                    }
-                }
-            }
+        if (self.use_gpu_culling) {
+            self.renderGpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist);
+        } else {
+            self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist);
         }
 
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
@@ -259,8 +275,93 @@ pub const WorldRenderer = struct {
         }
     }
 
-    /// Intentionally excludes visual LOD meshes to prevent LOD offset/morphing
-    /// artifacts from corrupting shadow maps. Only real chunk geometry is rendered.
+    fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        const frustum = Frustum.fromViewProj(view_proj);
+
+        var cz = pc_z - r_dist;
+        while (cz <= pc_z + r_dist) : (cz += 1) {
+            var cx = pc_x - r_dist;
+            while (cx <= pc_x + r_dist) : (cx += 1) {
+                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                        if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
+                            self.visible_chunks.append(self.allocator, data) catch |err| {
+                                log.log.debug("MDI: visible_chunks append failed: {}", .{err});
+                            };
+                        } else {
+                            self.last_render_stats.chunks_culled += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn chunkAABB(chunk_x: i32, chunk_z: i32, camera_pos: Vec3) ChunkCullData {
+        const world_x: f32 = @floatFromInt(chunk_x * CHUNK_SIZE_X);
+        const world_z: f32 = @floatFromInt(chunk_z * CHUNK_SIZE_Z);
+        return .{
+            .min_point = .{ world_x - camera_pos.x, -camera_pos.y, world_z - camera_pos.z, 0.0 },
+            .max_point = .{
+                world_x - camera_pos.x + @as(f32, @floatFromInt(CHUNK_SIZE_X)),
+                -camera_pos.y + @as(f32, @floatFromInt(CHUNK_SIZE_Y)),
+                world_z - camera_pos.z + @as(f32, @floatFromInt(CHUNK_SIZE_Z)),
+                0.0,
+            },
+        };
+    }
+
+    fn renderGpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        const cs = self.culling_system orelse {
+            log.log.err("GPU culling enabled but system is null, falling back to CPU", .{});
+            self.use_gpu_culling = false;
+            return self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist);
+        };
+
+        const fi = self.query.getFrameIndex();
+        const prev_fi = (fi + rhi_mod.MAX_FRAMES_IN_FLIGHT - 1) % rhi_mod.MAX_FRAMES_IN_FLIGHT;
+
+        const prev_visible_count = cs.readVisibleCount(prev_fi);
+        self.gpu_visible_indices.clearRetainingCapacity();
+        if (prev_visible_count > 0) {
+            self.gpu_visible_indices.resize(self.allocator, prev_visible_count) catch return;
+            cs.readVisibleIndices(prev_fi, prev_visible_count, self.gpu_visible_indices.items);
+
+            const limit = @min(@as(usize, @intCast(prev_visible_count)), self.gpu_visible_indices.items.len);
+            for (self.gpu_visible_indices.items[0..limit]) |idx| {
+                if (idx < self.chunk_lookup[prev_fi].items.len) {
+                    self.visible_chunks.append(self.allocator, self.chunk_lookup[prev_fi].items[idx]) catch continue;
+                }
+            }
+        }
+
+        const prev_rendered: u32 = @intCast(self.visible_chunks.items.len);
+
+        self.aabb_data.clearRetainingCapacity();
+        self.chunk_lookup[fi].clearRetainingCapacity();
+
+        var cz = pc_z - r_dist;
+        while (cz <= pc_z + r_dist) : (cz += 1) {
+            var cx = pc_x - r_dist;
+            while (cx <= pc_x + r_dist) : (cx += 1) {
+                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                        self.aabb_data.append(self.allocator, chunkAABB(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos)) catch continue;
+                        self.chunk_lookup[fi].append(self.allocator, data) catch continue;
+                    }
+                }
+            }
+        }
+
+        const chunk_count: u32 = @intCast(self.aabb_data.items.len);
+        if (chunk_count == 0) return;
+
+        self.last_render_stats.chunks_culled += chunk_count - @min(prev_rendered, chunk_count);
+
+        cs.updateAABBData(fi, self.aabb_data.items);
+        cs.dispatch(view_proj, chunk_count);
+    }
+
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
         const frustum = Frustum.fromViewProj(light_space_matrix);
 
