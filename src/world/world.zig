@@ -256,20 +256,6 @@ pub const World = struct {
         return dirty_keys;
     }
 
-    fn clearModifiedFlags(self: *World, keys: []const ChunkKey, failed: []const ChunkKey) void {
-        self.storage.chunks_mutex.lockShared();
-        for (keys) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                const should_remark = for (failed) |f| {
-                    if (f.x == key.x and f.z == key.z) break true;
-                } else false;
-                if (!should_remark) data.chunk.modified = false;
-                data.chunk.unpin();
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
-    }
-
     pub fn saveAllModifiedChunks(self: *World) void {
         const sm = self.save_manager orelse return;
 
@@ -278,7 +264,19 @@ pub const World = struct {
 
         const failed = sm.flush();
 
-        self.clearModifiedFlags(dirty_keys.items, failed);
+        self.storage.chunks_mutex.lockShared();
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = false;
+                data.chunk.unpin();
+            }
+        }
+        for (failed) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = true;
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
     }
 
     pub fn checkAutoSave(self: *World) void {
@@ -291,7 +289,17 @@ pub const World = struct {
         const failed = sm.flush();
         sm.markAutoSaved();
 
-        self.clearModifiedFlags(dirty_keys.items, failed);
+        self.storage.chunks_mutex.lockShared();
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                const should_remark = for (failed) |f| {
+                    if (f.x == key.x and f.z == key.z) break true;
+                } else false;
+                if (!should_remark) data.chunk.modified = false;
+                data.chunk.unpin();
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
     }
 
     pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
