@@ -292,11 +292,15 @@ pub const World = struct {
         }
         self.storage.chunks_mutex.unlockShared();
 
+        const failed = sm.flush();
         sm.markAutoSaved();
 
         for (dirty_keys.items) |key| {
             if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = false;
+                const should_remark = for (failed) |f| {
+                    if (f.x == key.x and f.z == key.z) break true;
+                } else false;
+                if (!should_remark) data.chunk.modified = false;
                 data.chunk.unpin();
             }
         }
