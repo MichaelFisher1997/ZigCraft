@@ -162,33 +162,34 @@ pub const SingleplayerScreen = struct {
 fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize) !void {
     const home = std.posix.getenv("HOME") orelse {
         log.log.warn("Cannot save world: HOME not set", .{});
-        return;
+        return error.NoHome;
     };
     var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
         log.log.warn("Cannot save world: failed to open home dir: {}", .{err});
-        return;
+        return err;
     };
     defer home_dir.close();
     home_dir.makePath(world_list.SAVE_DIR) catch |err| {
         log.log.warn("Cannot save world: failed to create saves dir: {}", .{err});
-        return;
+        return err;
     };
     var dir_name_buf: [128]u8 = undefined;
-    const timestamp: i64 = @as(i64, @bitCast(seed_gen.randomSeedValue()));
+    const timestamp: i64 = std.time.milliTimestamp();
     const dir_name = std.fmt.bufPrint(&dir_name_buf, "world_{}", .{timestamp}) catch "world_new";
     const world_dir_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ world_list.SAVE_DIR, dir_name });
     defer allocator.free(world_dir_path);
     home_dir.makePath(world_dir_path) catch |err| {
         log.log.warn("Cannot save world: failed to create world dir: {}", .{err});
-        return;
+        return err;
     };
     var save_dir = home_dir.openDir(world_dir_path, .{}) catch |err| {
         log.log.warn("Cannot save world: failed to open world dir: {}", .{err});
-        return;
+        return err;
     };
     defer save_dir.close();
     world_list.writeLevelDat(allocator, save_dir, dir_name, seed, generator_index, timestamp) catch |err| {
         log.log.warn("Cannot save world: failed to write level.dat: {}", .{err});
+        return err;
     };
 }
 

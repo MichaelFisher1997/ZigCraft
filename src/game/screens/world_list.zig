@@ -8,7 +8,6 @@ const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const WorldScreen = @import("world.zig").WorldScreen;
-const c = @import("../../c.zig").c;
 const log = @import("../../engine/core/log.zig");
 
 const PANEL_WIDTH_MAX = 700.0;
@@ -350,8 +349,6 @@ pub const WorldListScreen = struct {
 
     fn confirmDelete(self: *@This(), idx: usize) !void {
         const allocator = self.context.allocator;
-        const entry_name = allocator.dupe(u8, self.worlds[idx].name) catch "<unknown>";
-        defer allocator.free(entry_name);
         const dir_path = self.worlds[idx].dir_path;
         deleteWorld(allocator, dir_path);
         for (self.worlds) |e| {
@@ -367,7 +364,7 @@ pub const WorldListScreen = struct {
 
 fn formatTimestamp(ts: i64) []const u8 {
     if (ts <= 0) return "NEVER";
-    const now: i64 = @as(i64, @intCast(c.SDL_GetTicks()));
+    const now: i64 = std.time.milliTimestamp();
     const diff = now - ts;
     if (diff < 0) return "NEVER";
     if (diff < 60000) return "JUST NOW";
