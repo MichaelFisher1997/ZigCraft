@@ -238,11 +238,8 @@ pub const World = struct {
         self.save_manager = try SaveManager.init(self.allocator, save_dir_path, world_name, seed, gen_name);
     }
 
-    pub fn saveAllModifiedChunks(self: *World) void {
-        const sm = self.save_manager orelse return;
-
+    fn enqueueModifiedChunks(self: *World, sm: *SaveManager) std.ArrayListUnmanaged(ChunkKey) {
         var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
-        defer dirty_keys.deinit(self.allocator);
 
         self.storage.chunks_mutex.lockShared();
         var iter = self.storage.iteratorUnsafe();
@@ -256,47 +253,12 @@ pub const World = struct {
         }
         self.storage.chunks_mutex.unlockShared();
 
-        const failed = sm.flush();
-
-        self.storage.chunks_mutex.lockShared();
-        for (dirty_keys.items) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = false;
-                data.chunk.unpin();
-            }
-        }
-        for (failed) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = true;
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
+        return dirty_keys;
     }
 
-    pub fn checkAutoSave(self: *World) void {
-        const sm = self.save_manager orelse return;
-        if (!sm.shouldAutoSave()) return;
-
-        var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
-        defer dirty_keys.deinit(self.allocator);
-
+    fn clearModifiedFlags(self: *World, keys: []const ChunkKey, failed: []const ChunkKey) void {
         self.storage.chunks_mutex.lockShared();
-        var iter_a = self.storage.iteratorUnsafe();
-        while (iter_a.next()) |entry| {
-            const chunk = &entry.value_ptr.*.chunk;
-            if (chunk.modified and chunk.generated) {
-                chunk.pin();
-                sm.enqueueSave(chunk);
-                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
-
-        const failed = sm.flush();
-        sm.markAutoSaved();
-
-        self.storage.chunks_mutex.lockShared();
-        for (dirty_keys.items) |key| {
+        for (keys) |key| {
             if (self.storage.chunks.get(key)) |data| {
                 const should_remark = for (failed) |f| {
                     if (f.x == key.x and f.z == key.z) break true;
@@ -306,6 +268,30 @@ pub const World = struct {
             }
         }
         self.storage.chunks_mutex.unlockShared();
+    }
+
+    pub fn saveAllModifiedChunks(self: *World) void {
+        const sm = self.save_manager orelse return;
+
+        var dirty_keys = self.enqueueModifiedChunks(sm);
+        defer dirty_keys.deinit(self.allocator);
+
+        const failed = sm.flush();
+
+        self.clearModifiedFlags(dirty_keys.items, failed);
+    }
+
+    pub fn checkAutoSave(self: *World) void {
+        const sm = self.save_manager orelse return;
+        if (!sm.shouldAutoSave()) return;
+
+        var dirty_keys = self.enqueueModifiedChunks(sm);
+        defer dirty_keys.deinit(self.allocator);
+
+        const failed = sm.flush();
+        sm.markAutoSaved();
+
+        self.clearModifiedFlags(dirty_keys.items, failed);
     }
 
     pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
