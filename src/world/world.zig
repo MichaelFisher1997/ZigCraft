@@ -157,7 +157,7 @@ pub const World = struct {
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
-        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage);
+        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, rhi);
         errdefer _ = world.renderer;
 
         log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
