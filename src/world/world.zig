@@ -295,6 +295,7 @@ pub const World = struct {
         const failed = sm.flush();
         sm.markAutoSaved();
 
+        self.storage.chunks_mutex.lockShared();
         for (dirty_keys.items) |key| {
             if (self.storage.chunks.get(key)) |data| {
                 const should_remark = for (failed) |f| {
@@ -304,6 +305,7 @@ pub const World = struct {
                 data.chunk.unpin();
             }
         }
+        self.storage.chunks_mutex.unlockShared();
     }
 
     pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
