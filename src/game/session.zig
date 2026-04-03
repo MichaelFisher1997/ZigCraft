@@ -183,6 +183,16 @@ pub const GameSession = struct {
             .creative_mode = true,
         };
 
+        const save_env = std.posix.getenv("ZIGCRAFT_SAVE_DIR");
+        if (save_env) |save_path| {
+            world.enableSaveManager(save_path, "world") catch |err| {
+                log.log.warn("Failed to initialize save manager: {}", .{err});
+            };
+            if (world.save_manager) |sm| {
+                world.streamer.setSaveManager(sm);
+            }
+        }
+
         // Force map update initially
         session.map_controller.map_needs_update = true;
 
