@@ -174,7 +174,10 @@ fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize)
         return err;
     };
     var dir_name_buf: [128]u8 = undefined;
-    const timestamp: i64 = std.time.milliTimestamp();
+    const timestamp: i64 = blk: {
+        const t = try std.posix.clock_gettime(std.posix.CLOCK.REALTIME);
+        break :blk t.sec * 1000 + @divTrunc(t.nsec, 1000000);
+    };
     const dir_name = std.fmt.bufPrint(&dir_name_buf, "world_{}", .{timestamp}) catch "world_new";
     const world_dir_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ world_list.SAVE_DIR, dir_name });
     defer allocator.free(world_dir_path);

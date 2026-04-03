@@ -364,7 +364,10 @@ pub const WorldListScreen = struct {
 
 fn formatTimestamp(ts: i64) []const u8 {
     if (ts <= 0) return "NEVER";
-    const now: i64 = std.time.milliTimestamp();
+    const now: i64 = blk: {
+        const t = std.posix.clock_gettime(std.posix.CLOCK.REALTIME) catch return "NEVER";
+        break :blk t.sec * 1000 + @divTrunc(t.nsec, 1000000);
+    };
     const diff = now - ts;
     if (diff < 0) return "NEVER";
     if (diff < 60000) return "JUST NOW";
