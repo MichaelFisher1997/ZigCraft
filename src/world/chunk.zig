@@ -136,6 +136,9 @@ pub const Chunk = struct {
     /// Has this chunk been generated?
     generated: bool = false,
 
+    /// Has this chunk been modified since last save?
+    modified: bool = false,
+
     /// Number of active jobs referencing this chunk (prevents unloading)
     pin_count: std.atomic.Value(u32),
 
@@ -169,6 +172,7 @@ pub const Chunk = struct {
     pub fn setBlock(self: *Chunk, x: u32, y: u32, z: u32, block: BlockType) void {
         self.blocks[getIndex(x, y, z)] = block;
         self.dirty = true;
+        self.modified = true;
     }
 
     /// Get block with bounds checking (returns air if out of bounds)

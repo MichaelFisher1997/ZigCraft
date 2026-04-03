@@ -7,6 +7,7 @@ const NeighborChunks = @import("chunk_mesh.zig").NeighborChunks;
 const BlockType = @import("block.zig").BlockType;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
 const ChunkData = @import("chunk_storage.zig").ChunkData;
+const ChunkKey = @import("chunk_storage.zig").ChunkKey;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const worldToLocal = @import("chunk.zig").worldToLocal;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
@@ -39,6 +40,8 @@ const log = @import("../engine/core/log.zig");
 const LODConfig = @import("lod_chunk.zig").LODConfig;
 const ILODConfig = @import("lod_chunk.zig").ILODConfig;
 const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
+const SaveManager = @import("persistence/save_manager.zig").SaveManager;
+const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -119,6 +122,9 @@ pub const World = struct {
     lod: ?*WorldLOD,
     lod_enabled: bool, // Runtime toggle for LOD rendering
 
+    // Save system (Issue #380)
+    save_manager: ?*SaveManager,
+
     pub fn init(allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, atlas: *const TextureAtlas) !*World {
         return initGen(0, allocator, render_distance, seed, rhi, atlas);
     }
@@ -154,6 +160,7 @@ pub const World = struct {
             .safe_render_distance = safe_render_distance,
             .lod = null,
             .lod_enabled = false,
+            .save_manager = null,
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
@@ -184,6 +191,12 @@ pub const World = struct {
 
     pub fn deinit(self: *World) void {
         self.rhi.waitIdle();
+
+        if (self.save_manager) |sm| {
+            self.saveAllModifiedChunks();
+            sm.deinit();
+        }
+
         self.streamer.deinit();
 
         // Storage must be deinitialized before renderer because it uses the renderer's vertex_allocator
@@ -217,6 +230,81 @@ pub const World = struct {
         if (self.lod) |lod| {
             lod.unpause();
         }
+    }
+
+    pub fn enableSaveManager(self: *World, save_dir_path: []const u8, world_name: []const u8) !void {
+        const seed = self.generator.getSeed();
+        const gen_name = self.generator.info.name;
+        self.save_manager = try SaveManager.init(self.allocator, save_dir_path, world_name, seed, gen_name);
+    }
+
+    fn enqueueModifiedChunks(self: *World, sm: *SaveManager) std.ArrayListUnmanaged(ChunkKey) {
+        var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
+
+        self.storage.chunks_mutex.lockShared();
+        var iter = self.storage.iteratorUnsafe();
+        while (iter.next()) |entry| {
+            const chunk = &entry.value_ptr.*.chunk;
+            if (chunk.modified and chunk.generated) {
+                chunk.pin();
+                sm.enqueueSave(chunk);
+                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+
+        return dirty_keys;
+    }
+
+    pub fn saveAllModifiedChunks(self: *World) void {
+        const sm = self.save_manager orelse return;
+
+        var dirty_keys = self.enqueueModifiedChunks(sm);
+        defer dirty_keys.deinit(self.allocator);
+
+        const failed = sm.flush();
+
+        self.storage.chunks_mutex.lockShared();
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = false;
+                data.chunk.unpin();
+            }
+        }
+        for (failed) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = true;
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+    }
+
+    pub fn checkAutoSave(self: *World) void {
+        const sm = self.save_manager orelse return;
+        if (!sm.shouldAutoSave()) return;
+
+        var dirty_keys = self.enqueueModifiedChunks(sm);
+        defer dirty_keys.deinit(self.allocator);
+
+        const failed = sm.flush();
+        sm.markAutoSaved();
+
+        self.storage.chunks_mutex.lockShared();
+        for (dirty_keys.items) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                const should_remark = for (failed) |f| {
+                    if (f.x == key.x and f.z == key.z) break true;
+                } else false;
+                if (!should_remark) data.chunk.modified = false;
+                data.chunk.unpin();
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+    }
+
+    pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
+        const sm = self.save_manager orelse return .not_found;
+        return sm.loadChunk(cx, cz, out_chunk);
     }
 
     /// Set render distance and trigger chunk loading/unloading update
