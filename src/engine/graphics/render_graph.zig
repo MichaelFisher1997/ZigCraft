@@ -492,3 +492,43 @@ pub const FXAAPass = struct {
         ctx.render_ctx.endFXAAPass();
     }
 };
+
+pub const WaterReflectionPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "WaterReflectionPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *WaterReflectionPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        _ = ctx;
+    }
+};
+
+pub const WaterPass = struct {
+    enabled: bool = true,
+    const VTABLE = IRenderPass.VTable{
+        .name = "WaterPass",
+        .needs_main_pass = true,
+        .execute = execute,
+    };
+    pub fn pass(self: *WaterPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        const self: *WaterPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled) return;
+        _ = ctx;
+    }
+};

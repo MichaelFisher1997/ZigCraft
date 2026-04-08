@@ -38,6 +38,7 @@ pub const PipelineManager = struct {
     ui_pipeline: c.VkPipeline = null,
     ui_tex_pipeline: c.VkPipeline = null,
     cloud_pipeline: c.VkPipeline = null,
+    water_pipeline: c.VkPipeline = null,
 
     // Swapchain UI pipelines
     ui_swapchain_pipeline: c.VkPipeline = null,
@@ -224,6 +225,7 @@ pub const PipelineManager = struct {
         if (self.ui_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_tex_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.cloud_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
+        if (self.water_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_swapchain_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_swapchain_tex_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
 
@@ -240,6 +242,7 @@ pub const PipelineManager = struct {
         self.ui_pipeline = null;
         self.ui_tex_pipeline = null;
         self.cloud_pipeline = null;
+        self.water_pipeline = null;
         self.ui_swapchain_pipeline = null;
         self.ui_swapchain_tex_pipeline = null;
         self.debug_shadow_pipeline = null;
