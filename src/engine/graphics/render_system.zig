@@ -43,6 +43,8 @@ pub const RenderSystem = struct {
     bloom_pass: render_graph_pkg.BloomPass,
     post_process_pass: render_graph_pkg.PostProcessPass,
     fxaa_pass: render_graph_pkg.FXAAPass,
+    water_reflection_pass: render_graph_pkg.WaterReflectionPass,
+    water_pass: render_graph_pkg.WaterPass,
     safe_render_mode: bool,
     disable_shadow_draw: bool,
     disable_gpass_draw: bool,
@@ -176,6 +178,8 @@ pub const RenderSystem = struct {
             .bloom_pass = .{ .enabled = false },
             .post_process_pass = .{},
             .fxaa_pass = .{ .enabled = true },
+            .water_reflection_pass = .{},
+            .water_pass = .{ .enabled = true },
             .safe_render_mode = safe_render_mode,
             .disable_shadow_draw = disable_shadow_draw,
             .disable_gpass_draw = disable_gpass_draw,
@@ -214,6 +218,8 @@ pub const RenderSystem = struct {
             try self.render_graph.addPass(self.depth_pyramid_pass.pass());
             try self.render_graph.addPass(self.sky_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());
+            try self.render_graph.addPass(self.water_reflection_pass.pass());
+            try self.render_graph.addPass(self.water_pass.pass());
             try self.render_graph.addPass(self.cloud_pass.pass());
             try self.render_graph.addPass(self.entity_pass.pass());
             try self.render_graph.addPass(self.taa_pass.pass());

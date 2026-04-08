@@ -2652,6 +2652,8 @@ const MockWorld = struct {
     const VTABLE = IWorld.VTable{
         .update = update,
         .render = render,
+        .renderOpaque = renderOpaque,
+        .renderFluid = renderFluid,
         .deinit = deinit,
         .getRenderStats = getRenderStats,
         .getStats = getStats,
@@ -2677,6 +2679,14 @@ const MockWorld = struct {
         const self: *MockWorld = @ptrCast(@alignCast(ptr));
         self.render_calls += 1;
         self.last_render_lod = render_lod;
+    }
+
+    fn renderOpaque(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        render(ptr, view_proj, camera_pos, render_lod);
+    }
+
+    fn renderFluid(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        render(ptr, view_proj, camera_pos, render_lod);
     }
 
     fn deinit(ptr: *anyopaque) void {

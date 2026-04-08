@@ -90,7 +90,15 @@ const MockContext = struct {
         self.cloud_pipeline_requested = true;
         return 0;
     }
+    fn getNativeWaterPipeline(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
     fn getNativeCloudPipelineLayout(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeWaterPipelineLayout(ptr: *anyopaque) u64 {
         _ = ptr;
         return 0;
     }
@@ -158,6 +166,19 @@ const MockContext = struct {
         return 0;
     }
 
+    fn getWaterReflectionHandle(ptr: *anyopaque) rhi.TextureHandle {
+        _ = ptr;
+        return 0;
+    }
+
+    fn computeWaterReflectedViewProj(ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        _ = ptr;
+        _ = view;
+        _ = proj;
+        _ = camera_pos;
+        return Mat4.identity;
+    }
+
     fn drawDepthTexture(ptr: *anyopaque, texture: rhi.TextureHandle, rect: rhi.Rect) void {
         const self: *MockContext = @ptrCast(@alignCast(ptr));
         _ = texture;
@@ -188,6 +209,8 @@ const MockContext = struct {
         .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
         .getNativeCloudPipeline = getNativeCloudPipeline,
         .getNativeCloudPipelineLayout = getNativeCloudPipelineLayout,
+        .getNativeWaterPipeline = getNativeWaterPipeline,
+        .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
         .getNativeMainDescriptorSet = getNativeMainDescriptorSet,
         .getNativeCommandBuffer = getNativeCommandBuffer,
         .getNativeSwapchainExtent = getNativeSwapchainExtent,
@@ -198,6 +221,13 @@ const MockContext = struct {
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
         .compute = computeSSAO,
+    };
+
+    const MOCK_WATER_VTABLE = rhi.IWaterContext.VTable{
+        .beginReflectionPass = undefined,
+        .endReflectionPass = undefined,
+        .getReflectionTextureHandle = getWaterReflectionHandle,
+        .computeReflectedViewProj = computeWaterReflectedViewProj,
     };
 
     const MOCK_RESOURCES_VTABLE = rhi.IResourceFactory.VTable{
@@ -317,6 +347,7 @@ const MockContext = struct {
         .render = MOCK_RENDER_VTABLE,
         .ssao = MOCK_SSAO_VTABLE,
         .shadow = MOCK_SHADOW_VTABLE,
+        .water = MOCK_WATER_VTABLE,
         .ui = MOCK_UI_VTABLE,
         .query = MOCK_QUERY_VTABLE,
         .timing = .{

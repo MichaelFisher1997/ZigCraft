@@ -36,6 +36,12 @@ pub const ShadowStats = struct {
     chunks_culled: u32 = 0,
 };
 
+pub const RenderLayer = enum {
+    all,
+    terrain,
+    fluid,
+};
+
 pub const WorldRenderer = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
@@ -151,7 +157,7 @@ pub const WorldRenderer = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn render(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, render_distance: i32, lod_manager: ?*LODManager, render_lod: bool) void {
+    pub fn render(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, render_distance: i32, lod_manager: ?*LODManager, render_lod: bool, layer: RenderLayer) void {
         self.last_render_stats = .{ .gpu_culling = self.use_gpu_culling };
 
         self.storage.chunks_mutex.lockShared();
@@ -207,32 +213,36 @@ pub const WorldRenderer = struct {
                 continue;
             };
 
-            if (data.mesh.solid_allocation) |alloc| {
-                self.last_render_stats.vertices_rendered += alloc.count;
-                self.draw_commands.append(self.allocator, .{
-                    .vertexCount = alloc.count,
-                    .instanceCount = 1,
-                    .firstVertex = @intCast(alloc.offset / vertex_size),
-                    .firstInstance = instance_idx,
-                }) catch |err| log.log.debug("MDI: solid cmd append failed: {}", .{err});
+            if (layer != .fluid) {
+                if (data.mesh.solid_allocation) |alloc| {
+                    self.last_render_stats.vertices_rendered += alloc.count;
+                    self.draw_commands.append(self.allocator, .{
+                        .vertexCount = alloc.count,
+                        .instanceCount = 1,
+                        .firstVertex = @intCast(alloc.offset / vertex_size),
+                        .firstInstance = instance_idx,
+                    }) catch |err| log.log.debug("MDI: solid cmd append failed: {}", .{err});
+                }
+                if (data.mesh.cutout_allocation) |alloc| {
+                    self.last_render_stats.vertices_rendered += alloc.count;
+                    self.draw_commands.append(self.allocator, .{
+                        .vertexCount = alloc.count,
+                        .instanceCount = 1,
+                        .firstVertex = @intCast(alloc.offset / vertex_size),
+                        .firstInstance = instance_idx,
+                    }) catch |err| log.log.debug("MDI: cutout cmd append failed: {}", .{err});
+                }
             }
-            if (data.mesh.cutout_allocation) |alloc| {
-                self.last_render_stats.vertices_rendered += alloc.count;
-                self.draw_commands.append(self.allocator, .{
-                    .vertexCount = alloc.count,
-                    .instanceCount = 1,
-                    .firstVertex = @intCast(alloc.offset / vertex_size),
-                    .firstInstance = instance_idx,
-                }) catch |err| log.log.debug("MDI: cutout cmd append failed: {}", .{err});
-            }
-            if (data.mesh.fluid_allocation) |alloc| {
-                self.last_render_stats.vertices_rendered += alloc.count;
-                self.draw_commands.append(self.allocator, .{
-                    .vertexCount = alloc.count,
-                    .instanceCount = 1,
-                    .firstVertex = @intCast(alloc.offset / vertex_size),
-                    .firstInstance = instance_idx,
-                }) catch |err| log.log.debug("MDI: fluid cmd append failed: {}", .{err});
+            if (layer != .terrain) {
+                if (data.mesh.fluid_allocation) |alloc| {
+                    self.last_render_stats.vertices_rendered += alloc.count;
+                    self.draw_commands.append(self.allocator, .{
+                        .vertexCount = alloc.count,
+                        .instanceCount = 1,
+                        .firstVertex = @intCast(alloc.offset / vertex_size),
+                        .firstInstance = instance_idx,
+                    }) catch |err| log.log.debug("MDI: fluid cmd append failed: {}", .{err});
+                }
             }
         }
 

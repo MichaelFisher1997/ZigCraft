@@ -384,6 +384,28 @@ pub fn createTAAResources(ctx: anytype) !void {
     );
 }
 
+pub fn createWaterResources(ctx: anytype) !void {
+    const extent = ctx.swapchain.getExtent();
+
+    ctx.water_system.destroyResources(ctx.vulkan_device.vk_device);
+    try ctx.water_system.ensureResources(
+        ctx.vulkan_device.vk_device,
+        ctx.vulkan_device.physical_device,
+        extent.width,
+        extent.height,
+        ctx.descriptors.descriptor_set_layout,
+    );
+    try ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device);
+
+    ctx.water_system.reflection_texture_handle = try ctx.resources.registerExternalTexture(
+        ctx.water_system.extent.width,
+        ctx.water_system.extent.height,
+        .rgba,
+        ctx.water_system.reflection_view,
+        ctx.water_system.reflection_sampler,
+    );
+}
+
 pub fn createPostProcessResources(ctx: anytype) !void {
     const vk = ctx.vulkan_device.vk_device;
 

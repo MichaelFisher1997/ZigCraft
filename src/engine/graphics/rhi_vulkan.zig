@@ -13,6 +13,7 @@ const timing = @import("vulkan/rhi_timing.zig");
 const context_factory = @import("vulkan/rhi_context_factory.zig");
 const state_control = @import("vulkan/rhi_state_control.zig");
 const shadow_bridge = @import("vulkan/rhi_shadow_bridge.zig");
+const water_bridge = @import("vulkan/rhi_water_bridge.zig");
 const native_access = @import("vulkan/rhi_native_access.zig");
 const render_state = @import("vulkan/rhi_render_state.zig");
 const init_deinit = @import("vulkan/rhi_init_deinit.zig");
@@ -658,6 +659,37 @@ fn updateShadowUniforms(ctx_ptr: *anyopaque, params: rhi.ShadowParams) anyerror!
     try shadow_bridge.updateShadowUniforms(ctx, params);
 }
 
+const VULKAN_WATER_CONTEXT_VTABLE = rhi.IWaterContext.VTable{
+    .beginReflectionPass = beginWaterReflectionPass,
+    .endReflectionPass = endWaterReflectionPass,
+    .getReflectionTextureHandle = getWaterReflectionTextureHandle,
+    .computeReflectedViewProj = computeWaterReflectedViewProj,
+};
+
+fn beginWaterReflectionPass(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    water_bridge.beginWaterReflectionPassInternal(ctx);
+}
+
+fn endWaterReflectionPass(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    water_bridge.endWaterReflectionPassInternal(ctx);
+}
+
+fn getWaterReflectionTextureHandle(ctx_ptr: *anyopaque) rhi.TextureHandle {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return water_bridge.getWaterReflectionTextureHandle(ctx);
+}
+
+fn computeWaterReflectedViewProj(ctx_ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return water_bridge.computeWaterReflectedViewProj(ctx, view, proj, camera_pos);
+}
+
 fn getNativeSkyPipeline(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeSkyPipeline(ctx);
@@ -673,6 +705,14 @@ fn getNativeCloudPipeline(ctx_ptr: *anyopaque) u64 {
 fn getNativeCloudPipelineLayout(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeCloudPipelineLayout(ctx);
+}
+fn getNativeWaterPipeline(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeWaterPipeline(ctx);
+}
+fn getNativeWaterPipelineLayout(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeWaterPipelineLayout(ctx);
 }
 fn getNativeMainDescriptorSet(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
@@ -790,6 +830,8 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
         .getNativeCloudPipeline = getNativeCloudPipeline,
         .getNativeCloudPipelineLayout = getNativeCloudPipelineLayout,
+        .getNativeWaterPipeline = getNativeWaterPipeline,
+        .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
         .getNativeMainDescriptorSet = getNativeMainDescriptorSet,
         .getNativeCommandBuffer = getNativeCommandBuffer,
         .getNativeSwapchainExtent = getNativeSwapchainExtent,
@@ -800,6 +842,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     },
     .ssao = VULKAN_SSAO_VTABLE,
     .shadow = VULKAN_SHADOW_CONTEXT_VTABLE,
+    .water = VULKAN_WATER_CONTEXT_VTABLE,
     .ui = VULKAN_UI_CONTEXT_VTABLE,
     .query = .{
         .getFrameIndex = getFrameIndex,

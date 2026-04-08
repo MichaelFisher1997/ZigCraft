@@ -281,6 +281,7 @@ pub const WorldScreen = struct {
             const render_ctx = render_graph_pkg.SceneContext{
                 .render_ctx = rhi.renderContext(),
                 .shadow_ctx = rhi.shadowSystem(),
+                .water_ctx = rhi.waterSystem(),
                 .ssao_ctx = rhi.ssao(),
                 .timing = rhi.timing(),
                 .world = self.world,

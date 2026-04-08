@@ -81,6 +81,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try setup.createGPassResources(ctx);
     try setup.createSSAOResources(ctx);
     try setup.createTAAResources(ctx);
+    try setup.createWaterResources(ctx);
 
     try ctx.render_pass_manager.createMainRenderPass(
         ctx.vulkan_device.vk_device,
@@ -232,6 +233,11 @@ pub fn deinit(ctx: anytype) void {
         ctx.depth_pyramid.deinit(vk_device);
         lifecycle.destroyPostProcessResources(ctx);
         lifecycle.destroyGPassResources(ctx);
+        if (ctx.water_system.reflection_texture_handle != 0) {
+            ctx.resources.destroyTexture(ctx.water_system.reflection_texture_handle);
+            ctx.water_system.reflection_texture_handle = 0;
+        }
+        ctx.water_system.deinit(ctx.vulkan_device.vk_device);
 
         const device = ctx.vulkan_device.vk_device;
         {
