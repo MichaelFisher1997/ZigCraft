@@ -26,6 +26,8 @@ const encodeColor = rhi_types.encodeColor;
 const encodeNormal = rhi_types.encodeNormal;
 const encodeMeta = rhi_types.encodeMeta;
 const encodeBlocklight = rhi_types.encodeBlocklight;
+const QuadricSimplifier = @import("meshing/quadric_simplifier.zig").QuadricSimplifier;
+const log = @import("../engine/core/log.zig");
 
 /// Size of each LOD mesh grid cell in blocks
 pub fn getCellSize(lod: LODLevel) u32 {
@@ -141,6 +143,94 @@ pub const LODMesh = struct {
         } else {
             self.pending_vertices = null;
         }
+    }
+
+    /// Build mesh from simplified LOD data using QEM decimation.
+    /// Generates a full-detail heightmap mesh first, then simplifies via quadric error metrics.
+    /// Falls back to naive `buildFromSimplifiedData` if QEM input is too small or fails.
+    pub fn buildFromSimplifiedDataWithQEM(
+        self: *LODMesh,
+        data: *const LODSimplifiedData,
+        world_x: i32,
+        world_z: i32,
+        target_triangles: u32,
+        min_input_triangles: u32,
+    ) !void {
+        const full_mesh = buildFullDetailHeightmapMesh(self.allocator, data) catch |err| {
+            log.log.warn("LOD{} full-detail mesh build failed, falling back: {}", .{ @intFromEnum(self.lod_level), err });
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        };
+        defer {
+            self.allocator.free(full_mesh.vertices);
+            self.allocator.free(full_mesh.indices);
+        }
+
+        if (full_mesh.indices.len % 3 != 0) {
+            log.log.warn("LOD{} mesh has invalid index count {}, falling back", .{ @intFromEnum(self.lod_level), full_mesh.indices.len });
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        }
+        const input_triangles: u32 = @intCast(full_mesh.indices.len / 3);
+        if (input_triangles < min_input_triangles) {
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        }
+
+        // No simplification needed — target already meets or exceeds input
+        if (target_triangles >= input_triangles) {
+            try self.setPendingFromIndexed(full_mesh.vertices, full_mesh.indices);
+            return;
+        }
+        const effective_target = target_triangles;
+
+        const simplified = QuadricSimplifier.simplify(
+            self.allocator,
+            full_mesh.vertices,
+            full_mesh.indices,
+            effective_target,
+        ) catch |err| {
+            log.log.warn("LOD{} QEM simplification failed, falling back to naive: {}", .{ @intFromEnum(self.lod_level), err });
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        };
+        defer {
+            self.allocator.free(simplified.vertices);
+            self.allocator.free(simplified.indices);
+        }
+
+        if (simplified.indices.len == 0) {
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        }
+
+        log.log.debug("LOD{} QEM: {} -> {} triangles (error={d:.2})", .{
+            @intFromEnum(self.lod_level),
+            simplified.original_triangle_count,
+            simplified.simplified_triangle_count,
+            simplified.error_estimate,
+        });
+
+        self.setPendingFromIndexed(simplified.vertices, simplified.indices) catch |err| {
+            log.log.warn("LOD{} failed to expand simplified mesh, falling back: {}", .{ @intFromEnum(self.lod_level), err });
+            return self.buildFromSimplifiedData(data, world_x, world_z);
+        };
+    }
+
+    /// Convert indexed triangle mesh to non-indexed vertex list and store as pending.
+    fn setPendingFromIndexed(self: *LODMesh, vertices: []const Vertex, indices: []const u32) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.pending_vertices) |p| {
+            self.allocator.free(p);
+            self.pending_vertices = null;
+        }
+
+        if (indices.len == 0) return;
+
+        const expanded = try self.allocator.alloc(Vertex, indices.len);
+        for (expanded, 0..) |*dst, i| {
+            const idx = indices[i];
+            if (idx >= vertices.len) return error.InvalidIndex;
+            dst.* = vertices[idx];
+        }
+        self.pending_vertices = expanded;
     }
 
     /// Build mesh from full chunk heightmap data
@@ -265,6 +355,171 @@ pub const LODMesh = struct {
         rhi.draw(self.buffer_handle, self.vertex_count, .triangles);
     }
 };
+
+const FullDetailMesh = struct {
+    vertices: []Vertex,
+    indices: []u32,
+};
+
+/// Build a full-detail indexed triangle mesh from LOD heightmap data.
+/// Produces fine-grained quads with per-vertex heights suitable for QEM simplification.
+/// The mesh uses 1-block resolution: each cell in the heightmap grid becomes a quad
+/// subdivided into 2 triangles with separate indices for QEM edge collapse.
+fn appendIndexedQuad(
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    indices: *std.ArrayListUnmanaged(u32),
+    allocator: std.mem.Allocator,
+    quad: *const [4]Vertex,
+) !void {
+    const base: u32 = @intCast(vertices.items.len);
+    try vertices.appendSlice(allocator, quad);
+    try indices.appendSlice(allocator, &.{
+        base, base + 1, base + 2,
+        base, base + 2, base + 3,
+    });
+}
+
+const SkirtParams = struct {
+    x: f32,
+    z: f32,
+    size: f32,
+    avg_h: f32,
+    avg_c: u32,
+    brightness: f32,
+    dir: SkirtDir,
+};
+
+const SkirtDir = enum { north, south, east, west };
+
+fn makeSkirtQuad(params: SkirtParams) [4]Vertex {
+    const p = params;
+    const cr = unpackR(p.avg_c) * p.brightness;
+    const cg = unpackG(p.avg_c) * p.brightness;
+    const cb = unpackB(p.avg_c) * p.brightness;
+    const skirt_bottom = p.avg_h - p.size * 4.0;
+    const normal: [3]f32 = switch (p.dir) {
+        .north => .{ 0, 0, -1 },
+        .south => .{ 0, 0, 1 },
+        .west => .{ -1, 0, 0 },
+        .east => .{ 1, 0, 0 },
+    };
+    const col = [3]f32{ cr, cg, cb };
+    return switch (p.dir) {
+        .north => .{
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, .{ 0, 1 }),
+        },
+        .south => .{
+            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, .{ 0, 1 }),
+        },
+        .west => .{
+            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, .{ 0, 1 }),
+        },
+        .east => .{
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, .{ 0, 0 }),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, .{ 1, 0 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, .{ 1, 1 }),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, .{ 0, 1 }),
+        },
+    };
+}
+
+fn buildFullDetailHeightmapMesh(
+    allocator: std.mem.Allocator,
+    data: *const LODSimplifiedData,
+) !FullDetailMesh {
+    const w = data.width;
+    const grid_total = w * w;
+    if (grid_total == 0) return error.EmptyData;
+    std.debug.assert(w <= data.heightmap.len and w <= data.biomes.len);
+
+    const region_size_32: u32 = 32;
+    const cell_size: u32 = if (w > 0 and w <= region_size_32) region_size_32 / w else 2;
+    std.debug.assert(cell_size >= 1);
+
+    var vertices = std.ArrayListUnmanaged(Vertex){};
+    errdefer vertices.deinit(allocator);
+    var indices = std.ArrayListUnmanaged(u32){};
+    errdefer indices.deinit(allocator);
+
+    var gz: u32 = 0;
+    while (gz < w) : (gz += 1) {
+        var gx: u32 = 0;
+        while (gx < w) : (gx += 1) {
+            const h00 = data.heightmap[gx + gz * w];
+            const h10 = if (gx + 1 < w) data.heightmap[(gx + 1) + gz * w] else h00;
+            const h01 = if (gz + 1 < w) data.heightmap[gx + (gz + 1) * w] else h00;
+            const h11 = if (gx + 1 < w and gz + 1 < w) data.heightmap[(gx + 1) + (gz + 1) * w] else h00;
+
+            const c00 = biome_mod.getBiomeColor(data.biomes[gx + gz * w]);
+            const c10 = if (gx + 1 < w) biome_mod.getBiomeColor(data.biomes[(gx + 1) + gz * w]) else c00;
+            const c01 = if (gz + 1 < w) biome_mod.getBiomeColor(data.biomes[gx + (gz + 1) * w]) else c00;
+            const c11 = if (gx + 1 < w and gz + 1 < w) biome_mod.getBiomeColor(data.biomes[(gx + 1) + (gz + 1) * w]) else c00;
+
+            const wx: f32 = @floatFromInt(gx * cell_size);
+            const wz: f32 = @floatFromInt(gz * cell_size);
+            const size: f32 = @floatFromInt(cell_size);
+
+            const top_quad = [4]Vertex{
+                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, .{ 0, 1, 0 }, .{ 0, 0 }),
+                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, .{ 0, 1, 0 }, .{ 1, 0 }),
+                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, .{ 0, 1, 0 }, .{ 1, 1 }),
+                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, .{ 0, 1, 0 }, .{ 0, 1 }),
+            };
+            try appendIndexedQuad(&vertices, &indices, allocator, &top_quad);
+
+            if (gz == 0) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h00 + h10) * 0.5,
+                .avg_c = averageColor(c00, c10, c00, c10),
+                .brightness = 0.7,
+                .dir = .north,
+            }));
+            if (gz == w - 1) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h01 + h11) * 0.5,
+                .avg_c = averageColor(c01, c11, c01, c11),
+                .brightness = 0.7,
+                .dir = .south,
+            }));
+            if (gx == 0) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h00 + h01) * 0.5,
+                .avg_c = averageColor(c00, c01, c00, c01),
+                .brightness = 0.6,
+                .dir = .west,
+            }));
+            if (gx == w - 1) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
+                .x = wx,
+                .z = wz,
+                .size = size,
+                .avg_h = (h10 + h11) * 0.5,
+                .avg_c = averageColor(c10, c11, c10, c11),
+                .brightness = 0.6,
+                .dir = .east,
+            }));
+        }
+    }
+
+    return .{
+        .vertices = try vertices.toOwnedSlice(allocator),
+        .indices = try indices.toOwnedSlice(allocator),
+    };
+}
 
 const FaceDir = enum { north, south, east, west };
 

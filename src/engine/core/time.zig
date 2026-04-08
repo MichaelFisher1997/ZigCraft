@@ -4,6 +4,15 @@
 const std = @import("std");
 const c = @import("../../c.zig").c;
 
+pub fn timestampMs() i64 {
+    const inst = std.time.Instant.now() catch return 0;
+    const sec: i64 = inst.timestamp.sec;
+    const nsec: i64 = inst.timestamp.nsec;
+    const ms_from_sec = std.math.mul(i64, sec, std.time.ms_per_s) catch return std.math.maxInt(i64);
+    const ms_from_nsec = @divTrunc(nsec, std.time.ns_per_ms);
+    return std.math.add(i64, ms_from_sec, ms_from_nsec) catch return std.math.maxInt(i64);
+}
+
 pub const Time = struct {
     /// Time since last frame in seconds
     delta_time: f32 = 0,

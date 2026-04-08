@@ -89,8 +89,12 @@ test {
     _ = @import("game/inventory_tests.zig");
     _ = @import("game/screen_tests.zig");
     _ = @import("game/session_tests.zig");
+    _ = @import("game/world_list_tests.zig");
     _ = @import("world/persistence/region_file.zig");
     _ = @import("world/persistence/chunk_serializer.zig");
+    _ = @import("world/persistence/level_data.zig");
+    _ = @import("world/persistence/save_manager.zig");
+    _ = @import("world/meshing/quadric_simplifier.zig");
 }
 
 test "Vec3 addition" {
