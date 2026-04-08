@@ -1,6 +1,7 @@
 const std = @import("std");
 const data = @import("data.zig");
 const Settings = data.Settings;
+const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
 const log = @import("../../engine/core/log.zig");
 
 // Preset config compatible with static presets but with dynamic string name
@@ -35,6 +36,7 @@ pub const PresetConfig = struct {
     lpv_propagation_iterations: u32 = 3,
     lod_enabled: bool,
     render_distance: i32,
+    render_distance_preset: RenderDistancePreset = .high,
     fxaa_enabled: bool,
     bloom_enabled: bool,
     bloom_intensity: f32,
@@ -106,7 +108,10 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
             log.log.warn("Skipping preset '{s}': invalid lpv_propagation_iterations {}", .{ p.name, p.lpv_propagation_iterations });
             continue;
         }
-        // Duplicate name because parsed.deinit() will free strings
+        if (p.render_distance < 2 or p.render_distance > 32) {
+            log.log.warn("Skipping preset '{s}': invalid render_distance {}", .{ p.name, p.render_distance });
+            continue;
+        }
         p.name = try allocator.dupe(u8, preset.name);
         errdefer allocator.free(p.name);
         try graphics_presets.append(allocator, p);
@@ -153,6 +158,7 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.lpv_propagation_iterations = config.lpv_propagation_iterations;
     settings.lod_enabled = config.lod_enabled;
     settings.render_distance = config.render_distance;
+    settings.render_distance_preset = config.render_distance_preset;
     settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
     settings.bloom_enabled = config.bloom_enabled;
     settings.bloom_intensity = config.bloom_intensity;
@@ -184,6 +190,7 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.exposure, preset.exposure, epsilon) and
         std.math.approxEqAbs(f32, settings.saturation, preset.saturation, epsilon) and
         settings.render_distance == preset.render_distance and
+        settings.render_distance_preset == preset.render_distance_preset and
         settings.volumetric_lighting_enabled == preset.volumetric_lighting_enabled and
         std.math.approxEqAbs(f32, settings.volumetric_density, preset.volumetric_density, epsilon) and
         settings.volumetric_steps == preset.volumetric_steps and

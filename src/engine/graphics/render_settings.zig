@@ -1,6 +1,101 @@
 const rhi_pkg = @import("rhi.zig");
 const RHI = rhi_pkg.RHI;
 const IRenderSettings = @import("../core/interfaces.zig").IRenderSettings;
+const LODLevel = @import("../../world/lod_chunk.zig").LODLevel;
+
+pub const RenderDistancePreset = enum(u32) {
+    low = 0,
+    medium = 1,
+    high = 2,
+    ultra = 3,
+    extreme = 4,
+
+    pub const count = 5;
+
+    pub fn label(self: RenderDistancePreset) []const u8 {
+        return switch (self) {
+            .low => "LOW",
+            .medium => "MEDIUM",
+            .high => "HIGH",
+            .ultra => "ULTRA",
+            .extreme => "EXTREME",
+        };
+    }
+};
+
+pub const RenderDistancePresetConfig = struct {
+    lod_radii: [LODLevel.count]i32,
+    fog_start_percent: [LODLevel.count]f32,
+    active_lod_count: u32,
+    qem_targets: [LODLevel.count]u32,
+    memory_budget_mb: u32,
+    max_uploads_per_frame: u32,
+    skip_cutout_lod2: bool,
+    skip_lighting_lod3: bool,
+    show_warning: bool,
+};
+
+pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
+    .{
+        .lod_radii = .{ 8, 16, 16, 16 },
+        .fog_start_percent = .{ 0.5, 0.5, 0.0, 0.0 },
+        .active_lod_count = 2,
+        .qem_targets = .{ 0, 2000, 0, 0 },
+        .memory_budget_mb = 128,
+        .max_uploads_per_frame = 4,
+        .skip_cutout_lod2 = false,
+        .skip_lighting_lod3 = false,
+        .show_warning = false,
+    },
+    .{
+        .lod_radii = .{ 16, 32, 48, 64 },
+        .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.4 },
+        .active_lod_count = 4,
+        .qem_targets = .{ 0, 2000, 800, 200 },
+        .memory_budget_mb = 256,
+        .max_uploads_per_frame = 8,
+        .skip_cutout_lod2 = false,
+        .skip_lighting_lod3 = false,
+        .show_warning = false,
+    },
+    .{
+        .lod_radii = .{ 16, 32, 64, 100 },
+        .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
+        .active_lod_count = 4,
+        .qem_targets = .{ 0, 2000, 800, 200 },
+        .memory_budget_mb = 384,
+        .max_uploads_per_frame = 8,
+        .skip_cutout_lod2 = true,
+        .skip_lighting_lod3 = false,
+        .show_warning = false,
+    },
+    .{
+        .lod_radii = .{ 16, 32, 64, 256 },
+        .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
+        .active_lod_count = 4,
+        .qem_targets = .{ 0, 2000, 800, 200 },
+        .memory_budget_mb = 512,
+        .max_uploads_per_frame = 12,
+        .skip_cutout_lod2 = true,
+        .skip_lighting_lod3 = true,
+        .show_warning = false,
+    },
+    .{
+        .lod_radii = .{ 16, 32, 128, 512 },
+        .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
+        .active_lod_count = 4,
+        .qem_targets = .{ 0, 2000, 800, 200 },
+        .memory_budget_mb = 1024,
+        .max_uploads_per_frame = 16,
+        .skip_cutout_lod2 = true,
+        .skip_lighting_lod3 = true,
+        .show_warning = true,
+    },
+};
+
+pub fn getPresetConfig(preset: RenderDistancePreset) RenderDistancePresetConfig {
+    return RENDER_DISTANCE_PRESETS[@intFromEnum(preset)];
+}
 
 pub const RenderSettingsAdapter = struct {
     rhi: *RHI,
