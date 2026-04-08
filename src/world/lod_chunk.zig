@@ -293,6 +293,8 @@ pub const ILODConfig = struct {
         isInRange: *const fn (ptr: *anyopaque, dist_chunks: i32) bool,
         getMaxUploadsPerFrame: *const fn (ptr: *anyopaque) u32,
         calculateMaskRadius: *const fn (ptr: *anyopaque) f32,
+        getQEMTarget: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
+        getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
     };
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
@@ -316,6 +318,14 @@ pub const ILODConfig = struct {
     pub fn calculateMaskRadius(self: ILODConfig) f32 {
         return self.vtable.calculateMaskRadius(self.ptr);
     }
+
+    pub fn getQEMTarget(self: ILODConfig, lod: LODLevel) u32 {
+        return self.vtable.getQEMTarget(self.ptr, lod);
+    }
+
+    pub fn getQEMMinInputTriangles(self: ILODConfig) u32 {
+        return self.vtable.getQEMMinInputTriangles(self.ptr);
+    }
 };
 
 /// Concrete implementation of LOD system configuration.
@@ -329,10 +339,23 @@ pub const LODConfig = struct {
     memory_budget_mb: u32 = 256,
 
     /// Maximum uploads per frame per LOD level
-    max_uploads_per_frame: u32 = 8, // Increased from 4 for faster loading
+    max_uploads_per_frame: u32 = 8,
 
     /// Enable fog-masked transitions
     fog_transitions: bool = true,
+
+    /// Target triangle count per LOD region for QEM simplification.
+    /// LOD0 is unused. Targets based on % of typical ~8000 tri input:
+    /// LOD1=~25% (2000), LOD2=~12% (800), LOD3=~3% (200)
+    qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
+
+    /// Minimum triangles required to attempt QEM simplification.
+    /// Below this threshold the naive heightmap mesh is used directly.
+    qem_min_input_triangles: u32 = 50,
+
+    pub fn getQEMTarget(self: *const LODConfig, lod: LODLevel) u32 {
+        return self.qem_triangle_targets[@intFromEnum(lod)];
+    }
 
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
         inline for (0..LODLevel.count) |i| {
@@ -360,6 +383,8 @@ pub const LODConfig = struct {
         .isInRange = isInRangeWrapper,
         .getMaxUploadsPerFrame = getMaxUploadsPerFrameWrapper,
         .calculateMaskRadius = calculateMaskRadiusWrapper,
+        .getQEMTarget = getQEMTargetWrapper,
+        .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
     };
 
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
@@ -384,8 +409,15 @@ pub const LODConfig = struct {
     }
     fn calculateMaskRadiusWrapper(ptr: *anyopaque) f32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
-        // Return radii[0] - 2.0 to ensure a 2-chunk overlap between LODs and block chunks
         return @as(f32, @floatFromInt(self.radii[0])) - 2.0;
+    }
+    fn getQEMTargetWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.getQEMTarget(lod);
+    }
+    fn getQEMMinInputTrianglesWrapper(ptr: *anyopaque) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.qem_min_input_triangles;
     }
 };
 
