@@ -82,7 +82,7 @@ jobs:
           CURRENT_MODEL="${{ steps.fetch-models.outputs.model }}"
           FAMILY_ONLY="${{ steps.fetch-models.outputs.family_only }}"
           
-          BASE_PREFIX="${CURRENT_MODEL%"${CURRENT_MODEL##*[!0-9.]}"}"
+          BASE_PREFIX="$(echo "$CURRENT_MODEL" | sed 's/-[0-9.]*$//')-"
           
           {
             echo "base_prefix=${BASE_PREFIX}"
@@ -264,15 +264,21 @@ jobs:
           git diff --stat
 
           git add .github/model-tracker.json
-          for w in $(echo "$WORKFLOWS" | tr ',' ' '); do
-            git add "$w"
-          done
+          if [ -n "$WORKFLOWS" ]; then
+            for w in $(echo "$WORKFLOWS" | tr ',' ' '); do
+              git add "$w"
+            done
+          fi
           
           git commit -m "chore: update model from ${CURRENT_MODEL} to ${NEW_MODEL}"
 
           git push -u origin "$BRANCH_NAME"
 
-          WORKFLOWS_LIST=$(echo "$WORKFLOWS" | tr ',' '\n' | while read -r f; do echo "- \`$f\`"; done | tr '\n' ' ')
+          if [ -n "$WORKFLOWS" ]; then
+            WORKFLOWS_LIST=$(echo "$WORKFLOWS" | tr ',' '\n' | while read -r f; do echo "- \`$f\`"; done | tr '\n' ' ')
+          else
+            WORKFLOWS_LIST="(no workflow files found)"
+          fi
 
           PR_BODY_FILE=$(mktemp)
           printf '%s\n' \
