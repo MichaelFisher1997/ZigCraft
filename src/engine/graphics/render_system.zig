@@ -34,6 +34,7 @@ pub const RenderSystem = struct {
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
     ssao_pass: render_graph_pkg.SSAOPass,
+    depth_pyramid_pass: render_graph_pkg.DepthPyramidPass,
     sky_pass: render_graph_pkg.SkyPass,
     opaque_pass: render_graph_pkg.OpaquePass,
     cloud_pass: render_graph_pkg.CloudPass,
@@ -166,6 +167,7 @@ pub const RenderSystem = struct {
             },
             .g_pass = .{},
             .ssao_pass = .{},
+            .depth_pyramid_pass = .{},
             .sky_pass = .{},
             .opaque_pass = .{},
             .cloud_pass = .{},
@@ -209,6 +211,7 @@ pub const RenderSystem = struct {
             try self.render_graph.addPass(self.shadow_passes[3].pass());
             try self.render_graph.addPass(self.g_pass.pass());
             try self.render_graph.addPass(self.ssao_pass.pass());
+            try self.render_graph.addPass(self.depth_pyramid_pass.pass());
             try self.render_graph.addPass(self.sky_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());
             try self.render_graph.addPass(self.cloud_pass.pass());

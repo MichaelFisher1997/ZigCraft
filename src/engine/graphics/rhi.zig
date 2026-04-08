@@ -269,6 +269,9 @@ pub const RenderContext = struct {
     pub fn computeTAA(self: RenderContext) void {
         self.render.computeTAA();
     }
+    pub fn computeDepthPyramid(self: RenderContext) void {
+        self.render.computeDepthPyramid();
+    }
     pub fn requestSwapchainRecreate(self: RenderContext) void {
         self.render.requestSwapchainRecreate();
     }
@@ -616,6 +619,8 @@ pub const IRenderContext = struct {
         computeBloom: *const fn (ptr: *anyopaque) void,
         // TAA pass
         computeTAA: *const fn (ptr: *anyopaque) void,
+        // Depth pyramid
+        computeDepthPyramid: *const fn (ptr: *anyopaque) void,
         getEncoder: *const fn (ptr: *anyopaque) IGraphicsCommandEncoder,
         getStateContext: *const fn (ptr: *anyopaque) IRenderStateContext,
 
@@ -679,6 +684,9 @@ pub const IRenderContext = struct {
     }
     pub fn computeTAA(self: IRenderContext) void {
         self.vtable.computeTAA(self.ptr);
+    }
+    pub fn computeDepthPyramid(self: IRenderContext) void {
+        self.vtable.computeDepthPyramid(self.ptr);
     }
     pub fn requestSwapchainRecreate(self: IRenderContext) void {
         self.vtable.requestSwapchainRecreate(self.ptr);
@@ -1051,6 +1059,9 @@ pub const RHI = struct {
     }
     pub fn computeTAA(self: RHI) void {
         self.vtable.render.computeTAA(self.ptr);
+    }
+    pub fn computeDepthPyramid(self: RHI) void {
+        self.vtable.render.computeDepthPyramid(self.ptr);
     }
     pub fn setTextureUniforms(self: RHI, enabled: bool, handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.vtable.render.setTextureUniforms(self.ptr, enabled, handles);
