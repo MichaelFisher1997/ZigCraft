@@ -15,7 +15,7 @@ on:
 jobs:
   write-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       id-token: write
       contents: write
@@ -190,7 +190,7 @@ jobs:
       # XDG_CACHE_HOME=/tmp — non-persistent but avoids permission issues (see opencode-audit.yml)
       - name: Run opencode test writer
         if: steps.check-existing.outputs.skip != 'true'
-        uses: anomalyco/opencode/github@v1.3.3
+        uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
