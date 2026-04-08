@@ -33,6 +33,7 @@ pub const WaterSystem = struct {
     extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
     pass_active: bool = false,
     initialized: bool = false,
+    reflection_texture_handle: rhi.TextureHandle = 0,
 
     pub fn init(allocator: std.mem.Allocator) WaterSystem {
         return .{
@@ -416,15 +417,18 @@ pub const WaterSystem = struct {
         self.pass_active = false;
     }
 
-    pub fn computeReflectedViewProj(self: *WaterSystem, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
-        _ = self;
-        _ = camera_pos;
+    pub fn getReflectionTextureHandle(self: *WaterSystem) rhi.TextureHandle {
+        return self.reflection_texture_handle;
+    }
+
+    pub fn computeReflectedViewProj(_: *WaterSystem, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        const reflected_camera_y = 2.0 * WATER_LEVEL - camera_pos.y;
         const reflect_matrix = Mat4{
             .data = .{
                 .{ 1.0, 0.0, 0.0, 0.0 },
                 .{ 0.0, -1.0, 0.0, 0.0 },
                 .{ 0.0, 0.0, 1.0, 0.0 },
-                .{ 0.0, 2.0 * WATER_LEVEL, 0.0, 1.0 },
+                .{ 0.0, 2.0 * reflected_camera_y, 0.0, 1.0 },
             },
         };
         const reflected_view = view.multiply(reflect_matrix);
