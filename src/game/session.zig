@@ -17,6 +17,8 @@ const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtla
 const Input = @import("../engine/input/input.zig").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
 const LODConfig = @import("../world/lod_chunk.zig").LODConfig;
+const render_settings = @import("../engine/graphics/render_settings.zig");
+const RenderDistancePreset = render_settings.RenderDistancePreset;
 const log = @import("../engine/core/log.zig");
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
@@ -102,7 +104,7 @@ pub const GameSession = struct {
     debug_shadows: bool = false,
     debug_cascade_idx: usize = 0,
 
-    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize) !*GameSession {
+    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: u32) !*GameSession {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
 
@@ -118,6 +120,18 @@ pub const GameSession = struct {
             log.log.warn("ZIGCRAFT_SAFE_MODE enabled: render distance capped to {} and LOD disabled", .{effective_render_distance});
         }
 
+        const preset_enum: RenderDistancePreset = if (render_distance_preset < RenderDistancePreset.count)
+            @enumFromInt(render_distance_preset)
+        else
+            .high;
+        const preset_cfg = render_settings.getPresetConfig(preset_enum);
+
+        var preset_radii = preset_cfg.lod_radii;
+        preset_radii[0] = if (safe_mode)
+            @min(effective_render_distance, 8)
+        else
+            @min(effective_render_distance, preset_radii[0]);
+
         const lod_config = if (safe_mode)
             LODConfig{
                 .radii = .{
@@ -129,12 +143,13 @@ pub const GameSession = struct {
             }
         else
             LODConfig{
-                .radii = .{
-                    @min(effective_render_distance, 16),
-                    40,
-                    80,
-                    160,
-                },
+                .radii = preset_radii,
+                .fog_start_percent = preset_cfg.fog_start_percent,
+                .qem_triangle_targets = preset_cfg.qem_targets,
+                .memory_budget_mb = preset_cfg.memory_budget_mb,
+                .max_uploads_per_frame = preset_cfg.max_uploads_per_frame,
+                .skip_cutout_lod2 = preset_cfg.skip_cutout_lod2,
+                .skip_lighting_lod3 = preset_cfg.skip_lighting_lod3,
             };
 
         session.* = undefined;

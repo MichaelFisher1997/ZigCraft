@@ -18,16 +18,22 @@ test "Preset Application" {
     defer presets.deinitPresets(allocator);
 
     var settings = Settings{};
-    // Apply Low
     presets.apply(&settings, 0);
     try std.testing.expectEqual(@as(u32, 0), settings.shadow_quality);
-    try std.testing.expectEqual(@as(i32, 6), settings.render_distance);
+    try std.testing.expectEqual(@as(i32, 8), settings.render_distance);
+    try std.testing.expectEqual(@as(u32, 0), settings.render_distance_preset);
     try std.testing.expectEqual(true, settings.lod_enabled);
 
-    // Apply Ultra
     presets.apply(&settings, 3);
     try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);
-    try std.testing.expectEqual(@as(i32, 28), settings.render_distance);
+    try std.testing.expectEqual(@as(i32, 16), settings.render_distance);
+    try std.testing.expectEqual(@as(u32, 3), settings.render_distance_preset);
+    try std.testing.expectEqual(true, settings.lod_enabled);
+
+    presets.apply(&settings, 4);
+    try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);
+    try std.testing.expectEqual(@as(i32, 16), settings.render_distance);
+    try std.testing.expectEqual(@as(u32, 4), settings.render_distance_preset);
     try std.testing.expectEqual(true, settings.lod_enabled);
 }
 

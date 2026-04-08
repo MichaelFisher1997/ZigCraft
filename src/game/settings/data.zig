@@ -68,6 +68,7 @@ pub const Settings = struct {
     window_width: u32 = 1920,
     window_height: u32 = 1080,
     lod_enabled: bool = false,
+    render_distance_preset: u32 = 2,
     texture_pack: []const u8 = "default",
     environment_map: []const u8 = "default", // "default" or filename.exr/hdr
 
@@ -233,6 +234,14 @@ pub const Settings = struct {
             .label = "LOD SYSTEM",
             .description = "Enables high-distance simplified terrain rendering",
             .kind = .toggle,
+        };
+        pub const render_distance_preset = SettingMetadata{
+            .label = "RENDER DISTANCE PRESET",
+            .description = "Controls LOD radii, fog curves, and quality targets",
+            .kind = .{ .choice = .{
+                .labels = &[_][]const u8{ "LOW", "MEDIUM", "HIGH", "ULTRA", "EXTREME" },
+                .values = &[_]u32{ 0, 1, 2, 3, 4 },
+            } },
         };
         pub const ssao_enabled = SettingMetadata{
             .label = "SSAO",

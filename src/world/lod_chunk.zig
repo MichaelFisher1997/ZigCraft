@@ -289,12 +289,14 @@ pub const ILODConfig = struct {
     pub const VTable = struct {
         getRadii: *const fn (ptr: *anyopaque) [LODLevel.count]i32,
         setLOD0Radius: *const fn (ptr: *anyopaque, radius: i32) void,
+        setRadii: *const fn (ptr: *anyopaque, radii: [LODLevel.count]i32) void,
         getLODForDistance: *const fn (ptr: *anyopaque, dist_chunks: i32) LODLevel,
         isInRange: *const fn (ptr: *anyopaque, dist_chunks: i32) bool,
         getMaxUploadsPerFrame: *const fn (ptr: *anyopaque) u32,
         calculateMaskRadius: *const fn (ptr: *anyopaque) f32,
         getQEMTarget: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
         getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
+        getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
     };
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
@@ -302,6 +304,9 @@ pub const ILODConfig = struct {
     }
     pub fn setLOD0Radius(self: ILODConfig, radius: i32) void {
         self.vtable.setLOD0Radius(self.ptr, radius);
+    }
+    pub fn setRadii(self: ILODConfig, radii: [LODLevel.count]i32) void {
+        self.vtable.setRadii(self.ptr, radii);
     }
     pub fn getLODForDistance(self: ILODConfig, dist_chunks: i32) LODLevel {
         return self.vtable.getLODForDistance(self.ptr, dist_chunks);
@@ -326,32 +331,31 @@ pub const ILODConfig = struct {
     pub fn getQEMMinInputTriangles(self: ILODConfig) u32 {
         return self.vtable.getQEMMinInputTriangles(self.ptr);
     }
+
+    pub fn getFogStartPercent(self: ILODConfig, lod: LODLevel) f32 {
+        return self.vtable.getFogStartPercent(self.ptr, lod);
+    }
 };
 
 /// Concrete implementation of LOD system configuration.
 pub const LODConfig = struct {
-    /// Radius in chunks for each LOD level
-    /// LOD0 = render_distance (user-controlled block chunks)
-    /// LOD1/2/3 = Fixed large values for "infinite" terrain view
     radii: [LODLevel.count]i32 = .{ 16, 40, 80, 160 },
 
-    /// Memory budget in MB
     memory_budget_mb: u32 = 256,
 
-    /// Maximum uploads per frame per LOD level
     max_uploads_per_frame: u32 = 8,
 
-    /// Enable fog-masked transitions
     fog_transitions: bool = true,
 
-    /// Target triangle count per LOD region for QEM simplification.
-    /// LOD0 is unused. Targets based on % of typical ~8000 tri input:
-    /// LOD1=~25% (2000), LOD2=~12% (800), LOD3=~3% (200)
+    fog_start_percent: [LODLevel.count]f32 = .{ 0.5, 0.5, 0.4, 0.3 },
+
     qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
 
-    /// Minimum triangles required to attempt QEM simplification.
-    /// Below this threshold the naive heightmap mesh is used directly.
     qem_min_input_triangles: u32 = 50,
+
+    skip_cutout_lod2: bool = false,
+
+    skip_lighting_lod3: bool = false,
 
     pub fn getQEMTarget(self: *const LODConfig, lod: LODLevel) u32 {
         return self.qem_triangle_targets[@intFromEnum(lod)];
@@ -379,12 +383,14 @@ pub const LODConfig = struct {
     const VTABLE = ILODConfig.VTable{
         .getRadii = getRadiiWrapper,
         .setLOD0Radius = setLOD0RadiusWrapper,
+        .setRadii = setRadiiWrapper,
         .getLODForDistance = getLODForDistanceWrapper,
         .isInRange = isInRangeWrapper,
         .getMaxUploadsPerFrame = getMaxUploadsPerFrameWrapper,
         .calculateMaskRadius = calculateMaskRadiusWrapper,
         .getQEMTarget = getQEMTargetWrapper,
         .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
+        .getFogStartPercent = getFogStartPercentWrapper,
     };
 
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
@@ -394,6 +400,10 @@ pub const LODConfig = struct {
     fn setLOD0RadiusWrapper(ptr: *anyopaque, radius: i32) void {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         self.radii[0] = radius;
+    }
+    fn setRadiiWrapper(ptr: *anyopaque, radii: [LODLevel.count]i32) void {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        self.radii = radii;
     }
     fn getLODForDistanceWrapper(ptr: *anyopaque, dist_chunks: i32) LODLevel {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -418,6 +428,10 @@ pub const LODConfig = struct {
     fn getQEMMinInputTrianglesWrapper(ptr: *anyopaque) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.qem_min_input_triangles;
+    }
+    fn getFogStartPercentWrapper(ptr: *anyopaque, lod: LODLevel) f32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.fog_start_percent[@intFromEnum(lod)];
     }
 };
 
