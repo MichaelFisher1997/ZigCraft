@@ -1,6 +1,7 @@
 const std = @import("std");
 const data = @import("data.zig");
 const Settings = data.Settings;
+const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
 const log = @import("../../engine/core/log.zig");
 
 // Preset config compatible with static presets but with dynamic string name
@@ -35,7 +36,7 @@ pub const PresetConfig = struct {
     lpv_propagation_iterations: u32 = 3,
     lod_enabled: bool,
     render_distance: i32,
-    render_distance_preset: u32 = 2,
+    render_distance_preset: RenderDistancePreset = .high,
     fxaa_enabled: bool,
     bloom_enabled: bool,
     bloom_intensity: f32,
@@ -109,10 +110,6 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
         }
         if (p.render_distance < 2 or p.render_distance > 32) {
             log.log.warn("Skipping preset '{s}': invalid render_distance {}", .{ p.name, p.render_distance });
-            continue;
-        }
-        if (p.render_distance_preset > 4) {
-            log.log.warn("Skipping preset '{s}': invalid render_distance_preset {}", .{ p.name, p.render_distance_preset });
             continue;
         }
         p.name = try allocator.dupe(u8, preset.name);

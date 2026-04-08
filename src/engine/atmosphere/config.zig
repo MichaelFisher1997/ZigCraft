@@ -13,6 +13,4 @@ pub const AtmosphereConfig = struct {
 
     pub const FOG_DENSITY_MAX: f32 = 0.0008;
     pub const FOG_DENSITY_MIN: f32 = 0.0004;
-
-    pub const FOG_DENSITY_EXTREME: f32 = 0.0012;
 };

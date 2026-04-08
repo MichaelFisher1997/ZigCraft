@@ -2,6 +2,7 @@ const std = @import("std");
 const Settings = @import("data.zig").Settings;
 const presets = @import("json_presets.zig");
 const persistence = @import("persistence.zig");
+const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
 
 test "Persistence Roundtrip" {
     const allocator = std.testing.allocator;
@@ -21,19 +22,19 @@ test "Preset Application" {
     presets.apply(&settings, 0);
     try std.testing.expectEqual(@as(u32, 0), settings.shadow_quality);
     try std.testing.expectEqual(@as(i32, 8), settings.render_distance);
-    try std.testing.expectEqual(@as(u32, 0), settings.render_distance_preset);
+    try std.testing.expectEqual(RenderDistancePreset.low, settings.render_distance_preset);
     try std.testing.expectEqual(true, settings.lod_enabled);
 
     presets.apply(&settings, 3);
     try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);
     try std.testing.expectEqual(@as(i32, 16), settings.render_distance);
-    try std.testing.expectEqual(@as(u32, 3), settings.render_distance_preset);
+    try std.testing.expectEqual(RenderDistancePreset.ultra, settings.render_distance_preset);
     try std.testing.expectEqual(true, settings.lod_enabled);
 
     presets.apply(&settings, 4);
     try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);
     try std.testing.expectEqual(@as(i32, 16), settings.render_distance);
-    try std.testing.expectEqual(@as(u32, 4), settings.render_distance_preset);
+    try std.testing.expectEqual(RenderDistancePreset.extreme, settings.render_distance_preset);
     try std.testing.expectEqual(true, settings.lod_enabled);
 }
 

@@ -17,6 +17,7 @@ const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtla
 const Input = @import("../engine/input/input.zig").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
 const LODConfig = @import("../world/lod_chunk.zig").LODConfig;
+const LODLevel = @import("../world/lod_chunk.zig").LODLevel;
 const render_settings = @import("../engine/graphics/render_settings.zig");
 const RenderDistancePreset = render_settings.RenderDistancePreset;
 const log = @import("../engine/core/log.zig");
@@ -104,7 +105,7 @@ pub const GameSession = struct {
     debug_shadows: bool = false,
     debug_cascade_idx: usize = 0,
 
-    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: u32) !*GameSession {
+    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset) !*GameSession {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
 
@@ -120,17 +121,21 @@ pub const GameSession = struct {
             log.log.warn("ZIGCRAFT_SAFE_MODE enabled: render distance capped to {} and LOD disabled", .{effective_render_distance});
         }
 
-        const preset_enum: RenderDistancePreset = if (render_distance_preset < RenderDistancePreset.count)
-            @enumFromInt(render_distance_preset)
-        else
-            .high;
-        const preset_cfg = render_settings.getPresetConfig(preset_enum);
+        const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
         var preset_radii = preset_cfg.lod_radii;
         preset_radii[0] = if (safe_mode)
             @min(effective_render_distance, 8)
         else
             @min(effective_render_distance, preset_radii[0]);
+
+        const active_count = preset_cfg.active_lod_count;
+        if (active_count < LODLevel.count) {
+            var i: usize = active_count;
+            while (i < LODLevel.count) : (i += 1) {
+                preset_radii[i] = preset_radii[active_count - 1];
+            }
+        }
 
         const lod_config = if (safe_mode)
             LODConfig{
@@ -150,6 +155,7 @@ pub const GameSession = struct {
                 .max_uploads_per_frame = preset_cfg.max_uploads_per_frame,
                 .skip_cutout_lod2 = preset_cfg.skip_cutout_lod2,
                 .skip_lighting_lod3 = preset_cfg.skip_lighting_lod3,
+                .active_lod_count = active_count,
             };
 
         session.* = undefined;

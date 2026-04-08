@@ -122,24 +122,20 @@ pub const GraphicsScreen = struct {
 
         // Render Distance Preset
         Font.drawText(ui, "RENDER DISTANCE", lx, sy, label_scale, Color.rgba(0.4, 0.8, 1.0, 1.0));
-        const current_rdp = settings.render_distance_preset;
-        const rdp_label = if (current_rdp < RenderDistancePreset.count)
-            @as(RenderDistancePreset, @enumFromInt(current_rdp)).label()
-        else
-            "CUSTOM";
+        const current_rdp = @intFromEnum(settings.render_distance_preset);
+        const rdp_label = settings.render_distance_preset.label();
         if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 5.0, .width = toggle_width, .height = btn_height }, rdp_label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.render_distance_preset = (current_rdp + 1) % @as(u32, RenderDistancePreset.count);
-            if (settings.render_distance_preset < RenderDistancePreset.count) {
-                const preset_cfg = render_settings_mod.getPresetConfig(@enumFromInt(settings.render_distance_preset));
-                settings.render_distance = preset_cfg.lod_radii[0];
-                settings.lod_enabled = true;
-            }
+            const next = (current_rdp + 1) % @as(u32, RenderDistancePreset.count);
+            settings.render_distance_preset = @enumFromInt(next);
+            const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
+            settings.render_distance = preset_cfg.lod_radii[0];
+            settings.lod_enabled = true;
         }
         sy += row_height;
 
         // Extreme preset warning
-        if (current_rdp < RenderDistancePreset.count) {
-            const preset_cfg = render_settings_mod.getPresetConfig(@as(RenderDistancePreset, @enumFromInt(current_rdp)));
+        {
+            const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
             if (preset_cfg.show_warning) {
                 ui.drawRect(.{ .x = lx, .y = sy - 5.0, .width = pw - 80.0 * ui_scale, .height = 20.0 * ui_scale }, Color.rgba(0.6, 0.1, 0.1, 0.8));
                 Font.drawText(ui, "WARNING: Extreme render distance may cause instability on GPUs with <8GB VRAM", lx + 5.0, sy, 1.2 * ui_scale, Color.rgba(1.0, 0.7, 0.3, 1.0));
@@ -152,6 +148,7 @@ pub const GraphicsScreen = struct {
         // Auto-generated UI from metadata
         inline for (comptime std.meta.declarations(Settings.metadata)) |decl| {
             if (comptime std.mem.eql(u8, decl.name, "msaa_samples")) continue;
+            if (comptime std.mem.eql(u8, decl.name, "render_distance_preset")) continue;
 
             const meta = @field(Settings.metadata, decl.name);
             const val_ptr = &@field(settings, decl.name);
@@ -280,11 +277,9 @@ pub const GraphicsScreen = struct {
                 } else if (std.mem.eql(u8, decl.name, "film_grain_intensity")) {
                     rs.setFilmGrainIntensity(settings.film_grain_intensity);
                 } else if (std.mem.eql(u8, decl.name, "render_distance_preset")) {
-                    if (settings.render_distance_preset < RenderDistancePreset.count) {
-                        const preset_cfg = render_settings_mod.getPresetConfig(@as(RenderDistancePreset, @enumFromInt(settings.render_distance_preset)));
-                        settings.render_distance = preset_cfg.lod_radii[0];
-                        settings.lod_enabled = true;
-                    }
+                    const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
+                    settings.render_distance = preset_cfg.lod_radii[0];
+                    settings.lod_enabled = true;
                 }
             }
 
@@ -294,17 +289,15 @@ pub const GraphicsScreen = struct {
             }
 
             if (std.mem.eql(u8, decl.name, "render_distance_preset")) {
-                if (settings.render_distance_preset < RenderDistancePreset.count) {
-                    const preset_cfg = render_settings_mod.getPresetConfig(@as(RenderDistancePreset, @enumFromInt(settings.render_distance_preset)));
-                    var info_buf: [64]u8 = undefined;
-                    const info = std.fmt.bufPrint(&info_buf, "LOD: {} {} {} {}", .{
-                        preset_cfg.lod_radii[0],
-                        preset_cfg.lod_radii[1],
-                        preset_cfg.lod_radii[2],
-                        preset_cfg.lod_radii[3],
-                    }) catch "LOD: ?";
-                    Font.drawText(ui, info, vx - 170.0 * ui_scale, sy + row_height - 10.0 * ui_scale, 1.2 * ui_scale, Color.rgba(0.5, 0.8, 1.0, 1.0));
-                }
+                const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
+                var info_buf: [64]u8 = undefined;
+                const info = std.fmt.bufPrint(&info_buf, "LOD: {} {} {} {}", .{
+                    preset_cfg.lod_radii[0],
+                    preset_cfg.lod_radii[1],
+                    preset_cfg.lod_radii[2],
+                    preset_cfg.lod_radii[3],
+                }) catch "LOD: ?";
+                Font.drawText(ui, info, vx - 170.0 * ui_scale, sy + row_height - 10.0 * ui_scale, 1.2 * ui_scale, Color.rgba(0.5, 0.8, 1.0, 1.0));
             }
 
             sy += row_height;

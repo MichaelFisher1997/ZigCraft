@@ -347,6 +347,8 @@ pub const LODConfig = struct {
 
     fog_transitions: bool = true,
 
+    /// Fog start position as percentage of LOD radius (0.0-1.0) where fog begins.
+    /// Values closer to 0.0 start fog near the player; 1.0 disables fog for that level.
     fog_start_percent: [LODLevel.count]f32 = .{ 0.5, 0.5, 0.4, 0.3 },
 
     qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
@@ -356,6 +358,8 @@ pub const LODConfig = struct {
     skip_cutout_lod2: bool = false,
 
     skip_lighting_lod3: bool = false,
+
+    active_lod_count: u32 = 4,
 
     pub fn getQEMTarget(self: *const LODConfig, lod: LODLevel) u32 {
         return self.qem_triangle_targets[@intFromEnum(lod)];
