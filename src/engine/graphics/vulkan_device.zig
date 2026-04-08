@@ -50,6 +50,8 @@ pub const VulkanDevice = struct {
     vk_device: c.VkDevice = null,
     queue: c.VkQueue = null,
     graphics_family: u32 = 0,
+    transfer_family: u32 = 0,
+    has_dedicated_transfer_queue: bool = false,
     supports_device_fault: bool = false,
     mutex: std.Thread.Mutex = .{},
 
@@ -238,21 +240,47 @@ pub const VulkanDevice = struct {
         c.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &queue_family_count, queue_families.ptr);
 
         var graphics_family: ?u32 = null;
+        var dedicated_transfer_family: ?u32 = null;
         for (queue_families, 0..) |qf, i| {
-            if ((qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0) {
-                graphics_family = @intCast(i);
-                break;
+            const idx: u32 = @intCast(i);
+            if (graphics_family == null and (qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) != 0) {
+                graphics_family = idx;
+            }
+            if (dedicated_transfer_family == null and
+                (qf.queueFlags & c.VK_QUEUE_TRANSFER_BIT) != 0 and
+                (qf.queueFlags & c.VK_QUEUE_GRAPHICS_BIT) == 0 and
+                (qf.queueFlags & c.VK_QUEUE_COMPUTE_BIT) == 0)
+            {
+                dedicated_transfer_family = idx;
             }
         }
         if (graphics_family == null) return error.NoGraphicsQueue;
         self.graphics_family = graphics_family.?;
 
+        if (dedicated_transfer_family) |tf| {
+            self.transfer_family = tf;
+            self.has_dedicated_transfer_queue = true;
+            log.log.info("Dedicated transfer queue family found: {}", .{tf});
+        } else {
+            self.transfer_family = self.graphics_family;
+            self.has_dedicated_transfer_queue = false;
+            log.log.info("No dedicated transfer queue — sharing graphics queue family {}", .{self.graphics_family});
+        }
+
         const queue_priority: f32 = 1.0;
-        var queue_create_info = std.mem.zeroes(c.VkDeviceQueueCreateInfo);
-        queue_create_info.sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queue_create_info.queueFamilyIndex = self.graphics_family;
-        queue_create_info.queueCount = 1;
-        queue_create_info.pQueuePriorities = &queue_priority;
+        var queue_create_infos: [2]c.VkDeviceQueueCreateInfo = .{std.mem.zeroes(c.VkDeviceQueueCreateInfo)} ** 2;
+        var queue_create_count: u32 = 1;
+
+        queue_create_infos[0].queueFamilyIndex = self.graphics_family;
+        queue_create_infos[0].queueCount = 1;
+        queue_create_infos[0].pQueuePriorities = &queue_priority;
+
+        if (self.has_dedicated_transfer_queue) {
+            queue_create_infos[1].queueFamilyIndex = self.transfer_family;
+            queue_create_infos[1].queueCount = 1;
+            queue_create_infos[1].pQueuePriorities = &queue_priority;
+            queue_create_count = 2;
+        }
 
         var ext_count: u32 = 0;
         _ = c.vkEnumerateDeviceExtensionProperties(self.physical_device, null, &ext_count, null);
@@ -318,8 +346,8 @@ pub const VulkanDevice = struct {
 
         var device_create_info = std.mem.zeroes(c.VkDeviceCreateInfo);
         device_create_info.sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        device_create_info.queueCreateInfoCount = 1;
-        device_create_info.pQueueCreateInfos = &queue_create_info;
+        device_create_info.queueCreateInfoCount = queue_create_count;
+        device_create_info.pQueueCreateInfos = &queue_create_infos[0];
         device_create_info.pEnabledFeatures = &device_features;
         if (allow_robustness2) {
             device_create_info.pNext = @ptrCast(&robustness2_features);
@@ -339,6 +367,8 @@ pub const VulkanDevice = struct {
             enabled_extension_count = 1;
             device_create_info.enabledExtensionCount = enabled_extension_count;
             device_create_info.ppEnabledExtensionNames = &enabled_extensions;
+            queue_create_count = 1;
+            device_create_info.queueCreateInfoCount = queue_create_count;
             create_result = c.vkCreateDevice(self.physical_device, &device_create_info, null, &self.vk_device);
         }
 

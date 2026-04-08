@@ -485,10 +485,8 @@ test "ResourceManager.registerExternalTexture validation" {
         .next_texture_handle = 1,
         .buffer_deletion_queue = undefined,
         .image_deletion_queue = undefined,
-        .staging_buffers = undefined,
-        .transfer_command_pool = null,
-        .transfer_command_buffers = undefined,
-        .transfer_fence = null,
+        .staging_ring = undefined,
+        .transfer = undefined,
     };
     defer manager.textures.deinit();
     defer manager.buffers.deinit();

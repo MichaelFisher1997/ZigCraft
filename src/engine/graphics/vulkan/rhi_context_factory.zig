@@ -105,8 +105,6 @@ pub fn createRHI(
     }
 
     ctx.frames.command_pool = null;
-    ctx.resources.transfer_command_pool = null;
-    ctx.resources.transfer_ready = false;
     ctx.swapchain.swapchain.main_render_pass = null;
     ctx.swapchain.swapchain.handle = null;
     ctx.swapchain.swapchain.depth_image = null;
@@ -183,6 +181,7 @@ pub fn createRHI(
         }
         ctx.resources.buffer_deletion_queue[i] = .empty;
         ctx.resources.image_deletion_queue[i] = .empty;
+        ctx.resources.transfer.transfer_ready[i] = false;
     }
 
     for (0..rhi.MAX_SWAPCHAIN_IMAGES) |i| {

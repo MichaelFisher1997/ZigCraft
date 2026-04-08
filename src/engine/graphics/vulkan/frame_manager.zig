@@ -133,51 +133,65 @@ pub const FrameManager = struct {
         return true;
     }
 
-    pub fn endFrame(self: *FrameManager, swapchain: *SwapchainPresenter, transfer_cb: ?c.VkCommandBuffer) !void {
+    pub fn endFrame(self: *FrameManager, swapchain: *SwapchainPresenter, transfer_cb: ?c.VkCommandBuffer, transfer_semaphore: ?c.VkSemaphore) !void {
         if (!self.frame_in_progress) return error.InvalidState;
         defer self.frame_in_progress = false;
 
         const cb = self.command_buffers[self.current_frame];
         try Utils.checkVk(c.vkEndCommandBuffer(cb));
 
-        // End transfer command buffer if present
-        if (transfer_cb) |tcb| {
-            try Utils.checkVk(c.vkEndCommandBuffer(tcb));
+        // Shared-queue uploads are submitted with graphics, so this CB is ended here.
+        // Dedicated-queue uploads are ended in submitTransfer() before the separate submit.
+        if (transfer_semaphore == null) {
+            if (transfer_cb) |tcb| {
+                try Utils.checkVk(c.vkEndCommandBuffer(tcb));
+            }
         }
 
-        var wait_stages = [_]c.VkPipelineStageFlags{c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        var wait_semaphores: [2]c.VkSemaphore = .{ null, null };
+        var wait_stages: [2]c.VkPipelineStageFlags = .{
+            c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+        };
+        var wait_count: u32 = 0;
 
         var submit_info = std.mem.zeroes(c.VkSubmitInfo);
         submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
         if (!swapchain.skip_present) {
-            submit_info.waitSemaphoreCount = 1;
-            submit_info.pWaitSemaphores = &self.image_available_semaphores[self.current_frame];
-            submit_info.pWaitDstStageMask = &wait_stages[0];
+            wait_semaphores[wait_count] = self.image_available_semaphores[self.current_frame];
+            wait_count += 1;
         }
 
-        // Submit transfer buffer first if needed?
-        // Actually, if we submit them in the same batch, we can list multiple command buffers.
-        // Or if we need strict ordering (transfer before graphics), we can submit twice or use barriers.
-        // Since both are on graphics queue, single submit guarantees execution order.
-
+        // For dedicated transfer queue, transfer runs on its own queue and signals a semaphore
+        // that the graphics queue waits on. The transfer CB is NOT included in the graphics submit.
+        // For shared queue, both CBs go in the same submit.
         var command_buffers: [2]c.VkCommandBuffer = undefined;
         var cb_count: u32 = 0;
 
-        if (transfer_cb) |tcb| {
-            command_buffers[cb_count] = tcb;
+        if (transfer_semaphore == null and transfer_cb != null) {
+            command_buffers[cb_count] = transfer_cb.?;
             cb_count += 1;
         }
+
         command_buffers[cb_count] = cb;
         cb_count += 1;
 
         submit_info.commandBufferCount = cb_count;
         submit_info.pCommandBuffers = &command_buffers[0];
 
+        if (transfer_semaphore) |sem| {
+            wait_semaphores[wait_count] = sem;
+            wait_count += 1;
+        }
+
+        if (wait_count > 0) {
+            submit_info.waitSemaphoreCount = wait_count;
+            submit_info.pWaitSemaphores = &wait_semaphores[0];
+            submit_info.pWaitDstStageMask = &wait_stages[0];
+        }
+
         if (!self.dry_run) {
-            // Only signal render_finished_semaphore if we're going to present.
-            // If skip_present is true, signaling would leave an orphaned semaphore
-            // that crashes Lavapipe when any wait operation is called.
             if (!swapchain.skip_present) {
                 submit_info.signalSemaphoreCount = 1;
                 submit_info.pSignalSemaphores = &self.render_finished_semaphores[self.current_image_index];
