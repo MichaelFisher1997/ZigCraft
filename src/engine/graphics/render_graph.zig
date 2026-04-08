@@ -523,7 +523,7 @@ pub const WaterReflectionPass = struct {
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
 
-        ctx.world.render(reflected_vp, ctx.camera.position, true);
+        ctx.world.renderOpaque(reflected_vp, ctx.camera.position, true);
     }
 };
 
@@ -545,6 +545,26 @@ pub const WaterPass = struct {
         const self: *WaterPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled) return;
 
-        _ = ctx;
+        const pipeline_u64 = ctx.render_ctx.getNativeWaterPipeline();
+        const layout_u64 = ctx.render_ctx.getNativeWaterPipelineLayout();
+        const descriptor_set_u64 = ctx.render_ctx.getNativeMainDescriptorSet();
+        const cmd_u64 = ctx.render_ctx.getNativeCommandBuffer();
+        const reflection_handle = ctx.water_ctx.getReflectionTextureHandle();
+
+        if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0) return;
+
+        const pipeline = @as(c.VkPipeline, @ptrFromInt(pipeline_u64));
+        const layout = @as(c.VkPipelineLayout, @ptrFromInt(layout_u64));
+        const descriptor_set = @as(c.VkDescriptorSet, @ptrFromInt(descriptor_set_u64));
+        const cmd = @as(c.VkCommandBuffer, @ptrFromInt(cmd_u64));
+
+        ctx.render_ctx.bindTexture(reflection_handle, 14);
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        if (descriptor_set_u64 != 0) {
+            c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
+        }
+
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
+        ctx.world.renderFluid(view_proj, ctx.camera.position, true);
     }
 };

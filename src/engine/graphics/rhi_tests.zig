@@ -90,7 +90,15 @@ const MockContext = struct {
         self.cloud_pipeline_requested = true;
         return 0;
     }
+    fn getNativeWaterPipeline(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
     fn getNativeCloudPipelineLayout(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeWaterPipelineLayout(ptr: *anyopaque) u64 {
         _ = ptr;
         return 0;
     }
@@ -201,6 +209,8 @@ const MockContext = struct {
         .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
         .getNativeCloudPipeline = getNativeCloudPipeline,
         .getNativeCloudPipelineLayout = getNativeCloudPipelineLayout,
+        .getNativeWaterPipeline = getNativeWaterPipeline,
+        .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
         .getNativeMainDescriptorSet = getNativeMainDescriptorSet,
         .getNativeCommandBuffer = getNativeCommandBuffer,
         .getNativeSwapchainExtent = getNativeSwapchainExtent,

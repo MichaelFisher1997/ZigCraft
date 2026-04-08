@@ -706,6 +706,14 @@ fn getNativeCloudPipelineLayout(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeCloudPipelineLayout(ctx);
 }
+fn getNativeWaterPipeline(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeWaterPipeline(ctx);
+}
+fn getNativeWaterPipelineLayout(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeWaterPipelineLayout(ctx);
+}
 fn getNativeMainDescriptorSet(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeMainDescriptorSet(ctx);
@@ -822,6 +830,8 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
         .getNativeCloudPipeline = getNativeCloudPipeline,
         .getNativeCloudPipelineLayout = getNativeCloudPipelineLayout,
+        .getNativeWaterPipeline = getNativeWaterPipeline,
+        .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
         .getNativeMainDescriptorSet = getNativeMainDescriptorSet,
         .getNativeCommandBuffer = getNativeCommandBuffer,
         .getNativeSwapchainExtent = getNativeSwapchainExtent,

@@ -53,6 +53,14 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         log.log.errWithTrace("Failed to recreate TAA resources: {}", .{err});
         return;
     };
+    if (ctx.water_system.reflection_texture_handle != 0) {
+        ctx.resources.destroyTexture(ctx.water_system.reflection_texture_handle);
+        ctx.water_system.reflection_texture_handle = 0;
+    }
+    setup.createWaterResources(ctx) catch |err| {
+        log.log.errWithTrace("Failed to recreate water resources: {}", .{err});
+        return;
+    };
     ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
         log.log.errWithTrace("Failed to recreate render pass: {}", .{err});
         return;

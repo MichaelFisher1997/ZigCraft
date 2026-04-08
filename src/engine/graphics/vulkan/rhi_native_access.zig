@@ -14,6 +14,14 @@ pub fn getNativeCloudPipelineLayout(ctx: anytype) u64 {
     return @intFromPtr(ctx.pipeline_manager.cloud_pipeline_layout);
 }
 
+pub fn getNativeWaterPipeline(ctx: anytype) u64 {
+    return @intFromPtr(ctx.water_system.water_pipeline);
+}
+
+pub fn getNativeWaterPipelineLayout(ctx: anytype) u64 {
+    return @intFromPtr(ctx.water_system.water_pipeline_layout);
+}
+
 pub fn getNativeMainDescriptorSet(ctx: anytype) u64 {
     return @intFromPtr(ctx.descriptors.descriptor_sets[ctx.frames.current_frame]);
 }

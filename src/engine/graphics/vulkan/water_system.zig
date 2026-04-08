@@ -6,6 +6,8 @@ const Utils = @import("utils.zig");
 const Vec3 = @import("../../math/vec3.zig").Vec3;
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 
+// Match the engine's standard depth format and use an sRGB reflection target
+// because the sampled result is composited directly in the water shader.
 const DEPTH_FORMAT = c.VK_FORMAT_D32_SFLOAT;
 const COLOR_FORMAT = c.VK_FORMAT_R8G8B8A8_SRGB;
 const PUSH_CONSTANT_SIZE_WATER: u32 = 256;

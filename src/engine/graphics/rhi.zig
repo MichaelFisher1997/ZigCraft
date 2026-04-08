@@ -296,6 +296,12 @@ pub const RenderContext = struct {
     pub fn getNativeCloudPipelineLayout(self: RenderContext) u64 {
         return self.render.vtable.getNativeCloudPipelineLayout(self.render.ptr);
     }
+    pub fn getNativeWaterPipeline(self: RenderContext) u64 {
+        return self.render.vtable.getNativeWaterPipeline(self.render.ptr);
+    }
+    pub fn getNativeWaterPipelineLayout(self: RenderContext) u64 {
+        return self.render.vtable.getNativeWaterPipelineLayout(self.render.ptr);
+    }
     pub fn getNativeMainDescriptorSet(self: RenderContext) u64 {
         return self.render.vtable.getNativeMainDescriptorSet(self.render.ptr);
     }
@@ -687,6 +693,10 @@ pub const IRenderContext = struct {
         getNativeCloudPipeline: *const fn (ptr: *anyopaque) u64,
         /// Returns the native cloud pipeline layout handle (VkPipelineLayout).
         getNativeCloudPipelineLayout: *const fn (ptr: *anyopaque) u64,
+        /// Returns the native water pipeline handle (VkPipeline).
+        getNativeWaterPipeline: *const fn (ptr: *anyopaque) u64,
+        /// Returns the native water pipeline layout handle (VkPipelineLayout).
+        getNativeWaterPipelineLayout: *const fn (ptr: *anyopaque) u64,
         /// Returns the main native descriptor set handle (VkDescriptorSet).
         getNativeMainDescriptorSet: *const fn (ptr: *anyopaque) u64,
         /// Returns the native command buffer handle for the current frame (VkCommandBuffer).
