@@ -8,6 +8,7 @@ const Mat4 = @import("../../math/mat4.zig").Mat4;
 
 const DEPTH_FORMAT = c.VK_FORMAT_D32_SFLOAT;
 const COLOR_FORMAT = c.VK_FORMAT_R8G8B8A8_SRGB;
+const PUSH_CONSTANT_SIZE_WATER: u32 = 256;
 
 pub const WATER_LEVEL: f32 = 64.0;
 
@@ -99,7 +100,7 @@ pub const WaterSystem = struct {
         depth_desc.format = DEPTH_FORMAT;
         depth_desc.samples = c.VK_SAMPLE_COUNT_1_BIT;
         depth_desc.loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_desc.storeOp = c.VK_ATTACHMENT_LOAD_OP_STORE;
+        depth_desc.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
         depth_desc.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
         depth_desc.finalLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
@@ -245,7 +246,7 @@ pub const WaterSystem = struct {
         {
             var push_constant = std.mem.zeroes(c.VkPushConstantRange);
             push_constant.stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT;
-            push_constant.size = 256;
+            push_constant.size = PUSH_CONSTANT_SIZE_WATER;
 
             var layout_info = std.mem.zeroes(c.VkPipelineLayoutCreateInfo);
             layout_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -265,9 +266,15 @@ pub const WaterSystem = struct {
 
         const shader_registry = @import("shader_registry.zig");
 
-        const vert_code = try std.fs.cwd().readFileAlloc(shader_registry.WATER_VERT, allocator, @enumFromInt(1024 * 1024));
+        const vert_code = std.fs.cwd().readFileAlloc(shader_registry.WATER_VERT, allocator, @enumFromInt(1024 * 1024)) catch |err| {
+            log.log.err("Failed to load water vertex shader: {s} - {}", .{ shader_registry.WATER_VERT, err });
+            return err;
+        };
         defer allocator.free(vert_code);
-        const frag_code = try std.fs.cwd().readFileAlloc(shader_registry.WATER_FRAG, allocator, @enumFromInt(1024 * 1024));
+        const frag_code = std.fs.cwd().readFileAlloc(shader_registry.WATER_FRAG, allocator, @enumFromInt(1024 * 1024)) catch |err| {
+            log.log.err("Failed to load water fragment shader: {s} - {}", .{ shader_registry.WATER_FRAG, err });
+            return err;
+        };
         defer allocator.free(frag_code);
 
         const vert_module = try Utils.createShaderModule(device, vert_code);
@@ -409,13 +416,15 @@ pub const WaterSystem = struct {
         self.pass_active = false;
     }
 
-    pub fn computeReflectedViewProj(view_proj: Mat4, camera_pos: Vec3) Mat4 {
-        const reflected_y = 2.0 * WATER_LEVEL - camera_pos.y;
-        const reflected_pos = Vec3.init(camera_pos.x, reflected_y, camera_pos.z);
-
-        const scale_flip = Mat4.scale(Vec3.init(1.0, -1.0, 1.0));
-        _ = reflected_pos;
-        _ = scale_flip;
-        return view_proj;
+    pub fn computeReflectedViewProj(view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        _ = camera_pos;
+        const reflect_matrix = Mat4.init(.{
+            1.0, 0.0,               0.0, 0.0,
+            0.0, -1.0,              0.0, 0.0,
+            0.0, 0.0,               1.0, 0.0,
+            0.0, 2.0 * WATER_LEVEL, 0.0, 1.0,
+        });
+        const reflected_view = view.multiply(reflect_matrix);
+        return proj.multiply(reflected_view);
     }
 };
