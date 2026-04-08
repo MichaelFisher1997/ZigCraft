@@ -40,15 +40,15 @@ pub const DepthPyramidSystem = struct {
         self: *DepthPyramidSystem,
         device: *const VulkanDevice,
         allocator: Allocator,
-        descriptor_pool: c.VkDescriptorPool,
+        _: c.VkDescriptorPool,
         depth_view: c.VkImageView,
         width: u32,
         height: u32,
     ) !void {
-        self.deinit(device.vk_device, allocator, descriptor_pool);
+        self.deinit(device.vk_device);
         const vk = device.vk_device;
 
-        errdefer self.deinit(vk, allocator, descriptor_pool);
+        errdefer self.deinit(vk);
 
         self.width = width;
         self.height = height;
@@ -411,7 +411,7 @@ pub const DepthPyramidSystem = struct {
         }
     }
 
-    pub fn deinit(self: *DepthPyramidSystem, device: c.VkDevice, _: Allocator, _: c.VkDescriptorPool) void {
+    pub fn deinit(self: *DepthPyramidSystem, device: c.VkDevice) void {
         if (self.pipeline != null) {
             c.vkDestroyPipeline(device, self.pipeline, null);
             self.pipeline = null;

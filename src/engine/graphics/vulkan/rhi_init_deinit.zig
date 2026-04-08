@@ -230,7 +230,7 @@ pub fn deinit(ctx: anytype) void {
         lifecycle.destroyTAAResources(ctx);
         lifecycle.destroyBloomResources(ctx);
         lifecycle.destroyVelocityResources(ctx);
-        ctx.depth_pyramid.deinit(vk_device, ctx.allocator, ctx.descriptors.descriptor_pool);
+        ctx.depth_pyramid.deinit(vk_device);
         lifecycle.destroyPostProcessResources(ctx);
         lifecycle.destroyGPassResources(ctx);
 
