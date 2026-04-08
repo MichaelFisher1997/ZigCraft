@@ -140,20 +140,27 @@ pub const FrameManager = struct {
         const cb = self.command_buffers[self.current_frame];
         try Utils.checkVk(c.vkEndCommandBuffer(cb));
 
-        // End transfer command buffer if present (for shared-queue case; for dedicated queue, already ended)
-        if (transfer_cb) |tcb| {
-            try Utils.checkVk(c.vkEndCommandBuffer(tcb));
+        // Shared-queue uploads are submitted with graphics, so this CB is ended here.
+        // Dedicated-queue uploads are ended in submitTransfer() before the separate submit.
+        if (transfer_semaphore == null) {
+            if (transfer_cb) |tcb| {
+                try Utils.checkVk(c.vkEndCommandBuffer(tcb));
+            }
         }
 
-        var wait_stages = [_]c.VkPipelineStageFlags{c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        var wait_semaphores: [2]c.VkSemaphore = .{ null, null };
+        var wait_stages: [2]c.VkPipelineStageFlags = .{
+            c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+        };
+        var wait_count: u32 = 0;
 
         var submit_info = std.mem.zeroes(c.VkSubmitInfo);
         submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
         if (!swapchain.skip_present) {
-            submit_info.waitSemaphoreCount = 1;
-            submit_info.pWaitSemaphores = &self.image_available_semaphores[self.current_frame];
-            submit_info.pWaitDstStageMask = &wait_stages[0];
+            wait_semaphores[wait_count] = self.image_available_semaphores[self.current_frame];
+            wait_count += 1;
         }
 
         // For dedicated transfer queue, transfer runs on its own queue and signals a semaphore
@@ -173,10 +180,15 @@ pub const FrameManager = struct {
         submit_info.commandBufferCount = cb_count;
         submit_info.pCommandBuffers = &command_buffers[0];
 
-        if (transfer_semaphore != null) {
-            submit_info.waitSemaphoreCount += 1;
-            submit_info.pWaitSemaphores = @ptrCast(&self.image_available_semaphores[self.current_frame]);
-            submit_info.pWaitDstStageMask = @ptrCast(&wait_stages);
+        if (transfer_semaphore) |sem| {
+            wait_semaphores[wait_count] = sem;
+            wait_count += 1;
+        }
+
+        if (wait_count > 0) {
+            submit_info.waitSemaphoreCount = wait_count;
+            submit_info.pWaitSemaphores = &wait_semaphores[0];
+            submit_info.pWaitDstStageMask = &wait_stages[0];
         }
 
         if (!self.dry_run) {

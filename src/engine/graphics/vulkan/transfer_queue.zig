@@ -136,8 +136,9 @@ pub const TransferQueue = struct {
     command_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandBuffer = undefined,
     fence: c.VkFence = null,
     frame_fences: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkFence = .{null} ** rhi.MAX_FRAMES_IN_FLIGHT,
-    transfer_semaphore: c.VkSemaphore = null,
+    transfer_semaphores: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkSemaphore = .{null} ** rhi.MAX_FRAMES_IN_FLIGHT,
     transfer_ready: [rhi.MAX_FRAMES_IN_FLIGHT]bool = undefined,
+    transfer_submitted: [rhi.MAX_FRAMES_IN_FLIGHT]bool = undefined,
     current_frame: usize = 0,
 
     pub fn init(device: *const VulkanDevice, transfer_family: u32, is_dedicated: bool) !TransferQueue {
@@ -146,6 +147,7 @@ pub const TransferQueue = struct {
             .is_dedicated = is_dedicated,
         };
         @memset(&self.transfer_ready, false);
+        @memset(&self.transfer_submitted, false);
 
         c.vkGetDeviceQueue(device.vk_device, transfer_family, 0, &self.queue);
 
@@ -172,7 +174,9 @@ pub const TransferQueue = struct {
 
         var sem_info = std.mem.zeroes(c.VkSemaphoreCreateInfo);
         sem_info.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        try Utils.checkVk(c.vkCreateSemaphore(device.vk_device, &sem_info, null, &self.transfer_semaphore));
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            try Utils.checkVk(c.vkCreateSemaphore(device.vk_device, &sem_info, null, &self.transfer_semaphores[i]));
+        }
 
         return self;
     }
@@ -195,9 +199,11 @@ pub const TransferQueue = struct {
                 self.frame_fences[i] = null;
             }
         }
-        if (self.transfer_semaphore != null) {
-            c.vkDestroySemaphore(vk_device, self.transfer_semaphore, null);
-            self.transfer_semaphore = null;
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            if (self.transfer_semaphores[i] != null) {
+                c.vkDestroySemaphore(vk_device, self.transfer_semaphores[i], null);
+                self.transfer_semaphores[i] = null;
+            }
         }
     }
 
@@ -217,6 +223,7 @@ pub const TransferQueue = struct {
         try Utils.checkVk(c.vkBeginCommandBuffer(cb, &begin_info));
 
         self.transfer_ready[self.current_frame] = true;
+        self.transfer_submitted[self.current_frame] = false;
         return cb;
     }
 
@@ -227,6 +234,7 @@ pub const TransferQueue = struct {
 
     pub fn resetTransferState(self: *TransferQueue) void {
         self.transfer_ready[self.current_frame] = false;
+        self.transfer_submitted[self.current_frame] = false;
     }
 
     pub fn endTransferCommandBuffer(self: *TransferQueue) !void {

@@ -194,8 +194,8 @@ pub const ResourceManager = struct {
 
     pub fn getTransferSemaphore(self: *ResourceManager) ?c.VkSemaphore {
         if (!self.transfer.is_dedicated) return null;
-        if (!self.transfer.transfer_ready[self.transfer.current_frame]) return null;
-        return self.transfer.transfer_semaphore;
+        if (!self.transfer.transfer_submitted[self.transfer.current_frame]) return null;
+        return self.transfer.transfer_semaphores[self.transfer.current_frame];
     }
 
     pub fn submitTransfer(self: *ResourceManager) !void {
@@ -203,6 +203,8 @@ pub const ResourceManager = struct {
         if (!self.transfer.transfer_ready[self.transfer.current_frame]) return;
 
         const cb = self.transfer.command_buffers[self.transfer.current_frame];
+        try self.transfer.endTransferCommandBuffer();
+        try Utils.checkVk(c.vkResetFences(self.vulkan_device.vk_device, 1, &self.transfer.frame_fences[self.transfer.current_frame]));
 
         var submit_info = std.mem.zeroes(c.VkSubmitInfo);
         submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -210,7 +212,7 @@ pub const ResourceManager = struct {
         submit_info.pCommandBuffers = &cb;
 
         submit_info.signalSemaphoreCount = 1;
-        submit_info.pSignalSemaphores = &self.transfer.transfer_semaphore;
+        submit_info.pSignalSemaphores = &self.transfer.transfer_semaphores[self.transfer.current_frame];
 
         self.vulkan_device.mutex.lock();
         const result = c.vkQueueSubmit(self.transfer.queue, 1, &submit_info, self.transfer.frame_fences[self.transfer.current_frame]);
@@ -219,6 +221,7 @@ pub const ResourceManager = struct {
         if (result != c.VK_SUCCESS) return error.VulkanError;
 
         self.transfer.transfer_ready[self.transfer.current_frame] = false;
+        self.transfer.transfer_submitted[self.transfer.current_frame] = true;
     }
 
     pub fn createBuffer(self: *ResourceManager, size: usize, usage: rhi.BufferUsage) rhi.RhiError!rhi.BufferHandle {
