@@ -82,7 +82,7 @@ jobs:
           CURRENT_MODEL="${{ steps.fetch-models.outputs.model }}"
           FAMILY_ONLY="${{ steps.fetch-models.outputs.family_only }}"
           
-          BASE_PREFIX="$(echo "$CURRENT_MODEL" | sed 's/-[0-9.]*$//')-"
+          BASE_PREFIX="${CURRENT_MODEL%%-[0-9.]*}-"
           
           {
             echo "base_prefix=${BASE_PREFIX}"
@@ -199,7 +199,6 @@ jobs:
         run: |
           STATE_FILE=".github/model-tracker.json"
           MODEL_ID="${{ steps.fetch-models.outputs.model_id }}"
-          CURRENT_MODEL="${{ steps.fetch-models.outputs.model }}"
           CURRENT_SPEC="${{ steps.fetch-models.outputs.current_last_updated }}"
           CURRENT_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           NEW_MODEL_ID="${{ steps.check-update.outputs.new_model_id }}"
