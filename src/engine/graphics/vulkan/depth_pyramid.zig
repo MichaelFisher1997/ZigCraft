@@ -9,6 +9,7 @@ const VulkanDevice = @import("device.zig").VulkanDevice;
 pub const DEPTH_PYRAMID_SHADER_PATH = "assets/shaders/vulkan/depth_pyramid.comp.spv";
 pub const DEPTH_PYRAMID_WORKGROUP_SIZE: u32 = 8;
 const MAX_MIP_LEVELS: u32 = 16;
+// Descriptor set arrays sized by MAX_FRAMES_IN_FLIGHT; must match RHI frame count.
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 
 const PushConstants = extern struct {
@@ -40,7 +41,6 @@ pub const DepthPyramidSystem = struct {
         self: *DepthPyramidSystem,
         device: *const VulkanDevice,
         allocator: Allocator,
-        _: c.VkDescriptorPool,
         depth_view: c.VkImageView,
         width: u32,
         height: u32,

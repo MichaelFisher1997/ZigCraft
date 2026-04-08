@@ -107,7 +107,6 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
         ctx.depth_pyramid.init(
             &ctx.vulkan_device,
             ctx.allocator,
-            ctx.descriptors.descriptor_pool,
             ctx.gpass.g_depth_view,
             ctx.swapchain.getExtent().width,
             ctx.swapchain.getExtent().height,
