@@ -19,6 +19,7 @@ const PostProcessSystem = @import("post_process_system.zig").PostProcessSystem;
 const FXAASystem = @import("fxaa_system.zig").FXAASystem;
 const BloomSystem = @import("bloom_system.zig").BloomSystem;
 const TAASystem = @import("taa_system.zig").TAASystem;
+const DepthPyramidSystem = @import("depth_pyramid.zig").DepthPyramidSystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
@@ -211,6 +212,7 @@ pub const VulkanContext = struct {
     fxaa: FXAASystem = .{},
     taa: TAASystem = .{},
     bloom: BloomSystem = .{},
+    depth_pyramid: DepthPyramidSystem = .{},
     post_process_state: PostProcessState = .{},
     velocity: VelocityResources = .{},
 

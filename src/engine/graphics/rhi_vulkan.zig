@@ -231,6 +231,24 @@ fn setBloomIntensity(ctx_ptr: *anyopaque, intensity: f32) void {
     ctx.bloom.intensity = intensity;
 }
 
+fn computeDepthPyramid(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    if (!ctx.frames.frame_in_progress) return;
+    if (ctx.depth_pyramid.pipeline == null) return;
+    pass_orchestration.ensureNoRenderPassActiveInternal(ctx);
+
+    const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+    ctx.depth_pyramid.compute(
+        command_buffer,
+        ctx.frames.current_frame,
+        ctx.gpass.g_depth_image,
+        ctx.gpass.g_pass_extent.width,
+        ctx.gpass.g_pass_extent.height,
+    );
+}
+
 fn setVignetteEnabled(ctx_ptr: *anyopaque, enabled: bool) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.post_process_state.vignette_enabled = enabled;
@@ -765,6 +783,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .requestSwapchainRecreate = requestSwapchainRecreate,
         .computeBloom = computeBloom,
         .computeTAA = computeTAA,
+        .computeDepthPyramid = computeDepthPyramid,
         .getEncoder = getEncoder,
         .getStateContext = getStateContext,
         .getNativeSkyPipeline = getNativeSkyPipeline,

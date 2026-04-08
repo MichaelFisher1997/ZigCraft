@@ -180,6 +180,7 @@ const MockContext = struct {
         .requestSwapchainRecreate = undefined,
         .computeBloom = undefined,
         .computeTAA = undefined,
+        .computeDepthPyramid = undefined,
         .getEncoder = MockContext.getEncoder,
         .getStateContext = MockContext.getStateContext,
         .setClearColor = undefined,
