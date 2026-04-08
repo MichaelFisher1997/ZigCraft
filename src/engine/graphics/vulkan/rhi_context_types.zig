@@ -91,7 +91,6 @@ const LegacyResources = struct {
     dummy_shadow_view: c.VkImageView = null,
     model_ubo: VulkanBuffer = .{},
     dummy_instance_buffer: VulkanBuffer = .{},
-    transfer_fence: c.VkFence = null,
 };
 
 const ShadowRuntime = struct {
