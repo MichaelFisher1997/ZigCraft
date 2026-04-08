@@ -73,7 +73,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
         frame_orchestration.recreateSwapchainInternal(ctx);
     }
 
-    if (ctx.resources.transfer_ready) {
+    if (ctx.resources.transfer.transfer_ready[ctx.resources.transfer.current_frame]) {
         ctx.resources.flushTransfer() catch |err| {
             log.log.errWithTrace("Failed to flush inter-frame transfers: {}", .{err});
         };

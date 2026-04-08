@@ -3,6 +3,7 @@ const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const log = @import("../../core/log.zig");
 const Utils = @import("utils.zig");
+const transfer_queue = @import("transfer_queue.zig");
 
 pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.TextureFormat, config: rhi.TextureConfig, data_opt: ?[]const u8) rhi.RhiError!rhi.TextureHandle {
     const vk_format: c.VkFormat = switch (format) {
@@ -32,13 +33,14 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
     if (mip_levels > 1) usage_flags |= c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (format == .rgba32f) usage_flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
+    if (config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (format == .rgba32f) usage_flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
 
     var staging_offset: u64 = 0;
+    var staging_slice: ?transfer_queue.StagingSlice = null;
     if (data_opt) |data| {
-        const staging = &self.staging_buffers[self.current_frame_index];
-        const offset = staging.allocate(data.len) orelse return error.OutOfMemory;
-        if (staging.mapped_ptr == null) return error.OutOfMemory;
-        staging_offset = offset;
+        staging_slice = self.staging_ring.allocate(data.len, self.current_frame_index) orelse return error.OutOfMemory;
+        staging_offset = staging_slice.?.buffer_offset;
     }
 
     const device = self.vulkan_device.vk_device;
@@ -77,10 +79,9 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
     try Utils.checkVk(c.vkBindImageMemory(device, image, memory, 0));
 
     if (data_opt) |data| {
-        const staging = &self.staging_buffers[self.current_frame_index];
-        if (staging.mapped_ptr == null) return error.OutOfMemory;
-        const dest = @as([*]u8, @ptrCast(staging.mapped_ptr.?)) + staging_offset;
-        @memcpy(dest[0..data.len], data);
+        if (staging_slice == null) return error.OutOfMemory;
+        const slice = staging_slice.?;
+        @memcpy(slice.ptr[0..data.len], data);
 
         const transfer_cb = try self.prepareTransfer();
 
@@ -107,7 +108,7 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
         region.imageSubresource.layerCount = 1;
         region.imageExtent = .{ .width = width, .height = height, .depth = 1 };
 
-        c.vkCmdCopyBufferToImage(transfer_cb, staging.buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        c.vkCmdCopyBufferToImage(transfer_cb, self.staging_ring.buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
         if (mip_levels > 1) {
             var mip_width: i32 = @intCast(width);
@@ -251,11 +252,10 @@ pub fn createTexture3D(self: anytype, width: u32, height: u32, depth: u32, forma
     if (texture_config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     var staging_offset: u64 = 0;
+    var staging_slice_3d: ?transfer_queue.StagingSlice = null;
     if (data_opt) |data| {
-        const staging = &self.staging_buffers[self.current_frame_index];
-        const offset = staging.allocate(data.len) orelse return error.OutOfMemory;
-        if (staging.mapped_ptr == null) return error.OutOfMemory;
-        staging_offset = offset;
+        staging_slice_3d = self.staging_ring.allocate(data.len, self.current_frame_index) orelse return error.OutOfMemory;
+        staging_offset = staging_slice_3d.?.buffer_offset;
     }
 
     const device = self.vulkan_device.vk_device;
@@ -321,17 +321,16 @@ pub fn createTexture3D(self: anytype, width: u32, height: u32, depth: u32, forma
     );
 
     if (data_opt) |data| {
-        const staging = &self.staging_buffers[self.current_frame_index];
-        if (staging.mapped_ptr == null) return error.OutOfMemory;
-        const dest = @as([*]u8, @ptrCast(staging.mapped_ptr.?)) + staging_offset;
-        @memcpy(dest[0..data.len], data);
+        if (staging_slice_3d == null) return error.OutOfMemory;
+        const slice = staging_slice_3d.?;
+        @memcpy(slice.ptr[0..data.len], data);
 
         var region = std.mem.zeroes(c.VkBufferImageCopy);
         region.bufferOffset = staging_offset;
         region.imageSubresource.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.layerCount = 1;
         region.imageExtent = .{ .width = width, .height = height, .depth = depth };
-        c.vkCmdCopyBufferToImage(transfer_cb, staging.buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        c.vkCmdCopyBufferToImage(transfer_cb, self.staging_ring.buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
         barrier.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
