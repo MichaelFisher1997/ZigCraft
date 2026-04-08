@@ -284,6 +284,25 @@ pub const SSAOPass = struct {
     }
 };
 
+pub const DepthPyramidPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "DepthPyramidPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *DepthPyramidPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        ctx.render_ctx.computeDepthPyramid();
+    }
+};
+
 pub const SkyPass = struct {
     const VTABLE = IRenderPass.VTable{
         .name = "SkyPass",
