@@ -35,8 +35,10 @@ jobs:
           MODEL_ID="${{ inputs.model_id || 'minimax-coding-plan/MiniMax-M2.7' }}"
           FAMILY_ONLY="${{ inputs.family_only || 'true' }}"
           
-          echo "model_id=${MODEL_ID}" >> "$GITHUB_OUTPUT"
-          echo "family_only=${FAMILY_ONLY}" >> "$GITHUB_OUTPUT"
+          {
+            echo "model_id=${MODEL_ID}"
+            echo "family_only=${FAMILY_ONLY}"
+          } >> "$GITHUB_OUTPUT"
 
           API_RESPONSE=$(curl -s https://models.dev/api.json)
           
@@ -48,26 +50,27 @@ jobs:
           PROVIDER=$(echo "$MODEL_ID" | cut -d/ -f1)
           MODEL=$(echo "$MODEL_ID" | cut -d/ -f2)
           
-          echo "provider=${PROVIDER}" >> "$GITHUB_OUTPUT"
-          echo "model=${MODEL}" >> "$GITHUB_OUTPUT"
+          {
+            echo "provider=${PROVIDER}"
+            echo "model=${MODEL}"
+          } >> "$GITHUB_OUTPUT"
 
-          # Check if model exists
           MODEL_EXISTS=$(echo "$API_RESPONSE" | jq -r ".\"${PROVIDER}\".models.\"${MODEL}\" != null")
           if [ "$MODEL_EXISTS" != "true" ]; then
             echo "error=Model ${MODEL_ID} not found in models.dev" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # Get current model info
           CURRENT_LAST_UPDATED=$(echo "$API_RESPONSE" | jq -r ".\"${PROVIDER}\".models.\"${MODEL}\".last_updated")
           CURRENT_RELEASE_DATE=$(echo "$API_RESPONSE" | jq -r ".\"${PROVIDER}\".models.\"${MODEL}\".release_date")
           MODEL_NAME=$(echo "$API_RESPONSE" | jq -r ".\"${PROVIDER}\".models.\"${MODEL}\".name")
           
-          echo "current_last_updated=${CURRENT_LAST_UPDATED}" >> "$GITHUB_OUTPUT"
-          echo "current_release_date=${CURRENT_RELEASE_DATE}" >> "$GITHUB_OUTPUT"
-          echo "model_name=${MODEL_NAME}" >> "$GITHUB_OUTPUT"
+          {
+            echo "current_last_updated=${CURRENT_LAST_UPDATED}"
+            echo "current_release_date=${CURRENT_RELEASE_DATE}"
+            echo "model_name=${MODEL_NAME}"
+          } >> "$GITHUB_OUTPUT"
 
-          # Get all models in the same provider
           PROVIDER_MODELS=$(echo "$API_RESPONSE" | jq -r ".\"${PROVIDER}\".models | keys[]")
           echo "all_models=${PROVIDER_MODELS}" >> "$GITHUB_OUTPUT"
 
@@ -79,17 +82,15 @@ jobs:
           CURRENT_MODEL="${{ steps.fetch-models.outputs.model }}"
           FAMILY_ONLY="${{ steps.fetch-models.outputs.family_only }}"
           
-          # Extract base name without version suffix (e.g., MiniMax-M2 from MiniMax-M2.7)
-          # Pattern: find all models starting with same prefix
-          BASE_PREFIX=$(echo "$CURRENT_MODEL" | sed 's/\([^-]*-[^0-9]*\)[0-9]*.*/\1/')
+          BASE_PREFIX="${CURRENT_MODEL%"${CURRENT_MODEL##*[!0-9.]}"}"
           
-          echo "base_prefix=${BASE_PREFIX}" >> "$GITHUB_OUTPUT"
+          {
+            echo "base_prefix=${BASE_PREFIX}"
+          } >> "$GITHUB_OUTPUT"
           
-          # Find all models in the same family
           FAMILY_MODELS=$(echo "$API_RESPONSE" | jq -r ".\"${PROVIDER}\".models | to_entries[] | select(.key | startswith(\"${BASE_PREFIX}\")) | .key" 2>/dev/null)
           echo "family_models=${FAMILY_MODELS}" >> "$GITHUB_OUTPUT"
 
-          # Find the latest model in the family by release_date
           LATEST_MODEL=""
           LATEST_RELEASE=""
           for model in $FAMILY_MODELS; do
@@ -100,16 +101,18 @@ jobs:
             fi
           done
           
-          echo "latest_family_model=${LATEST_MODEL}" >> "$GITHUB_OUTPUT"
-          echo "latest_release_date=${LATEST_RELEASE}" >> "$GITHUB_OUTPUT"
+          {
+            echo "latest_family_model=${LATEST_MODEL}"
+            echo "latest_release_date=${LATEST_RELEASE}"
+          } >> "$GITHUB_OUTPUT"
 
-          # Determine if update is needed
           if [ "$CURRENT_MODEL" != "$LATEST_MODEL" ]; then
-            echo "update_type=family" >> "$GITHUB_OUTPUT"
-            echo "new_model=${LATEST_MODEL}" >> "$GITHUB_OUTPUT"
-            echo "update_reason=Newer model variant ${LATEST_MODEL} available (released ${LATEST_RELEASE})" >> "$GITHUB_OUTPUT"
+            {
+              echo "update_type=family"
+              echo "new_model=${LATEST_MODEL}"
+              echo "update_reason=Newer model variant ${LATEST_MODEL} available (released ${LATEST_RELEASE})"
+            } >> "$GITHUB_OUTPUT"
           elif [ "$FAMILY_ONLY" = "false" ]; then
-            # Check for spec updates only
             CURRENT_TRACKED="${{ steps.fetch-models.outputs.current_last_updated }}"
             if [ -n "$CURRENT_TRACKED" ] && [ "$CURRENT_TRACKED" != "${{ steps.fetch-models.outputs.current_last_updated }}" ]; then
               echo "update_type=spec" >> "$GITHUB_OUTPUT"
@@ -124,11 +127,15 @@ jobs:
           if [ -f "$STATE_FILE" ]; then
             TRACKED_MODEL=$(jq -r '.tracked."${{ steps.fetch-models.outputs.model_id }}" // empty' "$STATE_FILE")
             TRACKED_SPEC=$(jq -r '.specs."${{ steps.fetch-models.outputs.model_id }}" // empty' "$STATE_FILE")
-            echo "tracked_model=${TRACKED_MODEL}" >> "$GITHUB_OUTPUT"
-            echo "tracked_spec=${TRACKED_SPEC}" >> "$GITHUB_OUTPUT"
+            {
+              echo "tracked_model=${TRACKED_MODEL}"
+              echo "tracked_spec=${TRACKED_SPEC}"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "tracked_model=" >> "$GITHUB_OUTPUT"
-            echo "tracked_spec=" >> "$GITHUB_OUTPUT"
+            {
+              echo "tracked_model="
+              echo "tracked_spec="
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Determine if update is needed
@@ -148,8 +155,10 @@ jobs:
             if [ "$TRACKED_MODEL" != "$LATEST_FAMILY_MODEL" ]; then
               UPDATE_NEEDED=true
               UPDATE_REASON="Newer model in family: ${LATEST_FAMILY_MODEL}"
-              echo "update_type=family" >> "$GITHUB_OUTPUT"
-              echo "new_model_id=${{ steps.fetch-models.outputs.provider }}/${LATEST_FAMILY_MODEL}" >> "$GITHUB_OUTPUT"
+              {
+                echo "update_type=family"
+                echo "new_model_id=${{ steps.fetch-models.outputs.provider }}/${LATEST_FAMILY_MODEL}"
+              } >> "$GITHUB_OUTPUT"
             fi
           fi
           
@@ -157,20 +166,26 @@ jobs:
           if [ "$UPDATE_NEEDED" = "false" ] && [ -n "$TRACKED_SPEC" ] && [ "$TRACKED_SPEC" != "$CURRENT_SPEC" ]; then
             UPDATE_NEEDED=true
             UPDATE_REASON="Model spec updated: ${TRACKED_SPEC} -> ${CURRENT_SPEC}"
-            echo "update_type=spec" >> "$GITHUB_OUTPUT"
-            echo "new_model_id=${{ steps.fetch-models.outputs.model_id }}" >> "$GITHUB_OUTPUT"
+            {
+              echo "update_type=spec"
+              echo "new_model_id=${{ steps.fetch-models.outputs.model_id }}"
+            } >> "$GITHUB_OUTPUT"
           fi
           
           # First time tracking
           if [ -z "$TRACKED_MODEL" ] && [ -z "$TRACKED_SPEC" ]; then
-            echo "update_type=initial" >> "$GITHUB_OUTPUT"
-            echo "new_model_id=${{ steps.fetch-models.outputs.model_id }}" >> "$GITHUB_OUTPUT"
+            {
+              echo "update_type=initial"
+              echo "new_model_id=${{ steps.fetch-models.outputs.model_id }}"
+            } >> "$GITHUB_OUTPUT"
             UPDATE_NEEDED=true
             UPDATE_REASON="Initial tracking of model"
           fi
 
-          echo "update_needed=${UPDATE_NEEDED}" >> "$GITHUB_OUTPUT"
-          echo "update_reason=${UPDATE_REASON}" >> "$GITHUB_OUTPUT"
+          {
+            echo "update_needed=${UPDATE_NEEDED}"
+            echo "update_reason=${UPDATE_REASON}"
+          } >> "$GITHUB_OUTPUT"
           
           echo "=== Update Check Results ==="
           echo "Current model: ${CURRENT_MODEL}"
@@ -201,13 +216,10 @@ jobs:
                "$STATE_FILE" > "$tmp"
             mv "$tmp" "$STATE_FILE"
           else
-            cat > "$STATE_FILE" << EOF
-            {
-              "tracked": {"$MODEL_ID": "$NEW_MODEL_ID"},
-              "specs": {"$MODEL_ID": "$CURRENT_SPEC"},
-              "last_checked": "$CURRENT_DATE"
-            }
-            EOF
+            printf '{"tracked": {"%s": "%s"}, "specs": {"%s": "%s"}, "last_checked": "%s"}' \
+              "$MODEL_ID" "$NEW_MODEL_ID" \
+              "$MODEL_ID" "$CURRENT_SPEC" \
+              "$CURRENT_DATE" > "$STATE_FILE"
           fi
 
           cat "$STATE_FILE"
@@ -260,30 +272,26 @@ jobs:
 
           git push -u origin "$BRANCH_NAME"
 
-          PR_BODY_FILE=$(mktemp)
-          cat > "$PR_BODY_FILE" << 'PREOF'
-          ## Model Update
-
-          This PR updates the AI model used in our OpenCode workflows.
-
-          **Change:** %UPDATE_REASON%
-
-          **Files updated:**
-          %WORKFLOWS_LIST%
-
-          **Verification:**
-          - [ ] Confirm model exists in models.dev
-          - [ ] Review updated workflow files
-          - [ ] Run tests if available
-
-          ---
-          Auto-generated by Model Update Checker workflow
-          PREOF
-
           WORKFLOWS_LIST=$(echo "$WORKFLOWS" | tr ',' '\n' | while read -r f; do echo "- \`$f\`"; done | tr '\n' ' ')
 
-          sed -i "s|%UPDATE_REASON%|$UPDATE_REASON|g" "$PR_BODY_FILE"
-          sed -i "s|%WORKFLOWS_LIST%|$WORKFLOWS_LIST|g" "$PR_BODY_FILE"
+          PR_BODY_FILE=$(mktemp)
+          printf '%s\n' \
+            "## Model Update" \
+            "" \
+            "This PR updates the AI model used in our OpenCode workflows." \
+            "" \
+            "**Change:** ${UPDATE_REASON}" \
+            "" \
+            "**Files updated:**" \
+            "${WORKFLOWS_LIST}" \
+            "" \
+            "**Verification:**" \
+            "- [ ] Confirm model exists in models.dev" \
+            "- [ ] Review updated workflow files" \
+            "- [ ] Run tests if available" \
+            "" \
+            "---" \
+            "Auto-generated by Model Update Checker workflow" > "$PR_BODY_FILE"
 
           gh pr create \
             --base dev \
