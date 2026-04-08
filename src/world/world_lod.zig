@@ -110,6 +110,16 @@ pub fn WorldLOD(comptime RHI: type) type {
             log.log.info("LOD0 radius updated to match render distance: {}", .{radius});
         }
 
+        pub fn setRadii(self: *Self, radii: [LODLevel.count]i32) void {
+            self.manager.config.setRadii(radii);
+            log.log.info("LOD radii updated: LOD0={}, LOD1={}, LOD2={}, LOD3={}", .{
+                radii[0],
+                radii[1],
+                radii[2],
+                radii[3],
+            });
+        }
+
         pub fn getStats(self: *const Self) LODStats {
             return self.manager.getStats();
         }
