@@ -419,6 +419,48 @@ pub const ShadowSystemWrapper = struct {
     }
 };
 
+pub const IWaterContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        beginReflectionPass: *const fn (ptr: *anyopaque) void,
+        endReflectionPass: *const fn (ptr: *anyopaque) void,
+        getReflectionTextureHandle: *const fn (ptr: *anyopaque) TextureHandle,
+        computeReflectedViewProj: *const fn (ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4,
+    };
+
+    pub fn beginReflectionPass(self: IWaterContext) void {
+        self.vtable.beginReflectionPass(self.ptr);
+    }
+    pub fn endReflectionPass(self: IWaterContext) void {
+        self.vtable.endReflectionPass(self.ptr);
+    }
+    pub fn getReflectionTextureHandle(self: IWaterContext) TextureHandle {
+        return self.vtable.getReflectionTextureHandle(self.ptr);
+    }
+    pub fn computeReflectedViewProj(self: IWaterContext, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        return self.vtable.computeReflectedViewProj(self.ptr, view, proj, camera_pos);
+    }
+};
+
+pub const WaterSystemWrapper = struct {
+    ctx: IWaterContext,
+
+    pub fn beginReflectionPass(self: WaterSystemWrapper) void {
+        self.ctx.beginReflectionPass();
+    }
+    pub fn endReflectionPass(self: WaterSystemWrapper) void {
+        self.ctx.endReflectionPass();
+    }
+    pub fn getReflectionTextureHandle(self: WaterSystemWrapper) TextureHandle {
+        return self.ctx.getReflectionTextureHandle();
+    }
+    pub fn computeReflectedViewProj(self: WaterSystemWrapper, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        return self.ctx.computeReflectedViewProj(view, proj, camera_pos);
+    }
+};
+
 pub const IUIContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -813,6 +855,7 @@ pub const RHI = struct {
         render: IRenderContext.VTable,
         ssao: ISSAOContext.VTable,
         shadow: IShadowContext.VTable,
+        water: IWaterContext.VTable,
         ui: IUIContext.VTable,
         query: IDeviceQuery.VTable,
         timing: IDeviceTiming.VTable,
@@ -873,6 +916,12 @@ pub const RHI = struct {
     }
     pub fn shadowSystem(self: RHI) ShadowSystemWrapper {
         return .{ .ctx = self.shadow() };
+    }
+    pub fn waterSystem(self: RHI) WaterSystemWrapper {
+        return .{ .ctx = self.water() };
+    }
+    pub fn water(self: RHI) IWaterContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.water };
     }
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };

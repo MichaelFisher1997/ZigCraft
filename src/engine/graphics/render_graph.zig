@@ -44,6 +44,7 @@ const shadow_scene = @import("shadow_scene.zig");
 const rhi_pkg = @import("rhi.zig");
 const RenderContext = rhi_pkg.RenderContext;
 const ShadowSystemWrapper = rhi_pkg.ShadowSystemWrapper;
+const WaterSystemWrapper = rhi_pkg.WaterSystemWrapper;
 const ISSAOContext = rhi_pkg.ISSAOContext;
 const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -55,6 +56,7 @@ const MaterialSystem = @import("material_system.zig").MaterialSystem;
 pub const SceneContext = struct {
     render_ctx: RenderContext,
     shadow_ctx: ShadowSystemWrapper,
+    water_ctx: WaterSystemWrapper,
     ssao_ctx: ISSAOContext,
     timing: IDeviceTiming,
     world: IWorld,
@@ -508,7 +510,20 @@ pub const WaterReflectionPass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
-        _ = ctx;
+        ctx.water_ctx.beginReflectionPass();
+        defer ctx.water_ctx.endReflectionPass();
+
+        const view = ctx.camera.getViewMatrixOriginCentered();
+        const proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled);
+        const reflected_vp = ctx.water_ctx.computeReflectedViewProj(view, proj, ctx.camera.position);
+
+        ctx.render_ctx.bindShader(ctx.main_shader);
+        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle, 11);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
+
+        ctx.world.render(reflected_vp, ctx.camera.position, true);
     }
 };
 
@@ -529,6 +544,7 @@ pub const WaterPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *WaterPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled) return;
+
         _ = ctx;
     }
 };

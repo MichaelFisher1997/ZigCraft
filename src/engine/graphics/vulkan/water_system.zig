@@ -416,14 +416,17 @@ pub const WaterSystem = struct {
         self.pass_active = false;
     }
 
-    pub fn computeReflectedViewProj(view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+    pub fn computeReflectedViewProj(self: *WaterSystem, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        _ = self;
         _ = camera_pos;
-        const reflect_matrix = Mat4.init(.{
-            1.0, 0.0,               0.0, 0.0,
-            0.0, -1.0,              0.0, 0.0,
-            0.0, 0.0,               1.0, 0.0,
-            0.0, 2.0 * WATER_LEVEL, 0.0, 1.0,
-        });
+        const reflect_matrix = Mat4{
+            .data = .{
+                .{ 1.0, 0.0, 0.0, 0.0 },
+                .{ 0.0, -1.0, 0.0, 0.0 },
+                .{ 0.0, 0.0, 1.0, 0.0 },
+                .{ 0.0, 2.0 * WATER_LEVEL, 0.0, 1.0 },
+            },
+        };
         const reflected_view = view.multiply(reflect_matrix);
         return proj.multiply(reflected_view);
     }
