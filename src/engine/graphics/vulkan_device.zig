@@ -268,18 +268,14 @@ pub const VulkanDevice = struct {
         }
 
         const queue_priority: f32 = 1.0;
-        var queue_create_infos: [2]c.VkDeviceQueueCreateInfo = undefined;
+        var queue_create_infos: [2]c.VkDeviceQueueCreateInfo = .{std.mem.zeroes(c.VkDeviceQueueCreateInfo)} ** 2;
         var queue_create_count: u32 = 1;
 
-        queue_create_infos[0] = std.mem.zeroes(c.VkDeviceQueueCreateInfo);
-        queue_create_infos[0].sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
         queue_create_infos[0].queueFamilyIndex = self.graphics_family;
         queue_create_infos[0].queueCount = 1;
         queue_create_infos[0].pQueuePriorities = &queue_priority;
 
         if (self.has_dedicated_transfer_queue) {
-            queue_create_infos[1] = std.mem.zeroes(c.VkDeviceQueueCreateInfo);
-            queue_create_infos[1].sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queue_create_infos[1].queueFamilyIndex = self.transfer_family;
             queue_create_infos[1].queueCount = 1;
             queue_create_infos[1].pQueuePriorities = &queue_priority;

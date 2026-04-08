@@ -65,9 +65,6 @@ pub const ResourceManager = struct {
     current_frame_index: usize = 0,
     textures_enabled: bool = true,
 
-    // Legacy transfer fence for init-time synchronous flushes
-    transfer_fence: c.VkFence = null,
-
     pub fn init(allocator: std.mem.Allocator, vulkan_device: *VulkanDevice) !ResourceManager {
         var self = ResourceManager{
             .allocator = allocator,
@@ -80,7 +77,6 @@ pub const ResourceManager = struct {
             .image_deletion_queue = undefined,
             .staging_ring = undefined,
             .transfer = undefined,
-            .transfer_fence = null,
         };
 
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
@@ -99,13 +95,6 @@ pub const ResourceManager = struct {
         } else {
             log.log.info("Transfer queue: SHARED with graphics (family {})", .{tx_family});
         }
-
-        var fence_info = std.mem.zeroes(c.VkFenceCreateInfo);
-        fence_info.sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        Utils.checkVk(c.vkCreateFence(vulkan_device.vk_device, &fence_info, null, &self.transfer_fence)) catch |err| {
-            log.log.err("Failed to create transfer fence: {}", .{err});
-            return err;
-        };
 
         return self;
     }
@@ -152,10 +141,6 @@ pub const ResourceManager = struct {
 
         self.transfer.deinit(device);
         self.staging_ring.deinit(device);
-
-        if (self.transfer_fence != null) {
-            c.vkDestroyFence(device, self.transfer_fence, null);
-        }
     }
 
     pub fn flushTransfer(self: *ResourceManager) !void {
@@ -165,6 +150,10 @@ pub const ResourceManager = struct {
     pub fn setCurrentFrame(self: *ResourceManager, frame_index: usize) void {
         self.current_frame_index = frame_index;
         self.transfer.setCurrentFrame(frame_index);
+
+        if (self.transfer.is_dedicated) {
+            self.transfer.waitForFrameFence(self.vulkan_device.vk_device, frame_index);
+        }
         self.staging_ring.reclaimFrame(frame_index);
         self.staging_ring.beginFrame(frame_index);
 
@@ -224,7 +213,7 @@ pub const ResourceManager = struct {
         submit_info.pSignalSemaphores = &self.transfer.transfer_semaphore;
 
         self.vulkan_device.mutex.lock();
-        const result = c.vkQueueSubmit(self.transfer.queue, 1, &submit_info, null);
+        const result = c.vkQueueSubmit(self.transfer.queue, 1, &submit_info, self.transfer.frame_fences[self.transfer.current_frame]);
         self.vulkan_device.mutex.unlock();
 
         if (result != c.VK_SUCCESS) return error.VulkanError;
@@ -395,8 +384,13 @@ pub const ResourceManager = struct {
         barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.oldLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        if (self.transfer.is_dedicated) {
+            barrier.srcQueueFamilyIndex = self.vulkan_device.graphics_family;
+            barrier.dstQueueFamilyIndex = self.transfer.family_index;
+        } else {
+            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        }
         barrier.image = tex.image orelse return error.ExtensionNotPresent;
         barrier.subresourceRange.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
         barrier.subresourceRange.baseMipLevel = 0;
@@ -420,6 +414,13 @@ pub const ResourceManager = struct {
         barrier.newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+        if (self.transfer.is_dedicated) {
+            barrier.srcQueueFamilyIndex = self.transfer.family_index;
+            barrier.dstQueueFamilyIndex = self.vulkan_device.graphics_family;
+        } else {
+            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        }
 
         c.vkCmdPipelineBarrier(transfer_cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &barrier);
     }

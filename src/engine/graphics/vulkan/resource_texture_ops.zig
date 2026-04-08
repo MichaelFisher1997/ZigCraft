@@ -33,8 +33,6 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
     if (mip_levels > 1) usage_flags |= c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (format == .rgba32f) usage_flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
-    if (config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    if (format == .rgba32f) usage_flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
 
     var staging_offset: u64 = 0;
     var staging_slice: ?transfer_queue.StagingSlice = null;

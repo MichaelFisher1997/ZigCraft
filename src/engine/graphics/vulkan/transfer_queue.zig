@@ -135,6 +135,7 @@ pub const TransferQueue = struct {
     command_pool: c.VkCommandPool = null,
     command_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandBuffer = undefined,
     fence: c.VkFence = null,
+    frame_fences: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkFence = .{null} ** rhi.MAX_FRAMES_IN_FLIGHT,
     transfer_semaphore: c.VkSemaphore = null,
     transfer_ready: [rhi.MAX_FRAMES_IN_FLIGHT]bool = undefined,
     current_frame: usize = 0,
@@ -165,6 +166,10 @@ pub const TransferQueue = struct {
         fence_info.sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         try Utils.checkVk(c.vkCreateFence(device.vk_device, &fence_info, null, &self.fence));
 
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            try Utils.checkVk(c.vkCreateFence(device.vk_device, &fence_info, null, &self.frame_fences[i]));
+        }
+
         var sem_info = std.mem.zeroes(c.VkSemaphoreCreateInfo);
         sem_info.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         try Utils.checkVk(c.vkCreateSemaphore(device.vk_device, &sem_info, null, &self.transfer_semaphore));
@@ -183,6 +188,12 @@ pub const TransferQueue = struct {
         if (self.fence != null) {
             c.vkDestroyFence(vk_device, self.fence, null);
             self.fence = null;
+        }
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            if (self.frame_fences[i] != null) {
+                c.vkDestroyFence(vk_device, self.frame_fences[i], null);
+                self.frame_fences[i] = null;
+            }
         }
         if (self.transfer_semaphore != null) {
             c.vkDestroySemaphore(vk_device, self.transfer_semaphore, null);
@@ -222,6 +233,12 @@ pub const TransferQueue = struct {
         if (!self.transfer_ready[self.current_frame]) return;
         const cb = self.command_buffers[self.current_frame];
         try Utils.checkVk(c.vkEndCommandBuffer(cb));
+    }
+
+    pub fn waitForFrameFence(self: *TransferQueue, vk_device: c.VkDevice, frame_index: usize) void {
+        if (self.frame_fences[frame_index] == null) return;
+        _ = c.vkWaitForFences(vk_device, 1, &self.frame_fences[frame_index], c.VK_TRUE, std.math.maxInt(u64));
+        _ = c.vkResetFences(vk_device, 1, &self.frame_fences[frame_index]);
     }
 
     pub fn submitAndWait(self: *TransferQueue, vk_device: c.VkDevice, queue_mutex: *std.Thread.Mutex) !void {
