@@ -194,10 +194,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
-          model: kimi-for-coding/k2p5
+          model: minimax-coding-plan/MiniMax-M2.7
           use_github_token: true
           prompt: |
             You are a senior Zig systems programmer writing unit tests for a voxel engine. Your job is to find untested code, write thorough tests, and submit a pull request.

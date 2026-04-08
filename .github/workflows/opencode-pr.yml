@@ -105,9 +105,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ github.token }}
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         with:
-          model: kimi-for-coding/k2p5
+          model: minimax-coding-plan/MiniMax-M2.7
           use_github_token: true
           prompt: |
             You are reviewing a pull request for the ZigCraft repository.
