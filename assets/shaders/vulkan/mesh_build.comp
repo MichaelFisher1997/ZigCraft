@@ -1,0 +1,285 @@
+#version 450
+
+// GPU-driven chunk meshing compute shader (Issue #391, Step 1: basic face culling).
+// Reads block data from GpuBlockBuffer, emits one quad per visible face.
+// No greedy merge — that comes in a later step.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+const uint CHUNK_X = 16u;
+const uint CHUNK_Y = 256u;
+const uint CHUNK_Z = 16u;
+const uint CHUNK_VOLUME = CHUNK_X * CHUNK_Y * CHUNK_Z;
+const uint INVALID_SLOT = 0xFFFFFFFFu;
+
+const uint MAX_VERTICES = 8388608u; // 8M vertices max across all passes
+
+const uint FLAG_SOLID      = 1u;
+const uint FLAG_TRANSPARENT = 2u;
+const uint FLAG_FLUID      = 4u;
+const uint FLAG_CROSS      = 8u;
+
+layout(std430, binding = 0) readonly buffer BlockData {
+    uint blocks[];
+};
+
+layout(std430, binding = 1) readonly buffer BlockPropsSSBO {
+    uint props_flags[256];
+    uint props_color[256];
+    uint props_tile_top[256];
+    uint props_tile_side[256];
+    uint props_tile_bottom[256];
+} bp;
+
+layout(std430, binding = 2) writeonly buffer VertexOutput {
+    uint vertices[];
+} vertex_out;
+
+layout(std430, binding = 3) coherent buffer Counters {
+    uint solid_vertex_count;
+    uint _pad0;
+    uint cutout_vertex_count;
+    uint _pad1;
+    uint fluid_vertex_count;
+    uint _pad2;
+    uint solid_vertex_base;
+    uint _pad3;
+    uint cutout_vertex_base;
+    uint _pad4;
+    uint fluid_vertex_base;
+    uint _pad5;
+} counters;
+
+layout(push_constant) uniform PushConstants {
+    uint center_slot;
+    uint north_slot;
+    uint south_slot;
+    uint east_slot;
+    uint west_slot;
+};
+
+uint getBlockLocal(uint slot, int x, int y, int z) {
+    if (x < 0 || x >= int(CHUNK_X) || y < 0 || y >= int(CHUNK_Y) || z < 0 || z >= int(CHUNK_Z))
+        return 0u;
+    uint idx = uint(x) + uint(z) * CHUNK_X + uint(y) * CHUNK_X * CHUNK_Z;
+    return blocks[slot * CHUNK_VOLUME + idx];
+}
+
+uint getBlockCross(int x, int y, int z) {
+    if (x < 0) {
+        return (west_slot != INVALID_SLOT) ? getBlockLocal(west_slot, int(CHUNK_X) - 1, y, z) : 0u;
+    }
+    if (x >= int(CHUNK_X)) {
+        return (east_slot != INVALID_SLOT) ? getBlockLocal(east_slot, 0, y, z) : 0u;
+    }
+    if (z < 0) {
+        return (north_slot != INVALID_SLOT) ? getBlockLocal(north_slot, x, y, int(CHUNK_Z) - 1) : 0u;
+    }
+    if (z >= int(CHUNK_Z)) {
+        return (south_slot != INVALID_SLOT) ? getBlockLocal(south_slot, x, y, 0) : 0u;
+    }
+    return getBlockLocal(center_slot, x, y, z);
+}
+
+bool blockIsSolid(uint b)      { return (bp.props_flags[b] & FLAG_SOLID) != 0u; }
+bool blockIsTransparent(uint b) { return (bp.props_flags[b] & FLAG_TRANSPARENT) != 0u; }
+bool blockIsFluid(uint b)      { return (bp.props_flags[b] & FLAG_FLUID) != 0u; }
+bool blockIsCross(uint b)      { return (bp.props_flags[b] & FLAG_CROSS) != 0u; }
+uint blockRenderPass(uint b)   { return (bp.props_flags[b] >> 4u) & 0x3u; }
+
+uint packColor(vec3 c) {
+    uint r = uint(clamp(round(c.r * 255.0), 0.0, 255.0));
+    uint g = uint(clamp(round(c.g * 255.0), 0.0, 255.0));
+    uint b = uint(clamp(round(c.b * 255.0), 0.0, 255.0));
+    return r | (g << 8u) | (b << 16u) | (255u << 24u);
+}
+
+uint packNormal(vec3 n) {
+    return packSnorm2x16(vec2(n.x, n.y));
+}
+
+uint packUV(float u, float v) {
+    return packHalf2x16(vec2(u, v));
+}
+
+uint packMeta(uint tile_id, float skylight, float ao) {
+    uint sl = uint(clamp(round(skylight * 255.0), 0.0, 255.0));
+    uint ao8 = uint(clamp(round(ao * 255.0), 0.0, 255.0));
+    return tile_id | (sl << 16u) | (ao8 << 24u);
+}
+
+vec3 unpackColor(uint p) {
+    return vec3(float(p & 0xFFu), float((p >> 8u) & 0xFFu), float((p >> 16u) & 0xFFu)) / 255.0;
+}
+
+bool shouldDrawFace(uint block_b, uint neighbor_b) {
+    if (block_b == 0u) return false;
+
+    bool nb_solid = blockIsSolid(neighbor_b);
+    bool nb_trans = blockIsTransparent(neighbor_b);
+    bool b_solid  = blockIsSolid(block_b);
+    bool b_trans  = blockIsTransparent(block_b);
+    bool b_fluid  = blockIsFluid(block_b);
+    bool nb_fluid = blockIsFluid(neighbor_b);
+
+    if (b_solid && !b_trans) {
+        return !nb_solid || nb_trans;
+    }
+    if (b_solid && b_trans) {
+        return block_b != neighbor_b || !nb_solid;
+    }
+    if (b_fluid) {
+        return !nb_fluid || block_b != neighbor_b;
+    }
+    return false;
+}
+
+void writeVertex(uint offset_words, float px, float py, float pz,
+                 uint col, uint norm, uint uv, uint meta, uint blight) {
+    vertex_out.vertices[offset_words + 0u] = floatBitsToUint(px);
+    vertex_out.vertices[offset_words + 1u] = floatBitsToUint(py);
+    vertex_out.vertices[offset_words + 2u] = floatBitsToUint(pz);
+    vertex_out.vertices[offset_words + 3u] = col;
+    vertex_out.vertices[offset_words + 4u] = norm;
+    vertex_out.vertices[offset_words + 5u] = uv;
+    vertex_out.vertices[offset_words + 6u] = meta;
+    vertex_out.vertices[offset_words + 7u] = blight;
+}
+
+void emitQuad(uint pass, vec3 p0, vec3 p1, vec3 p2, vec3 p3,
+              vec3 normal, vec3 base_col, uint tile_id) {
+    uint start;
+    uint base_val;
+    if (pass == 0u) {
+        start = atomicAdd(counters.solid_vertex_count, 6u);
+        base_val = counters.solid_vertex_base;
+    } else if (pass == 1u) {
+        start = atomicAdd(counters.cutout_vertex_count, 6u);
+        base_val = counters.cutout_vertex_base;
+    } else {
+        start = atomicAdd(counters.fluid_vertex_count, 6u);
+        base_val = counters.fluid_vertex_base;
+    }
+
+    uint col  = packColor(base_col);
+    uint norm = packNormal(normal);
+    uint meta = packMeta(tile_id, 1.0, 1.0);
+    uint bl   = 0u;
+
+    uint v0 = (base_val + start) * 8u;
+    uint v1 = (base_val + start + 1u) * 8u;
+    uint v2 = (base_val + start + 2u) * 8u;
+    uint v3 = (base_val + start + 3u) * 8u;
+    uint v4 = (base_val + start + 4u) * 8u;
+    uint v5 = (base_val + start + 5u) * 8u;
+
+    // Triangle 1: p0, p1, p2
+    writeVertex(v0, p0.x, p0.y, p0.z, col, norm, packUV(0.0, 0.0), meta, bl);
+    writeVertex(v1, p1.x, p1.y, p1.z, col, norm, packUV(1.0, 0.0), meta, bl);
+    writeVertex(v2, p2.x, p2.y, p2.z, col, norm, packUV(1.0, 1.0), meta, bl);
+    // Triangle 2: p0, p2, p3
+    writeVertex(v3, p0.x, p0.y, p0.z, col, norm, packUV(0.0, 0.0), meta, bl);
+    writeVertex(v4, p2.x, p2.y, p2.z, col, norm, packUV(1.0, 1.0), meta, bl);
+    writeVertex(v5, p3.x, p3.y, p3.z, col, norm, packUV(0.0, 1.0), meta, bl);
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= CHUNK_VOLUME) return;
+
+    uint bx = idx % CHUNK_X;
+    uint bz = (idx / CHUNK_X) % CHUNK_Z;
+    uint by = idx / (CHUNK_X * CHUNK_Z);
+
+    int x = int(bx);
+    int y = int(by);
+    int z = int(bz);
+
+    uint block = getBlockLocal(center_slot, x, y, z);
+    if (block == 0u) return;
+    if (blockIsCross(block)) return;
+
+    vec3 base_col = unpackColor(bp.props_color[block]);
+    vec3 bp_f = vec3(float(x), float(y), float(z));
+
+    uint pass_id = blockRenderPass(block);
+
+    // Top face (+Y)
+    {
+        uint nb = getBlockCross(x, y + 1, z);
+        if (shouldDrawFace(block, nb)) {
+            float shade = 1.0;
+            uint tid = bp.props_tile_top[block];
+            vec3 c = base_col * shade;
+            emitQuad(pass_id,
+                bp_f + vec3(0, 1, 1), bp_f + vec3(1, 1, 1),
+                bp_f + vec3(1, 1, 0), bp_f + vec3(0, 1, 0),
+                vec3(0, 1, 0), c, tid);
+        }
+    }
+    // Bottom face (-Y)
+    {
+        uint nb = getBlockCross(x, y - 1, z);
+        if (shouldDrawFace(block, nb)) {
+            float shade = 0.5;
+            uint tid = bp.props_tile_bottom[block];
+            vec3 c = base_col * shade;
+            emitQuad(pass_id,
+                bp_f + vec3(0, 0, 0), bp_f + vec3(1, 0, 0),
+                bp_f + vec3(1, 0, 1), bp_f + vec3(0, 0, 1),
+                vec3(0, -1, 0), c, tid);
+        }
+    }
+    // North face (-Z)
+    {
+        uint nb = getBlockCross(x, y, z - 1);
+        if (shouldDrawFace(block, nb)) {
+            float shade = 0.8;
+            uint tid = bp.props_tile_side[block];
+            vec3 c = base_col * shade;
+            emitQuad(pass_id,
+                bp_f + vec3(1, 0, 0), bp_f + vec3(0, 0, 0),
+                bp_f + vec3(0, 1, 0), bp_f + vec3(1, 1, 0),
+                vec3(0, 0, -1), c, tid);
+        }
+    }
+    // South face (+Z)
+    {
+        uint nb = getBlockCross(x, y, z + 1);
+        if (shouldDrawFace(block, nb)) {
+            float shade = 0.8;
+            uint tid = bp.props_tile_side[block];
+            vec3 c = base_col * shade;
+            emitQuad(pass_id,
+                bp_f + vec3(0, 0, 1), bp_f + vec3(1, 0, 1),
+                bp_f + vec3(1, 1, 1), bp_f + vec3(0, 1, 1),
+                vec3(0, 0, 1), c, tid);
+        }
+    }
+    // East face (+X)
+    {
+        uint nb = getBlockCross(x + 1, y, z);
+        if (shouldDrawFace(block, nb)) {
+            float shade = 0.7;
+            uint tid = bp.props_tile_side[block];
+            vec3 c = base_col * shade;
+            emitQuad(pass_id,
+                bp_f + vec3(1, 0, 1), bp_f + vec3(1, 0, 0),
+                bp_f + vec3(1, 1, 0), bp_f + vec3(1, 1, 1),
+                vec3(1, 0, 0), c, tid);
+        }
+    }
+    // West face (-X)
+    {
+        uint nb = getBlockCross(x - 1, y, z);
+        if (shouldDrawFace(block, nb)) {
+            float shade = 0.7;
+            uint tid = bp.props_tile_side[block];
+            vec3 c = base_col * shade;
+            emitQuad(pass_id,
+                bp_f + vec3(0, 0, 0), bp_f + vec3(0, 0, 1),
+                bp_f + vec3(0, 1, 1), bp_f + vec3(0, 1, 0),
+                vec3(-1, 0, 0), c, tid);
+        }
+    }
+}

@@ -101,6 +101,7 @@ pub const Chunk = struct {
         meshing,
         mesh_ready,
         uploading,
+        gpu_mesh_pending,
         renderable,
         unloading,
     };

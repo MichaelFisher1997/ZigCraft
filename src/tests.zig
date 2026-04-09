@@ -2660,6 +2660,7 @@ const MockWorld = struct {
         .getLODStats = getLODStats,
         .isLODEnabled = isLODEnabled,
         .shadowScene = shadowScene,
+        .getGpuMesher = getGpuMesher,
     };
 
     const SHADOW_VTABLE = shadow_scene.IShadowScene.VTable{
@@ -2722,6 +2723,11 @@ const MockWorld = struct {
         const self: *MockWorld = @ptrCast(@alignCast(ptr));
         self.shadow_scene_calls += 1;
         return .{ .ptr = self, .vtable = &SHADOW_VTABLE };
+    }
+
+    fn getGpuMesher(ptr: *anyopaque) ?*@import("world/gpu_mesher.zig").GpuMesher {
+        _ = ptr;
+        return null;
     }
 
     fn renderShadowPass(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {

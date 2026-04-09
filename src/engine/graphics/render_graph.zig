@@ -78,7 +78,6 @@ pub const SceneContext = struct {
     disable_gpass_draw: bool,
     disable_ssao: bool,
     disable_clouds: bool,
-    // Post-processing flags
     fxaa_enabled: bool = true,
     bloom_enabled: bool = true,
     overlay_renderer: ?*const fn (ctx: SceneContext) void = null,
@@ -86,9 +85,8 @@ pub const SceneContext = struct {
     lpv_texture_handle: rhi_pkg.TextureHandle = 0,
     lpv_texture_handle_g: rhi_pkg.TextureHandle = 0,
     lpv_texture_handle_b: rhi_pkg.TextureHandle = 0,
-    // Pointer to frame-local cascade storage, computed once per frame by the first
-    // ShadowPass and reused by subsequent cascade passes to guarantee consistency.
     cached_cascades: *?CSM.ShadowCascades,
+    gpu_mesher: ?*@import("../../world/gpu_mesher.zig").GpuMesher = null,
 };
 
 pub const IRenderPass = struct {
@@ -568,5 +566,28 @@ pub const WaterPass = struct {
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.renderFluid(view_proj, ctx.camera.position, true);
+    }
+};
+
+pub const MeshBuildPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "MeshBuildPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *MeshBuildPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        const mesher = ctx.gpu_mesher orelse return;
+        if (!mesher.enabled) return;
+        mesher.dispatchAll();
+        _ = mesher.readResults();
+        mesher.clearDirtyChunks();
     }
 };

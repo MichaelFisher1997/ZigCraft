@@ -73,6 +73,7 @@ pub const IWorld = struct {
         getLODStats: *const fn (ptr: *anyopaque) ?@import("lod_manager.zig").LODStats,
         isLODEnabled: *const fn (ptr: *anyopaque) bool,
         shadowScene: *const fn (ptr: *anyopaque) shadow_scene.IShadowScene,
+        getGpuMesher: *const fn (ptr: *anyopaque) ?*@import("gpu_mesher.zig").GpuMesher,
     };
 
     pub fn update(self: IWorld, player_pos: Vec3, dt: f32) !void {
@@ -113,6 +114,10 @@ pub const IWorld = struct {
 
     pub fn shadowScene(self: IWorld) shadow_scene.IShadowScene {
         return self.vtable.shadowScene(self.ptr);
+    }
+
+    pub fn getGpuMesher(self: IWorld) ?*@import("gpu_mesher.zig").GpuMesher {
+        return self.vtable.getGpuMesher(self.ptr);
     }
 };
 
@@ -186,7 +191,7 @@ pub const World = struct {
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
 
         log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer);
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
         errdefer world.streamer.deinit();
 
         return world;
@@ -518,6 +523,7 @@ pub const World = struct {
         .getLODStats = igetLODStats,
         .isLODEnabled = iisLODEnabled,
         .shadowScene = ishadowScene,
+        .getGpuMesher = igetGpuMesher,
     };
 
     fn iupdate(ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void {
@@ -568,6 +574,11 @@ pub const World = struct {
     fn ishadowScene(ptr: *anyopaque) shadow_scene.IShadowScene {
         const self: *World = @ptrCast(@alignCast(ptr));
         return self.shadowScene();
+    }
+
+    fn igetGpuMesher(ptr: *anyopaque) ?*@import("gpu_mesher.zig").GpuMesher {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.renderer.getGpuMesher();
     }
 
     /// Get LOD system statistics (returns null if LOD not enabled)

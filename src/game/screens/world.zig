@@ -311,6 +311,7 @@ pub const WorldScreen = struct {
                 .lpv_texture_handle = lpv_system.getTextureHandle(),
                 .lpv_texture_handle_g = lpv_system.getTextureHandleG(),
                 .lpv_texture_handle_b = lpv_system.getTextureHandleB(),
+                .gpu_mesher = self.world.getGpuMesher(),
             };
             try render_system.getRenderGraph().execute(render_ctx);
         }

@@ -64,6 +64,7 @@ const log = @import("../engine/core/log.zig");
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
+const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -153,11 +154,13 @@ pub const WorldStreamer = struct {
 
     // GPU Block Buffer for compute meshing (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
+    gpu_mesher: ?*GpuMesher,
+    use_gpu_meshing: bool,
 
     const GEN_WORKERS = 4;
     const MESH_WORKERS = 3;
 
-    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer) !*WorldStreamer {
+    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
 
         const gen_queue = try allocator.create(JobQueue);
@@ -183,6 +186,8 @@ pub const WorldStreamer = struct {
             .lod_manager = null,
             .max_uploads_per_frame = max_uploads_per_frame,
             .gpu_block_buffer = gpu_block_buffer,
+            .gpu_mesher = gpu_mesher,
+            .use_gpu_meshing = if (gpu_mesher) |m| m.enabled else false,
         };
 
         streamer.gen_pool = try WorkerPool.init(allocator, GEN_WORKERS, gen_queue, streamer, processGenJob);
@@ -319,28 +324,72 @@ pub const WorldStreamer = struct {
                 const dx = data.chunk.chunk_x - pc.chunk_x;
                 const dz = data.chunk.chunk_z - pc.chunk_z;
                 if (dx * dx + dz * dz <= render_dist * render_dist) {
-                    const weight = self.player_movement.priorityWeight(dx, dz);
-                    const weighted_dist: i32 = @intFromFloat(@as(f32, @floatFromInt(dx * dx + dz * dz)) * weight);
+                    if (self.use_gpu_meshing) {
+                        if (self.gpu_block_buffer) |buf| {
+                            const slot = buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch {
+                                data.chunk.state = .generated;
+                                continue;
+                            };
+                            const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
+                            buf.upload(slot, blocks_slice) catch {
+                                buf.free(slot);
+                                continue;
+                            };
+                        }
+                        data.chunk.state = .gpu_mesh_pending;
+                    } else {
+                        const weight = self.player_movement.priorityWeight(dx, dz);
+                        const weighted_dist: i32 = @intFromFloat(@as(f32, @floatFromInt(dx * dx + dz * dz)) * weight);
 
-                    try self.mesh_queue.push(.{
-                        .type = .chunk_meshing,
-                        .dist_sq = weighted_dist,
-                        .data = .{
-                            .chunk = .{
-                                .x = data.chunk.chunk_x,
-                                .z = data.chunk.chunk_z,
-                                .job_token = data.chunk.job_token,
+                        try self.mesh_queue.push(.{
+                            .type = .chunk_meshing,
+                            .dist_sq = weighted_dist,
+                            .data = .{
+                                .chunk = .{
+                                    .x = data.chunk.chunk_x,
+                                    .z = data.chunk.chunk_z,
+                                    .job_token = data.chunk.job_token,
+                                },
                             },
-                        },
+                        });
+                        data.chunk.state = .meshing;
+                    }
+                }
+            } else if (data.chunk.state == .gpu_mesh_pending) {
+                if (self.gpu_mesher) |mesher| {
+                    const n_slot: u32 = if (self.gpu_block_buffer) |buf| blk: {
+                        break :blk if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z - 1)) |s| @intCast(s) else @import("gpu_mesher.zig").INVALID_SLOT;
+                    } else @import("gpu_mesher.zig").INVALID_SLOT;
+                    const s_slot: u32 = if (self.gpu_block_buffer) |buf| blk: {
+                        break :blk if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z + 1)) |s| @intCast(s) else @import("gpu_mesher.zig").INVALID_SLOT;
+                    } else @import("gpu_mesher.zig").INVALID_SLOT;
+                    const e_slot: u32 = if (self.gpu_block_buffer) |buf| blk: {
+                        break :blk if (buf.getSlotForChunk(data.chunk.chunk_x + 1, data.chunk.chunk_z)) |s| @intCast(s) else @import("gpu_mesher.zig").INVALID_SLOT;
+                    } else @import("gpu_mesher.zig").INVALID_SLOT;
+                    const w_slot: u32 = if (self.gpu_block_buffer) |buf| blk: {
+                        break :blk if (buf.getSlotForChunk(data.chunk.chunk_x - 1, data.chunk.chunk_z)) |s| @intCast(s) else @import("gpu_mesher.zig").INVALID_SLOT;
+                    } else @import("gpu_mesher.zig").INVALID_SLOT;
+                    const center: u32 = if (self.gpu_block_buffer) |buf| blk: {
+                        break :blk if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |s| @intCast(s) else @import("gpu_mesher.zig").INVALID_SLOT;
+                    } else @import("gpu_mesher.zig").INVALID_SLOT;
+
+                    mesher.markDirty(.{
+                        .cx = data.chunk.chunk_x,
+                        .cz = data.chunk.chunk_z,
+                        .center_slot = center,
+                        .north_slot = n_slot,
+                        .south_slot = s_slot,
+                        .east_slot = e_slot,
+                        .west_slot = w_slot,
                     });
-                    data.chunk.state = .meshing;
+                    data.chunk.state = .renderable;
                 }
             } else if (data.chunk.state == .mesh_ready) {
                 data.chunk.state = .uploading;
                 try self.upload_queue.push(key);
             } else if (data.chunk.state == .renderable and data.chunk.dirty) {
                 data.chunk.dirty = false;
-                data.chunk.state = .generated;
+                data.chunk.state = if (self.use_gpu_meshing) .generated else .generated;
             }
         }
         self.storage.chunks_mutex.unlockShared();

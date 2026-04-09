@@ -22,6 +22,9 @@ const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").Cu
 const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
 const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig").VulkanContext;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
+const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
+const ChunkMeshRequest = @import("gpu_mesher.zig").ChunkMeshRequest;
+const INVALID_SLOT = @import("gpu_mesher.zig").INVALID_SLOT;
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -73,6 +76,10 @@ pub const WorldRenderer = struct {
     // GPU Block Buffer (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
 
+    // GPU Compute Mesher (Batch 6 - Issue #391)
+    gpu_mesher: ?*GpuMesher,
+    use_gpu_meshing: bool,
+
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
@@ -113,6 +120,21 @@ pub const WorldRenderer = struct {
         gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, max_chunks);
         log.log.info("GpuBlockBuffer initialized (capacity={})", .{max_chunks});
 
+        var gpu_mesher: ?*GpuMesher = null;
+        errdefer if (gpu_mesher) |m| m.deinit();
+        var use_gpu_mesh = false;
+        if (gpu_block_buffer) |buf| {
+            if (GpuMesher.init(allocator, @ptrCast(@alignCast(rhi.ptr)), buf)) |mesher| {
+                gpu_mesher = mesher;
+                use_gpu_mesh = mesher.enabled;
+                if (use_gpu_mesh) {
+                    log.log.info("GPU compute meshing enabled", .{});
+                }
+            } else |err| {
+                log.log.warn("GPU mesher init failed ({}), using CPU fallback", .{err});
+            }
+        }
+
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
@@ -134,6 +156,8 @@ pub const WorldRenderer = struct {
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
             .gpu_block_buffer = gpu_block_buffer,
+            .gpu_mesher = gpu_mesher,
+            .use_gpu_meshing = use_gpu_mesh,
         };
 
         for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
@@ -154,6 +178,35 @@ pub const WorldRenderer = struct {
         return self.gpu_block_buffer;
     }
 
+    pub fn getGpuMesher(self: *WorldRenderer) ?*GpuMesher {
+        return self.gpu_mesher;
+    }
+
+    pub fn isGpuMeshingEnabled(self: *WorldRenderer) bool {
+        return self.use_gpu_meshing;
+    }
+
+    pub fn queueChunkForGpuMesh(self: *WorldRenderer, cx: i32, cz: i32) void {
+        const mesher = self.gpu_mesher orelse return;
+        const buf = self.gpu_block_buffer orelse return;
+
+        const center_slot = buf.getSlotForChunk(cx, cz) orelse return;
+        const n_slot: u32 = if (buf.getSlotForChunk(cx, cz - 1)) |s| @intCast(s) else INVALID_SLOT;
+        const s_slot: u32 = if (buf.getSlotForChunk(cx, cz + 1)) |s| @intCast(s) else INVALID_SLOT;
+        const e_slot: u32 = if (buf.getSlotForChunk(cx + 1, cz)) |s| @intCast(s) else INVALID_SLOT;
+        const w_slot: u32 = if (buf.getSlotForChunk(cx - 1, cz)) |s| @intCast(s) else INVALID_SLOT;
+
+        mesher.markDirty(.{
+            .cx = cx,
+            .cz = cz,
+            .center_slot = @intCast(center_slot),
+            .north_slot = n_slot,
+            .south_slot = s_slot,
+            .east_slot = e_slot,
+            .west_slot = w_slot,
+        });
+    }
+
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
         self.aabb_data.deinit(self.allocator);
@@ -170,6 +223,8 @@ pub const WorldRenderer = struct {
         if (self.culling_system) |cs| cs.deinit();
 
         if (self.gpu_block_buffer) |buf| buf.deinit();
+
+        if (self.gpu_mesher) |m| m.deinit();
 
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
