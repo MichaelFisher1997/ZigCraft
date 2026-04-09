@@ -65,15 +65,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure audit label exists
+      - name: Validate token permissions
         run: |
+          echo "Checking token permissions for issue creation..."
+          if ! gh api repos/{owner}/{repo} --jq '.permissions.issues' 2>/dev/null | grep -q 'true'; then
+            echo "::error::Token lacks 'issues' write permission. Ensure the token has repo scope (classic PAT) or Issues: Read & Write (fine-grained PAT)."
+            exit 1
+          fi
+          echo "Token has required permissions."
           if ! gh label list --json name --jq '.[].name' | grep -q '^automated-audit$'; then
+            echo "Creating automated-audit label..."
             gh label create "automated-audit" \
               --description "Issues found by automated opencode audit scans" \
               --color "1D76DB"
+          else
+            echo "Label 'automated-audit' already exists."
           fi
         env:
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GH_TOKEN: ${{ github.token }}
 
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
@@ -87,8 +96,8 @@ jobs:
       - name: Run opencode audit
         uses: anomalyco/opencode/github@latest
         env:
-          GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
@@ -261,7 +270,7 @@ jobs:
         run: |
           echo "=== Checking for audit compliance violations ==="
 
-          BOT_LOGIN="opencode-agent[bot]"
+          BOT_LOGIN="github-actions[bot]"
 
           VIOLATIONS=0
 
@@ -321,4 +330,4 @@ jobs:
             echo "✅ No compliance violations detected."
           fi
         env:
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GH_TOKEN: ${{ github.token }}
