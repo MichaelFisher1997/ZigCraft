@@ -19,6 +19,8 @@ const PostProcessSystem = @import("post_process_system.zig").PostProcessSystem;
 const FXAASystem = @import("fxaa_system.zig").FXAASystem;
 const BloomSystem = @import("bloom_system.zig").BloomSystem;
 const TAASystem = @import("taa_system.zig").TAASystem;
+const DepthPyramidSystem = @import("depth_pyramid.zig").DepthPyramidSystem;
+const WaterSystem = @import("water_system.zig").WaterSystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
@@ -90,7 +92,6 @@ const LegacyResources = struct {
     dummy_shadow_view: c.VkImageView = null,
     model_ubo: VulkanBuffer = .{},
     dummy_instance_buffer: VulkanBuffer = .{},
-    transfer_fence: c.VkFence = null,
 };
 
 const ShadowRuntime = struct {
@@ -212,8 +213,10 @@ pub const VulkanContext = struct {
     fxaa: FXAASystem = .{},
     taa: TAASystem = .{},
     bloom: BloomSystem = .{},
+    depth_pyramid: DepthPyramidSystem = .{},
     post_process_state: PostProcessState = .{},
     velocity: VelocityResources = .{},
+    water_system: WaterSystem = .{},
 
     timing: TimingState = .{},
 };

@@ -269,6 +269,9 @@ pub const RenderContext = struct {
     pub fn computeTAA(self: RenderContext) void {
         self.render.computeTAA();
     }
+    pub fn computeDepthPyramid(self: RenderContext) void {
+        self.render.computeDepthPyramid();
+    }
     pub fn requestSwapchainRecreate(self: RenderContext) void {
         self.render.requestSwapchainRecreate();
     }
@@ -292,6 +295,12 @@ pub const RenderContext = struct {
     }
     pub fn getNativeCloudPipelineLayout(self: RenderContext) u64 {
         return self.render.vtable.getNativeCloudPipelineLayout(self.render.ptr);
+    }
+    pub fn getNativeWaterPipeline(self: RenderContext) u64 {
+        return self.render.vtable.getNativeWaterPipeline(self.render.ptr);
+    }
+    pub fn getNativeWaterPipelineLayout(self: RenderContext) u64 {
+        return self.render.vtable.getNativeWaterPipelineLayout(self.render.ptr);
     }
     pub fn getNativeMainDescriptorSet(self: RenderContext) u64 {
         return self.render.vtable.getNativeMainDescriptorSet(self.render.ptr);
@@ -413,6 +422,48 @@ pub const ShadowSystemWrapper = struct {
     }
     pub fn getShadowMapHandle(self: ShadowSystemWrapper, cascade_index: u32) TextureHandle {
         return self.ctx.getShadowMapHandle(cascade_index);
+    }
+};
+
+pub const IWaterContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        beginReflectionPass: *const fn (ptr: *anyopaque) void,
+        endReflectionPass: *const fn (ptr: *anyopaque) void,
+        getReflectionTextureHandle: *const fn (ptr: *anyopaque) TextureHandle,
+        computeReflectedViewProj: *const fn (ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4,
+    };
+
+    pub fn beginReflectionPass(self: IWaterContext) void {
+        self.vtable.beginReflectionPass(self.ptr);
+    }
+    pub fn endReflectionPass(self: IWaterContext) void {
+        self.vtable.endReflectionPass(self.ptr);
+    }
+    pub fn getReflectionTextureHandle(self: IWaterContext) TextureHandle {
+        return self.vtable.getReflectionTextureHandle(self.ptr);
+    }
+    pub fn computeReflectedViewProj(self: IWaterContext, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        return self.vtable.computeReflectedViewProj(self.ptr, view, proj, camera_pos);
+    }
+};
+
+pub const WaterSystemWrapper = struct {
+    ctx: IWaterContext,
+
+    pub fn beginReflectionPass(self: WaterSystemWrapper) void {
+        self.ctx.beginReflectionPass();
+    }
+    pub fn endReflectionPass(self: WaterSystemWrapper) void {
+        self.ctx.endReflectionPass();
+    }
+    pub fn getReflectionTextureHandle(self: WaterSystemWrapper) TextureHandle {
+        return self.ctx.getReflectionTextureHandle();
+    }
+    pub fn computeReflectedViewProj(self: WaterSystemWrapper, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
+        return self.ctx.computeReflectedViewProj(view, proj, camera_pos);
     }
 };
 
@@ -616,6 +667,8 @@ pub const IRenderContext = struct {
         computeBloom: *const fn (ptr: *anyopaque) void,
         // TAA pass
         computeTAA: *const fn (ptr: *anyopaque) void,
+        // Depth pyramid
+        computeDepthPyramid: *const fn (ptr: *anyopaque) void,
         getEncoder: *const fn (ptr: *anyopaque) IGraphicsCommandEncoder,
         getStateContext: *const fn (ptr: *anyopaque) IRenderStateContext,
 
@@ -640,6 +693,10 @@ pub const IRenderContext = struct {
         getNativeCloudPipeline: *const fn (ptr: *anyopaque) u64,
         /// Returns the native cloud pipeline layout handle (VkPipelineLayout).
         getNativeCloudPipelineLayout: *const fn (ptr: *anyopaque) u64,
+        /// Returns the native water pipeline handle (VkPipeline).
+        getNativeWaterPipeline: *const fn (ptr: *anyopaque) u64,
+        /// Returns the native water pipeline layout handle (VkPipelineLayout).
+        getNativeWaterPipelineLayout: *const fn (ptr: *anyopaque) u64,
         /// Returns the main native descriptor set handle (VkDescriptorSet).
         getNativeMainDescriptorSet: *const fn (ptr: *anyopaque) u64,
         /// Returns the native command buffer handle for the current frame (VkCommandBuffer).
@@ -679,6 +736,9 @@ pub const IRenderContext = struct {
     }
     pub fn computeTAA(self: IRenderContext) void {
         self.vtable.computeTAA(self.ptr);
+    }
+    pub fn computeDepthPyramid(self: IRenderContext) void {
+        self.vtable.computeDepthPyramid(self.ptr);
     }
     pub fn requestSwapchainRecreate(self: IRenderContext) void {
         self.vtable.requestSwapchainRecreate(self.ptr);
@@ -805,6 +865,7 @@ pub const RHI = struct {
         render: IRenderContext.VTable,
         ssao: ISSAOContext.VTable,
         shadow: IShadowContext.VTable,
+        water: IWaterContext.VTable,
         ui: IUIContext.VTable,
         query: IDeviceQuery.VTable,
         timing: IDeviceTiming.VTable,
@@ -865,6 +926,12 @@ pub const RHI = struct {
     }
     pub fn shadowSystem(self: RHI) ShadowSystemWrapper {
         return .{ .ctx = self.shadow() };
+    }
+    pub fn waterSystem(self: RHI) WaterSystemWrapper {
+        return .{ .ctx = self.water() };
+    }
+    pub fn water(self: RHI) IWaterContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.water };
     }
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };
@@ -1051,6 +1118,9 @@ pub const RHI = struct {
     }
     pub fn computeTAA(self: RHI) void {
         self.vtable.render.computeTAA(self.ptr);
+    }
+    pub fn computeDepthPyramid(self: RHI) void {
+        self.vtable.render.computeDepthPyramid(self.ptr);
     }
     pub fn setTextureUniforms(self: RHI, enabled: bool, handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.vtable.render.setTextureUniforms(self.ptr, enabled, handles);

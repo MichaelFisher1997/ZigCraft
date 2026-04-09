@@ -5,6 +5,10 @@ const log = @import("../../core/log.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 const resource_texture_ops = @import("resource_texture_ops.zig");
+const transfer_queue = @import("transfer_queue.zig");
+const StagingRing = transfer_queue.StagingRing;
+const StagingSlice = transfer_queue.StagingSlice;
+const TransferQueue = transfer_queue.TransferQueue;
 
 /// Vulkan buffer with backing memory.
 pub const VulkanBuffer = Utils.VulkanBuffer;
@@ -37,54 +41,6 @@ const ZombieImage = struct {
     is_owned: bool,
 };
 
-/// Per-frame linear staging buffer for async uploads.
-const StagingBuffer = struct {
-    buffer: c.VkBuffer,
-    memory: c.VkDeviceMemory,
-    size: u64,
-    current_offset: u64,
-    mapped_ptr: ?*anyopaque,
-
-    fn init(device: *const VulkanDevice, size: u64) !StagingBuffer {
-        const buf = try Utils.createVulkanBuffer(device, size, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (buf.buffer == null) return error.VulkanError;
-
-        return StagingBuffer{
-            .buffer = buf.buffer,
-            .memory = buf.memory,
-            .size = size,
-            .current_offset = 0,
-            .mapped_ptr = buf.mapped_ptr,
-        };
-    }
-
-    fn deinit(self: *StagingBuffer, device: c.VkDevice) void {
-        if (self.mapped_ptr != null) {
-            c.vkUnmapMemory(device, self.memory);
-        }
-        c.vkDestroyBuffer(device, self.buffer, null);
-        c.vkFreeMemory(device, self.memory, null);
-    }
-
-    fn reset(self: *StagingBuffer) void {
-        self.current_offset = 0;
-    }
-
-    /// Allocates space in the staging buffer. Returns offset if successful, null if full.
-    /// Aligns allocation to 256 bytes (common minUniformBufferOffsetAlignment/optimal copy offset).
-    pub fn allocate(self: *StagingBuffer, size: u64) ?u64 {
-        const alignment = 256; // Safe alignment for most GPU copy operations
-        const aligned_offset = std.mem.alignForward(u64, self.current_offset, alignment);
-
-        if (aligned_offset + size > self.size) return null;
-
-        if (self.mapped_ptr == null) return null;
-
-        self.current_offset = aligned_offset + size;
-        return aligned_offset;
-    }
-};
-
 pub const ResourceManager = struct {
     allocator: std.mem.Allocator,
     vulkan_device: *VulkanDevice,
@@ -100,12 +56,12 @@ pub const ResourceManager = struct {
     buffer_deletion_queue: [rhi.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(ZombieBuffer),
     image_deletion_queue: [rhi.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(ZombieImage),
 
-    // Staging
-    staging_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]StagingBuffer,
-    transfer_command_pool: c.VkCommandPool,
-    transfer_command_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandBuffer,
-    transfer_fence: c.VkFence,
-    transfer_ready: bool = false,
+    // Staging ring buffer (replaces per-frame StagingBuffer)
+    staging_ring: StagingRing,
+
+    // Transfer queue (dedicated or shared with graphics)
+    transfer: TransferQueue,
+
     current_frame_index: usize = 0,
     textures_enabled: bool = true,
 
@@ -119,45 +75,26 @@ pub const ResourceManager = struct {
             .next_texture_handle = 1,
             .buffer_deletion_queue = undefined,
             .image_deletion_queue = undefined,
-            .staging_buffers = undefined,
-            .transfer_command_pool = null,
-            .transfer_command_buffers = undefined,
-            .transfer_fence = null,
+            .staging_ring = undefined,
+            .transfer = undefined,
         };
 
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
             self.buffer_deletion_queue[i] = .{};
             self.image_deletion_queue[i] = .{};
-            self.staging_buffers[i] = try StagingBuffer.init(vulkan_device, 64 * 1024 * 1024); // 64MB staging buffer
         }
 
-        // Create transfer command pool
-        var pool_info = std.mem.zeroes(c.VkCommandPoolCreateInfo);
-        pool_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        pool_info.queueFamilyIndex = vulkan_device.graphics_family;
-        pool_info.flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        try Utils.checkVk(c.vkCreateCommandPool(vulkan_device.vk_device, &pool_info, null, &self.transfer_command_pool));
+        self.staging_ring = try StagingRing.init(vulkan_device, transfer_queue.DEFAULT_STAGING_CAPACITY);
+        log.log.info("Staging ring initialized: {}MB", .{transfer_queue.DEFAULT_STAGING_CAPACITY / (1024 * 1024)});
 
-        // Allocate transfer command buffers
-        var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
-        alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc_info.commandPool = self.transfer_command_pool;
-        alloc_info.level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc_info.commandBufferCount = rhi.MAX_FRAMES_IN_FLIGHT;
-        try Utils.checkVk(c.vkAllocateCommandBuffers(vulkan_device.vk_device, &alloc_info, &self.transfer_command_buffers));
-
-        // Create transfer fence
-        var fence_info = std.mem.zeroes(c.VkFenceCreateInfo);
-        fence_info.sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fence_info.flags = 0; // Not signaled initially
-        Utils.checkVk(c.vkCreateFence(vulkan_device.vk_device, &fence_info, null, &self.transfer_fence)) catch |err| {
-            log.log.err("Failed to create transfer fence: {}", .{err});
-            // Cleanup command pool and buffers before returning to avoid leaks
-            if (self.transfer_command_pool != null) {
-                c.vkDestroyCommandPool(vulkan_device.vk_device, self.transfer_command_pool, null);
-            }
-            return err;
-        };
+        const tx_family = vulkan_device.transfer_family;
+        const is_dedicated = vulkan_device.has_dedicated_transfer_queue;
+        self.transfer = try TransferQueue.init(vulkan_device, tx_family, is_dedicated);
+        if (is_dedicated) {
+            log.log.info("Transfer queue: DEDICATED (family {})", .{tx_family});
+        } else {
+            log.log.info("Transfer queue: SHARED with graphics (family {})", .{tx_family});
+        }
 
         return self;
     }
@@ -167,7 +104,6 @@ pub const ResourceManager = struct {
         _ = c.vkDeviceWaitIdle(device);
 
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
-            self.staging_buffers[i].deinit(device);
             for (self.buffer_deletion_queue[i].items) |b| {
                 c.vkDestroyBuffer(device, b.buffer, null);
                 c.vkFreeMemory(device, b.memory, null);
@@ -203,50 +139,23 @@ pub const ResourceManager = struct {
         }
         self.textures.deinit();
 
-        if (self.transfer_command_pool != null) {
-            c.vkDestroyCommandPool(device, self.transfer_command_pool, null);
-        }
-        if (self.transfer_fence != null) {
-            c.vkDestroyFence(device, self.transfer_fence, null);
-        }
+        self.transfer.deinit(device);
+        self.staging_ring.deinit(device);
     }
 
-    /// Flushes any pending transfer commands for the current frame.
-    /// This is useful for initialization-time resource uploads that must complete before rendering begins.
     pub fn flushTransfer(self: *ResourceManager) !void {
-        if (!self.transfer_ready) return;
-
-        const cb = self.transfer_command_buffers[self.current_frame_index];
-        try Utils.checkVk(c.vkEndCommandBuffer(cb));
-
-        var submit_info = std.mem.zeroes(c.VkSubmitInfo);
-        submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.commandBufferCount = 1;
-        submit_info.pCommandBuffers = &cb;
-
-        // Use the transfer fence to wait
-        try Utils.checkVk(c.vkResetFences(self.vulkan_device.vk_device, 1, &self.transfer_fence));
-
-        self.vulkan_device.mutex.lock();
-        const result = c.vkQueueSubmit(self.vulkan_device.queue, 1, &submit_info, self.transfer_fence);
-        self.vulkan_device.mutex.unlock();
-
-        if (result != c.VK_SUCCESS) return error.VulkanError;
-
-        try Utils.checkVk(c.vkWaitForFences(self.vulkan_device.vk_device, 1, &self.transfer_fence, c.VK_TRUE, std.math.maxInt(u64)));
-
-        self.transfer_ready = false;
-
-        // Note: We do NOT reset the staging buffer here because other systems might still rely on it
-        // being valid until the next frame. However, for init-time flush, we can reset it.
-        // Let's reset it to be safe for next usage.
-        self.staging_buffers[self.current_frame_index].reset();
+        try self.transfer.flushSync(self.vulkan_device.vk_device, &self.vulkan_device.mutex);
     }
 
     pub fn setCurrentFrame(self: *ResourceManager, frame_index: usize) void {
         self.current_frame_index = frame_index;
-        self.transfer_ready = false; // Reset for new frame
-        self.staging_buffers[frame_index].reset();
+        self.transfer.setCurrentFrame(frame_index);
+
+        if (self.transfer.is_dedicated) {
+            self.transfer.waitForFrameFence(self.vulkan_device.vk_device, frame_index);
+        }
+        self.staging_ring.reclaimFrame(frame_index);
+        self.staging_ring.beginFrame(frame_index);
 
         // Process deletion queue for this frame
         const device = self.vulkan_device.vk_device;
@@ -268,27 +177,51 @@ pub const ResourceManager = struct {
     }
 
     pub fn resetTransferState(self: *ResourceManager) void {
-        self.transfer_ready = false;
+        self.transfer.resetTransferState();
     }
 
     pub fn prepareTransfer(self: *ResourceManager) !c.VkCommandBuffer {
-        if (self.transfer_ready) return self.transfer_command_buffers[self.current_frame_index];
-
-        const cb = self.transfer_command_buffers[self.current_frame_index];
-        try Utils.checkVk(c.vkResetCommandBuffer(cb, 0));
-
-        var begin_info = std.mem.zeroes(c.VkCommandBufferBeginInfo);
-        begin_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin_info.flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        try Utils.checkVk(c.vkBeginCommandBuffer(cb, &begin_info));
-
-        self.transfer_ready = true;
-        return cb;
+        return self.transfer.prepareTransfer();
     }
 
     pub fn getTransferCommandBuffer(self: *ResourceManager) ?c.VkCommandBuffer {
-        if (!self.transfer_ready) return null;
-        return self.transfer_command_buffers[self.current_frame_index];
+        return self.transfer.getTransferCommandBuffer();
+    }
+
+    pub fn endTransferCommandBuffer(self: *ResourceManager) !void {
+        try self.transfer.endTransferCommandBuffer();
+    }
+
+    pub fn getTransferSemaphore(self: *ResourceManager) ?c.VkSemaphore {
+        if (!self.transfer.is_dedicated) return null;
+        if (!self.transfer.transfer_submitted[self.transfer.current_frame]) return null;
+        return self.transfer.transfer_semaphores[self.transfer.current_frame];
+    }
+
+    pub fn submitTransfer(self: *ResourceManager) !void {
+        if (!self.transfer.is_dedicated) return;
+        if (!self.transfer.transfer_ready[self.transfer.current_frame]) return;
+
+        const cb = self.transfer.command_buffers[self.transfer.current_frame];
+        try self.transfer.endTransferCommandBuffer();
+        try Utils.checkVk(c.vkResetFences(self.vulkan_device.vk_device, 1, &self.transfer.frame_fences[self.transfer.current_frame]));
+
+        var submit_info = std.mem.zeroes(c.VkSubmitInfo);
+        submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &cb;
+
+        submit_info.signalSemaphoreCount = 1;
+        submit_info.pSignalSemaphores = &self.transfer.transfer_semaphores[self.transfer.current_frame];
+
+        self.vulkan_device.mutex.lock();
+        const result = c.vkQueueSubmit(self.transfer.queue, 1, &submit_info, self.transfer.frame_fences[self.transfer.current_frame]);
+        self.vulkan_device.mutex.unlock();
+
+        if (result != c.VK_SUCCESS) return error.VulkanError;
+
+        self.transfer.transfer_ready[self.transfer.current_frame] = false;
+        self.transfer.transfer_submitted[self.transfer.current_frame] = true;
     }
 
     pub fn createBuffer(self: *ResourceManager, size: usize, usage: rhi.BufferUsage) rhi.RhiError!rhi.BufferHandle {
@@ -329,32 +262,33 @@ pub const ResourceManager = struct {
     pub fn updateBuffer(self: *ResourceManager, handle: rhi.BufferHandle, offset: usize, data: []const u8) rhi.RhiError!void {
         const buf = self.buffers.get(handle) orelse return;
 
-        const staging = &self.staging_buffers[self.current_frame_index];
-        const staging_offset = staging.allocate(data.len) orelse {
-            log.log.err("Staging buffer overflow in updateBuffer! Data dropped.", .{});
+        const slice = self.staging_ring.allocate(data.len, self.current_frame_index) orelse {
+            log.log.err("Staging ring overflow in updateBuffer! Data dropped.", .{});
             return error.OutOfMemory;
         };
 
-        if (staging.mapped_ptr == null) return error.OutOfMemory;
-        const dest = @as([*]u8, @ptrCast(staging.mapped_ptr.?)) + staging_offset;
-        @memcpy(dest[0..data.len], data);
+        @memcpy(slice.ptr[0..data.len], data);
 
         const cmd = try self.prepareTransfer();
 
         var region = std.mem.zeroes(c.VkBufferCopy);
-        region.srcOffset = staging_offset;
+        region.srcOffset = slice.buffer_offset;
         region.dstOffset = offset;
         region.size = data.len;
 
-        c.vkCmdCopyBuffer(cmd, staging.buffer, buf.buffer, 1, &region);
+        c.vkCmdCopyBuffer(cmd, self.staging_ring.buffer, buf.buffer, 1, &region);
 
-        // Ensure visibility for subsequent stages
         var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
         barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
         barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | c.VK_ACCESS_INDEX_READ_BIT | c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-        barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        if (self.transfer.is_dedicated) {
+            barrier.srcQueueFamilyIndex = self.transfer.family_index;
+            barrier.dstQueueFamilyIndex = self.vulkan_device.graphics_family;
+        } else {
+            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        }
         barrier.buffer = buf.buffer;
         barrier.offset = offset;
         barrier.size = data.len;
@@ -440,51 +374,58 @@ pub const ResourceManager = struct {
     pub fn updateTexture(self: *ResourceManager, handle: rhi.TextureHandle, data: []const u8) rhi.RhiError!void {
         const tex = self.textures.get(handle) orelse return;
 
-        const staging = &self.staging_buffers[self.current_frame_index];
-        if (staging.allocate(data.len)) |offset| {
-            if (staging.mapped_ptr == null) return error.OutOfMemory;
-            // Async Path
-            const dest = @as([*]u8, @ptrCast(staging.mapped_ptr.?)) + offset;
-            @memcpy(dest[0..data.len], data);
+        const slice = self.staging_ring.allocate(data.len, self.current_frame_index) orelse {
+            log.log.err("Staging ring full during updateTexture! Update dropped.", .{});
+            return error.OutOfMemory;
+        };
 
-            const transfer_cb = try self.prepareTransfer();
+        @memcpy(slice.ptr[0..data.len], data);
 
-            var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
-            barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.oldLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        const transfer_cb = try self.prepareTransfer();
+
+        var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
+        barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        if (self.transfer.is_dedicated) {
+            barrier.srcQueueFamilyIndex = self.vulkan_device.graphics_family;
+            barrier.dstQueueFamilyIndex = self.transfer.family_index;
+        } else {
             barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
-            barrier.image = tex.image orelse return error.ExtensionNotPresent;
-            barrier.subresourceRange.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = 1;
-            barrier.subresourceRange.baseArrayLayer = 0;
-            barrier.subresourceRange.layerCount = 1;
-            barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
-            barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
-
-            c.vkCmdPipelineBarrier(transfer_cb, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, 1, &barrier);
-
-            var region = std.mem.zeroes(c.VkBufferImageCopy);
-            region.bufferOffset = offset;
-            region.imageSubresource.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
-            region.imageSubresource.layerCount = 1;
-            region.imageExtent = .{ .width = tex.width, .height = tex.height, .depth = tex.depth };
-
-            c.vkCmdCopyBufferToImage(transfer_cb, staging.buffer, tex.image.?, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-            barrier.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
-
-            c.vkCmdPipelineBarrier(transfer_cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &barrier);
-        } else {
-            // Buffer full, drop update for now (or implement fallback)
-            log.log.err("Staging buffer full during updateTexture! Update dropped.", .{});
-            return error.OutOfMemory;
         }
+        barrier.image = tex.image orelse return error.ExtensionNotPresent;
+        barrier.subresourceRange.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+        barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        c.vkCmdPipelineBarrier(transfer_cb, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, 1, &barrier);
+
+        var region = std.mem.zeroes(c.VkBufferImageCopy);
+        region.bufferOffset = slice.buffer_offset;
+        region.imageSubresource.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = .{ .width = tex.width, .height = tex.height, .depth = tex.depth };
+
+        c.vkCmdCopyBufferToImage(transfer_cb, self.staging_ring.buffer, tex.image.?, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        barrier.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+        if (self.transfer.is_dedicated) {
+            barrier.srcQueueFamilyIndex = self.transfer.family_index;
+            barrier.dstQueueFamilyIndex = self.vulkan_device.graphics_family;
+        } else {
+            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        }
+
+        c.vkCmdPipelineBarrier(transfer_cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &barrier);
     }
 
     pub fn createShader(self: *ResourceManager, vertex_src: [*c]const u8, fragment_src: [*c]const u8) rhi.RhiError!rhi.ShaderHandle {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
 
 pub const ShadowDebugChannel = enum(u32) {
     off = 0,
@@ -68,6 +69,7 @@ pub const Settings = struct {
     window_width: u32 = 1920,
     window_height: u32 = 1080,
     lod_enabled: bool = false,
+    render_distance_preset: RenderDistancePreset = .high,
     texture_pack: []const u8 = "default",
     environment_map: []const u8 = "default", // "default" or filename.exr/hdr
 
@@ -307,7 +309,7 @@ pub const Settings = struct {
         if (self.shadow_quality < SHADOW_QUALITIES.len) {
             return SHADOW_QUALITIES[self.shadow_quality].resolution;
         }
-        return SHADOW_QUALITIES[2].resolution; // Default to High
+        return SHADOW_QUALITIES[2].resolution;
     }
 
     pub fn getResolutionIndex(self: *const Settings) usize {

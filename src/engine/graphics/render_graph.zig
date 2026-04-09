@@ -44,6 +44,7 @@ const shadow_scene = @import("shadow_scene.zig");
 const rhi_pkg = @import("rhi.zig");
 const RenderContext = rhi_pkg.RenderContext;
 const ShadowSystemWrapper = rhi_pkg.ShadowSystemWrapper;
+const WaterSystemWrapper = rhi_pkg.WaterSystemWrapper;
 const ISSAOContext = rhi_pkg.ISSAOContext;
 const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -55,6 +56,7 @@ const MaterialSystem = @import("material_system.zig").MaterialSystem;
 pub const SceneContext = struct {
     render_ctx: RenderContext,
     shadow_ctx: ShadowSystemWrapper,
+    water_ctx: WaterSystemWrapper,
     ssao_ctx: ISSAOContext,
     timing: IDeviceTiming,
     world: IWorld,
@@ -284,6 +286,25 @@ pub const SSAOPass = struct {
     }
 };
 
+pub const DepthPyramidPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "DepthPyramidPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *DepthPyramidPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        ctx.render_ctx.computeDepthPyramid();
+    }
+};
+
 pub const SkyPass = struct {
     const VTABLE = IRenderPass.VTable{
         .name = "SkyPass",
@@ -471,5 +492,79 @@ pub const FXAAPass = struct {
         if (!self.enabled or !ctx.fxaa_enabled) return;
         ctx.render_ctx.beginFXAAPass();
         ctx.render_ctx.endFXAAPass();
+    }
+};
+
+pub const WaterReflectionPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "WaterReflectionPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *WaterReflectionPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        ctx.water_ctx.beginReflectionPass();
+        defer ctx.water_ctx.endReflectionPass();
+
+        const view = ctx.camera.getViewMatrixOriginCentered();
+        const proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled);
+        const reflected_vp = ctx.water_ctx.computeReflectedViewProj(view, proj, ctx.camera.position);
+
+        ctx.render_ctx.bindShader(ctx.main_shader);
+        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle, 11);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
+        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
+
+        ctx.world.renderOpaque(reflected_vp, ctx.camera.position, true);
+    }
+};
+
+pub const WaterPass = struct {
+    enabled: bool = true,
+    const VTABLE = IRenderPass.VTable{
+        .name = "WaterPass",
+        .needs_main_pass = true,
+        .execute = execute,
+    };
+    pub fn pass(self: *WaterPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        const self: *WaterPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled) return;
+
+        const pipeline_u64 = ctx.render_ctx.getNativeWaterPipeline();
+        const layout_u64 = ctx.render_ctx.getNativeWaterPipelineLayout();
+        const descriptor_set_u64 = ctx.render_ctx.getNativeMainDescriptorSet();
+        const cmd_u64 = ctx.render_ctx.getNativeCommandBuffer();
+        const reflection_handle = ctx.water_ctx.getReflectionTextureHandle();
+
+        if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0) return;
+
+        const pipeline = @as(c.VkPipeline, @ptrFromInt(pipeline_u64));
+        const layout = @as(c.VkPipelineLayout, @ptrFromInt(layout_u64));
+        const descriptor_set = @as(c.VkDescriptorSet, @ptrFromInt(descriptor_set_u64));
+        const cmd = @as(c.VkCommandBuffer, @ptrFromInt(cmd_u64));
+
+        ctx.render_ctx.bindTexture(reflection_handle, 14);
+        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        if (descriptor_set_u64 != 0) {
+            c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
+        }
+
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
+        ctx.world.renderFluid(view_proj, ctx.camera.position, true);
     }
 };

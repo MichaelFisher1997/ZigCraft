@@ -53,6 +53,14 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         log.log.errWithTrace("Failed to recreate TAA resources: {}", .{err});
         return;
     };
+    if (ctx.water_system.reflection_texture_handle != 0) {
+        ctx.resources.destroyTexture(ctx.water_system.reflection_texture_handle);
+        ctx.water_system.reflection_texture_handle = 0;
+    }
+    setup.createWaterResources(ctx) catch |err| {
+        log.log.errWithTrace("Failed to recreate water resources: {}", .{err});
+        return;
+    };
     ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
         log.log.errWithTrace("Failed to recreate render pass: {}", .{err});
         return;
@@ -200,9 +208,9 @@ pub fn prepareFrameState(ctx: anytype) void {
             log.log.err("CRITICAL: Descriptor set for frame {} is NULL!", .{ctx.frames.current_frame});
             return;
         }
-        var writes: [14]c.VkWriteDescriptorSet = undefined;
+        var writes: [16]c.VkWriteDescriptorSet = undefined;
         var write_count: u32 = 0;
-        var image_infos: [14]c.VkDescriptorImageInfo = undefined;
+        var image_infos: [16]c.VkDescriptorImageInfo = undefined;
         var info_count: u32 = 0;
 
         const dummy_tex_entry = ctx.resources.textures.get(ctx.draw.dummy_texture);

@@ -28,6 +28,7 @@ const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
 const RenderStats = @import("world_renderer.zig").RenderStats;
+const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
 const ChunkStateCounts = @import("../engine/ui/chunk_inspector_overlay.zig").ChunkStateCounts;
 const WorldStateData = @import("../engine/ui/chunk_inspector_overlay.zig").WorldStateData;
@@ -63,6 +64,8 @@ pub const IWorld = struct {
     pub const VTable = struct {
         update: *const fn (ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void,
         render: *const fn (ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void,
+        renderOpaque: *const fn (ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void,
+        renderFluid: *const fn (ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void,
         deinit: *const fn (ptr: *anyopaque) void,
         getRenderStats: *const fn (ptr: *anyopaque) RenderStats,
         getStats: *const fn (ptr: *anyopaque) WorldStatsData,
@@ -77,6 +80,14 @@ pub const IWorld = struct {
 
     pub fn render(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.vtable.render(self.ptr, view_proj, camera_pos, render_lod);
+    }
+
+    pub fn renderOpaque(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        self.vtable.renderOpaque(self.ptr, view_proj, camera_pos, render_lod);
+    }
+
+    pub fn renderFluid(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        self.vtable.renderFluid(self.ptr, view_proj, camera_pos, render_lod);
     }
 
     pub fn deinit(self: IWorld) void {
@@ -386,7 +397,17 @@ pub const World = struct {
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod);
+        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod, .all);
+    }
+
+    pub fn renderOpaque(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
+        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod, .terrain);
+    }
+
+    pub fn renderFluid(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
+        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod, .fluid);
     }
 
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
@@ -477,6 +498,8 @@ pub const World = struct {
     const IWORLD_VTABLE = IWorld.VTable{
         .update = iupdate,
         .render = irender,
+        .renderOpaque = irenderOpaque,
+        .renderFluid = irenderFluid,
         .deinit = ideinit,
         .getRenderStats = igetRenderStats,
         .getStats = igetStats,
@@ -493,6 +516,16 @@ pub const World = struct {
     fn irender(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const self: *World = @ptrCast(@alignCast(ptr));
         self.render(view_proj, camera_pos, render_lod);
+    }
+
+    fn irenderOpaque(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.renderOpaque(view_proj, camera_pos, render_lod);
+    }
+
+    fn irenderFluid(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.renderFluid(view_proj, camera_pos, render_lod);
     }
 
     fn ideinit(ptr: *anyopaque) void {

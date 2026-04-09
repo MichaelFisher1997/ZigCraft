@@ -175,6 +175,10 @@ pub const DescriptorManager = struct {
             .{ .binding = 12, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
             // 13: LPV SH Blue channel
             .{ .binding = 13, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
+            // 14: Water reflection texture
+            .{ .binding = 14, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
+            // 15: Scene depth texture (for water refraction)
+            .{ .binding = 15, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
         };
 
         var layout_info = std.mem.zeroes(c.VkDescriptorSetLayoutCreateInfo);

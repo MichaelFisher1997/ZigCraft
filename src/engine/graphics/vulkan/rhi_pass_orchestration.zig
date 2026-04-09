@@ -432,7 +432,15 @@ pub fn endFrame(ctx: anytype) void {
 
     const transfer_cb = ctx.resources.getTransferCommandBuffer();
 
-    ctx.frames.endFrame(&ctx.swapchain, transfer_cb) catch |err| {
+    if (ctx.resources.transfer.is_dedicated and transfer_cb != null) {
+        ctx.resources.submitTransfer() catch |err| {
+            log.log.errWithTrace("Failed to submit transfer: {}", .{err});
+        };
+    }
+
+    const transfer_sem = ctx.resources.getTransferSemaphore();
+
+    ctx.frames.endFrame(&ctx.swapchain, transfer_cb, transfer_sem) catch |err| {
         log.log.errWithTrace("endFrame failed: {}", .{err});
     };
 
