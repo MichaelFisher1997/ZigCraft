@@ -43,6 +43,7 @@ const ILODConfig = @import("lod_chunk.zig").ILODConfig;
 const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 const LoadResult = @import("persistence/save_manager.zig").LoadResult;
+const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -136,6 +137,9 @@ pub const World = struct {
     // Save system (Issue #380)
     save_manager: ?*SaveManager,
 
+    // GPU Block Buffer (Batch 5 - Issue #389)
+    gpu_block_buffer: ?*GpuBlockBuffer,
+
     pub fn init(allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, atlas: *const TextureAtlas) !*World {
         return initGen(0, allocator, render_distance, seed, rhi, atlas);
     }
@@ -172,14 +176,17 @@ pub const World = struct {
             .lod = null,
             .lod_enabled = false,
             .save_manager = null,
+            .gpu_block_buffer = null,
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
         world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, rhi);
         errdefer _ = world.renderer;
 
+        world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
+
         log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads);
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer);
         errdefer world.streamer.deinit();
 
         return world;
@@ -355,7 +362,12 @@ pub const World = struct {
         const local = worldToLocal(world_x, world_z);
         data.chunk.setBlock(local.x, @intCast(world_y), local.z, block);
 
-        // Update skylight for this column
+        if (self.gpu_block_buffer) |buf| {
+            buf.updateBlock(cp.chunk_x, cp.chunk_z, local.x, @intCast(world_y), local.z, @intFromEnum(block)) catch |err| {
+                log.log.debug("GPU block buffer update failed: {}", .{err});
+            };
+        }
+
         data.chunk.updateSkylightColumn(local.x, local.z);
 
         // Mark neighbor chunks dirty if block is on chunk boundary

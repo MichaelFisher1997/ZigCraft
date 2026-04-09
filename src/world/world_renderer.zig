@@ -20,6 +20,7 @@ const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
 const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").CullingSystem;
 const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
+const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -67,6 +68,9 @@ pub const WorldRenderer = struct {
     gpu_visible_indices: std.ArrayListUnmanaged(u32),
     use_gpu_culling: bool,
 
+    // GPU Block Buffer (Batch 5 - Issue #389)
+    gpu_block_buffer: ?*GpuBlockBuffer,
+
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
@@ -102,6 +106,11 @@ pub const WorldRenderer = struct {
             log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
         }
 
+        var gpu_block_buffer: ?*GpuBlockBuffer = null;
+        errdefer if (gpu_block_buffer) |buf| buf.deinit();
+        gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, max_chunks);
+        log.log.info("GpuBlockBuffer initialized (capacity={})", .{max_chunks});
+
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
@@ -121,6 +130,7 @@ pub const WorldRenderer = struct {
             .chunk_lookup = undefined,
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
+            .gpu_block_buffer = gpu_block_buffer,
         };
 
         for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
@@ -134,7 +144,11 @@ pub const WorldRenderer = struct {
     }
 
     pub fn resetShadowStats(self: *WorldRenderer) void {
-        self.last_shadow_stats = .{};
+        self.last_shadow_stats = .{ .chunks_rendered = 0, .chunks_culled = 0 };
+    }
+
+    pub fn getGpuBlockBuffer(self: *WorldRenderer) ?*GpuBlockBuffer {
+        return self.gpu_block_buffer;
     }
 
     pub fn deinit(self: *WorldRenderer) void {
@@ -151,6 +165,8 @@ pub const WorldRenderer = struct {
         self.draw_commands.deinit(self.allocator);
 
         if (self.culling_system) |cs| cs.deinit();
+
+        if (self.gpu_block_buffer) |buf| buf.deinit();
 
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
