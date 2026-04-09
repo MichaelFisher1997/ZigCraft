@@ -552,7 +552,7 @@ pub const WaterPass = struct {
         const reflection_handle = ctx.water_ctx.getReflectionTextureHandle();
         const scene_depth_handle = ctx.water_ctx.getSceneDepthTextureHandle();
 
-        if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0) return;
+        if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0 or scene_depth_handle == 0) return;
 
         const pipeline = @as(c.VkPipeline, @ptrFromInt(pipeline_u64));
         const layout = @as(c.VkPipelineLayout, @ptrFromInt(layout_u64));

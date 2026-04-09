@@ -39,7 +39,7 @@ layout(set = 0, binding = 15) uniform sampler2D uSceneDepth;
 
 const float PI = 3.14159265359;
 const float WATER_LEVEL = 64.0;
-const float F0_WATER = 0.02;
+const float F0_WATER = 0.02; // Fresnel reflectance at normal incidence for water (dielectric)
 
 const vec3 WATER_SHALLOW = vec3(0.1, 0.6, 0.8);
 const vec3 WATER_DEEP = vec3(0.02, 0.05, 0.15);
