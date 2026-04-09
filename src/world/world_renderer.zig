@@ -21,6 +21,7 @@ const Frustum = @import("../engine/math/frustum.zig").Frustum;
 const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").CullingSystem;
 const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
 const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig").VulkanContext;
+const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -69,6 +70,9 @@ pub const WorldRenderer = struct {
     gpu_visible_indices: std.ArrayListUnmanaged(u32),
     use_gpu_culling: bool,
 
+    // GPU Block Buffer (Batch 5 - Issue #389)
+    gpu_block_buffer: ?*GpuBlockBuffer,
+
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
@@ -104,6 +108,11 @@ pub const WorldRenderer = struct {
             log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
         }
 
+        var gpu_block_buffer: ?*GpuBlockBuffer = null;
+        errdefer if (gpu_block_buffer) |buf| buf.deinit();
+        gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, max_chunks);
+        log.log.info("GpuBlockBuffer initialized (capacity={})", .{max_chunks});
+
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
@@ -124,6 +133,7 @@ pub const WorldRenderer = struct {
             .chunk_lookup = undefined,
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
+            .gpu_block_buffer = gpu_block_buffer,
         };
 
         for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
@@ -137,7 +147,11 @@ pub const WorldRenderer = struct {
     }
 
     pub fn resetShadowStats(self: *WorldRenderer) void {
-        self.last_shadow_stats = .{};
+        self.last_shadow_stats = .{ .chunks_rendered = 0, .chunks_culled = 0 };
+    }
+
+    pub fn getGpuBlockBuffer(self: *WorldRenderer) ?*GpuBlockBuffer {
+        return self.gpu_block_buffer;
     }
 
     pub fn deinit(self: *WorldRenderer) void {
@@ -154,6 +168,8 @@ pub const WorldRenderer = struct {
         self.draw_commands.deinit(self.allocator);
 
         if (self.culling_system) |cs| cs.deinit();
+
+        if (self.gpu_block_buffer) |buf| buf.deinit();
 
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
@@ -374,7 +390,8 @@ pub const WorldRenderer = struct {
         cs.updateAABBData(fi, self.aabb_data.items);
         const screen_w = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.width));
         const screen_h = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.height));
-        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, fi > 0);
+        const prev_frame_valid = self.vk_ctx.depth_pyramid.isValid();
+        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, prev_frame_valid);
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
