@@ -24,6 +24,7 @@ pub const RhiError = error{
     CloudPipelineNotReady,
     CloudPipelineLayoutNotReady,
     CommandBufferNotReady,
+    PendingCopyOverflow,
     Unknown,
 };
 

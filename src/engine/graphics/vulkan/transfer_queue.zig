@@ -128,6 +128,15 @@ pub const StagingSlice = struct {
     size: u64,
 };
 
+pub const PendingCopy = struct {
+    src_offset: u64,
+    dst_buffer: c.VkBuffer,
+    dst_offset: u64,
+    size: u64,
+};
+
+pub const MAX_PENDING_COPIES = 256;
+
 pub const TransferQueue = struct {
     queue: c.VkQueue = null,
     family_index: u32 = 0,
@@ -141,6 +150,11 @@ pub const TransferQueue = struct {
     transfer_submitted: [rhi.MAX_FRAMES_IN_FLIGHT]bool = undefined,
     current_frame: usize = 0,
 
+    pending_copies: [rhi.MAX_FRAMES_IN_FLIGHT][MAX_PENDING_COPIES]PendingCopy = undefined,
+    pending_copy_count: [rhi.MAX_FRAMES_IN_FLIGHT]usize = undefined,
+    pending_staging_buffer: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkBuffer = undefined,
+    pending_dst_access_mask: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkAccessFlags = undefined,
+
     pub fn init(device: *const VulkanDevice, transfer_family: u32, is_dedicated: bool) !TransferQueue {
         var self = TransferQueue{
             .family_index = transfer_family,
@@ -148,6 +162,9 @@ pub const TransferQueue = struct {
         };
         @memset(&self.transfer_ready, false);
         @memset(&self.transfer_submitted, false);
+        @memset(&self.pending_copy_count, 0);
+        @memset(&self.pending_staging_buffer, null);
+        @memset(&self.pending_dst_access_mask, 0);
 
         c.vkGetDeviceQueue(device.vk_device, transfer_family, 0, &self.queue);
 
@@ -179,6 +196,54 @@ pub const TransferQueue = struct {
         }
 
         return self;
+    }
+
+    pub fn beginFrame(self: *TransferQueue, frame_index: usize, staging_buffer: c.VkBuffer) void {
+        self.current_frame = frame_index;
+        self.pending_copy_count[frame_index] = 0;
+        self.pending_staging_buffer[frame_index] = staging_buffer;
+        self.pending_dst_access_mask[frame_index] = 0;
+    }
+
+    pub fn addPendingCopy(self: *TransferQueue, copy: PendingCopy) bool {
+        const idx = self.current_frame;
+        if (self.pending_copy_count[idx] < MAX_PENDING_COPIES) {
+            self.pending_copies[idx][self.pending_copy_count[idx]] = copy;
+            self.pending_copy_count[idx] += 1;
+            return true;
+        }
+        return false;
+    }
+
+    pub fn pendingCopyCount(self: *const TransferQueue) usize {
+        return self.pending_copy_count[self.current_frame];
+    }
+
+    pub fn recordPendingCopies(self: *TransferQueue, cmd: c.VkCommandBuffer) void {
+        const idx = self.current_frame;
+        const staging = self.pending_staging_buffer[idx];
+        if (staging == null or self.pending_copy_count[idx] == 0) return;
+
+        for (0..self.pending_copy_count[idx]) |i| {
+            const pc = self.pending_copies[idx][i];
+            var region = std.mem.zeroes(c.VkBufferCopy);
+            region.srcOffset = pc.src_offset;
+            region.dstOffset = pc.dst_offset;
+            region.size = pc.size;
+            c.vkCmdCopyBuffer(cmd, staging, pc.dst_buffer, 1, &region);
+        }
+    }
+
+    pub fn getPendingDstAccessMask(self: *TransferQueue) c.VkAccessFlags {
+        return self.pending_dst_access_mask[self.current_frame];
+    }
+
+    pub fn addPendingDstAccess(self: *TransferQueue, mask: c.VkAccessFlags) void {
+        self.pending_dst_access_mask[self.current_frame] |= mask;
+    }
+
+    pub fn hasPendingCopies(self: *TransferQueue) bool {
+        return self.pending_copy_count[self.current_frame] > 0;
     }
 
     pub fn deinit(self: *TransferQueue, vk_device: c.VkDevice) void {

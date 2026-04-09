@@ -156,6 +156,7 @@ pub const ResourceManager = struct {
         }
         self.staging_ring.reclaimFrame(frame_index);
         self.staging_ring.beginFrame(frame_index);
+        self.transfer.beginFrame(frame_index, self.staging_ring.buffer);
 
         // Process deletion queue for this frame
         const device = self.vulkan_device.vk_device;
@@ -201,8 +202,21 @@ pub const ResourceManager = struct {
     pub fn submitTransfer(self: *ResourceManager) !void {
         if (!self.transfer.is_dedicated) return;
         if (!self.transfer.transfer_ready[self.transfer.current_frame]) return;
+        if (!self.transfer.hasPendingCopies()) return;
 
         const cb = self.transfer.command_buffers[self.transfer.current_frame];
+
+        self.transfer.recordPendingCopies(cb);
+
+        var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
+        barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = self.transfer.getPendingDstAccessMask();
+        barrier.srcQueueFamilyIndex = self.transfer.family_index;
+        barrier.dstQueueFamilyIndex = self.vulkan_device.graphics_family;
+
+        c.vkCmdPipelineBarrier(cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, null, 1, &barrier, 0, null);
+
         try self.transfer.endTransferCommandBuffer();
         try Utils.checkVk(c.vkResetFences(self.vulkan_device.vk_device, 1, &self.transfer.frame_fences[self.transfer.current_frame]));
 
@@ -269,31 +283,19 @@ pub const ResourceManager = struct {
 
         @memcpy(slice.ptr[0..data.len], data);
 
-        const cmd = try self.prepareTransfer();
+        _ = try self.prepareTransfer();
 
-        var region = std.mem.zeroes(c.VkBufferCopy);
-        region.srcOffset = slice.buffer_offset;
-        region.dstOffset = offset;
-        region.size = data.len;
-
-        c.vkCmdCopyBuffer(cmd, self.staging_ring.buffer, buf.buffer, 1, &region);
-
-        var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
-        barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | c.VK_ACCESS_INDEX_READ_BIT | c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-        if (self.transfer.is_dedicated) {
-            barrier.srcQueueFamilyIndex = self.transfer.family_index;
-            barrier.dstQueueFamilyIndex = self.vulkan_device.graphics_family;
-        } else {
-            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+        const copy = transfer_queue.PendingCopy{
+            .src_offset = slice.buffer_offset,
+            .dst_buffer = buf.buffer,
+            .dst_offset = offset,
+            .size = data.len,
+        };
+        if (!self.transfer.addPendingCopy(copy)) {
+            log.log.warn("Transfer queue pending copy overflow! Data not uploaded.", .{});
+            return error.PendingCopyOverflow;
         }
-        barrier.buffer = buf.buffer;
-        barrier.offset = offset;
-        barrier.size = data.len;
-
-        c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, null, 1, &barrier, 0, null);
+        self.transfer.addPendingDstAccess(c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | c.VK_ACCESS_INDEX_READ_BIT | c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
     }
 
     pub fn mapBuffer(self: *ResourceManager, handle: rhi.BufferHandle) rhi.RhiError!?*anyopaque {
