@@ -86,6 +86,8 @@ pub const SceneContext = struct {
     lpv_texture_handle_g: rhi_pkg.TextureHandle = 0,
     lpv_texture_handle_b: rhi_pkg.TextureHandle = 0,
     cached_cascades: *?CSM.ShadowCascades,
+    gpu_mesh_dispatch_fn: ?*const fn (*anyopaque) void = null,
+    gpu_mesh_dispatch_ctx: ?*anyopaque = null,
 };
 
 pub const IRenderPass = struct {
@@ -565,5 +567,24 @@ pub const WaterPass = struct {
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.renderFluid(view_proj, ctx.camera.position, true);
+    }
+};
+
+pub const MeshBuildPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "MeshBuildPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+
+    pub fn pass(self: *MeshBuildPass) IRenderPass {
+        return .{ .ptr = self, .vtable = &VTABLE };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        if (ctx.gpu_mesh_dispatch_fn) |dispatch_fn| {
+            if (ctx.gpu_mesh_dispatch_ctx) |dispatch_ctx| dispatch_fn(dispatch_ctx);
+        }
     }
 };

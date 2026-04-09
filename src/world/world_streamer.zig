@@ -64,6 +64,7 @@ const log = @import("../engine/core/log.zig");
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
+const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -153,11 +154,12 @@ pub const WorldStreamer = struct {
 
     // GPU Block Buffer for compute meshing (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
+    gpu_mesher: ?*GpuMesher,
 
     const GEN_WORKERS = 4;
     const MESH_WORKERS = 3;
 
-    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer) !*WorldStreamer {
+    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
 
         const gen_queue = try allocator.create(JobQueue);
@@ -183,6 +185,7 @@ pub const WorldStreamer = struct {
             .lod_manager = null,
             .max_uploads_per_frame = max_uploads_per_frame,
             .gpu_block_buffer = gpu_block_buffer,
+            .gpu_mesher = gpu_mesher,
         };
 
         streamer.gen_pool = try WorkerPool.init(allocator, GEN_WORKERS, gen_queue, streamer, processGenJob);
@@ -362,24 +365,50 @@ pub const WorldStreamer = struct {
             if (self.storage.get(key.x, key.z)) |data| {
                 if (data.chunk.state != .uploading) continue;
 
-                data.mesh.upload(self.vertex_allocator);
-
-                if (data.mesh.ready) {
+                if (self.gpu_mesher != null) {
                     if (self.gpu_block_buffer) |buf| {
-                        const slot = buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch |err| {
-                            log.log.err("GpuBlockBuffer allocation failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, err });
-                            return;
-                        };
+                        const slot = if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |existing|
+                            existing
+                        else
+                            buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch |err| {
+                                log.log.err("GpuBlockBuffer allocation failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, err });
+                                return;
+                            };
+
                         const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
                         buf.upload(slot, blocks_slice) catch |upload_err| {
                             log.log.err("GpuBlockBuffer upload failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, upload_err });
-                            buf.free(slot);
                             return;
                         };
+
+                        if (self.gpu_mesher.?.queueMesh(data.chunk.chunk_x, data.chunk.chunk_z, slot)) {
+                            data.chunk.state = .uploading;
+                        } else {
+                            data.chunk.state = .mesh_ready;
+                        }
                     }
-                    data.chunk.state = .renderable;
                 } else {
-                    data.chunk.state = .mesh_ready;
+                    data.mesh.upload(self.vertex_allocator);
+
+                    if (data.mesh.ready) {
+                        if (self.gpu_block_buffer) |buf| {
+                            const slot = if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |existing|
+                                existing
+                            else
+                                buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch |err| {
+                                    log.log.err("GpuBlockBuffer allocation failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, err });
+                                    return;
+                                };
+                            const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
+                            buf.upload(slot, blocks_slice) catch |upload_err| {
+                                log.log.err("GpuBlockBuffer upload failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, upload_err });
+                                return;
+                            };
+                        }
+                        data.chunk.state = .renderable;
+                    } else {
+                        data.chunk.state = .mesh_ready;
+                    }
                 }
                 uploads += 1;
             }
@@ -532,6 +561,10 @@ pub const WorldStreamer = struct {
         }
 
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
+            if (self.gpu_mesher != null) {
+                chunk_data.chunk.state = .mesh_ready;
+                return;
+            }
             chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
                 log.log.errWithTrace("Mesh build failed for chunk ({}, {}): {}", .{ cx, cz, err });
                 chunk_data.chunk.state = .generated;

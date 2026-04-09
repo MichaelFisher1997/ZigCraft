@@ -180,13 +180,13 @@ pub const World = struct {
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
-        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, rhi);
+        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, atlas, rhi);
         errdefer _ = world.renderer;
 
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
 
         log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer);
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
         errdefer world.streamer.deinit();
 
         return world;
