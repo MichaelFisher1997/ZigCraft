@@ -184,8 +184,8 @@ pub const GpuMesher = struct {
                 var fluid_alloc: ?VertexAllocation = null;
 
                 if (result.overflow_mask != 0) {
-                    log.log.warn("GpuMesher overflow for chunk ({}, {}), keeping existing mesh", .{ req.cx, req.cz });
-                    data.chunk.state = .renderable;
+                    log.log.warn("GpuMesher overflow for chunk ({}, {}), falling back to CPU meshing", .{ req.cx, req.cz });
+                    data.chunk.state = .generated;
                     continue;
                 }
 
