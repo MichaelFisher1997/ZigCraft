@@ -138,6 +138,47 @@ pub const GlobalVertexAllocator = struct {
         return error.OutOfMemory;
     }
 
+    /// Reserves space in the megabuffer without uploading data.
+    /// The caller is responsible for filling the reserved range on the GPU.
+    pub fn reserve(self: *GlobalVertexAllocator, vertex_count: u32) !VertexAllocation {
+        const size_needed = @as(usize, vertex_count) * @sizeOf(Vertex);
+        if (size_needed == 0) return error.InvalidSize;
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var best_fit_idx: ?usize = null;
+        var best_fit_size: usize = std.math.maxInt(usize);
+
+        for (self.free_blocks.items, 0..) |block, i| {
+            if (block.size >= size_needed and block.size < best_fit_size) {
+                best_fit_idx = i;
+                best_fit_size = block.size;
+                if (block.size == size_needed) break;
+            }
+        }
+
+        if (best_fit_idx) |i| {
+            const block = self.free_blocks.items[i];
+            const allocation = VertexAllocation{
+                .offset = block.offset,
+                .count = vertex_count,
+                .handle = self.buffer,
+            };
+
+            if (block.size > size_needed) {
+                self.free_blocks.items[i].offset += size_needed;
+                self.free_blocks.items[i].size -= size_needed;
+            } else {
+                _ = self.free_blocks.orderedRemove(i);
+            }
+
+            return allocation;
+        }
+
+        return error.OutOfMemory;
+    }
+
     /// Queues an allocation to be freed later.
     pub fn free(self: *GlobalVertexAllocator, allocation: VertexAllocation) void {
         if (allocation.count == 0) return;

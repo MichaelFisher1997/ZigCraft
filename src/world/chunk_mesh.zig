@@ -314,6 +314,28 @@ pub const ChunkMesh = struct {
         }
     }
 
+    /// Replaces all GPU allocations with externally produced vertex ranges.
+    /// Used by the GPU mesher after copying compute output into the megabuffer.
+    pub fn replaceAllocations(
+        self: *ChunkMesh,
+        allocator: *GlobalVertexAllocator,
+        solid: ?VertexAllocation,
+        cutout: ?VertexAllocation,
+        fluid: ?VertexAllocation,
+    ) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.solid_allocation) |alloc| allocator.free(alloc);
+        if (self.cutout_allocation) |alloc| allocator.free(alloc);
+        if (self.fluid_allocation) |alloc| allocator.free(alloc);
+
+        self.solid_allocation = solid;
+        self.cutout_allocation = cutout;
+        self.fluid_allocation = fluid;
+        self.ready = true;
+    }
+
     /// Draw the chunk mesh with a single draw call per pass.
     pub fn draw(self: *const ChunkMesh, ctx: RenderContext, pass: Pass) void {
         if (!self.ready) return;

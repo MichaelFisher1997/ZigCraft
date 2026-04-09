@@ -187,6 +187,7 @@ pub fn build(b: *std.Build) void {
     const validate_vulkan_depth_pyramid_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/depth_pyramid.comp" });
     const validate_vulkan_water_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/water.vert" });
     const validate_vulkan_water_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/water.frag" });
+    const validate_vulkan_mesh_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/mesh.comp" });
 
     test_step.dependOn(&validate_vulkan_terrain_vert.step);
     test_step.dependOn(&validate_vulkan_terrain_frag.step);
@@ -214,4 +215,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&validate_vulkan_depth_pyramid_comp.step);
     test_step.dependOn(&validate_vulkan_water_vert.step);
     test_step.dependOn(&validate_vulkan_water_frag.step);
+    test_step.dependOn(&validate_vulkan_mesh_comp.step);
 }

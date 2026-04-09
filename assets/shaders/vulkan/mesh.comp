@@ -1,0 +1,398 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+const uint CHUNK_X = 16;
+const uint CHUNK_Y = 256;
+const uint CHUNK_Z = 16;
+const uint SLOT_SIZE = CHUNK_X * CHUNK_Y * CHUNK_Z;
+const uint MAX_BLOCKS = 256;
+const uint MAX_PASS_VERTICES = 65536;
+const uint MAX_VERTICES_PER_CHUNK = MAX_PASS_VERTICES * 3;
+const uint TILES_PER_ROW = 16;
+
+const uint PASS_SOLID = 0;
+const uint PASS_CUTOUT = 1;
+const uint PASS_FLUID = 2;
+
+const uint FACE_TOP = 0;
+const uint FACE_BOTTOM = 1;
+const uint FACE_EAST = 2;
+const uint FACE_WEST = 3;
+const uint FACE_SOUTH = 4;
+const uint FACE_NORTH = 5;
+
+const uint OVERFLOW_SOLID = 1u << 0;
+const uint OVERFLOW_CUTOUT = 1u << 1;
+const uint OVERFLOW_FLUID = 1u << 2;
+const uint INVALID_VERTEX_OFFSET = 0xFFFFFFFFu;
+
+struct Vertex {
+    vec3 pos;
+    uint color;
+    uint normal;
+    uint uv;
+    uint packed_meta;
+    uint blocklight;
+};
+
+struct MeshResult {
+    uint solid_count;
+    uint cutout_count;
+    uint fluid_count;
+    uint overflow_mask;
+};
+
+layout(std430, binding = 0) readonly buffer BlockData {
+    uint blocks[];
+} block_buf;
+
+layout(std430, binding = 1) readonly buffer BlockPropsBuffer {
+    uint props_packed[MAX_BLOCKS];
+    float color_r[MAX_BLOCKS];
+    float color_g[MAX_BLOCKS];
+    float color_b[MAX_BLOCKS];
+    uint tile_top[MAX_BLOCKS];
+    uint tile_bottom[MAX_BLOCKS];
+    uint tile_side[MAX_BLOCKS];
+} block_props;
+
+layout(std430, binding = 2) writeonly buffer VertexOutput {
+    Vertex vertices[];
+} vertex_out;
+
+layout(std430, binding = 3) coherent buffer MeshResults {
+    MeshResult results[];
+} mesh_results;
+
+layout(push_constant) uniform MeshPushConstants {
+    uint chunk_slot;
+    uint request_index;
+    uint output_offset;
+    int neighbor_north_slot;
+    int neighbor_south_slot;
+    int neighbor_east_slot;
+    int neighbor_west_slot;
+} pc;
+
+shared uint face_mask[16 * 16];
+shared uint slice_blocks[16 * 16];
+shared uint merge_mask[16 * 16];
+
+uint blockIndex(uint x, uint y, uint z) {
+    return x + z * CHUNK_X + y * CHUNK_X * CHUNK_Z;
+}
+
+uint getBlock(uint slot_offset, uint x, uint y, uint z) {
+    uint idx = blockIndex(x, y, z);
+    uint word_idx = idx / 4u;
+    uint byte_in_word = idx % 4u;
+    uint word = block_buf.blocks[(slot_offset / 4u) + word_idx];
+    return (word >> (byte_in_word * 8u)) & 0xFFu;
+}
+
+bool isTransparent(uint block_type) {
+    return block_type >= MAX_BLOCKS || (block_props.props_packed[block_type] & 0x2u) != 0u;
+}
+
+bool isFluid(uint block_type) {
+    return block_type < MAX_BLOCKS && (block_props.props_packed[block_type] & 0x4u) != 0u;
+}
+
+uint getRenderPass(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return PASS_SOLID;
+    return (block_props.props_packed[block_type] >> 4u) & 0x3u;
+}
+
+vec3 getBlockColor(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return vec3(1.0, 0.0, 1.0);
+    return vec3(block_props.color_r[block_type], block_props.color_g[block_type], block_props.color_b[block_type]);
+}
+
+uint getTileId(uint block_type, uint face) {
+    if (block_type >= MAX_BLOCKS) return 0u;
+    if (face == FACE_TOP) return block_props.tile_top[block_type];
+    if (face == FACE_BOTTOM) return block_props.tile_bottom[block_type];
+    return block_props.tile_side[block_type];
+}
+
+bool shouldDrawFace(uint block_type, uint neighbor_type) {
+    if (block_type == 0u) return false;
+    if (neighbor_type == 0u) return true;
+    if (isTransparent(block_type) && block_type == neighbor_type) return false;
+    if (isFluid(block_type) && block_type == neighbor_type) return false;
+    if (isTransparent(neighbor_type)) return true;
+    return false;
+}
+
+uint encodeColor(vec3 c) {
+    uint r = uint(round(clamp(c.x, 0.0, 1.0) * 255.0));
+    uint g = uint(round(clamp(c.y, 0.0, 1.0) * 255.0));
+    uint b = uint(round(clamp(c.z, 0.0, 1.0) * 255.0));
+    return r | (g << 8u) | (b << 16u) | (255u << 24u);
+}
+
+uint encodeNormal(vec3 n) {
+    float l1 = abs(n.x) + abs(n.y) + abs(n.z);
+    if (l1 < 0.0001) return 0u;
+
+    float px = n.x / l1;
+    float py = n.y / l1;
+    if (n.z < 0.0) {
+        float ox = px;
+        float sx = px >= 0.0 ? 1.0 : -1.0;
+        float sy = py >= 0.0 ? 1.0 : -1.0;
+        px = (1.0 - abs(py)) * sx;
+        py = (1.0 - abs(ox)) * sy;
+    }
+
+    int sx = int(round(clamp(px, -1.0, 1.0) * 32767.0));
+    int sy = int(round(clamp(py, -1.0, 1.0) * 32767.0));
+    return (uint(sx) & 0xFFFFu) | ((uint(sy) & 0xFFFFu) << 16u);
+}
+
+uint encodeUV(vec2 uv) {
+    return packHalf2x16(uv);
+}
+
+uint encodeMeta(uint tile_id, float skylight, float ao) {
+    uint sl = uint(round(clamp(skylight, 0.0, 1.0) * 255.0));
+    uint ao_u8 = uint(round(clamp(ao, 0.0, 1.0) * 255.0));
+    return tile_id | (sl << 16u) | (ao_u8 << 24u);
+}
+
+uint allocVertices(uint render_pass, uint count) {
+    uint local_offset = 0u;
+    uint overflow_bit = OVERFLOW_SOLID;
+
+    if (render_pass == PASS_SOLID) {
+        local_offset = atomicAdd(mesh_results.results[pc.request_index].solid_count, count);
+        overflow_bit = OVERFLOW_SOLID;
+    } else if (render_pass == PASS_CUTOUT) {
+        local_offset = atomicAdd(mesh_results.results[pc.request_index].cutout_count, count);
+        overflow_bit = OVERFLOW_CUTOUT;
+    } else {
+        local_offset = atomicAdd(mesh_results.results[pc.request_index].fluid_count, count);
+        overflow_bit = OVERFLOW_FLUID;
+    }
+
+    if (local_offset + count > MAX_PASS_VERTICES) {
+        atomicOr(mesh_results.results[pc.request_index].overflow_mask, overflow_bit);
+        return INVALID_VERTEX_OFFSET;
+    }
+
+    uint pass_base = pc.output_offset + (render_pass * MAX_PASS_VERTICES);
+    return pass_base + local_offset;
+}
+
+void emitQuad(uint base_idx, vec3 p0, vec3 p1, vec3 p2, vec3 p3, vec3 normal, vec3 base_color, uint tile_id, vec2 uv_min, vec2 uv_max) {
+    uint color = encodeColor(base_color);
+    uint norm = encodeNormal(normal);
+    uint meta = encodeMeta(tile_id, 1.0, 1.0);
+    uint blocklight = 0u;
+
+    vertex_out.vertices[base_idx + 0u] = Vertex(p0, color, norm, encodeUV(uv_min), meta, blocklight);
+    vertex_out.vertices[base_idx + 1u] = Vertex(p1, color, norm, encodeUV(vec2(uv_max.x, uv_min.y)), meta, blocklight);
+    vertex_out.vertices[base_idx + 2u] = Vertex(p2, color, norm, encodeUV(vec2(uv_min.x, uv_max.y)), meta, blocklight);
+    vertex_out.vertices[base_idx + 3u] = Vertex(p2, color, norm, encodeUV(vec2(uv_min.x, uv_max.y)), meta, blocklight);
+    vertex_out.vertices[base_idx + 4u] = Vertex(p1, color, norm, encodeUV(vec2(uv_max.x, uv_min.y)), meta, blocklight);
+    vertex_out.vertices[base_idx + 5u] = Vertex(p3, color, norm, encodeUV(uv_max), meta, blocklight);
+}
+
+void emitYQuad(uint base_idx, uint x, uint z, uint width, uint height, uint y, bool is_top, vec3 base_color, uint tile_id) {
+    float fx = float(x);
+    float fz = float(z);
+    float fy = float(y);
+    float fw = float(width);
+    float fh = float(height);
+
+    vec3 normal = is_top ? vec3(0.0, 1.0, 0.0) : vec3(0.0, -1.0, 0.0);
+    vec3 p0;
+    vec3 p1;
+    vec3 p2;
+    vec3 p3;
+    if (is_top) {
+        p0 = vec3(fx, fy, fz);
+        p1 = vec3(fx + fw, fy, fz);
+        p2 = vec3(fx, fy, fz + fh);
+        p3 = vec3(fx + fw, fy, fz + fh);
+    } else {
+        p0 = vec3(fx, fy, fz);
+        p1 = vec3(fx, fy, fz + fh);
+        p2 = vec3(fx + fw, fy, fz);
+        p3 = vec3(fx + fw, fy, fz + fh);
+    }
+
+    float shade = is_top ? 1.0 : 0.5;
+    emitQuad(base_idx, p0, p1, p2, p3, normal, base_color * shade, tile_id, vec2(0.0), vec2(fw, fh));
+}
+
+void emitXQuad(uint base_idx, uint x, uint y, uint z, bool is_east, vec3 base_color, uint tile_id) {
+    float fx = float(x);
+    float fy = float(y);
+    float fz = float(z);
+    vec3 normal = is_east ? vec3(1.0, 0.0, 0.0) : vec3(-1.0, 0.0, 0.0);
+    vec3 p0;
+    vec3 p1;
+    vec3 p2;
+    vec3 p3;
+    if (is_east) {
+        p0 = vec3(fx + 1.0, fy, fz);
+        p1 = vec3(fx + 1.0, fy, fz + 1.0);
+        p2 = vec3(fx + 1.0, fy + 1.0, fz);
+        p3 = vec3(fx + 1.0, fy + 1.0, fz + 1.0);
+    } else {
+        p0 = vec3(fx, fy, fz + 1.0);
+        p1 = vec3(fx, fy, fz);
+        p2 = vec3(fx, fy + 1.0, fz + 1.0);
+        p3 = vec3(fx, fy + 1.0, fz);
+    }
+    emitQuad(base_idx, p0, p1, p2, p3, normal, base_color * 0.8, tile_id, vec2(0.0), vec2(1.0));
+}
+
+void emitZQuad(uint base_idx, uint x, uint y, uint z, bool is_south, vec3 base_color, uint tile_id) {
+    float fx = float(x);
+    float fy = float(y);
+    float fz = float(z);
+    vec3 normal = is_south ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0);
+    vec3 p0;
+    vec3 p1;
+    vec3 p2;
+    vec3 p3;
+    if (is_south) {
+        p0 = vec3(fx, fy, fz + 1.0);
+        p1 = vec3(fx + 1.0, fy, fz + 1.0);
+        p2 = vec3(fx, fy + 1.0, fz + 1.0);
+        p3 = vec3(fx + 1.0, fy + 1.0, fz + 1.0);
+    } else {
+        p0 = vec3(fx + 1.0, fy, fz);
+        p1 = vec3(fx, fy, fz);
+        p2 = vec3(fx + 1.0, fy + 1.0, fz);
+        p3 = vec3(fx, fy + 1.0, fz);
+    }
+    emitQuad(base_idx, p0, p1, p2, p3, normal, base_color * 0.7, tile_id, vec2(0.0), vec2(1.0));
+}
+
+void main() {
+    uint local_x = gl_LocalInvocationID.x;
+    uint local_z = gl_LocalInvocationID.y;
+    uint slice_y = gl_WorkGroupID.x;
+    uint thread_id = local_x + local_z * 16u;
+
+    if (slice_y >= CHUNK_Y) return;
+
+    uint slot_offset = pc.chunk_slot * SLOT_SIZE;
+    uint block_type = getBlock(slot_offset, local_x, slice_y, local_z);
+    slice_blocks[thread_id] = block_type;
+
+    uint b_top = slice_y < CHUNK_Y - 1u ? getBlock(slot_offset, local_x, slice_y + 1u, local_z) : 0u;
+    uint b_bottom = slice_y > 0u ? getBlock(slot_offset, local_x, slice_y - 1u, local_z) : 0u;
+    uint b_east = local_x < 15u ? getBlock(slot_offset, local_x + 1u, slice_y, local_z) : (pc.neighbor_east_slot >= 0 ? getBlock(uint(pc.neighbor_east_slot) * SLOT_SIZE, 0u, slice_y, local_z) : 0u);
+    uint b_west = local_x > 0u ? getBlock(slot_offset, local_x - 1u, slice_y, local_z) : (pc.neighbor_west_slot >= 0 ? getBlock(uint(pc.neighbor_west_slot) * SLOT_SIZE, 15u, slice_y, local_z) : 0u);
+    uint b_south = local_z < 15u ? getBlock(slot_offset, local_x, slice_y, local_z + 1u) : (pc.neighbor_south_slot >= 0 ? getBlock(uint(pc.neighbor_south_slot) * SLOT_SIZE, local_x, slice_y, 0u) : 0u);
+    uint b_north = local_z > 0u ? getBlock(slot_offset, local_x, slice_y, local_z - 1u) : (pc.neighbor_north_slot >= 0 ? getBlock(uint(pc.neighbor_north_slot) * SLOT_SIZE, local_x, slice_y, 15u) : 0u);
+
+    uint mask = 0u;
+    if (shouldDrawFace(block_type, b_top)) mask |= (1u << FACE_TOP);
+    if (shouldDrawFace(block_type, b_bottom)) mask |= (1u << FACE_BOTTOM);
+    if (shouldDrawFace(block_type, b_east)) mask |= (1u << FACE_EAST);
+    if (shouldDrawFace(block_type, b_west)) mask |= (1u << FACE_WEST);
+    if (shouldDrawFace(block_type, b_south)) mask |= (1u << FACE_SOUTH);
+    if (shouldDrawFace(block_type, b_north)) mask |= (1u << FACE_NORTH);
+
+    face_mask[thread_id] = mask;
+    merge_mask[thread_id] = 0u;
+    barrier();
+
+    if (block_type == 0u) return;
+
+    uint render_pass = getRenderPass(block_type);
+    vec3 base_color = getBlockColor(block_type);
+
+    if ((mask & (1u << FACE_TOP)) != 0u && (merge_mask[thread_id] & (1u << FACE_TOP)) == 0u) {
+        uint merge_width = 1u;
+        for (uint dx = local_x + 1u; dx < 16u; dx++) {
+            uint other_tid = dx + local_z * 16u;
+            if ((face_mask[other_tid] & (1u << FACE_TOP)) != 0u && (merge_mask[other_tid] & (1u << FACE_TOP)) == 0u && slice_blocks[other_tid] == block_type) {
+                merge_width++;
+                merge_mask[other_tid] |= (1u << FACE_TOP);
+            } else {
+                break;
+            }
+        }
+
+        uint merge_height = 1u;
+        for (uint dz = local_z + 1u; dz < 16u; dz++) {
+            bool can_extend = true;
+            for (uint dx = 0u; dx < merge_width; dx++) {
+                uint other_tid = (local_x + dx) + dz * 16u;
+                if ((face_mask[other_tid] & (1u << FACE_TOP)) == 0u || (merge_mask[other_tid] & (1u << FACE_TOP)) != 0u || slice_blocks[other_tid] != block_type) {
+                    can_extend = false;
+                    break;
+                }
+            }
+            if (!can_extend) break;
+            for (uint dx = 0u; dx < merge_width; dx++) {
+                uint other_tid = (local_x + dx) + dz * 16u;
+                merge_mask[other_tid] |= (1u << FACE_TOP);
+            }
+            merge_height++;
+        }
+        merge_mask[thread_id] |= (1u << FACE_TOP);
+
+        uint base_idx = allocVertices(render_pass, 6u);
+        if (base_idx != INVALID_VERTEX_OFFSET) emitYQuad(base_idx, local_x, local_z, merge_width, merge_height, slice_y + 1u, true, base_color, getTileId(block_type, FACE_TOP));
+    }
+
+    if ((mask & (1u << FACE_BOTTOM)) != 0u && (merge_mask[thread_id] & (1u << FACE_BOTTOM)) == 0u) {
+        uint merge_width = 1u;
+        for (uint dx = local_x + 1u; dx < 16u; dx++) {
+            uint other_tid = dx + local_z * 16u;
+            if ((face_mask[other_tid] & (1u << FACE_BOTTOM)) != 0u && (merge_mask[other_tid] & (1u << FACE_BOTTOM)) == 0u && slice_blocks[other_tid] == block_type) {
+                merge_width++;
+                merge_mask[other_tid] |= (1u << FACE_BOTTOM);
+            } else {
+                break;
+            }
+        }
+
+        uint merge_height = 1u;
+        for (uint dz = local_z + 1u; dz < 16u; dz++) {
+            bool can_extend = true;
+            for (uint dx = 0u; dx < merge_width; dx++) {
+                uint other_tid = (local_x + dx) + dz * 16u;
+                if ((face_mask[other_tid] & (1u << FACE_BOTTOM)) == 0u || (merge_mask[other_tid] & (1u << FACE_BOTTOM)) != 0u || slice_blocks[other_tid] != block_type) {
+                    can_extend = false;
+                    break;
+                }
+            }
+            if (!can_extend) break;
+            for (uint dx = 0u; dx < merge_width; dx++) {
+                uint other_tid = (local_x + dx) + dz * 16u;
+                merge_mask[other_tid] |= (1u << FACE_BOTTOM);
+            }
+            merge_height++;
+        }
+        merge_mask[thread_id] |= (1u << FACE_BOTTOM);
+
+        uint base_idx = allocVertices(render_pass, 6u);
+        if (base_idx != INVALID_VERTEX_OFFSET) emitYQuad(base_idx, local_x, local_z, merge_width, merge_height, slice_y, false, base_color, getTileId(block_type, FACE_BOTTOM));
+    }
+
+    if ((mask & (1u << FACE_EAST)) != 0u) {
+        uint base_idx = allocVertices(render_pass, 6u);
+        if (base_idx != INVALID_VERTEX_OFFSET) emitXQuad(base_idx, local_x, slice_y, local_z, true, base_color, getTileId(block_type, FACE_EAST));
+    }
+    if ((mask & (1u << FACE_WEST)) != 0u) {
+        uint base_idx = allocVertices(render_pass, 6u);
+        if (base_idx != INVALID_VERTEX_OFFSET) emitXQuad(base_idx, local_x, slice_y, local_z, false, base_color, getTileId(block_type, FACE_WEST));
+    }
+    if ((mask & (1u << FACE_SOUTH)) != 0u) {
+        uint base_idx = allocVertices(render_pass, 6u);
+        if (base_idx != INVALID_VERTEX_OFFSET) emitZQuad(base_idx, local_x, slice_y, local_z, true, base_color, getTileId(block_type, FACE_SOUTH));
+    }
+    if ((mask & (1u << FACE_NORTH)) != 0u) {
+        uint base_idx = allocVertices(render_pass, 6u);
+        if (base_idx != INVALID_VERTEX_OFFSET) emitZQuad(base_idx, local_x, slice_y, local_z, false, base_color, getTileId(block_type, FACE_NORTH));
+    }
+}
