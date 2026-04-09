@@ -1,0 +1,629 @@
+#version 450
+
+// GPU-driven greedy mesh compute shader.
+// Reads block data from GPU storage buffer and produces vertex data directly on GPU.
+// Each workgroup processes one horizontal Y-slice (16x16 blocks).
+// Within each slice, each thread processes one block column.
+//
+// Greedy merge is performed in shared memory per workgroup:
+//   Phase 1: Build face mask (which faces are visible)
+//   Phase 2: Row-by-row greedy merge within the slice
+//   Phase 3: Output merged quad vertices
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+// --- Constants ---
+const uint CHUNK_X = 16;
+const uint CHUNK_Y = 256;
+const uint CHUNK_Z = 16;
+const uint CHUNK_VOLUME = CHUNK_X * CHUNK_Y * CHUNK_Z;
+const uint SLOT_SIZE = CHUNK_VOLUME;
+const uint MAX_VERTICES_PER_CHUNK = 196608; // worst case: 6 faces * 6 verts * 16*256*16 / 2 approx
+const uint FACE_COUNT = 6;
+const uint VERTS_PER_QUAD = 6;
+const uint RENDER_PASS_SOLID = 0;
+const uint RENDER_PASS_CUTOUT = 1;
+const uint RENDER_PASS_FLUID = 2;
+const uint FACE_TOP = 0;
+const uint FACE_BOTTOM = 1;
+const uint FACE_EAST = 2;
+const uint FACE_WEST = 3;
+const uint FACE_SOUTH = 4;
+const uint FACE_NORTH = 5;
+const uint MAX_BLOCKS = 256;
+
+// --- Block properties (packed u32 per block type) ---
+// Bits: [0] is_solid, [1] is_transparent, [2] is_fluid, [3] is_tintable,
+//       [4:5] render_pass (0=solid,1=cutout,2=fluid), [6] render_shape (0=cube,1=cross),
+//       [7:31] unused / reserved
+// Packed into block_props.x. block_props.yzw = default_color RGB as float.
+struct BlockProps {
+    uint packed;
+    float color_r;
+    float color_g;
+    float color_b;
+};
+
+// --- Vertex output (matches rhi_types.zig Vertex: 32 bytes) ---
+struct Vertex {
+    vec3 pos;           // 12 bytes
+    uint color;         // 4 bytes  (RGBA8 packed)
+    uint normal;        // 4 bytes  (octahedral i16x2 packed)
+    uint uv;            // 4 bytes  (2xf16 packed as u32)
+    uint packed_meta;   // 4 bytes  (tile_id u16 | skylight u8 | ao u8)
+    uint blocklight;    // 4 bytes  (RGB8 packed)
+};
+
+// --- Draw indirect command ---
+struct DrawIndirectCmd {
+    uint vertex_count;
+    uint instance_count;
+    uint first_vertex;
+    uint first_instance;
+};
+
+// --- Bindings ---
+layout(std430, binding = 0) readonly buffer BlockData {
+    uint blocks[];
+} block_buf;
+
+layout(std430, binding = 1) readonly buffer BlockPropsBuffer {
+    uint props_packed[MAX_BLOCKS];
+    float props_r[MAX_BLOCKS];
+    float props_g[MAX_BLOCKS];
+    float props_b[MAX_BLOCKS];
+} block_props;
+
+layout(std430, binding = 2) writeonly buffer VertexOutput {
+    Vertex vertices[];
+} vertex_out;
+
+layout(std430, binding = 3) coherent buffer DrawCommands {
+    DrawIndirectCmd solid_cmd;
+    uint _pad0[60]; // padding to separate command structs (256-byte alignment)
+    DrawIndirectCmd cutout_cmd;
+    uint _pad1[60];
+    DrawIndirectCmd fluid_cmd;
+    uint _pad2[60];
+} draw_cmds;
+
+layout(std430, binding = 4) coherent buffer Counters {
+    uint solid_vertex_count;
+    uint cutout_vertex_count;
+    uint fluid_vertex_count;
+    uint _pad;
+} counters;
+
+layout(std430, binding = 5) readonly buffer NeighborSlots {
+    int neighbor_north_slot;
+    int neighbor_south_slot;
+    int neighbor_east_slot;
+    int neighbor_west_slot;
+} neighbors;
+
+layout(push_constant) uniform MeshPushConstants {
+    uint chunk_slot;         // Slot index in GpuBlockBuffer
+    uint chunk_x;            // Chunk coordinate X
+    uint chunk_z;            // Chunk coordinate Z
+    uint output_offset;      // Starting offset in vertex output buffer for this chunk
+    uint max_output_verts;   // Max vertices this chunk can write
+} pc;
+
+// --- Shared memory for greedy merge ---
+// Face mask: one uint per block in slice, 6 bits for 6 faces
+shared uint face_mask[16 * 16];
+// Block type per position in slice
+shared uint slice_blocks[16 * 16];
+// Merge tracking: which faces have been consumed by a greedy quad
+shared uint merge_mask[16 * 16];
+
+// --- Helper functions ---
+
+uint blockIndex(uint x, uint y, uint z) {
+    return x + z * CHUNK_X + y * CHUNK_X * CHUNK_Z;
+}
+
+uint getBlock(uint slot_offset, uint x, uint y, uint z) {
+    uint idx = blockIndex(x, y, z);
+    // Each uint holds 4 bytes (4 blocks), packed as little-endian u8 array
+    uint byte_offset = idx;
+    uint word_idx = byte_offset / 4;
+    uint byte_in_word = byte_offset % 4;
+    uint word = block_buf.blocks[slot_offset / 4 + word_idx];
+    return (word >> (byte_in_word * 8)) & 0xFF;
+}
+
+uint getBlockLocal(uint x, uint y, uint z) {
+    // Within the chunk in shared memory
+    return slice_blocks[x + z * 16];
+}
+
+bool isSolid(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return false;
+    return (block_props.props_packed[block_type] & 0x1u) != 0;
+}
+
+bool isTransparent(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return true;
+    return (block_props.props_packed[block_type] & 0x2u) != 0;
+}
+
+bool isFluid(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return false;
+    return (block_props.props_packed[block_type] & 0x4u) != 0;
+}
+
+uint getRenderPass(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return RENDER_PASS_SOLID;
+    return (block_props.props_packed[block_type] >> 4) & 0x3u;
+}
+
+vec3 getBlockColor(uint block_type) {
+    if (block_type >= MAX_BLOCKS) return vec3(1.0, 0.0, 1.0);
+    return vec3(
+        block_props.props_r[block_type],
+        block_props.props_g[block_type],
+        block_props.props_b[block_type]
+    );
+}
+
+// Check if a face between two blocks should be drawn
+bool shouldDrawFace(uint block_type, uint neighbor_type, uint face) {
+    // Air never draws faces
+    if (block_type == 0) return false;
+
+    // Face against air always draws
+    if (neighbor_type == 0) return true;
+
+    // Don't draw internal faces between identical transparent blocks
+    if (isTransparent(block_type) && block_type == neighbor_type) return false;
+    if (isFluid(block_type) && block_type == neighbor_type) return false;
+
+    // Draw face if neighbor is transparent and we are not the same type
+    if (isTransparent(neighbor_type)) return true;
+
+    return false;
+}
+
+// Encode RGB float color to RGBA8 u32
+uint encodeColor(vec3 c) {
+    uint r = uint(round(clamp(c.x, 0.0, 1.0) * 255.0));
+    uint g = uint(round(clamp(c.y, 0.0, 1.0) * 255.0));
+    uint b = uint(round(clamp(c.z, 0.0, 1.0) * 255.0));
+    return r | (g << 8u) | (b << 16u) | (255u << 24u);
+}
+
+// Encode normal via octahedral mapping to packed i16x2 u32
+uint encodeNormal(vec3 n) {
+    float l1 = abs(n.x) + abs(n.y) + abs(n.z);
+    if (l1 < 0.0001) return 0;
+    float px = n.x / l1;
+    float py = n.y / l1;
+    if (n.z < 0.0) {
+        float ox = px;
+        float sx = px >= 0.0 ? 1.0 : -1.0;
+        float sy = py >= 0.0 ? 1.0 : -1.0;
+        px = (1.0 - abs(py)) * sx;
+        py = (1.0 - abs(ox)) * sy;
+    }
+    int sx = int(round(clamp(px, -1.0, 1.0) * 32767.0));
+    int sy = int(round(clamp(py, -1.0, 1.0) * 32767.0));
+    uint ux = uint(sx & 0xFFFF);
+    uint uy = uint(sy & 0xFFFF);
+    return ux | (uy << 16u);
+}
+
+// Encode UV as two f16 packed in u32
+uint encodeUV(vec2 uv) {
+    return packHalf2x16(uv);
+}
+
+// Encode tile_id, skylight, AO into packed_meta
+uint encodeMeta(uint tile_id, float skylight, float ao) {
+    uint sl = uint(round(clamp(skylight, 0.0, 1.0) * 255.0));
+    uint ao_u8 = uint(round(clamp(ao, 0.0, 1.0) * 255.0));
+    return tile_id | (sl << 16u) | (ao_u8 << 24u);
+}
+
+// Encode blocklight RGB to u32
+uint encodeBlocklight(vec3 bl) {
+    uint r = uint(round(clamp(bl.x, 0.0, 1.0) * 255.0));
+    uint g = uint(round(clamp(bl.y, 0.0, 1.0) * 255.0));
+    uint b = uint(round(clamp(bl.z, 0.0, 1.0) * 255.0));
+    return r | (g << 8u) | (b << 16u);
+}
+
+uint allocVertices(uint render_pass, uint count) {
+    if (render_pass == RENDER_PASS_SOLID) return atomicAdd(counters.solid_vertex_count, count);
+    if (render_pass == RENDER_PASS_FLUID) return atomicAdd(counters.fluid_vertex_count, count);
+    return atomicAdd(counters.cutout_vertex_count, count);
+}
+
+// Get face normal
+vec3 getFaceNormal(uint face) {
+    switch (face) {
+        case FACE_TOP:    return vec3(0, 1, 0);
+        case FACE_BOTTOM: return vec3(0, -1, 0);
+        case FACE_EAST:   return vec3(1, 0, 0);
+        case FACE_WEST:   return vec3(-1, 0, 0);
+        case FACE_SOUTH:  return vec3(0, 0, 1);
+        case FACE_NORTH:  return vec3(0, 0, -1);
+        default:          return vec3(0, 1, 0);
+    }
+}
+
+// Get face shade multiplier
+float getFaceShade(uint face) {
+    switch (face) {
+        case FACE_TOP:    return 1.0;
+        case FACE_BOTTOM: return 0.5;
+        case FACE_EAST:   return 0.8;
+        case FACE_WEST:   return 0.8;
+        case FACE_SOUTH:  return 0.7;
+        case FACE_NORTH:  return 0.7;
+        default:          return 1.0;
+    }
+}
+
+// Get face UV mapping for a quad at (x,z) with size (w,h)
+// face_axis: 0=Y (top/bottom), 1=X (east/west), 2=Z (south/north)
+vec2 getQuadUV(uint local_x, uint local_z, uint width, uint height, uint face) {
+    float u0 = float(local_x);
+    float v0 = float(local_z);
+    float u1 = float(local_x + width);
+    float v1 = float(local_z + height);
+
+    // Return bottom-left UV (thread will compute per-vertex)
+    return vec2(u0, v0);
+}
+
+// Emit a single quad (6 vertices) for a face
+void emitQuad(uint base_idx, uint pass_slot,
+              vec3 p0, vec3 p1, vec3 p2, vec3 p3,
+              vec3 normal, vec3 base_color, uint tile_id, vec2 uv_min, vec2 uv_max) {
+    vec3 shade_color = base_color;
+    uint color = encodeColor(shade_color);
+    uint norm = encodeNormal(normal);
+    uint meta = encodeMeta(tile_id, 1.0, 1.0);
+    uint blight = encodeBlocklight(vec3(0.0));
+
+    uint uv_00 = encodeUV(uv_min);
+    uint uv_10 = encodeUV(vec2(uv_max.x, uv_min.y));
+    uint uv_01 = encodeUV(vec2(uv_min.x, uv_max.y));
+    uint uv_11 = encodeUV(uv_max);
+
+    // Triangle 1: p0, p1, p2
+    vertex_out.vertices[base_idx + 0] = Vertex(p0, color, norm, uv_00, meta, blight);
+    vertex_out.vertices[base_idx + 1] = Vertex(p1, color, norm, uv_10, meta, blight);
+    vertex_out.vertices[base_idx + 2] = Vertex(p2, color, norm, uv_01, meta, blight);
+
+    // Triangle 2: p2, p1, p3
+    vertex_out.vertices[base_idx + 3] = Vertex(p2, color, norm, uv_01, meta, blight);
+    vertex_out.vertices[base_idx + 4] = Vertex(p1, color, norm, uv_10, meta, blight);
+    vertex_out.vertices[base_idx + 5] = Vertex(p3, color, norm, uv_11, meta, blight);
+}
+
+// Emit a quad for Y-axis face (top or bottom)
+void emitYQuad(uint base_idx, uint pass_slot,
+               uint x, uint z, uint width, uint height, uint y,
+               bool is_top, vec3 base_color, uint tile_id) {
+    float fx = float(x);
+    float fz = float(z);
+    float fy = float(y);
+    float fw = float(width);
+    float fh = float(height);
+
+    vec3 normal = is_top ? vec3(0, 1, 0) : vec3(0, -1, 0);
+
+    vec3 p0, p1, p2, p3;
+    if (is_top) {
+        p0 = vec3(fx, fy, fz);
+        p1 = vec3(fx + fw, fy, fz);
+        p2 = vec3(fx, fy, fz + fh);
+        p3 = vec3(fx + fw, fy, fz + fh);
+    } else {
+        p0 = vec3(fx, fy, fz);
+        p1 = vec3(fx, fy, fz + fh);
+        p2 = vec3(fx + fw, fy, fz);
+        p3 = vec3(fx + fw, fy, fz + fh);
+    }
+
+    float shade = is_top ? 1.0 : 0.5;
+    vec3 shaded = base_color * shade;
+
+    // UVs in tile atlas space (tile_id encodes atlas tile index)
+    // UVs are 0..1 per quad for proper atlas lookup
+    vec2 uv_min = vec2(0.0, 0.0);
+    vec2 uv_max = vec2(1.0, 1.0);
+
+    emitQuad(base_idx, pass_slot, p0, p1, p2, p3, normal, shaded, tile_id, uv_min, uv_max);
+}
+
+// Emit a quad for X-axis face (east or west)
+void emitXQuad(uint base_idx, uint pass_slot,
+               uint x, uint y_start, uint z, uint height, uint depth, uint y_base,
+               bool is_east, vec3 base_color, uint tile_id) {
+    float fx = float(x);
+    float fz = float(z);
+    float fy = float(y_base);
+    float fh = float(height);
+    float fd = float(depth);
+
+    vec3 normal = is_east ? vec3(1, 0, 0) : vec3(-1, 0, 0);
+
+    vec3 p0, p1, p2, p3;
+    if (is_east) {
+        p0 = vec3(fx + 1.0, fy, fz);
+        p1 = vec3(fx + 1.0, fy, fz + fd);
+        p2 = vec3(fx + 1.0, fy + fh, fz);
+        p3 = vec3(fx + 1.0, fy + fh, fz + fd);
+    } else {
+        p0 = vec3(fx, fy, fz + fd);
+        p1 = vec3(fx, fy, fz);
+        p2 = vec3(fx, fy + fh, fz + fd);
+        p3 = vec3(fx, fy + fh, fz);
+    }
+
+    float shade = 0.8;
+    vec3 shaded = base_color * shade;
+    vec2 uv_min = vec2(0.0, 0.0);
+    vec2 uv_max = vec2(1.0, 1.0);
+
+    emitQuad(base_idx, pass_slot, p0, p1, p2, p3, normal, shaded, tile_id, uv_min, uv_max);
+}
+
+// Emit a quad for Z-axis face (south or north)
+void emitZQuad(uint base_idx, uint pass_slot,
+               uint x, uint y_start, uint z, uint width, uint height, uint y_base,
+               bool is_south, vec3 base_color, uint tile_id) {
+    float fx = float(x);
+    float fz = float(z);
+    float fy = float(y_base);
+    float fw = float(width);
+    float fh = float(height);
+
+    vec3 normal = is_south ? vec3(0, 0, 1) : vec3(0, 0, -1);
+
+    vec3 p0, p1, p2, p3;
+    if (is_south) {
+        p0 = vec3(fx, fy, fz + 1.0);
+        p1 = vec3(fx + fw, fy, fz + 1.0);
+        p2 = vec3(fx, fy + fh, fz + 1.0);
+        p3 = vec3(fx + fw, fy + fh, fz + 1.0);
+    } else {
+        p0 = vec3(fx + fw, fy, fz);
+        p1 = vec3(fx, fy, fz);
+        p2 = vec3(fx + fw, fy + fh, fz);
+        p3 = vec3(fx, fy + fh, fz);
+    }
+
+    float shade = 0.7;
+    vec3 shaded = base_color * shade;
+    vec2 uv_min = vec2(0.0, 0.0);
+    vec2 uv_max = vec2(1.0, 1.0);
+
+    emitQuad(base_idx, pass_slot, p0, p1, p2, p3, normal, shaded, tile_id, uv_min, uv_max);
+}
+
+void main() {
+    uint local_x = gl_LocalInvocationID.x;
+    uint local_z = gl_LocalInvocationID.y;
+    uint slice_y = gl_WorkGroupID.x; // Y level (0..255)
+    uint thread_id = local_x + local_z * 16;
+
+    // Bounds check: slice_y must be within chunk height
+    if (slice_y >= CHUNK_Y) return;
+
+    uint slot_offset = pc.chunk_slot * SLOT_SIZE;
+
+    // --- Phase 1: Load slice data into shared memory ---
+    uint b = getBlock(slot_offset, local_x, slice_y, local_z);
+    slice_blocks[thread_id] = b;
+
+    // Load neighbor blocks for face culling
+    uint b_top = 0, b_bot = 0, b_east = 0, b_west = 0, b_south = 0, b_north = 0;
+
+    // Top/bottom neighbors (Y +/- 1)
+    if (slice_y < CHUNK_Y - 1) {
+        b_top = getBlock(slot_offset, local_x, slice_y + 1, local_z);
+    }
+    if (slice_y > 0) {
+        b_bot = getBlock(slot_offset, local_x, slice_y - 1, local_z);
+    }
+
+    // East/west neighbors (X +/- 1) — may cross chunk boundary
+    if (local_x < 15) {
+        b_east = getBlock(slot_offset, local_x + 1, slice_y, local_z);
+    } else if (neighbors.neighbor_east_slot >= 0) {
+        b_east = getBlock(uint(neighbors.neighbor_east_slot) * SLOT_SIZE, 0, slice_y, local_z);
+    }
+
+    if (local_x > 0) {
+        b_west = getBlock(slot_offset, local_x - 1, slice_y, local_z);
+    } else if (neighbors.neighbor_west_slot >= 0) {
+        b_west = getBlock(uint(neighbors.neighbor_west_slot) * SLOT_SIZE, 15, slice_y, local_z);
+    }
+
+    // South/north neighbors (Z +/- 1) — may cross chunk boundary
+    if (local_z < 15) {
+        b_south = getBlock(slot_offset, local_x, slice_y, local_z + 1);
+    } else if (neighbors.neighbor_south_slot >= 0) {
+        b_south = getBlock(uint(neighbors.neighbor_south_slot) * SLOT_SIZE, local_x, slice_y, 0);
+    }
+
+    if (local_z > 0) {
+        b_north = getBlock(slot_offset, local_x, slice_y, local_z - 1);
+    } else if (neighbors.neighbor_north_slot >= 0) {
+        b_north = getBlock(uint(neighbors.neighbor_north_slot) * SLOT_SIZE, local_x, slice_y, 15);
+    }
+
+    // Build face mask
+    uint mask = 0;
+    if (shouldDrawFace(b, b_top, FACE_TOP))    mask |= (1u << FACE_TOP);
+    if (shouldDrawFace(b, b_bot, FACE_BOTTOM))  mask |= (1u << FACE_BOTTOM);
+    if (shouldDrawFace(b, b_east, FACE_EAST))   mask |= (1u << FACE_EAST);
+    if (shouldDrawFace(b, b_west, FACE_WEST))   mask |= (1u << FACE_WEST);
+    if (shouldDrawFace(b, b_south, FACE_SOUTH)) mask |= (1u << FACE_SOUTH);
+    if (shouldDrawFace(b, b_north, FACE_NORTH)) mask |= (1u << FACE_NORTH);
+
+    face_mask[thread_id] = mask;
+    merge_mask[thread_id] = 0;
+
+    barrier();
+
+    // --- Phase 2: Greedy merge for top/bottom faces (Y-axis) ---
+    // Each thread handles its own column's top and bottom faces
+    // Greedy merge along X axis for the same block type on the same row
+
+    if (b != 0 && (mask & ((1u << FACE_TOP) | (1u << FACE_BOTTOM))) != 0u) {
+        uint render_pass = getRenderPass(b);
+        vec3 base_color = getBlockColor(b);
+        uint tile_id = b; // block type serves as tile_id
+
+        // Top face greedy merge along X axis
+        if ((mask & (1u << FACE_TOP)) != 0u && (merge_mask[thread_id] & (1u << FACE_TOP)) == 0u) {
+            // Try to merge along X (same Z)
+            uint merge_width = 1;
+            for (uint dx = local_x + 1; dx < 16; dx++) {
+                uint other_tid = dx + local_z * 16;
+                if ((face_mask[other_tid] & (1u << FACE_TOP)) != 0u &&
+                    (merge_mask[other_tid] & (1u << FACE_TOP)) == 0u &&
+                    slice_blocks[other_tid] == b) {
+                    merge_width++;
+                    merge_mask[other_tid] |= (1u << FACE_TOP);
+                } else {
+                    break;
+                }
+            }
+
+            // Try to extend along Z (same merged width)
+            uint merge_height = 1;
+            for (uint dz = local_z + 1; dz < 16; dz++) {
+                bool can_extend = true;
+                for (uint dx = 0; dx < merge_width; dx++) {
+                    uint other_tid = (local_x + dx) + dz * 16;
+                    if ((face_mask[other_tid] & (1u << FACE_TOP)) == 0u ||
+                        (merge_mask[other_tid] & (1u << FACE_TOP)) != 0u ||
+                        slice_blocks[other_tid] != b) {
+                        can_extend = false;
+                        break;
+                    }
+                }
+                if (can_extend) {
+                    for (uint dx = 0; dx < merge_width; dx++) {
+                        uint other_tid = (local_x + dx) + dz * 16;
+                        merge_mask[other_tid] |= (1u << FACE_TOP);
+                    }
+                    merge_height++;
+                } else {
+                    break;
+                }
+            }
+            merge_mask[thread_id] |= (1u << FACE_TOP);
+
+            uint vert_count = allocVertices(render_pass, VERTS_PER_QUAD);
+
+            if (vert_count + VERTS_PER_QUAD <= pc.max_output_verts) {
+                emitYQuad(pc.output_offset + vert_count, render_pass,
+                          local_x, local_z, merge_width, merge_height, slice_y + 1,
+                          true, base_color, tile_id);
+            }
+        }
+
+        // Bottom face greedy merge along X axis
+        if ((mask & (1u << FACE_BOTTOM)) != 0u && (merge_mask[thread_id] & (1u << FACE_BOTTOM)) == 0u) {
+            uint merge_width = 1;
+            for (uint dx = local_x + 1; dx < 16; dx++) {
+                uint other_tid = dx + local_z * 16;
+                if ((face_mask[other_tid] & (1u << FACE_BOTTOM)) != 0u &&
+                    (merge_mask[other_tid] & (1u << FACE_BOTTOM)) == 0u &&
+                    slice_blocks[other_tid] == b) {
+                    merge_width++;
+                    merge_mask[other_tid] |= (1u << FACE_BOTTOM);
+                } else {
+                    break;
+                }
+            }
+
+            uint merge_height = 1;
+            for (uint dz = local_z + 1; dz < 16; dz++) {
+                bool can_extend = true;
+                for (uint dx = 0; dx < merge_width; dx++) {
+                    uint other_tid = (local_x + dx) + dz * 16;
+                    if ((face_mask[other_tid] & (1u << FACE_BOTTOM)) == 0u ||
+                        (merge_mask[other_tid] & (1u << FACE_BOTTOM)) != 0u ||
+                        slice_blocks[other_tid] != b) {
+                        can_extend = false;
+                        break;
+                    }
+                }
+                if (can_extend) {
+                    for (uint dx = 0; dx < merge_width; dx++) {
+                        uint other_tid = (local_x + dx) + dz * 16;
+                        merge_mask[other_tid] |= (1u << FACE_BOTTOM);
+                    }
+                    merge_height++;
+                } else {
+                    break;
+                }
+            }
+            merge_mask[thread_id] |= (1u << FACE_BOTTOM);
+
+            uint vert_count2 = allocVertices(render_pass, VERTS_PER_QUAD);
+
+            if (vert_count2 + VERTS_PER_QUAD <= pc.max_output_verts) {
+                emitYQuad(pc.output_offset + vert_count2, render_pass,
+                          local_x, local_z, merge_width, merge_height, slice_y,
+                          false, base_color, tile_id);
+            }
+        }
+
+        // East face (X+ boundary)
+        if ((mask & (1u << FACE_EAST)) != 0u && local_x == 15 || (mask & (1u << FACE_EAST)) != 0u && local_x < 15 && slice_blocks[(local_x + 1) + local_z * 16] != b) {
+            uint rp = getRenderPass(b);
+            uint vc = allocVertices(rp, VERTS_PER_QUAD);
+
+            if (vc + VERTS_PER_QUAD <= pc.max_output_verts) {
+                emitXQuad(pc.output_offset + vc, rp,
+                          local_x, slice_y, local_z, 1, 1, slice_y,
+                          true, base_color, tile_id);
+            }
+        }
+
+        // West face (X- boundary)
+        if ((mask & (1u << FACE_WEST)) != 0u && local_x == 0 || (mask & (1u << FACE_WEST)) != 0u && local_x > 0 && slice_blocks[(local_x - 1) + local_z * 16] != b) {
+            uint rp = getRenderPass(b);
+            uint vc = allocVertices(rp, VERTS_PER_QUAD);
+
+            if (vc + VERTS_PER_QUAD <= pc.max_output_verts) {
+                emitXQuad(pc.output_offset + vc, rp,
+                          local_x, slice_y, local_z, 1, 1, slice_y,
+                          false, base_color, tile_id);
+            }
+        }
+
+        // South face (Z+ boundary)
+        if ((mask & (1u << FACE_SOUTH)) != 0u && local_z == 15 || (mask & (1u << FACE_SOUTH)) != 0u && local_z < 15 && slice_blocks[local_x + (local_z + 1) * 16] != b) {
+            uint rp = getRenderPass(b);
+            uint vc = allocVertices(rp, VERTS_PER_QUAD);
+
+            if (vc + VERTS_PER_QUAD <= pc.max_output_verts) {
+                emitZQuad(pc.output_offset + vc, rp,
+                          local_x, slice_y, local_z, 1, 1, slice_y,
+                          true, base_color, tile_id);
+            }
+        }
+
+        // North face (Z- boundary)
+        if ((mask & (1u << FACE_NORTH)) != 0u && local_z == 0 || (mask & (1u << FACE_NORTH)) != 0u && local_z > 0 && slice_blocks[local_x + (local_z - 1) * 16] != b) {
+            uint rp = getRenderPass(b);
+            uint vc = allocVertices(rp, VERTS_PER_QUAD);
+
+            if (vc + VERTS_PER_QUAD <= pc.max_output_verts) {
+                emitZQuad(pc.output_offset + vc, rp,
+                          local_x, slice_y, local_z, 1, 1, slice_y,
+                          false, base_color, tile_id);
+            }
+        }
+    }
+}

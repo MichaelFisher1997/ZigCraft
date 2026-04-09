@@ -1,5 +1,6 @@
 //! World renderer - handles chunk rendering, culling, and MDI.
 //! Integrates GPU compute frustum culling (CullingSystem) with CPU fallback.
+//! Supports optional GPU-driven meshing via GpuMesher (#391).
 
 const std = @import("std");
 const log = @import("../engine/core/log.zig");
@@ -22,6 +23,7 @@ const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").Cu
 const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
 const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig").VulkanContext;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
+const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -73,6 +75,9 @@ pub const WorldRenderer = struct {
     // GPU Block Buffer (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
 
+    // GPU Mesher (Batch 6 - Issue #391)
+    gpu_mesher: ?*GpuMesher,
+
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
@@ -113,6 +118,22 @@ pub const WorldRenderer = struct {
         gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, max_chunks);
         log.log.info("GpuBlockBuffer initialized (capacity={})", .{max_chunks});
 
+        var gpu_mesher: ?*GpuMesher = null;
+        errdefer if (gpu_mesher) |m| m.deinit();
+        if (gpu_block_buffer) |buf| {
+            gpu_mesher = GpuMesher.init(allocator, rhi, max_chunks, buf) catch |err| blk: {
+                log.log.warn("GpuMesher init failed ({}), CPU meshing fallback active", .{err});
+                break :blk null;
+            };
+        }
+        if (gpu_mesher) |m| {
+            if (m.available) {
+                log.log.info("GpuMesher initialized — GPU-driven meshing active", .{});
+            } else {
+                log.log.info("GpuMesher initialized but not available — CPU meshing fallback active", .{});
+            }
+        }
+
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
@@ -134,6 +155,7 @@ pub const WorldRenderer = struct {
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
             .gpu_block_buffer = gpu_block_buffer,
+            .gpu_mesher = gpu_mesher,
         };
 
         for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
@@ -154,6 +176,19 @@ pub const WorldRenderer = struct {
         return self.gpu_block_buffer;
     }
 
+    pub fn getGpuMesher(self: *WorldRenderer) ?*GpuMesher {
+        return self.gpu_mesher;
+    }
+
+    pub fn dispatchGpuMeshing(ctx: *anyopaque) void {
+        const self: *WorldRenderer = @ptrCast(@alignCast(ctx));
+        if (self.gpu_mesher) |mesher| {
+            if (self.gpu_block_buffer) |buf| {
+                mesher.dispatch(buf);
+            }
+        }
+    }
+
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
         self.aabb_data.deinit(self.allocator);
@@ -170,6 +205,8 @@ pub const WorldRenderer = struct {
         if (self.culling_system) |cs| cs.deinit();
 
         if (self.gpu_block_buffer) |buf| buf.deinit();
+
+        if (self.gpu_mesher) |m| m.deinit();
 
         self.vertex_allocator.deinit();
         self.allocator.destroy(self.vertex_allocator);
