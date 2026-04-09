@@ -37,6 +37,18 @@ pub const DepthPyramidSystem = struct {
     width: u32 = 0,
     height: u32 = 0,
 
+    pub fn getPyramidImageView(self: *const DepthPyramidSystem) c.VkImageView {
+        return self.pyramid_view;
+    }
+
+    pub fn getPyramidSampler(self: *const DepthPyramidSystem) c.VkSampler {
+        return self.pyramid_sampler;
+    }
+
+    pub fn isValid(self: *const DepthPyramidSystem) bool {
+        return self.pipeline != null and self.pyramid_view != null;
+    }
+
     pub fn init(
         self: *DepthPyramidSystem,
         device: *const VulkanDevice,

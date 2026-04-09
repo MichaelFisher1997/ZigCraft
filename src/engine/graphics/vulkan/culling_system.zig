@@ -16,8 +16,12 @@ pub const ChunkCullData = extern struct {
     max_point: [4]f32,
 };
 
-const FrustumPushConstants = extern struct {
+const CullingPushConstants = extern struct {
     planes: [6][4]f32,
+    view_proj: [4][4]f32,
+    screen_size: [2]f32,
+    previous_frame_valid: f32,
+    _pad: f32,
 };
 
 pub const CullingSystem = struct {
@@ -37,7 +41,7 @@ pub const CullingSystem = struct {
     pipeline: c.VkPipeline = null,
 
     cached_view_proj: Mat4 = Mat4.zero,
-    cached_planes: FrustumPushConstants = undefined,
+    cached_planes: CullingPushConstants = undefined,
     planes_cached: bool = false,
 
     max_chunks: usize,
@@ -129,6 +133,9 @@ pub const CullingSystem = struct {
         self: *CullingSystem,
         view_proj: Mat4,
         chunk_count: u32,
+        screen_width: f32,
+        screen_height: f32,
+        previous_frame_valid: bool,
     ) void {
         if (chunk_count == 0) return;
         const fi = self.vk_ctx.frames.current_frame;
@@ -171,16 +178,20 @@ pub const CullingSystem = struct {
             null,
         );
 
+        self.cached_planes.screen_size = .{ screen_width, screen_height };
+        self.cached_planes.previous_frame_valid = if (previous_frame_valid) 1.0 else 0.0;
+
         if (!self.planes_cached or !mat4Equal(self.cached_view_proj, view_proj)) {
-            self.cached_planes = extractFrustumPlanes(view_proj);
+            self.cached_planes.planes = extractPlanes(view_proj);
             self.cached_view_proj = view_proj;
             self.planes_cached = true;
         }
+        self.cached_planes.view_proj = view_proj.data;
         const push = self.cached_planes;
 
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
         c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[fi], 0, null);
-        c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(FrustumPushConstants), &push);
+        c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(CullingPushConstants), &push);
 
         const clamped_count = @min(chunk_count, @as(u32, @intCast(self.max_chunks)));
         const groups = divCeil(clamped_count, WORKGROUP_SIZE);
@@ -278,6 +289,7 @@ pub const CullingSystem = struct {
 
         var pool_sizes = [_]c.VkDescriptorPoolSize{
             .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 3 * MAX_FRAMES_IN_FLIGHT },
+            .{ .type = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
         };
 
         var pool_info = std.mem.zeroes(c.VkDescriptorPoolCreateInfo);
@@ -291,6 +303,7 @@ pub const CullingSystem = struct {
             .{ .binding = 0, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = null },
             .{ .binding = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = null },
             .{ .binding = 2, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = null },
+            .{ .binding = 3, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = null },
         };
 
         var layout_info = std.mem.zeroes(c.VkDescriptorSetLayoutCreateInfo);
@@ -314,7 +327,7 @@ pub const CullingSystem = struct {
         var pc_range = std.mem.zeroes(c.VkPushConstantRange);
         pc_range.stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT;
         pc_range.offset = 0;
-        pc_range.size = @sizeOf(FrustumPushConstants);
+        pc_range.size = @sizeOf(CullingPushConstants);
 
         var pipeline_layout_info = std.mem.zeroes(c.VkPipelineLayoutCreateInfo);
         pipeline_layout_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -344,10 +357,11 @@ pub const CullingSystem = struct {
         const vk = self.vk_ctx.vulkan_device.vk_device;
         const aabb_range = self.max_chunks * @sizeOf(ChunkCullData);
 
-        var writes: [3 * MAX_FRAMES_IN_FLIGHT]c.VkWriteDescriptorSet = undefined;
+        var writes: [4 * MAX_FRAMES_IN_FLIGHT]c.VkWriteDescriptorSet = undefined;
         var aabb_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorBufferInfo = undefined;
         var index_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorBufferInfo = undefined;
         var counter_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorBufferInfo = undefined;
+        var pyramid_infos: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorImageInfo = undefined;
         var n: usize = 0;
 
         for (0..MAX_FRAMES_IN_FLIGHT) |i| {
@@ -365,6 +379,11 @@ pub const CullingSystem = struct {
                 .buffer = self.counter_buffers[i].buffer,
                 .offset = 0,
                 .range = @sizeOf(u32),
+            };
+            pyramid_infos[i] = c.VkDescriptorImageInfo{
+                .sampler = self.vk_ctx.depth_pyramid.getPyramidSampler(),
+                .imageView = self.vk_ctx.depth_pyramid.getPyramidImageView(),
+                .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             };
 
             writes[n] = std.mem.zeroes(c.VkWriteDescriptorSet);
@@ -392,6 +411,15 @@ pub const CullingSystem = struct {
             writes[n].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[n].descriptorCount = 1;
             writes[n].pBufferInfo = &counter_infos[i];
+            n += 1;
+
+            writes[n] = std.mem.zeroes(c.VkWriteDescriptorSet);
+            writes[n].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[n].dstSet = self.descriptor_sets[i];
+            writes[n].dstBinding = 3;
+            writes[n].descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[n].descriptorCount = 1;
+            writes[n].pImageInfo = &pyramid_infos[i];
             n += 1;
         }
 
@@ -448,7 +476,7 @@ fn unmapAndDestroy(vk: c.VkDevice, buf: *Utils.VulkanBuffer) void {
     buf.* = .{};
 }
 
-fn extractFrustumPlanes(vp: Mat4) FrustumPushConstants {
+fn extractPlanes(vp: Mat4) [6][4]f32 {
     const m = vp.data;
     var planes: [6][4]f32 = undefined;
 
@@ -469,7 +497,7 @@ fn extractFrustumPlanes(vp: Mat4) FrustumPushConstants {
         }
     }
 
-    return .{ .planes = planes };
+    return planes;
 }
 
 fn loadShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Allocator) !c.VkShaderModule {
