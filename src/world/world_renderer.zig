@@ -20,6 +20,7 @@ const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
 const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").CullingSystem;
 const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
+const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig").VulkanContext;
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -48,6 +49,7 @@ pub const WorldRenderer = struct {
     rm: ResourceManager,
     render_ctx: RenderContext,
     query: IDeviceQuery,
+    vk_ctx: *VulkanContext,
 
     vertex_allocator: *GlobalVertexAllocator,
     visible_chunks: std.ArrayListUnmanaged(*ChunkData),
@@ -108,6 +110,7 @@ pub const WorldRenderer = struct {
             .rm = rm,
             .render_ctx = render_ctx,
             .query = query,
+            .vk_ctx = @ptrCast(@alignCast(rhi.ptr)),
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
             .last_render_stats = .{},
@@ -369,7 +372,9 @@ pub const WorldRenderer = struct {
         self.last_render_stats.chunks_culled += chunk_count - @min(prev_rendered, chunk_count);
 
         cs.updateAABBData(fi, self.aabb_data.items);
-        cs.dispatch(view_proj, chunk_count);
+        const screen_w = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.width));
+        const screen_h = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.height));
+        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, fi > 0);
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
