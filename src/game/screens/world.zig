@@ -23,7 +23,6 @@ const WorldStats = @import("../../engine/ui/timing_overlay.zig").WorldStats;
 const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDisplay;
 const log = @import("../../engine/core/log.zig");
 const CSM = @import("../../engine/graphics/csm.zig");
-const WorldRenderer = @import("../../world/world_renderer.zig").WorldRenderer;
 
 pub const WorldScreen = struct {
     context: EngineContext,
@@ -312,8 +311,6 @@ pub const WorldScreen = struct {
                 .lpv_texture_handle = lpv_system.getTextureHandle(),
                 .lpv_texture_handle_g = lpv_system.getTextureHandleG(),
                 .lpv_texture_handle_b = lpv_system.getTextureHandleB(),
-                .gpu_mesh_dispatch_fn = if (self.session.world.renderer.getGpuMesher() != null) WorldRenderer.dispatchGpuMeshing else null,
-                .gpu_mesh_dispatch_ctx = @ptrCast(&self.session.world.renderer),
             };
             try render_system.getRenderGraph().execute(render_ctx);
         }
