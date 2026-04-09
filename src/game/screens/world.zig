@@ -452,6 +452,8 @@ pub const WorldScreen = struct {
             .gen_queue = stats.gen_queue,
             .mesh_queue = stats.mesh_queue,
             .upload_queue = stats.upload_queue,
+            .staging_allocated_mb = 0,
+            .staging_capacity_mb = 0,
             .lod = lod_display,
         };
     }
