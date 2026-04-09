@@ -480,6 +480,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.fog)] = self.session.atmosphere.fog_enabled;
         states[@intFromEnum(DebugFeature.lpv_overlay)] = ctx.settings.debug_lpv_overlay_active;
         states[@intFromEnum(DebugFeature.frustum_debug)] = ctx.settings.debug_frustum_active;
+        states[@intFromEnum(DebugFeature.occlusion_debug)] = ctx.settings.debug_occlusion_active;
         states[@intFromEnum(DebugFeature.creative_mode)] = self.session.creative_mode;
         states[@intFromEnum(DebugFeature.time_pause)] = self.session.atmosphere.time.time_scale == 0.0;
         states[@intFromEnum(DebugFeature.chunk_inspector)] = self.chunk_inspector_overlay.enabled;
@@ -581,6 +582,9 @@ pub const WorldScreen = struct {
             },
             .frustum_debug => {
                 ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active;
+            },
+            .occlusion_debug => {
+                ctx.settings.debug_occlusion_active = !ctx.settings.debug_occlusion_active;
             },
             .creative_mode => {
                 self.session.creative_mode = !self.session.creative_mode;

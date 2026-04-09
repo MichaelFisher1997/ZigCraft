@@ -58,6 +58,7 @@ pub const Settings = struct {
     debug_shadow_seam_diag: bool = false,
     debug_lpv_overlay_active: bool = false,
     debug_frustum_active: bool = false,
+    debug_occlusion_active: bool = false,
     shadow_quality: u32 = 2, // 0=Low, 1=Medium, 2=High, 3=Ultra
     shadow_distance: f32 = 250.0,
     anisotropic_filtering: u8 = 16,
