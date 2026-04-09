@@ -44,6 +44,8 @@ const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
+const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
+const ChunkMeshDispatch = @import("gpu_mesher.zig").ChunkMeshDispatch;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -73,6 +75,7 @@ pub const IWorld = struct {
         getLODStats: *const fn (ptr: *anyopaque) ?@import("lod_manager.zig").LODStats,
         isLODEnabled: *const fn (ptr: *anyopaque) bool,
         shadowScene: *const fn (ptr: *anyopaque) shadow_scene.IShadowScene,
+        gpuMeshDispatch: *const fn (ptr: *anyopaque, mesher: *GpuMesher) void,
     };
 
     pub fn update(self: IWorld, player_pos: Vec3, dt: f32) !void {
@@ -113,6 +116,10 @@ pub const IWorld = struct {
 
     pub fn shadowScene(self: IWorld) shadow_scene.IShadowScene {
         return self.vtable.shadowScene(self.ptr);
+    }
+
+    pub fn gpuMeshDispatch(self: IWorld, mesher: *GpuMesher) void {
+        self.vtable.gpuMeshDispatch(self.ptr, mesher);
     }
 };
 
@@ -180,7 +187,7 @@ pub const World = struct {
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
-        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, rhi);
+        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, rhi, atlas);
         errdefer _ = world.renderer;
 
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
@@ -518,6 +525,7 @@ pub const World = struct {
         .getLODStats = igetLODStats,
         .isLODEnabled = iisLODEnabled,
         .shadowScene = ishadowScene,
+        .gpuMeshDispatch = igpuMeshDispatch,
     };
 
     fn iupdate(ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void {
@@ -570,6 +578,53 @@ pub const World = struct {
         return self.shadowScene();
     }
 
+    fn igpuMeshDispatch(ptr: *anyopaque, mesher: *GpuMesher) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.gpuMeshDispatch(mesher);
+    }
+
+    pub fn gpuMeshDispatch(self: *World, mesher: *GpuMesher) void {
+        const gbb = self.gpu_block_buffer orelse return;
+
+        self.storage.chunks_mutex.lockShared();
+        defer self.storage.chunks_mutex.unlockShared();
+
+        var iter = self.storage.iteratorUnsafe();
+        while (iter.next()) |entry| {
+            const chunk = &entry.value_ptr.*.chunk;
+            if (chunk.state != .generated) continue;
+
+            const slot = gbb.getSlotForChunk(chunk.chunk_x, chunk.chunk_z) orelse continue;
+
+            const n_slot: u32 = blk: {
+                const n = gbb.getSlotForChunk(chunk.chunk_x, chunk.chunk_z - 1) orelse break :blk 0xFFFFFFFF;
+                break :blk @intCast(n);
+            };
+            const s_slot: u32 = blk: {
+                const n = gbb.getSlotForChunk(chunk.chunk_x, chunk.chunk_z + 1) orelse break :blk 0xFFFFFFFF;
+                break :blk @intCast(n);
+            };
+            const e_slot: u32 = blk: {
+                const n = gbb.getSlotForChunk(chunk.chunk_x + 1, chunk.chunk_z) orelse break :blk 0xFFFFFFFF;
+                break :blk @intCast(n);
+            };
+            const w_slot: u32 = blk: {
+                const n = gbb.getSlotForChunk(chunk.chunk_x - 1, chunk.chunk_z) orelse break :blk 0xFFFFFFFF;
+                break :blk @intCast(n);
+            };
+
+            mesher.enqueueChunk(.{
+                .chunk_slot = @intCast(slot),
+                .neighbor_north_slot = n_slot,
+                .neighbor_south_slot = s_slot,
+                .neighbor_east_slot = e_slot,
+                .neighbor_west_slot = w_slot,
+                .chunk_x = chunk.chunk_x,
+                .chunk_z = chunk.chunk_z,
+            }) catch continue;
+        }
+    }
+
     /// Get LOD system statistics (returns null if LOD not enabled)
     pub fn getLODStats(self: *World) ?@import("lod_manager.zig").LODStats {
         if (self.lod) |lod| {
@@ -581,5 +636,9 @@ pub const World = struct {
     /// Check if LOD system is enabled
     pub fn isLODEnabled(self: *const World) bool {
         return self.lod != null;
+    }
+
+    pub fn getGpuMesher(self: *World) ?*GpuMesher {
+        return self.renderer.getGpuMesher();
     }
 };

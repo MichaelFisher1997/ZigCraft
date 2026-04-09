@@ -52,6 +52,7 @@ const log = @import("../core/log.zig");
 const CSM = @import("csm.zig");
 const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
+const GpuMesher = @import("../../world/gpu_mesher.zig").GpuMesher;
 
 pub const SceneContext = struct {
     render_ctx: RenderContext,
@@ -89,6 +90,7 @@ pub const SceneContext = struct {
     // Pointer to frame-local cascade storage, computed once per frame by the first
     // ShadowPass and reused by subsequent cascade passes to guarantee consistency.
     cached_cascades: *?CSM.ShadowCascades,
+    gpu_mesher: ?*GpuMesher = null,
 };
 
 pub const IRenderPass = struct {
@@ -302,6 +304,33 @@ pub const DepthPyramidPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
         ctx.render_ctx.computeDepthPyramid();
+    }
+};
+
+pub const MeshBuildPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "MeshBuildPass",
+        .needs_main_pass = false,
+        .execute = execute,
+    };
+    pub fn pass(self: *MeshBuildPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        const mesher = ctx.gpu_mesher orelse return;
+        mesher.beginFrame();
+
+        ctx.world.gpuMeshDispatch(mesher);
+
+        mesher.dispatchPending(0);
+        mesher.dispatchPending(1);
+        mesher.dispatchPending(2);
+        mesher.endFrame();
     }
 };
 

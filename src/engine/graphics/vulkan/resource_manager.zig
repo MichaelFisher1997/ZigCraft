@@ -269,6 +269,11 @@ pub const ResourceManager = struct {
         };
     }
 
+    pub fn getNativeBuffer(self: *ResourceManager, handle: rhi.BufferHandle) ?c.VkBuffer {
+        const buf = self.buffers.get(handle) orelse return null;
+        return buf.buffer;
+    }
+
     pub fn uploadBuffer(self: *ResourceManager, handle: rhi.BufferHandle, data: []const u8) rhi.RhiError!void {
         return self.updateBuffer(handle, 0, data);
     }

@@ -1,0 +1,386 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+const uint CHUNK_SIZE_X = 16;
+const uint CHUNK_SIZE_Y = 256;
+const uint CHUNK_SIZE_Z = 16;
+const uint CHUNK_VOLUME = CHUNK_SIZE_X * CHUNK_SIZE_Y * CHUNK_SIZE_Z;
+
+const uint FACE_TOP = 0u;
+const uint FACE_BOTTOM = 1u;
+const uint FACE_NORTH = 2u;
+const uint FACE_SOUTH = 3u;
+const uint FACE_EAST = 4u;
+const uint FACE_WEST = 5u;
+
+const uint PASS_SOLID = 0u;
+const uint PASS_CUTOUT = 1u;
+const uint PASS_FLUID = 2u;
+
+const uint INVALID_SLOT = 0xFFFFFFFFu;
+
+struct GpuBlockInfo {
+    uint flags;
+    uint color;
+    uint tile_top;
+    uint tile_bottom;
+    uint tile_side;
+};
+
+const uint BLOCK_INFO_SIZE = 5u;
+
+layout(std430, binding = 0) readonly buffer BlockData {
+    uint blocks[];
+} block_buf;
+
+layout(std430, binding = 1) readonly buffer BlockRegistry {
+    GpuBlockInfo block_infos[];
+} registry_buf;
+
+layout(std430, binding = 2) writeonly buffer VertexOutput {
+    uint vertices[];
+} vertex_buf;
+
+layout(std430, binding = 3) coherent buffer Counters {
+    uint vertex_count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+} counter_buf;
+
+layout(push_constant) uniform PushConstants {
+    uint chunk_slot;
+    uint neighbor_north_slot;
+    uint neighbor_south_slot;
+    uint neighbor_east_slot;
+    uint neighbor_west_slot;
+    int chunk_x;
+    int chunk_z;
+    uint render_pass;
+};
+
+uint getBlock(uint slot, uint x, uint y, uint z) {
+    if (slot == INVALID_SLOT) return 0u;
+    uint idx = slot * CHUNK_VOLUME + x + z * CHUNK_SIZE_X + y * CHUNK_SIZE_X * CHUNK_SIZE_Z;
+    return block_buf.blocks[idx];
+}
+
+GpuBlockInfo getInfo(uint block_type) {
+    return registry_buf.block_infos[block_type * BLOCK_INFO_SIZE];
+}
+
+bool isSolid(uint flags) { return (flags & 1u) != 0u; }
+bool isTransparent(uint flags) { return (flags & 2u) != 0u; }
+bool isFluid(uint flags) { return (flags & 4u) != 0u; }
+uint getRenderPass(uint flags) { return (flags >> 3u) & 3u; }
+uint getRenderShape(uint flags) { return (flags >> 5u) & 1u; }
+
+bool isFaceVisible(uint current_block, uint neighbor_block, uint neighbor_flags) {
+    if (neighbor_block == 0u) return true;
+    if (current_block == neighbor_block && (isTransparent(neighbor_flags) || isFluid(neighbor_flags))) return false;
+    if (isSolid(neighbor_flags) && !isTransparent(neighbor_flags)) return false;
+    return true;
+}
+
+uint getTileId(GpuBlockInfo info, uint face) {
+    if (face == FACE_TOP) return info.tile_top;
+    if (face == FACE_BOTTOM) return info.tile_bottom;
+    return info.tile_side;
+}
+
+vec3 getFaceColor(GpuBlockInfo info, uint face) {
+    float shade = 1.0;
+    if (face == FACE_BOTTOM) shade = 0.5;
+    else if (face == FACE_NORTH || face == FACE_SOUTH) shade = 0.8;
+    else if (face == FACE_EAST || face == FACE_WEST) shade = 0.7;
+
+    uint c = info.color;
+    float r = float(c & 0xFFu) / 255.0;
+    float g = float((c >> 8u) & 0xFFu) / 255.0;
+    float b = float((c >> 16u) & 0xFFu) / 255.0;
+    return vec3(r, g, b) * shade;
+}
+
+vec3 getFaceNormal(uint face) {
+    if (face == FACE_TOP) return vec3(0.0, 1.0, 0.0);
+    if (face == FACE_BOTTOM) return vec3(0.0, -1.0, 0.0);
+    if (face == FACE_NORTH) return vec3(0.0, 0.0, -1.0);
+    if (face == FACE_SOUTH) return vec3(0.0, 0.0, 1.0);
+    if (face == FACE_EAST) return vec3(1.0, 0.0, 0.0);
+    return vec3(-1.0, 0.0, 0.0);
+}
+
+uint encodeNormal(vec3 n) {
+    float l1 = abs(n.x) + abs(n.y) + abs(n.z);
+    if (l1 < 0.0001) return 0u;
+    float px = n.x / l1;
+    float py = n.y / l1;
+    if (n.z < 0.0) {
+        float orig_px = px;
+        float sx = px >= 0.0 ? 1.0 : -1.0;
+        float sy = py >= 0.0 ? 1.0 : -1.0;
+        px = (1.0 - abs(py)) * sx;
+        py = (1.0 - abs(orig_px)) * sy;
+    }
+    return packSnorm2x16(vec2(px, py));
+}
+
+uint encodeColor(vec3 c) {
+    uint r = uint(round(clamp(c.r, 0.0, 1.0) * 255.0));
+    uint g = uint(round(clamp(c.g, 0.0, 1.0) * 255.0));
+    uint b = uint(round(clamp(c.b, 0.0, 1.0) * 255.0));
+    return r | (g << 8u) | (b << 16u) | (255u << 24u);
+}
+
+uint encodeMeta(uint tile_id, float skylight, float ao) {
+    uint sl = uint(round(clamp(skylight, 0.0, 1.0) * 255.0));
+    uint ao_u8 = uint(round(clamp(ao, 0.0, 1.0) * 255.0));
+    return (tile_id & 0xFFFFu) | (sl << 16u) | (ao_u8 << 24u);
+}
+
+uint encodeBlocklight(vec3 bl) {
+    uint r = uint(round(clamp(bl.r, 0.0, 1.0) * 255.0));
+    uint g = uint(round(clamp(bl.g, 0.0, 1.0) * 255.0));
+    uint b = uint(round(clamp(bl.b, 0.0, 1.0) * 255.0));
+    return r | (g << 8u) | (b << 16u);
+}
+
+void writeVertex(uint base, vec3 pos, uint color, uint normal, vec2 uv, uint packed_meta, uint blocklight) {
+    vertex_buf.vertices[base + 0] = floatBitsToUint(pos.x);
+    vertex_buf.vertices[base + 1] = floatBitsToUint(pos.y);
+    vertex_buf.vertices[base + 2] = floatBitsToUint(pos.z);
+    vertex_buf.vertices[base + 3] = color;
+    vertex_buf.vertices[base + 4] = normal;
+    vertex_buf.vertices[base + 5] = packHalf2x16(uv);
+    vertex_buf.vertices[base + 6] = packed_meta;
+    vertex_buf.vertices[base + 7] = blocklight;
+}
+
+void emitFace(uint bx, uint by, uint bz, uint face, GpuBlockInfo info) {
+    uint vert_idx = atomicAdd(counter_buf.vertex_count, 6u);
+    uint base = vert_idx * 8u;
+
+    vec3 n = getFaceNormal(face);
+    uint normal_packed = encodeNormal(n);
+    vec3 col = getFaceColor(info, face);
+    uint color_packed = encodeColor(col);
+    uint tile_id = getTileId(info, face);
+    uint meta = encodeMeta(tile_id, 1.0, 1.0);
+    uint bl = encodeBlocklight(vec3(0.0, 0.0, 0.0));
+
+    float fx = float(bx);
+    float fy = float(by);
+    float fz = float(bz);
+
+    if (face == FACE_TOP) {
+        writeVertex(base + 0, vec3(fx, fy + 1.0, fz), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx + 1.0, fy + 1.0, fz), color_packed, normal_packed, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx + 1.0, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx, fy + 1.0, fz), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx + 1.0, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(0.0, 1.0), meta, bl);
+    } else if (face == FACE_BOTTOM) {
+        writeVertex(base + 0, vec3(fx, fy, fz + 1.0), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx + 1.0, fy, fz + 1.0), color_packed, normal_packed, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx + 1.0, fy, fz), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx, fy, fz + 1.0), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx + 1.0, fy, fz), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx, fy, fz), color_packed, normal_packed, vec2(0.0, 1.0), meta, bl);
+    } else if (face == FACE_NORTH) {
+        writeVertex(base + 0, vec3(fx + 1.0, fy, fz), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx, fy, fz), color_packed, normal_packed, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx, fy + 1.0, fz), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx + 1.0, fy, fz), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx, fy + 1.0, fz), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx + 1.0, fy + 1.0, fz), color_packed, normal_packed, vec2(0.0, 1.0), meta, bl);
+    } else if (face == FACE_SOUTH) {
+        writeVertex(base + 0, vec3(fx, fy, fz + 1.0), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx + 1.0, fy, fz + 1.0), color_packed, normal_packed, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx + 1.0, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx, fy, fz + 1.0), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx + 1.0, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(0.0, 1.0), meta, bl);
+    } else if (face == FACE_EAST) {
+        writeVertex(base + 0, vec3(fx + 1.0, fy, fz + 1.0), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx + 1.0, fy, fz), color_packed, normal_packed, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx + 1.0, fy + 1.0, fz), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx + 1.0, fy, fz + 1.0), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx + 1.0, fy + 1.0, fz), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx + 1.0, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(0.0, 1.0), meta, bl);
+    } else {
+        writeVertex(base + 0, vec3(fx, fy, fz), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx, fy, fz + 1.0), color_packed, normal_packed, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx, fy, fz), color_packed, normal_packed, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx, fy + 1.0, fz + 1.0), color_packed, normal_packed, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx, fy + 1.0, fz), color_packed, normal_packed, vec2(0.0, 1.0), meta, bl);
+    }
+}
+
+void emitCrossBlock(uint bx, uint by, uint bz, GpuBlockInfo info) {
+    uint vert_idx = atomicAdd(counter_buf.vertex_count, 12u);
+    uint base = vert_idx * 8u;
+
+    vec3 col = vec3(
+        float(info.color & 0xFFu) / 255.0,
+        float((info.color >> 8u) & 0xFFu) / 255.0,
+        float((info.color >> 16u) & 0xFFu) / 255.0
+    );
+
+    uint tile_id = info.tile_side;
+    uint meta = encodeMeta(tile_id, 1.0, 1.0);
+    uint bl = encodeBlocklight(vec3(0.0, 0.0, 0.0));
+
+    float fx = float(bx);
+    float fy = float(by);
+    float fz = float(bz);
+
+    {
+        uint n0 = encodeNormal(vec3(0.942809, 0.0, -0.333333));
+        uint n1 = encodeNormal(vec3(-0.942809, 0.0, 0.333333));
+        uint c0 = encodeColor(col);
+        uint c1 = encodeColor(col * 0.85);
+
+        writeVertex(base + 0, vec3(fx, fy, fz), c0, n0, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx + 1.0, fy, fz + 1.0), c0, n0, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx + 1.0, fy + 1.0, fz + 1.0), c0, n0, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx, fy, fz), c0, n0, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx + 1.0, fy + 1.0, fz + 1.0), c0, n0, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx, fy + 1.0, fz), c0, n0, vec2(0.0, 1.0), meta, bl);
+
+        writeVertex(base + 48, vec3(fx + 1.0, fy, fz + 1.0), c1, n1, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 56, vec3(fx, fy, fz), c1, n1, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 64, vec3(fx, fy + 1.0, fz), c1, n1, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 72, vec3(fx + 1.0, fy, fz + 1.0), c1, n1, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 80, vec3(fx, fy + 1.0, fz), c1, n1, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 88, vec3(fx + 1.0, fy + 1.0, fz + 1.0), c1, n1, vec2(0.0, 1.0), meta, bl);
+    }
+
+    vert_idx = atomicAdd(counter_buf.vertex_count, 12u);
+    base = vert_idx * 8u;
+
+    {
+        uint n0 = encodeNormal(vec3(-0.942809, 0.0, -0.333333));
+        uint n1 = encodeNormal(vec3(0.942809, 0.0, 0.333333));
+        uint c0 = encodeColor(col * 0.9);
+        uint c1 = encodeColor(col * 0.75);
+
+        writeVertex(base + 0, vec3(fx + 1.0, fy, fz), c0, n0, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 8, vec3(fx, fy, fz + 1.0), c0, n0, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 16, vec3(fx, fy + 1.0, fz + 1.0), c0, n0, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 24, vec3(fx + 1.0, fy, fz), c0, n0, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 32, vec3(fx, fy + 1.0, fz + 1.0), c0, n0, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 40, vec3(fx + 1.0, fy + 1.0, fz), c0, n0, vec2(0.0, 1.0), meta, bl);
+
+        writeVertex(base + 48, vec3(fx, fy, fz + 1.0), c1, n1, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 56, vec3(fx + 1.0, fy, fz), c1, n1, vec2(1.0, 0.0), meta, bl);
+        writeVertex(base + 64, vec3(fx + 1.0, fy + 1.0, fz), c1, n1, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 72, vec3(fx, fy, fz + 1.0), c1, n1, vec2(0.0, 0.0), meta, bl);
+        writeVertex(base + 80, vec3(fx + 1.0, fy + 1.0, fz), c1, n1, vec2(1.0, 1.0), meta, bl);
+        writeVertex(base + 88, vec3(fx, fy + 1.0, fz + 1.0), c1, n1, vec2(0.0, 1.0), meta, bl);
+    }
+}
+
+uint getNeighborSlot(uint face, uint bx, uint bz) {
+    if (face == FACE_NORTH && bz == 0u) return neighbor_north_slot;
+    if (face == FACE_SOUTH && bz == CHUNK_SIZE_Z - 1u) return neighbor_south_slot;
+    if (face == FACE_EAST && bx == CHUNK_SIZE_X - 1u) return neighbor_east_slot;
+    if (face == FACE_WEST && bx == 0u) return neighbor_west_slot;
+    return chunk_slot;
+}
+
+uint getNeighborLocalX(uint face, uint bx) {
+    if (face == FACE_EAST && bx == CHUNK_SIZE_X - 1u) return 0u;
+    if (face == FACE_WEST && bx == 0u) return CHUNK_SIZE_X - 1u;
+    return bx;
+}
+
+uint getNeighborLocalZ(uint face, uint bz) {
+    if (face == FACE_NORTH && bz == 0u) return CHUNK_SIZE_Z - 1u;
+    if (face == FACE_SOUTH && bz == CHUNK_SIZE_Z - 1u) return 0u;
+    return bz;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= CHUNK_VOLUME) return;
+
+    uint bx = idx % CHUNK_SIZE_X;
+    uint bz = (idx / CHUNK_SIZE_X) % CHUNK_SIZE_Z;
+    uint by = idx / (CHUNK_SIZE_X * CHUNK_SIZE_Z);
+
+    uint block = getBlock(chunk_slot, bx, by, bz);
+    if (block == 0u) return;
+
+    GpuBlockInfo info = getInfo(block);
+    uint block_pass = getRenderPass(info.flags);
+
+    uint shape = getRenderShape(info.flags);
+
+    if (shape == 1u) {
+        if (render_pass == PASS_CUTOUT && block_pass == PASS_CUTOUT) {
+            emitCrossBlock(bx, by, bz, info);
+        }
+        return;
+    }
+
+    if (block_pass != render_pass) return;
+
+    // Check 6 faces
+    for (uint face = 0u; face < 6u; face++) {
+        uint nx = bx;
+        uint ny = by;
+        uint nz = bz;
+
+        if (face == FACE_TOP) ny = by + 1u;
+        else if (face == FACE_BOTTOM) ny = by - 1u;
+        else if (face == FACE_NORTH) nz = bz - 1u;
+        else if (face == FACE_SOUTH) nz = bz + 1u;
+        else if (face == FACE_EAST) nx = bx + 1u;
+        else if (face == FACE_WEST) nx = bx - 1u;
+
+        uint neighbor_block;
+        uint neighbor_slot = chunk_slot;
+        uint actual_nx = nx;
+        uint actual_nz = nz;
+
+        // Y bounds check
+        if (ny >= CHUNK_SIZE_Y) {
+            neighbor_block = 0u;
+        } else if (ny == 0xFFFFFFFFu) {
+            neighbor_block = 0u;
+        } else {
+            // X/Z boundary check
+            bool crosses_boundary = false;
+            if (face == FACE_NORTH && bz == 0u) {
+                neighbor_slot = neighbor_north_slot;
+                actual_nz = CHUNK_SIZE_Z - 1u;
+                crosses_boundary = true;
+            } else if (face == FACE_SOUTH && bz == CHUNK_SIZE_Z - 1u) {
+                neighbor_slot = neighbor_south_slot;
+                actual_nz = 0u;
+                crosses_boundary = true;
+            } else if (face == FACE_EAST && bx == CHUNK_SIZE_X - 1u) {
+                neighbor_slot = neighbor_east_slot;
+                actual_nx = 0u;
+                crosses_boundary = true;
+            } else if (face == FACE_WEST && bx == 0u) {
+                neighbor_slot = neighbor_west_slot;
+                actual_nx = CHUNK_SIZE_X - 1u;
+                crosses_boundary = true;
+            }
+
+            if (crosses_boundary && neighbor_slot == INVALID_SLOT) {
+                neighbor_block = 0u;
+            } else {
+                neighbor_block = getBlock(neighbor_slot, actual_nx, ny, actual_nz);
+            }
+        }
+
+        GpuBlockInfo neighbor_info = getInfo(neighbor_block);
+        if (isFaceVisible(block, neighbor_block, neighbor_info.flags)) {
+            emitFace(bx, by, bz, face, info);
+        }
+    }
+}

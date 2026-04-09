@@ -40,6 +40,7 @@ const ChunkStorage = @import("world/chunk_storage.zig").ChunkStorage;
 const ChunkData = @import("world/chunk_storage.zig").ChunkData;
 const IWorld = @import("world/world.zig").IWorld;
 const WorldStatsData = @import("world/world.zig").WorldStatsData;
+const GpuMesher = @import("world/gpu_mesher.zig").GpuMesher;
 const RenderStats = @import("world/world_renderer.zig").RenderStats;
 const shadow_scene = @import("engine/graphics/shadow_scene.zig");
 const ShadowConfig = @import("engine/graphics/rhi_types.zig").ShadowConfig;
@@ -2660,6 +2661,7 @@ const MockWorld = struct {
         .getLODStats = getLODStats,
         .isLODEnabled = isLODEnabled,
         .shadowScene = shadowScene,
+        .gpuMeshDispatch = gpuMeshDispatch,
     };
 
     const SHADOW_VTABLE = shadow_scene.IShadowScene.VTable{
@@ -2722,6 +2724,11 @@ const MockWorld = struct {
         const self: *MockWorld = @ptrCast(@alignCast(ptr));
         self.shadow_scene_calls += 1;
         return .{ .ptr = self, .vtable = &SHADOW_VTABLE };
+    }
+
+    fn gpuMeshDispatch(ptr: *anyopaque, mesher: *GpuMesher) void {
+        _ = ptr;
+        _ = mesher;
     }
 
     fn renderShadowPass(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
