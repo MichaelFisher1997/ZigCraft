@@ -90,6 +90,10 @@ pub fn destroyGPassResources(ctx: anytype) void {
         c.vkFreeMemory(vk, ctx.gpass.g_depth_memory, null);
         ctx.gpass.g_depth_memory = null;
     }
+    if (ctx.gpass.g_depth_sampler != null) {
+        c.vkDestroySampler(vk, ctx.gpass.g_depth_sampler, null);
+        ctx.gpass.g_depth_sampler = null;
+    }
 }
 
 pub fn destroySwapchainUIPipelines(ctx: anytype) void {

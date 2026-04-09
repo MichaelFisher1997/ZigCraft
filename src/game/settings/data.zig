@@ -120,6 +120,9 @@ pub const Settings = struct {
     // Texture Settings
     max_texture_resolution: u32 = 512, // 16, 32, 64, 128, 256, 512
 
+    // Water Settings (Issue #390)
+    water_quality: u8 = 2, // 0=Low, 1=Medium, 2=High
+
     pub const SettingMetadata = struct {
         label: []const u8,
         description: []const u8 = "",
@@ -303,6 +306,13 @@ pub const Settings = struct {
         pub const lpv_cell_size = SettingMetadata{
             .label = "LPV CELL SIZE",
             .kind = .{ .slider = .{ .min = 1.0, .max = 4.0, .step = 0.25 } },
+        };
+        pub const water_quality = SettingMetadata{
+            .label = "WATER QUALITY",
+            .kind = .{ .choice = .{
+                .labels = &[_][]const u8{ "LOW", "MEDIUM", "HIGH" },
+                .values = &[_]u32{ 0, 1, 2 },
+            } },
         };
     };
 

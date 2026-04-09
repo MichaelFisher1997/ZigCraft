@@ -433,6 +433,7 @@ pub const IWaterContext = struct {
         beginReflectionPass: *const fn (ptr: *anyopaque) void,
         endReflectionPass: *const fn (ptr: *anyopaque) void,
         getReflectionTextureHandle: *const fn (ptr: *anyopaque) TextureHandle,
+        getSceneDepthTextureHandle: *const fn (ptr: *anyopaque) TextureHandle,
         computeReflectedViewProj: *const fn (ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4,
     };
 
@@ -444,6 +445,9 @@ pub const IWaterContext = struct {
     }
     pub fn getReflectionTextureHandle(self: IWaterContext) TextureHandle {
         return self.vtable.getReflectionTextureHandle(self.ptr);
+    }
+    pub fn getSceneDepthTextureHandle(self: IWaterContext) TextureHandle {
+        return self.vtable.getSceneDepthTextureHandle(self.ptr);
     }
     pub fn computeReflectedViewProj(self: IWaterContext, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
         return self.vtable.computeReflectedViewProj(self.ptr, view, proj, camera_pos);
@@ -461,6 +465,9 @@ pub const WaterSystemWrapper = struct {
     }
     pub fn getReflectionTextureHandle(self: WaterSystemWrapper) TextureHandle {
         return self.ctx.getReflectionTextureHandle();
+    }
+    pub fn getSceneDepthTextureHandle(self: WaterSystemWrapper) TextureHandle {
+        return self.ctx.getSceneDepthTextureHandle();
     }
     pub fn computeReflectedViewProj(self: WaterSystemWrapper, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
         return self.ctx.computeReflectedViewProj(view, proj, camera_pos);

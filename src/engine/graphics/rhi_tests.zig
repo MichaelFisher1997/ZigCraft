@@ -171,6 +171,11 @@ const MockContext = struct {
         return 0;
     }
 
+    fn getWaterSceneDepthHandle(ptr: *anyopaque) rhi.TextureHandle {
+        _ = ptr;
+        return 0;
+    }
+
     fn computeWaterReflectedViewProj(ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
         _ = ptr;
         _ = view;
@@ -227,6 +232,7 @@ const MockContext = struct {
         .beginReflectionPass = undefined,
         .endReflectionPass = undefined,
         .getReflectionTextureHandle = getWaterReflectionHandle,
+        .getSceneDepthTextureHandle = getWaterSceneDepthHandle,
         .computeReflectedViewProj = computeWaterReflectedViewProj,
     };
 
