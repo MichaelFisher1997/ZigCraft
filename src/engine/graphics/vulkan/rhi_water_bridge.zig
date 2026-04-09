@@ -24,6 +24,14 @@ pub fn getWaterReflectionTextureHandle(ctx: anytype) rhi.TextureHandle {
     return handle;
 }
 
+pub fn getWaterSceneDepthTextureHandle(ctx: anytype) rhi.TextureHandle {
+    const handle = ctx.gpass.g_depth_handle;
+    if (handle == 0) {
+        log.log.warn("WaterSceneDepthTextureHandle not initialized", .{});
+    }
+    return handle;
+}
+
 pub fn computeWaterReflectedViewProj(ctx: anytype, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
     return ctx.water_system.computeReflectedViewProj(view, proj, camera_pos);
 }

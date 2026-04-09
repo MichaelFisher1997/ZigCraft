@@ -550,6 +550,7 @@ pub const WaterPass = struct {
         const descriptor_set_u64 = ctx.render_ctx.getNativeMainDescriptorSet();
         const cmd_u64 = ctx.render_ctx.getNativeCommandBuffer();
         const reflection_handle = ctx.water_ctx.getReflectionTextureHandle();
+        const scene_depth_handle = ctx.water_ctx.getSceneDepthTextureHandle();
 
         if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0) return;
 
@@ -559,6 +560,7 @@ pub const WaterPass = struct {
         const cmd = @as(c.VkCommandBuffer, @ptrFromInt(cmd_u64));
 
         ctx.render_ctx.bindTexture(reflection_handle, 14);
+        ctx.render_ctx.bindTexture(scene_depth_handle, 15);
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         if (descriptor_set_u64 != 0) {
             c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);

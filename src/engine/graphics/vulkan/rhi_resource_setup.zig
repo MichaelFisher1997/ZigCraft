@@ -325,6 +325,14 @@ pub fn createGPassResources(ctx: anytype) !void {
     const d_images = [_]c.VkImage{ctx.gpass.g_depth_image};
     try lifecycle.transitionImagesToShaderRead(ctx, &d_images, true);
 
+    ctx.gpass.g_depth_handle = try ctx.resources.registerExternalTexture(
+        extent.width,
+        extent.height,
+        .depth,
+        ctx.gpass.g_depth_view,
+        ctx.ssao_system.sampler,
+    );
+
     ctx.gpass.g_pass_extent = extent;
     log.log.debug("G-Pass resources created ({}x{}) with velocity buffer", .{ extent.width, extent.height });
 }

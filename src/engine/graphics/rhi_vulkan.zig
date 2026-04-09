@@ -663,6 +663,7 @@ const VULKAN_WATER_CONTEXT_VTABLE = rhi.IWaterContext.VTable{
     .beginReflectionPass = beginWaterReflectionPass,
     .endReflectionPass = endWaterReflectionPass,
     .getReflectionTextureHandle = getWaterReflectionTextureHandle,
+    .getSceneDepthTextureHandle = getWaterSceneDepthTextureHandle,
     .computeReflectedViewProj = computeWaterReflectedViewProj,
 };
 
@@ -683,6 +684,11 @@ fn endWaterReflectionPass(ctx_ptr: *anyopaque) void {
 fn getWaterReflectionTextureHandle(ctx_ptr: *anyopaque) rhi.TextureHandle {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return water_bridge.getWaterReflectionTextureHandle(ctx);
+}
+
+fn getWaterSceneDepthTextureHandle(ctx_ptr: *anyopaque) rhi.TextureHandle {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return water_bridge.getWaterSceneDepthTextureHandle(ctx);
 }
 
 fn computeWaterReflectedViewProj(ctx_ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {

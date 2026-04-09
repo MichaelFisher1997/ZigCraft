@@ -43,6 +43,7 @@ const GPassResources = struct {
     g_depth_image: c.VkImage = null,
     g_depth_memory: c.VkDeviceMemory = null,
     g_depth_view: c.VkImageView = null,
+    g_depth_handle: rhi.TextureHandle = 0,
     g_pass_extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
 };
 
