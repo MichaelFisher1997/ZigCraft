@@ -325,13 +325,27 @@ pub fn createGPassResources(ctx: anytype) !void {
     const d_images = [_]c.VkImage{ctx.gpass.g_depth_image};
     try lifecycle.transitionImagesToShaderRead(ctx, &d_images, true);
 
+    var depth_sampler_info = std.mem.zeroes(c.VkSamplerCreateInfo);
+    depth_sampler_info.sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    depth_sampler_info.magFilter = c.VK_FILTER_NEAREST;
+    depth_sampler_info.minFilter = c.VK_FILTER_NEAREST;
+    depth_sampler_info.mipmapMode = c.VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    depth_sampler_info.addressModeU = c.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    depth_sampler_info.addressModeV = c.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    depth_sampler_info.addressModeW = c.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    depth_sampler_info.borderColor = c.VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    depth_sampler_info.compareEnable = c.VK_FALSE;
+    var depth_sampler: c.VkSampler = null;
+    try Utils.checkVk(c.vkCreateSampler(vk, &depth_sampler_info, null, &depth_sampler));
+
     ctx.gpass.g_depth_handle = try ctx.resources.registerExternalTexture(
         extent.width,
         extent.height,
         .depth,
         ctx.gpass.g_depth_view,
-        ctx.ssao_system.sampler,
+        depth_sampler,
     );
+    ctx.gpass.g_depth_sampler = depth_sampler;
 
     ctx.gpass.g_pass_extent = extent;
     log.log.debug("G-Pass resources created ({}x{}) with velocity buffer", .{ extent.width, extent.height });
