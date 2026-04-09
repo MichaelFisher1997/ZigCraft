@@ -205,12 +205,18 @@ pub const TransferQueue = struct {
         self.pending_dst_access_mask[frame_index] = 0;
     }
 
-    pub fn addPendingCopy(self: *TransferQueue, copy: PendingCopy) void {
+    pub fn addPendingCopy(self: *TransferQueue, copy: PendingCopy) bool {
         const idx = self.current_frame;
         if (self.pending_copy_count[idx] < MAX_PENDING_COPIES) {
             self.pending_copies[idx][self.pending_copy_count[idx]] = copy;
             self.pending_copy_count[idx] += 1;
+            return true;
         }
+        return false;
+    }
+
+    pub fn pendingCopyCount(self: *const TransferQueue) usize {
+        return self.pending_copy_count[self.current_frame];
     }
 
     pub fn recordPendingCopies(self: *TransferQueue, cmd: c.VkCommandBuffer) void {

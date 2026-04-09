@@ -67,7 +67,6 @@ pub const TimingOverlay = struct {
             drawStatLine(ui, "CULLED:", ws.chunks_culled, label_x, value_x, &y, scale, Color.white);
             drawStatLine(ui, "VERTS:", ws.vertices_rendered, label_x, value_x, &y, scale, Color.white);
             drawQueueLine(ui, "QUEUES:", ws.gen_queue, ws.mesh_queue, ws.upload_queue, label_x, value_x, &y, scale, Color.white);
-            drawStagingLine(ui, "STAGING:", ws.staging_allocated_mb, ws.staging_capacity_mb, label_x, value_x, &y, scale, Color.white);
 
             if (ws.lod) |ls| {
                 drawSectionHeader(ui, "LOD DISTRIBUTION", label_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
@@ -129,16 +128,6 @@ pub const TimingOverlay = struct {
         y.* += 15;
     }
 
-    fn drawStagingLine(ui: *UISystem, label: []const u8, used_mb: f32, capacity_mb: f32, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
-        font.drawText(ui, label, label_x, y.*, scale, color);
-        var buf: [32]u8 = undefined;
-        const percent = if (capacity_mb > 0) (used_mb / capacity_mb) * 100.0 else 0.0;
-        const val_str = std.fmt.bufPrint(&buf, "{d:.1}MB ({d:.0}%)", .{ used_mb, percent }) catch "";
-        const val_w = font.measureTextWidth(val_str, scale);
-        font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
-        y.* += 15;
-    }
-
     pub fn toggle(self: *TimingOverlay) void {
         self.enabled = !self.enabled;
     }
@@ -160,8 +149,6 @@ pub const WorldStats = struct {
     gen_queue: usize,
     mesh_queue: usize,
     upload_queue: usize,
-    staging_allocated_mb: f32,
-    staging_capacity_mb: f32,
     lod: ?LODStatsDisplay,
 };
 
