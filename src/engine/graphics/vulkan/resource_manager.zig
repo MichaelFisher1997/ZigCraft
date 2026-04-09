@@ -292,7 +292,8 @@ pub const ResourceManager = struct {
             .size = data.len,
         };
         if (!self.transfer.addPendingCopy(copy)) {
-            log.log.warn("Transfer queue pending copy overflow! Increase MAX_PENDING_COPIES or reduce upload rate.", .{});
+            log.log.warn("Transfer queue pending copy overflow! Data not uploaded.", .{});
+            return error.PendingCopyOverflow;
         }
         self.transfer.addPendingDstAccess(c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | c.VK_ACCESS_INDEX_READ_BIT | c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
     }
