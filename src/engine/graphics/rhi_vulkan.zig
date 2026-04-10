@@ -182,6 +182,7 @@ fn computeBloom(ctx_ptr: *anyopaque) void {
     pass_orchestration.ensureNoRenderPassActiveInternal(ctx);
 
     var bloom_source_image = ctx.hdr.hdr_image;
+    // Bloom samples the raw blitted image, while post-process consumes its image view.
     if (ctx.dynamic_resolution.isActive() and ctx.taa.ran_this_frame and ctx.dynamic_resolution.upscale_image != null) {
         bloom_source_image = ctx.dynamic_resolution.upscale_image;
     } else if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
@@ -241,7 +242,7 @@ fn upscaleDynamicResolution(ctx: *VulkanContext, command_buffer: c.VkCommandBuff
     src_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
     src_barrier.image = taa_output_image;
     src_barrier.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
-    src_barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+    src_barrier.srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     src_barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
 
     var dst_barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
@@ -362,12 +363,17 @@ fn setTAAVelocityRejection(ctx_ptr: *anyopaque, value: f32) void {
 fn setDynamicResolution(ctx_ptr: *anyopaque, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.dynamic_resolution.enabled = enabled;
-    ctx.dynamic_resolution.min_scale = min_scale;
-    ctx.dynamic_resolution.max_scale = max_scale;
-    ctx.dynamic_resolution.target_fps = target_fps;
+    ctx.dynamic_resolution.min_scale = std.math.clamp(min_scale, 0.25, 1.0);
+    ctx.dynamic_resolution.max_scale = std.math.clamp(max_scale, 0.25, 1.0);
+    if (ctx.dynamic_resolution.min_scale > ctx.dynamic_resolution.max_scale) {
+        ctx.dynamic_resolution.max_scale = ctx.dynamic_resolution.min_scale;
+    }
+    ctx.dynamic_resolution.target_fps = if (target_fps == 0) 60 else target_fps;
     if (!enabled) {
         ctx.dynamic_resolution.current_scale = 1.0;
         ctx.dynamic_resolution.render_extent = ctx.swapchain.getExtent();
+    } else {
+        ctx.dynamic_resolution.update(ctx.timing.timing_results.total_gpu_ms);
     }
 }
 

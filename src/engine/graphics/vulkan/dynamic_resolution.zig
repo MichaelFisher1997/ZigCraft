@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("../../../c.zig").c;
 
 const ROLLING_WINDOW_SIZE = 8;
+const ACTIVE_THRESHOLD = 0.999;
 
 pub const DynamicResolutionState = struct {
     enabled: bool = false,
@@ -29,6 +30,9 @@ pub const DynamicResolutionState = struct {
             return;
         }
 
+        const min_scale = @min(self.min_scale, self.max_scale);
+        const max_scale = @max(self.min_scale, self.max_scale);
+
         self.frame_times[self.frame_time_index] = gpu_time_ms;
         self.frame_time_index = (self.frame_time_index + 1) % ROLLING_WINDOW_SIZE;
         if (self.frame_time_count < ROLLING_WINDOW_SIZE) {
@@ -53,10 +57,12 @@ pub const DynamicResolutionState = struct {
         const target_ms = 1000.0 / @as(f32, @floatFromInt(self.target_fps));
 
         if (self.rolling_avg_ms > target_ms * 1.1) {
-            self.current_scale = @max(self.current_scale - 0.02, self.min_scale);
+            self.current_scale = @max(self.current_scale - 0.02, min_scale);
         } else if (self.rolling_avg_ms < target_ms * 0.8) {
-            self.current_scale = @min(self.current_scale + 0.01, self.max_scale);
+            self.current_scale = @min(self.current_scale + 0.01, max_scale);
         }
+
+        self.current_scale = std.math.clamp(self.current_scale, min_scale, max_scale);
 
         self.computeRenderExtent();
     }
@@ -81,7 +87,7 @@ pub const DynamicResolutionState = struct {
     }
 
     pub fn isActive(self: *const DynamicResolutionState) bool {
-        return self.enabled and self.current_scale < 0.999;
+        return self.enabled and self.current_scale < ACTIVE_THRESHOLD;
     }
 
     pub fn getRenderExtent(self: *const DynamicResolutionState) c.VkExtent2D {
@@ -91,3 +97,38 @@ pub const DynamicResolutionState = struct {
         return self.swapchain_extent;
     }
 };
+
+test "DynamicResolutionState scales smoothly and clamps bounds" {
+    var state = DynamicResolutionState{};
+    state.enabled = true;
+    state.min_scale = 0.5;
+    state.max_scale = 1.0;
+    state.target_fps = 60;
+    state.setSwapchainExtent(.{ .width = 1920, .height = 1080 });
+
+    state.update(25.0);
+    try std.testing.expectEqual(@as(f32, 1.0), state.current_scale);
+    try std.testing.expectEqual(@as(u32, 1920), state.getRenderExtent().width);
+
+    for (0..4) |_| state.update(40.0);
+    try std.testing.expect(state.current_scale < 1.0);
+    try std.testing.expect(state.isActive());
+
+    state.min_scale = 0.9;
+    state.max_scale = 0.6;
+    state.update(100.0);
+    try std.testing.expect(state.current_scale >= 0.6);
+    try std.testing.expect(state.current_scale <= 0.9);
+}
+
+test "DynamicResolutionState disables cleanly" {
+    var state = DynamicResolutionState{};
+    state.enabled = false;
+    state.setSwapchainExtent(.{ .width = 1280, .height = 720 });
+    state.update(50.0);
+
+    try std.testing.expectEqual(@as(f32, 1.0), state.current_scale);
+    try std.testing.expect(!state.isActive());
+    try std.testing.expectEqual(@as(u32, 1280), state.getRenderExtent().width);
+    try std.testing.expectEqual(@as(u32, 720), state.getRenderExtent().height);
+}
