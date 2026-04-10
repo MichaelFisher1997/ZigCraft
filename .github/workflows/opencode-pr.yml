@@ -30,6 +30,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      statuses: write
 
     steps:
       - name: Resolve PR context
@@ -101,6 +102,7 @@ jobs:
         run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> "$GITHUB_ENV"
 
       - name: Run opencode
+        id: ai_review
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -156,6 +158,10 @@ jobs:
 
             ## 📋 Summary
             First, check if the PR description mentions any linked issues (e.g., "Closes #123", "Fixes #456", "Resolves #789"). 
+
+            ## 📌 Review Metadata
+            - **Reviewed Commit SHA:** `${{ steps.resolve-pr.outputs.pr_head_sha }}`
+            - **Reviewed PR:** #${{ steps.resolve-pr.outputs.pr_number }}
             
             If linked issues are found:
             - Mention the issue number(s) explicitly
@@ -241,3 +247,24 @@ jobs:
             5. Confidence scores should reflect how certain you are - use "Low" when unsure
             6. If you have nothing meaningful to add to a section, write "None identified" instead of omitting it
             7. Always provide actionable fixes, never just complaints
+
+      - name: Mark AI review complete
+        if: always()
+        run: |
+          PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
+          HEAD_SHA="${{ steps.resolve-pr.outputs.pr_head_sha }}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
+          OUTCOME="${{ steps.ai_review.outcome }}"
+          STATE="success"
+
+          if [ "$OUTCOME" != "success" ]; then
+            STATE="failure"
+          fi
+
+          gh api repos/${{ github.repository }}/statuses/${HEAD_SHA} \
+            -f state="$STATE" \
+            -f context='ai-review' \
+            -f description="AI review ${STATE} for ${SHORT_SHA}" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/pull/${PR_NUMBER}"
+        env:
+          GH_TOKEN: ${{ github.token }}

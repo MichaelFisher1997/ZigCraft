@@ -14,3 +14,9 @@ Closes #(issue number)
 - [ ] Code follows AGENTS.md conventions
 - [ ] Ran `zig build test` (all tests pass)
 - [ ] Ran `zig fmt src/` (formatted code)
+
+## Reviewer Checklist
+- [ ] AI review is current and matches the PR head SHA
+- [ ] No unresolved critical or major AI review issues remain
+- [ ] Required checks are green
+- [ ] PR is acceptable to merge
