@@ -82,6 +82,7 @@ test {
     _ = @import("world/worldgen/coastal_generator_tests.zig");
     _ = @import("world/lod_manager.zig");
     _ = @import("world/lod_renderer.zig");
+    _ = @import("world/world_tests.zig");
     _ = @import("engine/atmosphere/tests.zig");
     _ = @import("game/settings/tests.zig");
     _ = @import("game/input_settings.zig");
