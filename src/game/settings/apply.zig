@@ -45,6 +45,7 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setMSAA(settings.msaa_samples);
     rhi.setTAABlendFactor(settings.taa_blend_factor);
     rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
+    rhi.setDynamicResolution(settings.dynamic_resolution_enabled, settings.dynamic_resolution_min_scale, settings.dynamic_resolution_max_scale, settings.target_fps);
 }
 
 pub fn applyToRenderSettings(settings: *const Settings, rs: IRenderSettings) void {

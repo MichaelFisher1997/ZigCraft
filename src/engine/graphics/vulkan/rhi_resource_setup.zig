@@ -444,13 +444,59 @@ pub fn createPostProcessResources(ctx: anytype) !void {
         global_uniform_size,
     );
 
-    // Create neutral (identity) 3D LUT for color grading and bind it
     if (ctx.post_process.lut_texture == 0) {
         ctx.post_process.lut_texture = try createNeutralLUT3D(ctx);
     }
     updatePostProcessLUTDescriptor(ctx);
 
     try ctx.render_pass_manager.createPostProcessFramebuffers(vk, ctx.allocator, ctx.swapchain.getExtent(), ctx.swapchain.getImageViews());
+}
+
+pub fn createUpscaleResources(ctx: anytype) !void {
+    const vk = ctx.vulkan_device.vk_device;
+    const extent = ctx.swapchain.getExtent();
+    if (extent.width == 0 or extent.height == 0) return;
+
+    lifecycle.destroyUpscaleResources(ctx);
+
+    const format = c.VK_FORMAT_R32G32B32A32_SFLOAT;
+    const dr = &ctx.dynamic_resolution;
+
+    var image_info = std.mem.zeroes(c.VkImageCreateInfo);
+    image_info.sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = c.VK_IMAGE_TYPE_2D;
+    image_info.extent = .{ .width = extent.width, .height = extent.height, .depth = 1 };
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.format = format;
+    image_info.tiling = c.VK_IMAGE_TILING_OPTIMAL;
+    image_info.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+    image_info.usage = c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT;
+    image_info.samples = c.VK_SAMPLE_COUNT_1_BIT;
+    image_info.sharingMode = c.VK_SHARING_MODE_EXCLUSIVE;
+    try Utils.checkVk(c.vkCreateImage(vk, &image_info, null, &dr.upscale_image));
+
+    var mem_reqs: c.VkMemoryRequirements = undefined;
+    c.vkGetImageMemoryRequirements(vk, dr.upscale_image, &mem_reqs);
+    var alloc_info = std.mem.zeroes(c.VkMemoryAllocateInfo);
+    alloc_info.sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_reqs.size;
+    alloc_info.memoryTypeIndex = try Utils.findMemoryType(ctx.vulkan_device.physical_device, mem_reqs.memoryTypeBits, c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    try Utils.checkVk(c.vkAllocateMemory(vk, &alloc_info, null, &dr.upscale_memory));
+    try Utils.checkVk(c.vkBindImageMemory(vk, dr.upscale_image, dr.upscale_memory, 0));
+
+    var view_info = std.mem.zeroes(c.VkImageViewCreateInfo);
+    view_info.sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = dr.upscale_image;
+    view_info.viewType = c.VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+    try Utils.checkVk(c.vkCreateImageView(vk, &view_info, null, &dr.upscale_view));
+
+    dr.upscale_extent = extent;
+
+    const images = [_]c.VkImage{dr.upscale_image};
+    try lifecycle.transitionImagesToShaderRead(ctx, &images, false);
 }
 
 /// Generate a 32x32x32 identity LUT where each texel maps to itself: color(r,g,b) = (r,g,b).

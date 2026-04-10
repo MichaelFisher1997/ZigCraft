@@ -22,6 +22,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     lifecycle.destroyBloomResources(ctx);
     lifecycle.destroyPostProcessResources(ctx);
     lifecycle.destroyGPassResources(ctx);
+    lifecycle.destroyUpscaleResources(ctx);
 
     ctx.runtime.main_pass_active = false;
     ctx.shadow_system.pass_active = false;
@@ -90,6 +91,13 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         return;
     };
     setup.updatePostProcessDescriptorsWithBloom(ctx);
+
+    setup.createUpscaleResources(ctx) catch |err| {
+        log.log.errWithTrace("Failed to recreate upscale resources: {}", .{err});
+        return;
+    };
+
+    ctx.dynamic_resolution.setSwapchainExtent(ctx.swapchain.getExtent());
 
     {
         var list: [32]c.VkImage = undefined;

@@ -383,6 +383,8 @@ const MockContext = struct {
         .setColorGradingIntensity = undefined,
         .setTAABlendFactor = undefined,
         .setTAAVelocityRejection = undefined,
+        .setDynamicResolution = undefined,
+        .getResolutionScale = undefined,
         .captureFrame = undefined,
     };
 

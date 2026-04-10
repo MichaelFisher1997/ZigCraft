@@ -899,6 +899,8 @@ pub const RHI = struct {
         setColorGradingIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
         setTAABlendFactor: *const fn (ctx: *anyopaque, value: f32) void,
         setTAAVelocityRejection: *const fn (ctx: *anyopaque, value: f32) void,
+        setDynamicResolution: *const fn (ctx: *anyopaque, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void,
+        getResolutionScale: *const fn (ctx: *anyopaque) f32,
         captureFrame: *const fn (ctx: *anyopaque, path: []const u8) bool,
     };
 
@@ -1199,6 +1201,12 @@ pub const RHI = struct {
     }
     pub fn setTAAVelocityRejection(self: RHI, value: f32) void {
         self.vtable.setTAAVelocityRejection(self.ptr, value);
+    }
+    pub fn setDynamicResolution(self: RHI, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
+        self.vtable.setDynamicResolution(self.ptr, enabled, min_scale, max_scale, target_fps);
+    }
+    pub fn getResolutionScale(self: RHI) f32 {
+        return self.vtable.getResolutionScale(self.ptr);
     }
     pub fn captureFrame(self: RHI, path: []const u8) bool {
         return self.vtable.captureFrame(self.ptr, path);
