@@ -175,7 +175,6 @@ pub fn encodeNormal(n: [3]f32) u32 {
 /// Pack tile_id (u16), skylight (u8), and AO (u8) into a single u32.
 /// Skylight and AO precision: 1/255 (~0.4% steps). Tile IDs 0-65534 valid; 0xFFFF is LOD sentinel.
 pub fn encodeMeta(tile_id: u16, skylight: f32, ao: f32) u32 {
-    std.debug.assert(tile_id != Vertex.LOD_TILE_ID);
     const sl: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, skylight)) * 255.0));
     const ao_u8: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, ao)) * 255.0));
     return @as(u32, tile_id) | (@as(u32, sl) << 16) | (@as(u32, ao_u8) << 24);

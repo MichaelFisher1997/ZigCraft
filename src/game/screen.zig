@@ -12,6 +12,7 @@ const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const IRenderSettings = @import("../engine/core/interfaces.zig").IRenderSettings;
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
+const BenchmarkRunner = @import("../benchmark.zig").BenchmarkRunner;
 
 pub const EngineContext = struct {
     allocator: std.mem.Allocator,
@@ -26,6 +27,7 @@ pub const EngineContext = struct {
     screen_manager: *ScreenManager,
     skip_world_update: bool,
     render_settings: IRenderSettings,
+    benchmark_runner: ?*BenchmarkRunner = null,
 
     pub fn saveSettings(self: EngineContext) void {
         settings_pkg.persistence.save(self.settings, self.allocator);

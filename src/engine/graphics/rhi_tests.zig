@@ -347,6 +347,7 @@ const MockContext = struct {
         .getMaxMSAASamples = undefined,
         .getFaultCount = undefined,
         .getValidationErrorCount = undefined,
+        .getDrawCallCount = undefined,
         .waitIdle = undefined,
     };
 

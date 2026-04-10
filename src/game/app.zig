@@ -12,8 +12,11 @@ const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const InputMapper = @import("input_mapper.zig").InputMapper;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
+const BenchmarkRunner = @import("../benchmark.zig").BenchmarkRunner;
+const json_presets = @import("settings/json_presets.zig");
 
 const SettingsManager = @import("settings_manager.zig").SettingsManager;
+const Settings = @import("settings.zig").Settings;
 const InputSettings = @import("input_settings.zig").InputSettings;
 
 const screen_pkg = @import("screen.zig");
@@ -38,6 +41,7 @@ pub const App = struct {
     smoke_test_frames: u32 = 0,
     render_settings_adapter: RenderSettingsAdapter,
     resize_debounce_frames: u32 = 0,
+    benchmark_runner: ?*BenchmarkRunner = null,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -46,8 +50,14 @@ pub const App = struct {
         var settings_manager = try SettingsManager.init(allocator);
         errdefer settings_manager.deinit();
 
-        log.log.info("App.init: initializing WindowManager ({}x{})", .{ settings_manager.settings.window_width, settings_manager.settings.window_height });
-        var wm = try WindowManager.init(allocator, true, settings_manager.settings.window_width, settings_manager.settings.window_height);
+        if (build_options.benchmark) {
+            applyBenchmarkPreset(settings_manager.ptr(), build_options.benchmark_preset);
+        }
+
+        const initial_window_width: u32 = if (build_options.benchmark) 1920 else settings_manager.settings.window_width;
+        const initial_window_height: u32 = if (build_options.benchmark) 1080 else settings_manager.settings.window_height;
+        log.log.info("App.init: initializing WindowManager ({}x{})", .{ initial_window_width, initial_window_height });
+        var wm = try WindowManager.init(allocator, true, initial_window_width, initial_window_height);
         errdefer wm.deinit();
 
         var input = Input.init(allocator);
@@ -58,6 +68,12 @@ pub const App = struct {
         log.log.info("App.init: initializing RenderSystem", .{});
         const render_system = try RenderSystem.init(allocator, wm.window, &settings_manager.settings);
         errdefer render_system.deinit();
+
+        if (build_options.skip_present) {
+            const headless_extent = render_system.getRHI().renderContext().getNativeSwapchainExtent();
+            input.window_width = headless_extent[0];
+            input.window_height = headless_extent[1];
+        }
 
         const safe_render_env = std.posix.getenv("ZIGCRAFT_SAFE_RENDER");
         const safe_render_mode = if (safe_render_env) |val|
@@ -87,6 +103,15 @@ pub const App = struct {
 
         const app = try allocator.create(App);
         errdefer allocator.destroy(app);
+
+        var benchmark_runner: ?*BenchmarkRunner = null;
+        if (build_options.benchmark) {
+            const runner = try allocator.create(BenchmarkRunner);
+            const benchmark_duration_s: f32 = @as(f32, @floatFromInt(build_options.benchmark_duration));
+            runner.* = try BenchmarkRunner.init(allocator, build_options.benchmark_preset, settings_manager.settings.render_distance, benchmark_duration_s, build_options.benchmark_output);
+            benchmark_runner = runner;
+        }
+
         app.* = .{
             .allocator = allocator,
             .window_manager = wm,
@@ -102,10 +127,11 @@ pub const App = struct {
             .smoke_test_frames = 0,
             .render_settings_adapter = RenderSettingsAdapter.init(render_system.getRHI()),
             .resize_debounce_frames = 0,
+            .benchmark_runner = benchmark_runner,
         };
         errdefer app.screen_manager.deinit();
 
-        if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
+        if (build_options.smoke_test or build_options.screenshot_path.len > 0 or build_options.benchmark) {
             app.render_system.getRHI().timing().setTimingEnabled(true);
         }
 
@@ -114,6 +140,10 @@ pub const App = struct {
             log.log.info("SCREENSHOT MODE: Loading menu for screenshot capture to '{s}'", .{build_options.screenshot_path});
             const home_screen = try HomeScreen.init(allocator, engine_ctx);
             app.screen_manager.setScreen(home_screen.screen());
+        } else if (build_options.benchmark) {
+            log.log.info("BENCHMARK MODE: Loading world and collecting metrics", .{});
+            const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
+            app.screen_manager.setScreen(world_screen.screen());
         } else if (build_options.smoke_test) {
             log.log.info("SMOKE TEST MODE: Bypassing menu and loading world", .{});
             const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
@@ -132,6 +162,10 @@ pub const App = struct {
         self.ui_manager.deinit();
 
         self.screen_manager.deinit();
+        if (self.benchmark_runner) |runner| {
+            runner.deinit();
+            self.allocator.destroy(runner);
+        }
         self.audio_manager.deinit();
         self.render_system.deinit();
         self.settings_manager.deinit();
@@ -156,6 +190,7 @@ pub const App = struct {
             .screen_manager = &self.screen_manager,
             .skip_world_update = self.skip_world_update,
             .render_settings = self.render_settings_adapter.interface(),
+            .benchmark_runner = self.benchmark_runner,
         };
     }
 
@@ -174,7 +209,9 @@ pub const App = struct {
 
     pub fn runSingleFrame(self: *App) !void {
         self.time.update();
-        self.audio_manager.update();
+        if (!build_options.benchmark) {
+            self.audio_manager.update();
+        }
 
         self.input.beginFrame();
         self.input.pollEvents();
@@ -182,13 +219,15 @@ pub const App = struct {
         const window_width = self.input.interface().getWindowWidth();
         const window_height = self.input.interface().getWindowHeight();
         const swapchain_extent = self.render_system.getRHI().renderContext().getNativeSwapchainExtent();
-        if (self.resize_debounce_frames > 0) {
-            self.resize_debounce_frames -= 1;
-        } else if (window_width > 0 and window_height > 0 and (window_width != swapchain_extent[0] or window_height != swapchain_extent[1])) {
-            self.render_system.getRHI().renderContext().requestSwapchainRecreate();
-            self.resize_debounce_frames = 2;
-        } else if (window_width == swapchain_extent[0] and window_height == swapchain_extent[1]) {
-            self.resize_debounce_frames = 0;
+        if (!build_options.skip_present) {
+            if (self.resize_debounce_frames > 0) {
+                self.resize_debounce_frames -= 1;
+            } else if (window_width > 0 and window_height > 0 and (window_width != swapchain_extent[0] or window_height != swapchain_extent[1])) {
+                self.render_system.getRHI().renderContext().requestSwapchainRecreate();
+                self.resize_debounce_frames = 2;
+            } else if (window_width == swapchain_extent[0] and window_height == swapchain_extent[1]) {
+                self.resize_debounce_frames = 0;
+            }
         }
 
         self.ui_manager.handleTimingToggle(self.input.interface(), self.input_mapper.interface(), &self.time, self.render_system.getRHI());
@@ -244,6 +283,20 @@ pub const App = struct {
 
         self.render_system.endFrame();
 
+        if (build_options.benchmark) {
+            if (self.benchmark_runner) |runner| {
+                const gpu_timing = self.render_system.getRHI().timing().getTimingResults();
+                const draw_calls = self.render_system.getRHI().getDrawCallCount();
+                try runner.recordFrame(self.time.delta_time, self.time.fps, gpu_timing, world_stats, draw_calls);
+
+                if (runner.isComplete()) {
+                    try runner.writeResults();
+                    log.log.info("BENCHMARK COMPLETE: {} frames written to '{s}'", .{ runner.samples.items.len, runner.output_path });
+                    self.input.should_quit = true;
+                }
+            }
+        }
+
         if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
             var target_frames: u32 = 120;
@@ -274,3 +327,15 @@ pub const App = struct {
         }
     }
 };
+
+fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
+    for (json_presets.graphics_presets.items, 0..) |preset, i| {
+        if (std.ascii.eqlIgnoreCase(preset.name, preset_name) or std.ascii.eqlIgnoreCase(@tagName(preset.render_distance_preset), preset_name)) {
+            json_presets.apply(settings, i);
+            log.log.info("BENCHMARK: Applied graphics preset '{s}'", .{preset.name});
+            return;
+        }
+    }
+
+    log.log.warn("BENCHMARK: Unknown preset '{s}', keeping loaded settings", .{preset_name});
+}

@@ -621,6 +621,11 @@ fn getValidationErrorCount(ctx_ptr: *anyopaque) u32 {
     return state_control.getValidationErrorCount(ctx);
 }
 
+fn getDrawCallCount(ctx_ptr: *anyopaque) u32 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return ctx.runtime.draw_call_count;
+}
+
 fn drawIndexed(ctx_ptr: *anyopaque, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.BufferHandle, count: u32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
@@ -949,6 +954,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getMaxMSAASamples = getMaxMSAASamples,
         .getFaultCount = getFaultCount,
         .getValidationErrorCount = getValidationErrorCount,
+        .getDrawCallCount = getDrawCallCount,
         .waitIdle = waitIdle,
     },
     .timing = .{

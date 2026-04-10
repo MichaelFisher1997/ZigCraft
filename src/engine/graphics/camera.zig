@@ -139,6 +139,13 @@ pub const Camera = struct {
         self.up = self.right.cross(self.forward).normalize();
     }
 
+    /// Set camera orientation directly and refresh cached axes.
+    pub fn setYawPitch(self: *Camera, yaw: f32, pitch: f32) void {
+        self.yaw = yaw;
+        self.pitch = pitch;
+        self.updateVectors();
+    }
+
     /// Get view matrix
     pub fn getViewMatrix(self: *const Camera) Mat4 {
         const target = self.position.add(self.forward);

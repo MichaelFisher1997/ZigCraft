@@ -90,10 +90,8 @@ pub const FrameManager = struct {
 
         const device = self.vulkan_device.vk_device;
 
-        // Wait for previous frame
-        if (!self.dry_run) {
-            _ = c.vkWaitForFences(device, 1, &self.in_flight_fences[self.current_frame], c.VK_TRUE, std.math.maxInt(u64));
-        }
+        // Wait for previous frame before reusing the command buffer.
+        _ = c.vkWaitForFences(device, 1, &self.in_flight_fences[self.current_frame], c.VK_TRUE, std.math.maxInt(u64));
 
         // Acquire image
         if (self.dry_run) {
@@ -116,10 +114,8 @@ pub const FrameManager = struct {
             }
         }
 
-        // Reset fence
-        if (!self.dry_run) {
-            _ = c.vkResetFences(device, 1, &self.in_flight_fences[self.current_frame]);
-        }
+        // Reset fence before submitting the next frame.
+        _ = c.vkResetFences(device, 1, &self.in_flight_fences[self.current_frame]);
 
         // Begin command buffer
         const cb = self.command_buffers[self.current_frame];
@@ -191,14 +187,14 @@ pub const FrameManager = struct {
             submit_info.pWaitDstStageMask = &wait_stages[0];
         }
 
-        if (!self.dry_run) {
-            if (!swapchain.skip_present) {
-                submit_info.signalSemaphoreCount = 1;
-                submit_info.pSignalSemaphores = &self.render_finished_semaphores[self.current_image_index];
-            }
+        if (!swapchain.skip_present) {
+            submit_info.signalSemaphoreCount = 1;
+            submit_info.pSignalSemaphores = &self.render_finished_semaphores[self.current_image_index];
+        }
 
-            try self.vulkan_device.submitGuarded(submit_info, self.in_flight_fences[self.current_frame]);
+        try self.vulkan_device.submitGuarded(submit_info, self.in_flight_fences[self.current_frame]);
 
+        if (!swapchain.skip_present) {
             swapchain.present(self.render_finished_semaphores[self.current_image_index], self.current_image_index) catch |err| {
                 if (err == error.OutOfDate) {
                     swapchain.framebuffer_resized = true;

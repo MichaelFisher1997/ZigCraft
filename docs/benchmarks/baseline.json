@@ -1,0 +1,81 @@
+{
+  "generated": false,
+  "presets": {
+    "low": {
+      "preset": "low",
+      "render_distance": 0,
+      "frames": 0,
+      "duration_s": 0,
+      "fps": {
+        "min": 0,
+        "avg": 0,
+        "max": 0,
+        "p1": 0,
+        "p5": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "cpu_ms_avg": 0,
+      "gpu_ms": {
+        "shadow_avg": 0,
+        "opaque_avg": 0,
+        "total_avg": 0
+      },
+      "draw_calls_avg": 0,
+      "vertices_avg": 0,
+      "chunks_rendered_avg": 0
+    },
+    "medium": {
+      "preset": "medium",
+      "render_distance": 0,
+      "frames": 0,
+      "duration_s": 0,
+      "fps": {
+        "min": 0,
+        "avg": 0,
+        "max": 0,
+        "p1": 0,
+        "p5": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "cpu_ms_avg": 0,
+      "gpu_ms": {
+        "shadow_avg": 0,
+        "opaque_avg": 0,
+        "total_avg": 0
+      },
+      "draw_calls_avg": 0,
+      "vertices_avg": 0,
+      "chunks_rendered_avg": 0
+    },
+    "high": {
+      "preset": "high",
+      "render_distance": 0,
+      "frames": 0,
+      "duration_s": 0,
+      "fps": {
+        "min": 0,
+        "avg": 0,
+        "max": 0,
+        "p1": 0,
+        "p5": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0
+      },
+      "cpu_ms_avg": 0,
+      "gpu_ms": {
+        "shadow_avg": 0,
+        "opaque_avg": 0,
+        "total_avg": 0
+      },
+      "draw_calls_avg": 0,
+      "vertices_avg": 0,
+      "chunks_rendered_avg": 0
+    }
+  },
+  "note": "Populate this file with real benchmark baselines before enabling regression gating."
+}
