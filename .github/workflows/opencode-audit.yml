@@ -90,7 +90,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
