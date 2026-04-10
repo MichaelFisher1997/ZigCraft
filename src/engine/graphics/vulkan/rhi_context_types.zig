@@ -22,6 +22,7 @@ const TAASystem = @import("taa_system.zig").TAASystem;
 const DepthPyramidSystem = @import("depth_pyramid.zig").DepthPyramidSystem;
 const WaterSystem = @import("water_system.zig").WaterSystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
+const DynamicResolutionState = @import("dynamic_resolution.zig").DynamicResolutionState;
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 
@@ -221,4 +222,5 @@ pub const VulkanContext = struct {
     water_system: WaterSystem = .{},
 
     timing: TimingState = .{},
+    dynamic_resolution: DynamicResolutionState = .{},
 };

@@ -93,6 +93,10 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (frame_started) {
         processTimingResults(ctx);
 
+        if (ctx.dynamic_resolution.enabled) {
+            ctx.dynamic_resolution.update(ctx.timing.timing_results.total_gpu_ms);
+        }
+
         const current_frame = ctx.frames.current_frame;
         const command_buffer = ctx.frames.command_buffers[current_frame];
         if (ctx.timing.query_pool != null) {
@@ -178,7 +182,10 @@ fn computeBloom(ctx_ptr: *anyopaque) void {
     pass_orchestration.ensureNoRenderPassActiveInternal(ctx);
 
     var bloom_source_image = ctx.hdr.hdr_image;
-    if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
+    // Bloom samples the raw blitted image, while post-process consumes its image view.
+    if (ctx.dynamic_resolution.isActive() and ctx.taa.ran_this_frame and ctx.dynamic_resolution.upscale_image != null) {
+        bloom_source_image = ctx.dynamic_resolution.upscale_image;
+    } else if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
         if (ctx.resources.textures.get(ctx.taa.output_texture)) |tex| {
             if (tex.image) |img| {
                 bloom_source_image = img;
@@ -205,6 +212,8 @@ fn computeTAA(ctx_ptr: *anyopaque) void {
     pass_orchestration.ensureNoRenderPassActiveInternal(ctx);
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+    const render_extent = ctx.dynamic_resolution.getRenderExtent();
+
     ctx.taa.compute(
         ctx.vulkan_device.vk_device,
         command_buffer,
@@ -212,9 +221,70 @@ fn computeTAA(ctx_ptr: *anyopaque) void {
         &ctx.resources,
         ctx.hdr.hdr_view,
         ctx.velocity.velocity_view,
-        ctx.swapchain.getExtent(),
+        render_extent,
         &ctx.runtime.draw_call_count,
     );
+
+    if (ctx.dynamic_resolution.isActive() and ctx.taa.ran_this_frame and ctx.dynamic_resolution.upscale_image != null) {
+        upscaleDynamicResolution(ctx, command_buffer, render_extent);
+    }
+}
+
+fn upscaleDynamicResolution(ctx: *VulkanContext, command_buffer: c.VkCommandBuffer, render_extent: c.VkExtent2D) void {
+    const taa_output_tex = ctx.resources.textures.get(ctx.taa.output_texture) orelse return;
+    const taa_output_image = taa_output_tex.image orelse return;
+
+    var src_barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
+    src_barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    src_barrier.oldLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    src_barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    src_barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    src_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    src_barrier.image = taa_output_image;
+    src_barrier.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+    src_barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+    src_barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
+
+    var dst_barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
+    dst_barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    dst_barrier.oldLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    dst_barrier.newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    dst_barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    dst_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    dst_barrier.image = ctx.dynamic_resolution.upscale_image;
+    dst_barrier.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+    dst_barrier.srcAccessMask = 0;
+    dst_barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    const barriers = [_]c.VkImageMemoryBarrier{ src_barrier, dst_barrier };
+    c.vkCmdPipelineBarrier(command_buffer, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, barriers.len, &barriers[0]);
+
+    const native_extent = ctx.swapchain.getExtent();
+
+    var blit_info = std.mem.zeroes(c.VkImageBlit);
+    blit_info.srcSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 };
+    blit_info.srcOffsets[0] = .{ .x = 0, .y = 0, .z = 0 };
+    blit_info.srcOffsets[1] = .{ .x = @intCast(render_extent.width), .y = @intCast(render_extent.height), .z = 1 };
+    blit_info.dstSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 };
+    blit_info.dstOffsets[0] = .{ .x = 0, .y = 0, .z = 0 };
+    blit_info.dstOffsets[1] = .{ .x = @intCast(native_extent.width), .y = @intCast(native_extent.height), .z = 1 };
+
+    c.vkCmdBlitImage(command_buffer, taa_output_image, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ctx.dynamic_resolution.upscale_image, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit_info, c.VK_FILTER_LINEAR);
+
+    var restore_src = src_barrier;
+    restore_src.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    restore_src.newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    restore_src.srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
+    restore_src.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+
+    var restore_dst = dst_barrier;
+    restore_dst.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    restore_dst.newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    restore_dst.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+    restore_dst.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+
+    const restore_barriers = [_]c.VkImageMemoryBarrier{ restore_src, restore_dst };
+    c.vkCmdPipelineBarrier(command_buffer, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, restore_barriers.len, &restore_barriers[0]);
 }
 
 fn setFXAA(ctx_ptr: *anyopaque, enabled: bool) void {
@@ -288,6 +358,28 @@ fn setTAABlendFactor(ctx_ptr: *anyopaque, value: f32) void {
 fn setTAAVelocityRejection(ctx_ptr: *anyopaque, value: f32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.taa.velocity_rejection = std.math.clamp(value, 0.0, 0.25);
+}
+
+fn setDynamicResolution(ctx_ptr: *anyopaque, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.dynamic_resolution.enabled = enabled;
+    ctx.dynamic_resolution.min_scale = std.math.clamp(min_scale, 0.25, 1.0);
+    ctx.dynamic_resolution.max_scale = std.math.clamp(max_scale, 0.25, 1.0);
+    if (ctx.dynamic_resolution.min_scale > ctx.dynamic_resolution.max_scale) {
+        ctx.dynamic_resolution.max_scale = ctx.dynamic_resolution.min_scale;
+    }
+    ctx.dynamic_resolution.target_fps = if (target_fps == 0) 60 else target_fps;
+    if (!enabled) {
+        ctx.dynamic_resolution.current_scale = 1.0;
+        ctx.dynamic_resolution.render_extent = ctx.swapchain.getExtent();
+    } else {
+        ctx.dynamic_resolution.update(ctx.timing.timing_results.total_gpu_ms);
+    }
+}
+
+fn getResolutionScale(ctx_ptr: *anyopaque) f32 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return ctx.dynamic_resolution.current_scale;
 }
 
 fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
@@ -743,7 +835,7 @@ fn computeSSAO(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         ctx.vulkan_device.vk_device,
         ctx.frames.command_buffers[ctx.frames.current_frame],
         ctx.frames.current_frame,
-        ctx.swapchain.getExtent(),
+        ctx.dynamic_resolution.getRenderExtent(),
         proj,
         inv_proj,
     );
@@ -886,6 +978,8 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     .setColorGradingIntensity = setColorGradingIntensity,
     .setTAABlendFactor = setTAABlendFactor,
     .setTAAVelocityRejection = setTAAVelocityRejection,
+    .setDynamicResolution = setDynamicResolution,
+    .getResolutionScale = getResolutionScale,
     .captureFrame = captureFrame,
 };
 

@@ -31,6 +31,25 @@ pub fn destroyHDRResources(ctx: anytype) void {
     }
 }
 
+pub fn destroyUpscaleResources(ctx: anytype) void {
+    const vk = ctx.vulkan_device.vk_device;
+    if (vk == null) return;
+    const dr = &ctx.dynamic_resolution;
+    if (dr.upscale_view != null) {
+        c.vkDestroyImageView(vk, dr.upscale_view, null);
+        dr.upscale_view = null;
+    }
+    if (dr.upscale_image != null) {
+        c.vkDestroyImage(vk, dr.upscale_image, null);
+        dr.upscale_image = null;
+    }
+    if (dr.upscale_memory != null) {
+        c.vkFreeMemory(vk, dr.upscale_memory, null);
+        dr.upscale_memory = null;
+    }
+    dr.upscale_extent = .{ .width = 0, .height = 0 };
+}
+
 pub fn destroyPostProcessResources(ctx: anytype) void {
     const vk = ctx.vulkan_device.vk_device;
 

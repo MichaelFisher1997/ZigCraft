@@ -279,6 +279,10 @@ pub const WorldScreen = struct {
 
             var frame_cascades: ?@import("../../engine/graphics/csm.zig").ShadowCascades = null;
 
+            const resolution_scale = rhi.getResolutionScale();
+            const render_w = screen_w * resolution_scale;
+            const render_h = screen_h * resolution_scale;
+
             const render_ctx = render_graph_pkg.SceneContext{
                 .render_ctx = rhi.renderContext(),
                 .shadow_ctx = rhi.shadowSystem(),
@@ -292,8 +296,8 @@ pub const WorldScreen = struct {
                 .material_system = render_system.getMaterialSystem(),
                 .aspect = aspect,
                 .taa_enabled = taa_enabled,
-                .viewport_width = screen_w,
-                .viewport_height = screen_h,
+                .viewport_width = render_w,
+                .viewport_height = render_h,
                 .sky_params = sky_params,
                 .cloud_params = cloud_params,
                 .main_shader = render_system.getShader(),
@@ -306,6 +310,7 @@ pub const WorldScreen = struct {
                 .disable_clouds = render_system.getDisableClouds(),
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled,
+                .resolution_scale = resolution_scale,
                 .overlay_renderer = renderOverlay,
                 .overlay_ctx = self,
                 .cached_cascades = &frame_cascades,

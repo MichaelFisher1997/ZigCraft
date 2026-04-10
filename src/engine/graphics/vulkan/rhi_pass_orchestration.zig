@@ -39,12 +39,14 @@ pub fn beginGPassInternal(ctx: anytype) void {
         return;
     }
 
+    const g_extent = ctx.dynamic_resolution.getRenderExtent();
+
     var render_pass_info = std.mem.zeroes(c.VkRenderPassBeginInfo);
     render_pass_info.sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     render_pass_info.renderPass = ctx.render_pass_manager.g_render_pass;
     render_pass_info.framebuffer = ctx.render_pass_manager.g_framebuffer;
     render_pass_info.renderArea.offset = .{ .x = 0, .y = 0 };
-    render_pass_info.renderArea.extent = ctx.swapchain.getExtent();
+    render_pass_info.renderArea.extent = g_extent;
 
     var clear_values: [3]c.VkClearValue = undefined;
     clear_values[0] = std.mem.zeroes(c.VkClearValue);
@@ -59,9 +61,9 @@ pub fn beginGPassInternal(ctx: anytype) void {
     c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
     c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.g_pipeline);
 
-    const viewport = c.VkViewport{ .x = 0, .y = 0, .width = @floatFromInt(ctx.swapchain.getExtent().width), .height = @floatFromInt(ctx.swapchain.getExtent().height), .minDepth = 0, .maxDepth = 1 };
+    const viewport = c.VkViewport{ .x = 0, .y = 0, .width = @floatFromInt(g_extent.width), .height = @floatFromInt(g_extent.height), .minDepth = 0, .maxDepth = 1 };
     c.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
-    const scissor = c.VkRect2D{ .offset = .{ .x = 0, .y = 0 }, .extent = ctx.swapchain.getExtent() };
+    const scissor = c.VkRect2D{ .offset = .{ .x = 0, .y = 0 }, .extent = g_extent };
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
     const ds = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
@@ -263,7 +265,7 @@ pub fn beginMainPassInternal(ctx: anytype) void {
         render_pass_info.renderPass = ctx.render_pass_manager.hdr_render_pass;
         render_pass_info.framebuffer = ctx.render_pass_manager.main_framebuffer;
         render_pass_info.renderArea.offset = .{ .x = 0, .y = 0 };
-        render_pass_info.renderArea.extent = ctx.swapchain.getExtent();
+        render_pass_info.renderArea.extent = ctx.dynamic_resolution.getRenderExtent();
 
         var clear_values: [2]c.VkClearValue = undefined;
         clear_values[0] = std.mem.zeroes(c.VkClearValue);
@@ -278,18 +280,20 @@ pub fn beginMainPassInternal(ctx: anytype) void {
         ctx.draw.lod_mode = false;
     }
 
+    const main_extent = ctx.dynamic_resolution.getRenderExtent();
+
     var viewport = std.mem.zeroes(c.VkViewport);
     viewport.x = 0.0;
     viewport.y = 0.0;
-    viewport.width = @floatFromInt(ctx.swapchain.getExtent().width);
-    viewport.height = @floatFromInt(ctx.swapchain.getExtent().height);
+    viewport.width = @floatFromInt(main_extent.width);
+    viewport.height = @floatFromInt(main_extent.height);
     viewport.minDepth = 0.0;
     viewport.maxDepth = 1.0;
     c.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
 
     var scissor = std.mem.zeroes(c.VkRect2D);
     scissor.offset = .{ .x = 0, .y = 0 };
-    scissor.extent = ctx.swapchain.getExtent();
+    scissor.extent = main_extent;
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 }
 
@@ -353,7 +357,9 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
 
         var source_view = ctx.hdr.hdr_view;
         var source_sampler = ctx.post_process.sampler;
-        if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
+        if (ctx.dynamic_resolution.isActive() and ctx.taa.ran_this_frame and ctx.dynamic_resolution.upscale_view != null) {
+            source_view = ctx.dynamic_resolution.upscale_view;
+        } else if (ctx.taa.ran_this_frame and ctx.taa.output_texture != 0) {
             if (ctx.resources.textures.get(ctx.taa.output_texture)) |tex| {
                 source_view = tex.view;
                 source_sampler = tex.sampler;

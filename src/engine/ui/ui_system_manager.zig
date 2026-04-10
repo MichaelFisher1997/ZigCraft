@@ -60,6 +60,7 @@ pub const UISystemManager = struct {
                     .gpu = gpu_timing,
                     .cpu_frame_ms = cpu_frame_ms,
                     .fps = fps,
+                    .resolution_scale = rhi_ptr.getResolutionScale(),
                     .world = world_stats,
                     .gpu_stats = gpu_stats,
                 };

@@ -12,6 +12,12 @@ const MockContext = struct {
     draw_depth_texture_called: bool = false,
     sky_pipeline_requested: bool = false,
     cloud_pipeline_requested: bool = false,
+    dynamic_resolution_called: bool = false,
+    dynamic_resolution_enabled: bool = false,
+    dynamic_resolution_min_scale: f32 = 0.0,
+    dynamic_resolution_max_scale: f32 = 0.0,
+    dynamic_resolution_target_fps: u32 = 0,
+    resolution_scale: f32 = 1.0,
 
     fn bindShader(ptr: *anyopaque, handle: rhi.ShaderHandle) void {
         const self: *MockContext = @ptrCast(@alignCast(ptr));
@@ -158,6 +164,20 @@ const MockContext = struct {
     fn getTimingResults(ptr: *anyopaque) rhi.GpuTimingResults {
         _ = ptr;
         return std.mem.zeroes(rhi.GpuTimingResults);
+    }
+
+    fn setDynamicResolution(ptr: *anyopaque, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
+        const self: *MockContext = @ptrCast(@alignCast(ptr));
+        self.dynamic_resolution_called = true;
+        self.dynamic_resolution_enabled = enabled;
+        self.dynamic_resolution_min_scale = min_scale;
+        self.dynamic_resolution_max_scale = max_scale;
+        self.dynamic_resolution_target_fps = target_fps;
+    }
+
+    fn getResolutionScale(ptr: *anyopaque) f32 {
+        const self: *MockContext = @ptrCast(@alignCast(ptr));
+        return self.resolution_scale;
     }
 
     fn getShadowMapHandle(ptr: *anyopaque, cascade_index: u32) rhi.TextureHandle {
@@ -383,6 +403,8 @@ const MockContext = struct {
         .setColorGradingIntensity = undefined,
         .setTAABlendFactor = undefined,
         .setTAAVelocityRejection = undefined,
+        .setDynamicResolution = MockContext.setDynamicResolution,
+        .getResolutionScale = MockContext.getResolutionScale,
         .captureFrame = undefined,
     };
 
@@ -541,4 +563,18 @@ test "ResourceManager.registerExternalTexture validation" {
 
     // Test null sampler validation
     try testing.expectError(error.InvalidImageView, manager.registerExternalTexture(128, 128, .rgba, dummy_view, null));
+}
+
+test "RHI dynamic resolution passthrough" {
+    var mock = MockContext{};
+    mock.resolution_scale = 0.75;
+    const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };
+
+    rhi_instance.setDynamicResolution(true, 0.5, 0.9, 120);
+    try testing.expect(mock.dynamic_resolution_called);
+    try testing.expect(mock.dynamic_resolution_enabled);
+    try testing.expectEqual(@as(f32, 0.5), mock.dynamic_resolution_min_scale);
+    try testing.expectEqual(@as(f32, 0.9), mock.dynamic_resolution_max_scale);
+    try testing.expectEqual(@as(u32, 120), mock.dynamic_resolution_target_fps);
+    try testing.expectEqual(@as(f32, 0.75), rhi_instance.getResolutionScale());
 }

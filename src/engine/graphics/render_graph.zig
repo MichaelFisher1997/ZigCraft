@@ -80,6 +80,7 @@ pub const SceneContext = struct {
     disable_clouds: bool,
     fxaa_enabled: bool = true,
     bloom_enabled: bool = true,
+    resolution_scale: f32 = 1.0,
     overlay_renderer: ?*const fn (ctx: SceneContext) void = null,
     overlay_ctx: ?*anyopaque = null,
     lpv_texture_handle: rhi_pkg.TextureHandle = 0,

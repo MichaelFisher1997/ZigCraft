@@ -123,6 +123,12 @@ pub const Settings = struct {
     // Water Settings (Issue #390)
     water_quality: u8 = 2, // 0=Low, 1=Medium, 2=High
 
+    // Dynamic Resolution Settings (Issue #392)
+    dynamic_resolution_enabled: bool = false,
+    dynamic_resolution_min_scale: f32 = 0.5,
+    dynamic_resolution_max_scale: f32 = 1.0,
+    target_fps: u32 = 60,
+
     pub const SettingMetadata = struct {
         label: []const u8,
         description: []const u8 = "",
@@ -312,6 +318,29 @@ pub const Settings = struct {
             .kind = .{ .choice = .{
                 .labels = &[_][]const u8{ "LOW", "MEDIUM", "HIGH" },
                 .values = &[_]u32{ 0, 1, 2 },
+            } },
+        };
+        pub const dynamic_resolution_enabled = SettingMetadata{
+            .label = "DYNAMIC RES",
+            .description = "Adjusts render resolution to maintain target frame rate",
+            .kind = .toggle,
+        };
+        pub const dynamic_resolution_min_scale = SettingMetadata{
+            .label = "MIN RES SCALE",
+            .description = "Minimum resolution scale when under heavy load",
+            .kind = .{ .slider = .{ .min = 0.25, .max = 1.0, .step = 0.05 } },
+        };
+        pub const dynamic_resolution_max_scale = SettingMetadata{
+            .label = "MAX RES SCALE",
+            .description = "Maximum resolution scale when GPU has headroom",
+            .kind = .{ .slider = .{ .min = 0.5, .max = 1.0, .step = 0.05 } },
+        };
+        pub const target_fps = SettingMetadata{
+            .label = "TARGET FPS",
+            .description = "Frame rate budget for dynamic resolution",
+            .kind = .{ .choice = .{
+                .labels = &[_][]const u8{ "30 FPS", "60 FPS", "120 FPS", "144 FPS" },
+                .values = &[_]u32{ 30, 60, 120, 144 },
             } },
         };
     };

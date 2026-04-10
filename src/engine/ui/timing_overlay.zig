@@ -42,6 +42,12 @@ pub const TimingOverlay = struct {
             font.drawText(ui, cpu_str, x + 10, y, scale, Color.white);
             y += line_height + 3;
         }
+        if (data.resolution_scale < 0.999) {
+            var scale_buf: [32]u8 = undefined;
+            const scale_str = std.fmt.bufPrint(&scale_buf, "RES SCALE: {d:.0}%", .{data.resolution_scale * 100.0}) catch "";
+            font.drawText(ui, scale_str, x + 10, y, scale, Color.rgba(1.0, 0.7, 0.3, 1.0));
+            y += line_height + 3;
+        }
 
         drawSectionHeader(ui, "GPU PASSES (MS)", label_x, &y, scale, Color.gray);
         drawGpuLine(ui, "SHADOW 0:", data.gpu.shadow_pass_ms[0], label_x, value_x, &y, scale, Color.gray);
@@ -137,6 +143,7 @@ pub const PerformanceData = struct {
     gpu: rhi.GpuTimingResults,
     cpu_frame_ms: f32,
     fps: f32,
+    resolution_scale: f32 = 1.0,
     world: ?WorldStats,
     gpu_stats: RenderDeviceStats,
 };

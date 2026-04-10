@@ -31,7 +31,7 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
         c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT;
 
     if (mip_levels > 1) usage_flags |= c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    if (config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (format == .rgba32f) usage_flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
 
     var staging_offset: u64 = 0;
@@ -247,7 +247,7 @@ pub fn createTexture3D(self: anytype, width: u32, height: u32, depth: u32, forma
 
     var usage_flags: c.VkImageUsageFlags = c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT;
     if (format == .rgba32f) usage_flags |= c.VK_IMAGE_USAGE_STORAGE_BIT;
-    if (texture_config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (texture_config.is_render_target) usage_flags |= c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     var staging_offset: u64 = 0;
     var staging_slice_3d: ?transfer_queue.StagingSlice = null;
