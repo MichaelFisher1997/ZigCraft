@@ -67,27 +67,18 @@ jobs:
         with:
           token: ${{ github.token }}
 
-      - name: Validate token permissions
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Ensure automated-audit label exists
         run: |
-          echo "Checking token permissions for issue creation..."
-          if ! gh api repos/{owner}/{repo} --jq '.permissions.issues' 2>/dev/null | grep -q 'true'; then
-            echo "::error::Token lacks 'issues' write permission. Ensure the token has repo scope (classic PAT) or Issues: Read & Write (fine-grained PAT)."
-            exit 1
-          fi
-          echo "Token has required permissions."
           if ! gh label list --json name --jq '.[].name' | grep -q '^automated-audit$'; then
-            echo "Creating automated-audit label..."
             gh label create "automated-audit" \
               --description "Issues found by automated opencode audit scans" \
-              --color "1D76DB"
-          else
-            echo "Label 'automated-audit' already exists."
+              --color "1D76DB" || true
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
 
       - name: Ensure opencode cache dir exists
         run: |
