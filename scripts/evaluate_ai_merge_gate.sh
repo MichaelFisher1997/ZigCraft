@@ -5,8 +5,8 @@ repo="${1:?repo required}"
 pr_number="${2:?pr number required}"
 head_sha="${3:?head sha required}"
 
-review_body=$(gh api "/repos/${repo}/pulls/${pr_number}/reviews" \
-  --jq '[.[] | select(.user.login == "opencode-agent[bot]")] | sort_by(.submitted_at) | last | .body // empty')
+review_body=$(gh api "/repos/${repo}/issues/${pr_number}/comments" \
+  --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("```json")))] | sort_by(.created_at) | last | .body // empty')
 
 if [ -z "$review_body" ]; then
   printf '%s\n' '{"state":"failure","description":"AI merge gate missing opencode review"}'
@@ -22,7 +22,7 @@ import sys
 body = os.environ["REVIEW_BODY"]
 head_sha = os.environ["HEAD_SHA"]
 
-match = re.search(r"## Machine Readable Verdict\s*```json\s*(\{.*?\})\s*```", body, re.S)
+match = re.search(r"```json\s*(\{.*?\})\s*```", body, re.S)
 if not match:
     print(json.dumps({"state": "failure", "description": "AI merge gate missing machine-readable verdict block"}))
     sys.exit(0)
@@ -50,6 +50,9 @@ if not isinstance(score, int):
     errors.append("overall_confidence_score is missing or not an integer")
 elif score < 80:
     errors.append("overall_confidence_score must be at least 80")
+
+if verdict.get("recommendation") != "MERGE":
+    errors.append("recommendation must be MERGE")
 
 if errors:
     print(json.dumps({"state": "failure", "description": f"AI merge gate failed with {len(errors)} issue(s)"}))
