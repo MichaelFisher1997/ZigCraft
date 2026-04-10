@@ -242,7 +242,7 @@ fn upscaleDynamicResolution(ctx: *VulkanContext, command_buffer: c.VkCommandBuff
     src_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
     src_barrier.image = taa_output_image;
     src_barrier.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
-    src_barrier.srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    src_barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
     src_barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
 
     var dst_barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
@@ -253,7 +253,7 @@ fn upscaleDynamicResolution(ctx: *VulkanContext, command_buffer: c.VkCommandBuff
     dst_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
     dst_barrier.image = ctx.dynamic_resolution.upscale_image;
     dst_barrier.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
-    dst_barrier.srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
+    dst_barrier.srcAccessMask = 0;
     dst_barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
 
     const barriers = [_]c.VkImageMemoryBarrier{ src_barrier, dst_barrier };
