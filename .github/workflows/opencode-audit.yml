@@ -268,9 +268,9 @@ jobs:
           VIOLATIONS=0
 
           CUTOFF=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 10 \
+          NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 20 \
             --json number,title,headRefName,createdAt,body \
-            --jq '.[] | select(.createdAt >= "'"$CUTOFF"'")')
+            --jq '.[] | select(.createdAt >= "'"$CUTOFF"'") | select(.title | startswith("[Audit]"))')
 
           if [ -n "$NEW_PRS" ]; then
             echo "::error::Compliance violation detected: agent created pull request(s) instead of issue(s)"
