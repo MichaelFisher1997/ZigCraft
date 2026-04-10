@@ -237,6 +237,28 @@ jobs:
             
             One-sentence explanation of the verdict.
 
+            ## Machine Readable Verdict
+
+            Append this exact JSON block at the end of your review. Do not wrap it in another code block and do not add trailing commentary after it.
+
+            ```json
+            {
+              "reviewed_sha": "${{ steps.resolve-pr.outputs.pr_head_sha }}",
+              "critical_issues": 0,
+              "high_priority_issues": 0,
+              "medium_priority_issues": 0,
+              "overall_confidence_score": 0,
+              "recommendation": "MERGE"
+            }
+            ```
+
+            Rules for the JSON block:
+            - `reviewed_sha` must match the PR head SHA above.
+            - Counts must be integers.
+            - `overall_confidence_score` must be an integer from 0 to 100.
+            - If any critical, high, or medium issues remain, the counts must reflect them.
+            - Use `MERGE` only when there are no unresolved critical, high, or medium issues and the score is at least 80.
+
             ---
 
             **Review Guidelines:**
@@ -247,6 +269,29 @@ jobs:
             5. Confidence scores should reflect how certain you are - use "Low" when unsure
             6. If you have nothing meaningful to add to a section, write "None identified" instead of omitting it
             7. Always provide actionable fixes, never just complaints
+
+      - name: Evaluate AI merge gate
+        id: ai_merge_gate
+        run: |
+          PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
+          HEAD_SHA="${{ steps.resolve-pr.outputs.pr_head_sha }}"
+
+          PARSE_JSON=$(bash scripts/evaluate_ai_merge_gate.sh "${{ github.repository }}" "$PR_NUMBER" "$HEAD_SHA")
+
+          STATE=$(printf '%s' "$PARSE_JSON" | jq -r '.state')
+          DESCRIPTION=$(printf '%s' "$PARSE_JSON" | jq -r '.description')
+
+          gh api repos/${{ github.repository }}/statuses/${HEAD_SHA} \
+            -f state="$STATE" \
+            -f context='ai-merge-gate' \
+            -f description="$DESCRIPTION" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/pull/${PR_NUMBER}"
+
+          if [ "$STATE" = "success" ]; then
+            gh pr merge "$PR_NUMBER" --auto --squash || true
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Mark AI review complete
         if: always()

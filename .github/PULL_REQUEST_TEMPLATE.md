@@ -16,7 +16,7 @@ Closes #(issue number)
 - [ ] Ran `zig fmt src/` (formatted code)
 
 ## Reviewer Checklist
-- [ ] AI review is current and matches the PR head SHA
-- [ ] No unresolved critical or major AI review issues remain
+- [ ] AI merge gate is green
+- [ ] If the AI gate was wrong, I intend to bypass it as org admin
 - [ ] Required checks are green
 - [ ] PR is acceptable to merge
