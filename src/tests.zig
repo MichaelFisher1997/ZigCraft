@@ -95,6 +95,12 @@ test {
     _ = @import("world/persistence/level_data.zig");
     _ = @import("world/persistence/save_manager.zig");
     _ = @import("world/meshing/quadric_simplifier.zig");
+    _ = @import("world/chunk_storage_tests.zig");
+    _ = @import("world/block_tests.zig");
+    _ = @import("world/block_registry_tests.zig");
+    _ = @import("world/chunk_tests.zig");
+    _ = @import("world/packed_light_tests.zig");
+    _ = @import("world/meshing/boundary_tests.zig");
 }
 
 test "Vec3 addition" {
