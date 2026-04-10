@@ -5,9 +5,15 @@ on:
     branches: [ dev ]
   pull_request:
     branches: [ dev ]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or ref to build/test'
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
   cancel-in-progress: true
 
 env:
@@ -22,12 +28,14 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-latest
     outputs:
-      code_changes: ${{ steps.filter.outputs.code_changes }}
+      code_changes: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.code_changes }}
     steps:
     - uses: actions/checkout@v4
+      if: github.event_name != 'workflow_dispatch'
 
     - name: Detect build-relevant changes
       id: filter
+      if: github.event_name != 'workflow_dispatch'
       uses: dorny/paths-filter@v4
       with:
         filters: |
@@ -50,6 +58,8 @@ jobs:
     needs: changes
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
 
     - name: Skip build for workflow-only changes
       if: needs.changes.outputs.code_changes != 'true'
@@ -87,6 +97,8 @@ jobs:
     needs: [changes, build]
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
 
     - name: Skip unit tests for workflow-only changes
       if: needs.changes.outputs.code_changes != 'true'
@@ -112,6 +124,8 @@ jobs:
     needs: [changes, unit-test]
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
 
     - name: Skip integration tests for workflow-only changes
       if: needs.changes.outputs.code_changes != 'true'

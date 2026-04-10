@@ -230,11 +230,13 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         run: |
           sleep 5
-          PR_NUM=$(gh pr list --base dev --head "opencode/dispatch-" --label automated-test --state open --json number --jq '.[0].number')
+          BRANCH="${{ steps.select-module.outputs.branch }}"
+          PR_NUM=$(gh pr list --base dev --head "$BRANCH" --label automated-test --state open --json number --jq '.[0].number')
           if [ -n "$PR_NUM" ]; then
             echo "Triggering Build and opencode review for PR #$PR_NUM"
             SHA=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.sha')
-            gh workflow run build.yml --field ref="opencode/dispatch-" || echo "Build trigger attempted"
+            BRANCH=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.ref')
+            gh workflow run build.yml --field ref="$BRANCH" || echo "Build trigger attempted"
             gh workflow run opencode-pr.yml --field pr_number="$PR_NUM" --field head_sha="$SHA"
           else
             echo "No PR found to trigger workflows"
