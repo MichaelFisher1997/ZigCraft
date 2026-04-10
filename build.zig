@@ -17,6 +17,18 @@ pub fn build(b: *std.Build) void {
     const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PPM screenshot after N frames and exit (menu mode)") orelse "";
     options.addOption([]const u8, "screenshot_path", screenshot_path);
 
+    const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
+    options.addOption(bool, "benchmark", benchmark);
+
+    const benchmark_preset = b.option([]const u8, "benchmark-preset", "Graphics preset to benchmark (low, medium, high, ultra, extreme)") orelse "medium";
+    options.addOption([]const u8, "benchmark_preset", benchmark_preset);
+
+    const benchmark_duration = b.option(u32, "benchmark-duration", "Benchmark duration in seconds") orelse 60;
+    options.addOption(u32, "benchmark_duration", benchmark_duration);
+
+    const benchmark_output = b.option([]const u8, "benchmark-output", "Benchmark JSON output path") orelse "benchmark_results.json";
+    options.addOption([]const u8, "benchmark_output", benchmark_output);
+
     const zig_math = b.createModule(.{
         .root_source_file = b.path("libs/zig-math/math.zig"),
         .target = target,
@@ -68,6 +80,50 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const benchmark_options = b.addOptions();
+    benchmark_options.addOption(bool, "debug_shadows", enable_debug_shadows);
+    benchmark_options.addOption(bool, "smoke_test", false);
+    benchmark_options.addOption(bool, "skip_present", true);
+    benchmark_options.addOption([]const u8, "screenshot_path", "");
+    benchmark_options.addOption(bool, "benchmark", true);
+    benchmark_options.addOption([]const u8, "benchmark_preset", benchmark_preset);
+    benchmark_options.addOption(u32, "benchmark_duration", benchmark_duration);
+    benchmark_options.addOption([]const u8, "benchmark_output", benchmark_output);
+
+    const benchmark_root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    benchmark_root_module.addImport("zig-math", zig_math);
+    benchmark_root_module.addImport("zig-noise", zig_noise);
+    benchmark_root_module.addOptions("build_options", benchmark_options);
+    benchmark_root_module.addIncludePath(b.path("libs/stb"));
+
+    const benchmark_exe = b.addExecutable(.{
+        .name = "benchmark",
+        .root_module = benchmark_root_module,
+    });
+
+    benchmark_exe.linkLibC();
+    benchmark_exe.addCSourceFile(.{
+        .file = b.path("libs/stb/stb_image_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
+
+    benchmark_exe.linkSystemLibrary("sdl3");
+    benchmark_exe.linkSystemLibrary("vulkan");
+
+    b.installArtifact(benchmark_exe);
+
+    const benchmark_run_cmd = b.addRunArtifact(benchmark_exe);
+    benchmark_run_cmd.step.dependOn(b.getInstallStep());
+    benchmark_run_cmd.step.dependOn(&shader_cmd.step);
+    benchmark_run_cmd.setCwd(b.path("."));
+
+    const benchmark_step = b.step("benchmark", "Run benchmark harness");
+    benchmark_step.dependOn(&benchmark_run_cmd.step);
 
     const test_root_module = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),

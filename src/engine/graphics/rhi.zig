@@ -801,6 +801,7 @@ pub const IDeviceQuery = struct {
         getMaxMSAASamples: *const fn (ptr: *anyopaque) u8,
         getFaultCount: *const fn (ptr: *anyopaque) u32,
         getValidationErrorCount: *const fn (ptr: *anyopaque) u32,
+        getDrawCallCount: *const fn (ptr: *anyopaque) u32,
         waitIdle: *const fn (ptr: *anyopaque) void,
     };
 
@@ -815,6 +816,10 @@ pub const IDeviceQuery = struct {
     }
     pub fn getValidationErrorCount(self: IDeviceQuery) u32 {
         return self.vtable.getValidationErrorCount(self.ptr);
+    }
+
+    pub fn getDrawCallCount(self: IDeviceQuery) u32 {
+        return self.vtable.getDrawCallCount(self.ptr);
     }
 };
 
@@ -1071,6 +1076,10 @@ pub const RHI = struct {
     }
     pub fn getValidationErrorCount(self: RHI) u32 {
         return self.vtable.query.getValidationErrorCount(self.ptr);
+    }
+
+    pub fn getDrawCallCount(self: RHI) u32 {
+        return self.vtable.query.getDrawCallCount(self.ptr);
     }
 
     pub fn getShadowMapHandle(self: RHI, cascade: u32) TextureHandle {
