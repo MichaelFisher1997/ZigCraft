@@ -73,9 +73,11 @@ test {
     _ = @import("engine/graphics/vulkan/descriptor_bindings_tests.zig");
     _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
     _ = @import("engine/graphics/vulkan/descriptor_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/frame_manager_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
+    _ = @import("world/world_tests.zig");
     _ = @import("world/worldgen/schematics.zig");
     _ = @import("world/worldgen/tree_registry.zig");
     _ = @import("world/worldgen/caves_tests.zig");
@@ -95,6 +97,12 @@ test {
     _ = @import("world/persistence/level_data.zig");
     _ = @import("world/persistence/save_manager.zig");
     _ = @import("world/meshing/quadric_simplifier.zig");
+    _ = @import("world/chunk_storage_tests.zig");
+    _ = @import("world/block_tests.zig");
+    _ = @import("world/block_registry_tests.zig");
+    _ = @import("world/chunk_tests.zig");
+    _ = @import("world/packed_light_tests.zig");
+    _ = @import("world/meshing/boundary_tests.zig");
 }
 
 test "Vec3 addition" {
