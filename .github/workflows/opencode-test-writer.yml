@@ -77,6 +77,7 @@ jobs:
           BRANCH_NAME="test/$(echo "${SELECTED}" | tr '/' '-')"
           echo "module=${SELECTED}" >> "$GITHUB_OUTPUT"
           echo "branch=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
+          echo "base_branch=${{ github.event.repository.default_branch }}" >> "$GITHUB_OUTPUT"
 
           case "$SELECTED" in
             graphics/vulkan-device)
@@ -135,7 +136,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ steps.select-module.outputs.base_branch }}
           fetch-depth: 0
           token: ${{ secrets.OPENCODE_PAT }}
 
@@ -154,7 +155,7 @@ jobs:
         run: |
           MODULE="${{ steps.select-module.outputs.module }}"
           EXISTING=$(gh pr list \
-            --base ${{ github.event.repository.default_branch }} \
+            --base ${{ steps.select-module.outputs.base_branch }} \
             --label "automated-test" \
             --state open \
             --limit 20 \
@@ -226,20 +227,47 @@ jobs:
             5. Commit your changes: `git add` and `git commit` with message `test: add {area} tests for ${{ steps.select-module.outputs.module }}`
             6. STOP. Do not push or create a PR.
 
-      - name: Trigger downstream workflows
+      - name: Find and label created PR
         if: steps.check-existing.outputs.skip != 'true'
+        id: find-pr
         run: |
-          sleep 5
-          BRANCH="${{ steps.select-module.outputs.branch }}"
-          PR_NUM=$(gh pr list --base dev --head "$BRANCH" --label automated-test --state open --json number --jq '.[0].number')
+          BASE="${{ steps.select-module.outputs.base_branch }}"
+          MAX_RETRIES=8
+          PAT_USER=$(gh api user --jq '.login')
+          PR_NUM=""
+          for i in $(seq 1 "$MAX_RETRIES"); do
+            sleep $((i * 3))
+            echo "Attempt $i/$MAX_RETRIES: searching for PR by ${PAT_USER} targeting ${BASE}..."
+            PR_NUM=$(gh pr list \
+              --base "$BASE" \
+              --state open \
+              --limit 10 \
+              --json number,createdAt,author \
+              --jq "[.[] | select(.author.login == \"${PAT_USER}\")] | sort_by(.createdAt) | reverse | .[0].number")
+            if [ -n "$PR_NUM" ]; then
+              break
+            fi
+          done
           if [ -n "$PR_NUM" ]; then
-            echo "Triggering Build and opencode review for PR #$PR_NUM"
-            SHA=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.sha')
-            BRANCH=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.ref')
-            gh workflow run build.yml --field ref="$BRANCH" || echo "Build trigger attempted"
-            gh workflow run opencode-pr.yml --field pr_number="$PR_NUM" --field head_sha="$SHA"
+            echo "Found newly created PR #$PR_NUM (author: ${PAT_USER})"
+            if ! gh pr edit "$PR_NUM" --add-label "automated-test" 2>/dev/null; then
+              echo "::warning::Failed to add automated-test label to PR #$PR_NUM"
+            fi
+            echo "pr_number=${PR_NUM}" >> "$GITHUB_OUTPUT"
           else
-            echo "No PR found to trigger workflows"
+            echo "No PR found authored by ${PAT_USER} after $MAX_RETRIES attempts"
           fi
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+
+      - name: Trigger downstream workflows
+        if: steps.find-pr.outputs.pr_number != ''
+        run: |
+          PR_NUM="${{ steps.find-pr.outputs.pr_number }}"
+          echo "Triggering Build and opencode review for PR #$PR_NUM"
+          SHA=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.sha')
+          BRANCH=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.ref')
+          gh workflow run build.yml --field ref="$BRANCH" || echo "Build trigger attempted"
+          gh workflow run opencode-pr.yml --field pr_number="$PR_NUM" --field head_sha="$SHA"
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
