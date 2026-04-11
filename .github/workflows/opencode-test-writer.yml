@@ -230,9 +230,11 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         id: find-pr
         run: |
+          # Retry budget: 8 attempts, 3s/6s/9s/12s/15s/18s/21s/24s = ~108s max wait.
+          # Increase max attempts if GitHub API latency during incidents exceeds this window.
           PAT_USER=$(gh api user --jq '.login')
           PR_NUM=""
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8; do
             sleep $((i * 3))
             echo "Attempt $i: searching for PR by ${PAT_USER}..."
             PR_NUM=$(gh pr list \
@@ -250,7 +252,7 @@ jobs:
             gh pr edit "$PR_NUM" --add-label "automated-test"
             echo "pr_number=${PR_NUM}" >> "$GITHUB_OUTPUT"
           else
-            echo "No PR found authored by ${PAT_USER} after 5 attempts"
+            echo "No PR found authored by ${PAT_USER} after 8 attempts"
           fi
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
