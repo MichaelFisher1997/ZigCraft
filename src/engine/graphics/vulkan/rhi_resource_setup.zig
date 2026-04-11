@@ -362,6 +362,7 @@ pub fn createSSAOResources(ctx: anytype) !void {
         extent.height,
         ctx.gpass.g_normal_view,
         ctx.gpass.g_depth_view,
+        ctx.runtime.recovering,
     );
 
     ctx.draw.bound_ssao_handle = try ctx.resources.registerNativeTexture(

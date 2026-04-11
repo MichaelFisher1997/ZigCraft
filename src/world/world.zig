@@ -201,7 +201,7 @@ pub const World = struct {
         const world = try initGen(generator_index, allocator, render_distance, seed, rhi, atlas);
         errdefer world.deinit();
 
-        world.lod = try WorldLOD.init(allocator, rhi, lod_config, world.generator);
+        world.lod = try WorldLOD.init(allocator, rhi, lod_config, world.generator, atlas);
         world.lod_enabled = true;
         world.streamer.setLODManager(world.lod.?.manager);
         return world;

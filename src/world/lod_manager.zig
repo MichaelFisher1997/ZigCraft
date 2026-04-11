@@ -47,6 +47,7 @@ const RingBuffer = @import("../engine/core/ring_buffer.zig").RingBuffer;
 
 const Generator = @import("worldgen/generator_interface.zig").Generator;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
+const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
@@ -174,6 +175,8 @@ pub const LODManager = struct {
     // Terrain generator for LOD generation (mutable for cache recentering)
     generator: Generator,
 
+    atlas: *const TextureAtlas,
+
     // Paused state
     paused: bool,
 
@@ -196,7 +199,7 @@ pub const LODManager = struct {
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;
 
-    pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPUBridge, render_iface: LODRenderInterface, generator: Generator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPUBridge, render_iface: LODRenderInterface, generator: Generator, atlas: *const TextureAtlas) !*Self {
         const mgr = try allocator.create(Self);
         errdefer allocator.destroy(mgr);
 
@@ -255,13 +258,14 @@ pub const LODManager = struct {
             .mutex = .{},
             .gpu_bridge = gpu_bridge,
             .generator = generator,
+            .atlas = atlas,
             .paused = false,
             .memory_used_bytes = 0,
             .update_tick = 0,
             .deletion_queue = .empty,
             .deletion_timer = 0,
             .renderer = render_iface,
-            .cleanup_covered_regions = false,
+            .cleanup_covered_regions = true,
         };
 
         // Initialize worker pool for LOD generation and meshing (3 workers for LOD tasks)
@@ -834,7 +838,7 @@ pub const LODManager = struct {
                 const bounds = chunk.worldBounds();
                 const target_tris = self.config.getQEMTarget(chunk.lod_level);
                 const min_tris = self.config.getQEMMinInputTriangles();
-                try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target_tris, min_tris);
+                try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target_tris, min_tris, self.atlas);
             },
             .full => {
                 // LOD0 meshes handled by World, not LODManager
@@ -986,6 +990,7 @@ pub const LODManager = struct {
 // Tests
 test "LODManager initialization" {
     const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
 
     const MockState = struct {
         buffer_created: bool = false,
@@ -1061,7 +1066,20 @@ test "LODManager initialization" {
         .ptr = @ptrCast(&mock_state),
     };
 
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen);
+    const mock_atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+
+    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen, &mock_atlas);
     mgr.cleanup_covered_regions = false;
 
     // Verify initial state
@@ -1083,6 +1101,7 @@ test "LODManager initialization" {
 
 test "LODManager end-to-end covered cleanup" {
     const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
 
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
@@ -1149,7 +1168,20 @@ test "LODManager end-to-end covered cleanup" {
         .ptr = @ptrCast(&noop_ctx),
     };
 
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen);
+    const mock_atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+
+    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen, &mock_atlas);
     mgr.cleanup_covered_regions = false;
     defer mgr.deinit();
 

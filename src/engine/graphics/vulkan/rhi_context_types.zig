@@ -167,6 +167,7 @@ const DrawState = struct {
 
 const RuntimeState = struct {
     gpu_fault_detected: bool = false,
+    recovering: bool = false,
     memory_type_index: u32,
     framebuffer_resized: bool,
     draw_call_count: u32,

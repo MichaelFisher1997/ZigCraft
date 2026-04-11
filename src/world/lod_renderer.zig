@@ -129,7 +129,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.rhi.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
 
             const frustum = Frustum.fromViewProj(view_proj);
-            const lod_y_offset: f32 = -3.0;
+            const lod_y_offset: f32 = -0.5;
 
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
@@ -156,7 +156,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             self: *Self,
             meshes: *const MeshMap,
             regions: *const RegionMap,
-            _: ILODConfig,
+            config: ILODConfig,
             _: Mat4,
             camera_pos: Vec3,
             frustum: Frustum,
@@ -194,7 +194,7 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
-                    const mask_radius = 0.0;
+                    const mask_radius = config.calculateMaskRadius();
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,

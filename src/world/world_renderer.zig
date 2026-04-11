@@ -379,8 +379,8 @@ pub const WorldRenderer = struct {
         }
     }
 
-    fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, _: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
-        _ = view_proj;
+    fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        const frustum = Frustum.fromViewProj(view_proj);
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -388,6 +388,10 @@ pub const WorldRenderer = struct {
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                        if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
+                            self.last_render_stats.chunks_culled += 1;
+                            continue;
+                        }
                         self.visible_chunks.append(self.allocator, data) catch |err| {
                             log.log.debug("MDI: visible_chunks append failed: {}", .{err});
                         };

@@ -30,6 +30,7 @@ const RegionMap = lod_gpu.RegionMap;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Generator = @import("worldgen/generator_interface.zig").Generator;
+const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const log = @import("../engine/core/log.zig");
 
 pub fn WorldLOD(comptime RHI: type) type {
@@ -47,6 +48,7 @@ pub fn WorldLOD(comptime RHI: type) type {
             rhi: RHI,
             config: ILODConfig,
             generator: Generator,
+            atlas: *const TextureAtlas,
         ) !*Self {
             const renderer = try LODRenderer.init(allocator, rhi);
             errdefer renderer.deinit();
@@ -54,7 +56,7 @@ pub fn WorldLOD(comptime RHI: type) type {
             const gpu_bridge = renderer.createGPUBridge();
             const render_iface = renderer.toInterface();
 
-            const manager = try LODManager.init(allocator, config, gpu_bridge, render_iface, generator);
+            const manager = try LODManager.init(allocator, config, gpu_bridge, render_iface, generator, atlas);
             errdefer manager.deinit();
 
             const lod = try allocator.create(Self);
