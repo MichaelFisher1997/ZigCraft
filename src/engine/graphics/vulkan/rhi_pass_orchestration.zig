@@ -438,6 +438,32 @@ pub fn endFrame(ctx: anytype) void {
 
     const transfer_cb = ctx.resources.getTransferCommandBuffer();
 
+    if (!ctx.resources.transfer.is_dedicated) {
+        if (transfer_cb) |cb| {
+            ctx.resources.transfer.recordPendingCopies(cb);
+
+            var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
+            barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = ctx.resources.transfer.getPendingDstAccessMask();
+            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+
+            c.vkCmdPipelineBarrier(
+                cb,
+                c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                0,
+                0,
+                null,
+                1,
+                &barrier,
+                0,
+                null,
+            );
+        }
+    }
+
     if (ctx.resources.transfer.is_dedicated and transfer_cb != null) {
         ctx.resources.submitTransfer() catch |err| {
             log.log.errWithTrace("Failed to submit transfer: {}", .{err});
@@ -448,6 +474,9 @@ pub fn endFrame(ctx: anytype) void {
 
     ctx.frames.endFrame(&ctx.swapchain, transfer_cb, transfer_sem) catch |err| {
         log.log.errWithTrace("endFrame failed: {}", .{err});
+        if (err == error.GpuLost) {
+            ctx.runtime.gpu_fault_detected = true;
+        }
     };
 
     if (transfer_cb != null) {

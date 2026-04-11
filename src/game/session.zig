@@ -179,10 +179,16 @@ pub const GameSession = struct {
         var ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
         errdefer ecs_render_system.deinit();
 
-        const player = Player.init(Vec3.init(8, 100, 8), true);
+        const spawn_x: i32 = 8;
+        const spawn_z: i32 = 8;
+        const spawn_info = world.getColumnInfo(spawn_x, spawn_z);
+        const spawn_y: f32 = @floatFromInt(spawn_info.height + 16);
+        var player = Player.init(Vec3.init(@floatFromInt(spawn_x), spawn_y, @floatFromInt(spawn_z)), true);
+        // Aim toward the terrain so the first frame shows the ground.
+        player.camera.setYawPitch(player.camera.yaw, -std.math.degreesToRadians(35.0));
 
         var atmosphere = Atmosphere.init();
-        atmosphere.setTimeOfDay(0.25);
+        atmosphere.setTimeOfDay(0.5);
 
         session.* = .{
             .allocator = allocator,

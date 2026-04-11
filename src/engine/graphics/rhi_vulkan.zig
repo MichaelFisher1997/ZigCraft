@@ -77,6 +77,10 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (ctx.resources.transfer.transfer_ready[ctx.resources.transfer.current_frame]) {
         ctx.resources.flushTransfer() catch |err| {
             log.log.errWithTrace("Failed to flush inter-frame transfers: {}", .{err});
+            if (err == error.VulkanError) {
+                ctx.runtime.gpu_fault_detected = true;
+                return;
+            }
         };
     }
 
@@ -391,6 +395,7 @@ fn endFrame(ctx_ptr: *anyopaque) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
+    if (ctx.runtime.gpu_fault_detected) return;
     pass_orchestration.endFrame(ctx);
 }
 
@@ -517,10 +522,12 @@ fn bindTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         7 => ctx.draw.current_roughness_texture = resolved,
         8 => ctx.draw.current_displacement_texture = resolved,
         9 => ctx.draw.current_env_texture = resolved,
+        14 => ctx.draw.current_water_reflection_texture = resolved,
+        15 => ctx.draw.current_scene_depth_texture = resolved,
         11 => ctx.draw.current_lpv_texture = resolved,
         12 => ctx.draw.current_lpv_texture_g = resolved,
         13 => ctx.draw.current_lpv_texture_b = resolved,
-        else => ctx.draw.current_texture = resolved,
+        else => {},
     }
 }
 

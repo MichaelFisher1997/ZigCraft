@@ -48,7 +48,7 @@ pub fn begin2DPass(ctx: anytype, screen_width: f32, screen_height: f32) void {
             return;
         }
     } else {
-        if (!ctx.runtime.main_pass_active) pass_orchestration.beginMainPassInternal(ctx);
+        if (!ctx.runtime.main_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
         if (!ctx.runtime.main_pass_active) {
             return;
         }

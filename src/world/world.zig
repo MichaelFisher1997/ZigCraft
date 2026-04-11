@@ -355,6 +355,10 @@ pub const World = struct {
         return data.chunk.getBlock(local.x, @intCast(world_y), local.z);
     }
 
+    pub fn getColumnInfo(self: *const World, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
+        return self.generator.getColumnInfo(@floatFromInt(world_x), @floatFromInt(world_z));
+    }
+
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         if (world_y < 0 or world_y >= 256) return;
         const cp = worldToChunk(world_x, world_z);

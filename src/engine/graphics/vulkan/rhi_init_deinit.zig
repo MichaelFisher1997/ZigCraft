@@ -81,7 +81,6 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try setup.createGPassResources(ctx);
     try setup.createSSAOResources(ctx);
     try setup.createTAAResources(ctx);
-    try setup.createWaterResources(ctx);
 
     try ctx.render_pass_manager.createMainRenderPass(
         ctx.vulkan_device.vk_device,
@@ -96,6 +95,10 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
         ctx.render_pass_manager.g_render_pass,
         ctx.options.msaa_samples,
     );
+
+    try setup.createWaterResources(ctx);
+    try ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass);
+    try ctx.water_system.createReflectionTerrainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.pipeline_manager.pipeline_layout);
 
     try setup.createPostProcessResources(ctx);
     try setup.createSwapchainUIResources(ctx);
@@ -127,6 +130,8 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.draw.current_roughness_texture = ctx.draw.dummy_roughness_texture;
     ctx.draw.current_displacement_texture = ctx.draw.dummy_roughness_texture;
     ctx.draw.current_env_texture = ctx.draw.dummy_texture;
+    ctx.draw.current_water_reflection_texture = ctx.draw.dummy_texture;
+    ctx.draw.current_scene_depth_texture = ctx.draw.dummy_texture;
     ctx.draw.current_lpv_texture = ctx.draw.dummy_texture_3d;
     ctx.draw.current_lpv_texture_g = ctx.draw.dummy_texture_3d;
     ctx.draw.current_lpv_texture_b = ctx.draw.dummy_texture_3d;

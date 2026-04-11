@@ -417,7 +417,6 @@ pub fn createWaterResources(ctx: anytype) !void {
         extent.height,
         ctx.descriptors.descriptor_set_layout,
     );
-    try ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device);
 
     ctx.water_system.reflection_texture_handle = try ctx.resources.registerExternalTexture(
         ctx.water_system.extent.width,

@@ -51,6 +51,8 @@ pub fn createRHI(
     ctx.draw.current_roughness_texture = 0;
     ctx.draw.current_displacement_texture = 0;
     ctx.draw.current_env_texture = 0;
+    ctx.draw.current_water_reflection_texture = 0;
+    ctx.draw.current_scene_depth_texture = 0;
     ctx.draw.current_lpv_texture = 0;
     ctx.draw.current_lpv_texture_g = 0;
     ctx.draw.current_lpv_texture_b = 0;
@@ -84,6 +86,8 @@ pub fn createRHI(
     ctx.draw.bound_roughness_texture = 0;
     ctx.draw.bound_displacement_texture = 0;
     ctx.draw.bound_env_texture = 0;
+    ctx.draw.bound_water_reflection_texture = 0;
+    ctx.draw.bound_scene_depth_texture = 0;
     ctx.draw.bound_lpv_texture = 0;
     ctx.draw.current_mask_radius = 0;
     ctx.draw.lod_mode = false;

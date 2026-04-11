@@ -199,7 +199,7 @@ pub const LODMesh = struct {
             return self.buildFromSimplifiedData(data, world_x, world_z);
         }
 
-        log.log.debug("LOD{} QEM: {} -> {} triangles (error={d:.2})", .{
+        log.log.trace("LOD{} QEM: {} -> {} triangles (error={d:.2})", .{
             @intFromEnum(self.lod_level),
             simplified.original_triangle_count,
             simplified.simplified_triangle_count,

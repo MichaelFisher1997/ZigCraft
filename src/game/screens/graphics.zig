@@ -129,7 +129,6 @@ pub const GraphicsScreen = struct {
             settings.render_distance_preset = @enumFromInt(next);
             const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
             settings.render_distance = preset_cfg.lod_radii[0];
-            settings.lod_enabled = true;
         }
         sy += row_height;
 

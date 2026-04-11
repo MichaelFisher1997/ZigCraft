@@ -166,5 +166,22 @@ vec3 applyFilmGrain(vec3 color, vec2 uv, float intensity, float time) {
 }
 
 void main() {
-    outColor = vec4(texture(uHDRBuffer, inUV).rgb, 1.0);
+    vec3 color = texture(uHDRBuffer, inUV).rgb;
+
+    if (postParams.bloomEnabled > 0.5) {
+        color += texture(uBloomTexture, inUV).rgb * postParams.bloomIntensity;
+    }
+
+    if (global.cloud_params.z > 0.5) {
+        color = agxToneMap(color, global.pbr_params.y, global.pbr_params.z);
+        color = applyColorGrading(color, postParams.colorGradingEnabled * postParams.colorGradingIntensity);
+        color = applyVignette(color, inUV, postParams.vignetteIntensity);
+        color = applyFilmGrain(color, inUV, postParams.filmGrainIntensity, global.params.x);
+    } else {
+        // Keep the safe/non-PBR path on the same display transform so bright terrain
+        // doesn't collapse into a pale linear-looking wash.
+        color = agxToneMap(color, global.pbr_params.y, global.pbr_params.z);
+    }
+
+    outColor = vec4(color, 1.0);
 }

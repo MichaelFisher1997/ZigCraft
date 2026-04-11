@@ -58,16 +58,24 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         ctx.resources.destroyTexture(ctx.water_system.reflection_texture_handle);
         ctx.water_system.reflection_texture_handle = 0;
     }
-    setup.createWaterResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate water resources: {}", .{err});
-        return;
-    };
     ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
         log.log.errWithTrace("Failed to recreate render pass: {}", .{err});
         return;
     };
     ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, ctx.options.msaa_samples) catch |err| {
         log.log.errWithTrace("Failed to recreate pipelines: {}", .{err});
+        return;
+    };
+    setup.createWaterResources(ctx) catch |err| {
+        log.log.errWithTrace("Failed to recreate water resources: {}", .{err});
+        return;
+    };
+    ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass) catch |err| {
+        log.log.errWithTrace("Failed to recreate water pipeline: {}", .{err});
+        return;
+    };
+    ctx.water_system.createReflectionTerrainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.pipeline_manager.pipeline_layout) catch |err| {
+        log.log.errWithTrace("Failed to recreate reflection terrain pipelines: {}", .{err});
         return;
     };
     setup.createPostProcessResources(ctx) catch |err| {
@@ -137,6 +145,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
 
 pub fn prepareFrameState(ctx: anytype) void {
     ctx.runtime.draw_call_count = 0;
+    ctx.runtime.first_main_pass_draw_logged = false;
     ctx.runtime.main_pass_active = false;
     ctx.shadow_system.pass_active = false;
     ctx.runtime.post_process_ran_this_frame = false;
@@ -180,6 +189,8 @@ pub fn prepareFrameState(ctx: anytype) void {
     const cur_rou = ctx.draw.current_roughness_texture;
     const cur_dis = ctx.draw.current_displacement_texture;
     const cur_env = ctx.draw.current_env_texture;
+    const cur_water_reflection = ctx.draw.current_water_reflection_texture;
+    const cur_scene_depth = ctx.draw.current_scene_depth_texture;
     const cur_lpv = ctx.draw.current_lpv_texture;
     const cur_lpv_g = ctx.draw.current_lpv_texture_g;
     const cur_lpv_b = ctx.draw.current_lpv_texture_b;
@@ -190,6 +201,8 @@ pub fn prepareFrameState(ctx: anytype) void {
     if (ctx.draw.bound_roughness_texture != cur_rou) needs_update = true;
     if (ctx.draw.bound_displacement_texture != cur_dis) needs_update = true;
     if (ctx.draw.bound_env_texture != cur_env) needs_update = true;
+    if (ctx.draw.bound_water_reflection_texture != cur_water_reflection) needs_update = true;
+    if (ctx.draw.bound_scene_depth_texture != cur_scene_depth) needs_update = true;
     if (ctx.draw.bound_lpv_texture != cur_lpv) needs_update = true;
     if (ctx.draw.bound_lpv_texture_g != cur_lpv_g) needs_update = true;
     if (ctx.draw.bound_lpv_texture_b != cur_lpv_b) needs_update = true;
@@ -205,6 +218,8 @@ pub fn prepareFrameState(ctx: anytype) void {
         ctx.draw.bound_roughness_texture = cur_rou;
         ctx.draw.bound_displacement_texture = cur_dis;
         ctx.draw.bound_env_texture = cur_env;
+        ctx.draw.bound_water_reflection_texture = cur_water_reflection;
+        ctx.draw.bound_scene_depth_texture = cur_scene_depth;
         ctx.draw.bound_lpv_texture = cur_lpv;
         ctx.draw.bound_lpv_texture_g = cur_lpv_g;
         ctx.draw.bound_lpv_texture_b = cur_lpv_b;
@@ -216,6 +231,7 @@ pub fn prepareFrameState(ctx: anytype) void {
             log.log.err("CRITICAL: Descriptor set for frame {} is NULL!", .{ctx.frames.current_frame});
             return;
         }
+
         var writes: [16]c.VkWriteDescriptorSet = undefined;
         var write_count: u32 = 0;
         var image_infos: [16]c.VkDescriptorImageInfo = undefined;
@@ -230,6 +246,8 @@ pub fn prepareFrameState(ctx: anytype) void {
             .{ .handle = cur_rou, .binding = bindings.ROUGHNESS_TEXTURE, .is_3d = false },
             .{ .handle = cur_dis, .binding = bindings.DISPLACEMENT_TEXTURE, .is_3d = false },
             .{ .handle = cur_env, .binding = bindings.ENV_TEXTURE, .is_3d = false },
+            .{ .handle = cur_water_reflection, .binding = bindings.WATER_REFLECTION_TEXTURE, .is_3d = false },
+            .{ .handle = cur_scene_depth, .binding = bindings.SCENE_DEPTH_TEXTURE, .is_3d = false },
             .{ .handle = cur_lpv, .binding = bindings.LPV_TEXTURE, .is_3d = true },
             .{ .handle = cur_lpv_g, .binding = bindings.LPV_TEXTURE_G, .is_3d = true },
             .{ .handle = cur_lpv_b, .binding = bindings.LPV_TEXTURE_B, .is_3d = true },
@@ -237,7 +255,10 @@ pub fn prepareFrameState(ctx: anytype) void {
 
         for (atlas_slots) |slot| {
             const fallback = if (slot.is_3d) dummy_tex_3d_entry else dummy_tex_entry;
-            const entry = ctx.resources.textures.get(slot.handle) orelse fallback;
+            const entry = if (ctx.resources.textures.get(slot.handle)) |tex|
+                if (tex.format == .depth) fallback else tex
+            else
+                fallback;
             if (entry) |tex| {
                 image_infos[info_count] = .{
                     .sampler = tex.sampler,
@@ -256,52 +277,51 @@ pub fn prepareFrameState(ctx: anytype) void {
             }
         }
 
-        if (ctx.shadow_system.shadow_sampler == null) {
-            log.log.err("CRITICAL: Shadow sampler is NULL!", .{});
-        }
-        if (ctx.shadow_system.shadow_sampler_regular == null) {
-            log.log.err("CRITICAL: Shadow regular sampler is NULL!", .{});
-        }
-        if (ctx.shadow_system.shadow_image_view == null) {
-            log.log.err("CRITICAL: Shadow image view is NULL!", .{});
-        }
-        image_infos[info_count] = .{
-            .sampler = ctx.shadow_system.shadow_sampler,
-            .imageView = ctx.shadow_system.shadow_image_view,
-            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-        writes[write_count] = std.mem.zeroes(c.VkWriteDescriptorSet);
-        writes[write_count].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[write_count].dstSet = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
-        writes[write_count].dstBinding = bindings.SHADOW_COMPARE_TEXTURE;
-        writes[write_count].descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[write_count].descriptorCount = 1;
-        writes[write_count].pImageInfo = &image_infos[info_count];
-        write_count += 1;
-        info_count += 1;
+        if (ctx.shadow_system.shadow_image_view != null and ctx.shadow_system.shadow_sampler != null) {
+            image_infos[info_count] = .{
+                .sampler = ctx.shadow_system.shadow_sampler,
+                .imageView = ctx.shadow_system.shadow_image_view,
+                .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+            writes[write_count] = std.mem.zeroes(c.VkWriteDescriptorSet);
+            writes[write_count].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[write_count].dstSet = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+            writes[write_count].dstBinding = bindings.SHADOW_COMPARE_TEXTURE;
+            writes[write_count].descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[write_count].descriptorCount = 1;
+            writes[write_count].pImageInfo = &image_infos[info_count];
+            write_count += 1;
+            info_count += 1;
 
-        image_infos[info_count] = .{
-            .sampler = if (ctx.shadow_system.shadow_sampler_regular != null) ctx.shadow_system.shadow_sampler_regular else ctx.shadow_system.shadow_sampler,
-            .imageView = ctx.shadow_system.shadow_image_view,
-            .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        };
-        writes[write_count] = std.mem.zeroes(c.VkWriteDescriptorSet);
-        writes[write_count].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[write_count].dstSet = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
-        writes[write_count].dstBinding = bindings.SHADOW_REGULAR_TEXTURE;
-        writes[write_count].descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[write_count].descriptorCount = 1;
-        writes[write_count].pImageInfo = &image_infos[info_count];
-        write_count += 1;
-        info_count += 1;
+            const regular_shadow_sampler = ctx.shadow_system.shadow_sampler_regular orelse ctx.shadow_system.shadow_sampler;
+            if (regular_shadow_sampler != null) {
+                image_infos[info_count] = .{
+                    .sampler = regular_shadow_sampler,
+                    .imageView = ctx.shadow_system.shadow_image_view,
+                    .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                };
+                writes[write_count] = std.mem.zeroes(c.VkWriteDescriptorSet);
+                writes[write_count].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[write_count].dstSet = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+                writes[write_count].dstBinding = bindings.SHADOW_REGULAR_TEXTURE;
+                writes[write_count].descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[write_count].descriptorCount = 1;
+                writes[write_count].pImageInfo = &image_infos[info_count];
+                write_count += 1;
+                info_count += 1;
+            }
+        }
 
         if (write_count > 0) {
             c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, write_count, &writes[0], 0, null);
 
-            for (0..write_count) |i| {
-                writes[i].dstSet = ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame];
+            const lod_descriptor_set = ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame];
+            if (lod_descriptor_set != null) {
+                for (0..write_count) |i| {
+                    writes[i].dstSet = lod_descriptor_set;
+                }
+                c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, write_count, &writes[0], 0, null);
             }
-            c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, write_count, &writes[0], 0, null);
         }
 
         ctx.draw.descriptors_dirty[ctx.frames.current_frame] = false;

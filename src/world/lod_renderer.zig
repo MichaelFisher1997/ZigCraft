@@ -36,6 +36,7 @@ const LODRegionKey = lod_chunk.LODRegionKey;
 const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
+const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
@@ -155,7 +156,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             self: *Self,
             meshes: *const MeshMap,
             regions: *const RegionMap,
-            config: ILODConfig,
+            _: ILODConfig,
             _: Mat4,
             camera_pos: Vec3,
             frustum: Frustum,
@@ -177,37 +178,23 @@ pub fn LODRenderer(comptime RHI: type) type {
                         if (!isRegionInRange(bounds, camera_pos, max_dist)) continue;
                     }
 
-                    // Check if all underlying block chunks are loaded.
-                    // We require a 1-chunk halo around the LOD region to avoid exposing
-                    // block chunk cut-faces when neighbors are still missing.
+                    // Skip the LOD region only when the entire covered chunk area is loaded.
                     if (chunk_checker) |checker| {
-                        const side: i32 = @intCast(chunk.lod_level.chunksPerSide());
-                        const start_cx = chunk.region_x * side;
-                        const start_cz = chunk.region_z * side;
-
-                        var all_loaded = true;
-                        var lcz: i32 = -CHUNK_COVERAGE_PADDING;
-                        while (lcz < side + CHUNK_COVERAGE_PADDING) : (lcz += 1) {
-                            var lcx: i32 = -CHUNK_COVERAGE_PADDING;
-                            while (lcx < side + CHUNK_COVERAGE_PADDING) : (lcx += 1) {
-                                if (!checker(start_cx + lcx, start_cz + lcz, checker_ctx.?)) {
-                                    all_loaded = false;
-                                    break;
-                                }
-                            }
-                            if (!all_loaded) break;
+                        if (checker_ctx) |ctx_ptr| {
+                            if (self.isCoveredByChunks(bounds, checker, ctx_ptr)) continue;
                         }
-
-                        if (all_loaded) continue;
                     }
 
                     const aabb_min = Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, 0.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z);
                     const aabb_max = Vec3.init(@as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, 256.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z);
-                    if (use_frustum and !frustum.intersectsAABB(AABB.init(aabb_min, aabb_max))) continue;
+
+                    if (use_frustum) {
+                        if (!frustum.intersectsAABB(AABB.init(aabb_min, aabb_max))) continue;
+                    }
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
-                    const mask_radius = config.calculateMaskRadius() * @as(f32, @floatFromInt(CHUNK_SIZE_X));
+                    const mask_radius = 0.0;
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
@@ -216,6 +203,27 @@ pub fn LODRenderer(comptime RHI: type) type {
                     try self.draw_list.append(self.allocator, mesh);
                 }
             }
+        }
+
+        fn isCoveredByChunks(
+            _: *Self,
+            bounds: LODChunk.WorldBounds,
+            checker: ChunkChecker,
+            ctx: *anyopaque,
+        ) bool {
+            const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
+            const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
+            const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING;
+            const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_Z) + CHUNK_COVERAGE_PADDING;
+
+            var cz = min_cz;
+            while (cz <= max_cz) : (cz += 1) {
+                var cx = min_cx;
+                while (cx <= max_cx) : (cx += 1) {
+                    if (!checker(cx, cz, ctx)) return false;
+                }
+            }
+            return true;
         }
 
         /// Create a LODGPUBridge that delegates to this renderer's RHI.

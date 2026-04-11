@@ -288,12 +288,9 @@ pub const WorldStreamer = struct {
 
                     switch (data.chunk.state) {
                         .missing => {
-                            const weight = self.player_movement.priorityWeight(dx, dz);
-                            const weighted_dist: i32 = @intFromFloat(@as(f32, @floatFromInt(dist_sq)) * weight);
-
                             try self.gen_queue.push(.{
                                 .type = .chunk_generation,
-                                .dist_sq = weighted_dist,
+                                .dist_sq = dist_sq,
                                 .data = .{
                                     .chunk = .{
                                         .x = cx,
@@ -322,12 +319,9 @@ pub const WorldStreamer = struct {
                 const dx = data.chunk.chunk_x - pc.chunk_x;
                 const dz = data.chunk.chunk_z - pc.chunk_z;
                 if (dx * dx + dz * dz <= render_dist * render_dist) {
-                    const weight = self.player_movement.priorityWeight(dx, dz);
-                    const weighted_dist: i32 = @intFromFloat(@as(f32, @floatFromInt(dx * dx + dz * dz)) * weight);
-
                     try self.mesh_queue.push(.{
                         .type = .chunk_meshing,
-                        .dist_sq = weighted_dist,
+                        .dist_sq = dx * dx + dz * dz,
                         .data = .{
                             .chunk = .{
                                 .x = data.chunk.chunk_x,

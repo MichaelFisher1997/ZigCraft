@@ -318,7 +318,12 @@ pub const TransferQueue = struct {
         if (!self.transfer_ready[self.current_frame]) return;
 
         const cb = self.command_buffers[self.current_frame];
-        try Utils.checkVk(c.vkEndCommandBuffer(cb));
+        const end_result = c.vkEndCommandBuffer(cb);
+        if (end_result != c.VK_SUCCESS) {
+            self.transfer_ready[self.current_frame] = false;
+            if (end_result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
+            return error.VulkanError;
+        }
 
         var submit_info = std.mem.zeroes(c.VkSubmitInfo);
         submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -331,9 +336,12 @@ pub const TransferQueue = struct {
         const result = c.vkQueueSubmit(self.queue, 1, &submit_info, self.fence);
         queue_mutex.unlock();
 
+        if (result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
         if (result != c.VK_SUCCESS) return error.VulkanError;
 
-        try Utils.checkVk(c.vkWaitForFences(vk_device, 1, &self.fence, c.VK_TRUE, std.math.maxInt(u64)));
+        const wait_result = c.vkWaitForFences(vk_device, 1, &self.fence, c.VK_TRUE, std.math.maxInt(u64));
+        if (wait_result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
+        try Utils.checkVk(wait_result);
 
         self.transfer_ready[self.current_frame] = false;
     }

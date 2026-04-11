@@ -1,7 +1,3 @@
-//! World renderer - handles chunk rendering, culling, and MDI.
-//! Integrates GPU compute frustum culling (CullingSystem) with CPU fallback.
-//! Supports GPU-driven meshing via batched compute dispatches.
-
 const std = @import("std");
 const log = @import("../engine/core/log.zig");
 const ChunkData = @import("chunk_storage.zig").ChunkData;
@@ -96,6 +92,10 @@ pub const WorldRenderer = struct {
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
+        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
+
+        const safe_mode_enabled = vk_ctx.options.safe_mode;
+
         const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
         var indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
@@ -105,13 +105,16 @@ pub const WorldRenderer = struct {
         }
 
         var culling_system: ?*CullingSystem = null;
-        var use_gpu = false;
-        if (CullingSystem.init(allocator, rhi, max_chunks)) |cs| {
-            culling_system = cs;
-            use_gpu = true;
-            log.log.info("GPU frustum culling initialized (max_chunks={})", .{max_chunks});
-        } else |err| {
-            log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
+        const use_gpu = false;
+        if (!safe_mode_enabled) {
+            if (CullingSystem.init(allocator, rhi, max_chunks)) |cs| {
+                culling_system = cs;
+                log.log.warn("GPU chunk culling initialized but kept disabled due unstable visibility", .{});
+            } else |err| {
+                log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
+            }
+        } else {
+            log.log.info("Safe mode: GPU frustum culling disabled, using CPU culling", .{});
         }
 
         var gpu_block_buffer: ?*GpuBlockBuffer = null;
@@ -121,11 +124,15 @@ pub const WorldRenderer = struct {
 
         var gpu_mesher: ?*GpuMesher = null;
         errdefer if (gpu_mesher) |m| m.deinit();
-        if (gpu_block_buffer) |buf| {
-            gpu_mesher = GpuMesher.init(allocator, rhi, atlas, buf) catch |err| blk: {
-                log.log.warn("GpuMesher init failed ({}), CPU meshing fallback active", .{err});
-                break :blk null;
-            };
+        if (!safe_mode_enabled) {
+            if (gpu_block_buffer) |buf| {
+                gpu_mesher = GpuMesher.init(allocator, rhi, atlas, buf) catch |err| blk: {
+                    log.log.warn("GpuMesher init failed ({}), CPU meshing fallback active", .{err});
+                    break :blk null;
+                };
+            }
+        } else {
+            log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }
 
         renderer.* = .{
@@ -134,7 +141,7 @@ pub const WorldRenderer = struct {
             .rm = rm,
             .render_ctx = render_ctx,
             .query = query,
-            .vk_ctx = @ptrCast(@alignCast(rhi.ptr)),
+            .vk_ctx = vk_ctx,
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
             .last_render_stats = .{},
@@ -219,6 +226,9 @@ pub const WorldRenderer = struct {
             }
         }
 
+        // LOD rendering uses a separate descriptor set path; switch back before drawing full chunks.
+        self.render_ctx.setInstanceBuffer(0);
+
         self.visible_chunks.clearRetainingCapacity();
         self.instance_data.clearRetainingCapacity();
         self.draw_commands.clearRetainingCapacity();
@@ -242,6 +252,17 @@ pub const WorldRenderer = struct {
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
 
         const vertex_size = @sizeOf(rhi_mod.Vertex);
+        const supports_indirect_first_instance = self.query.supportsIndirectFirstInstance();
+
+        // Environment override to force MDI fallback for debugging
+        const force_mdi_fallback = blk: {
+            const env_val = std.posix.getenv("ZIGCRAFT_FORCE_MDI_FALLBACK");
+            break :blk if (env_val) |val|
+                !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+            else
+                false;
+        };
+        var total_vertices: u64 = 0;
 
         for (self.visible_chunks.items) |data| {
             self.last_render_stats.chunks_rendered += 1;
@@ -251,6 +272,29 @@ pub const WorldRenderer = struct {
             const rel_z = chunk_world_z - camera_pos.z;
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
+
+            if (!supports_indirect_first_instance or force_mdi_fallback) {
+                self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+
+                if (layer != .fluid) {
+                    if (data.mesh.solid_allocation) |alloc| {
+                        total_vertices += alloc.count;
+                        self.last_render_stats.vertices_rendered += alloc.count;
+                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                    }
+                    if (data.mesh.cutout_allocation) |alloc| {
+                        self.last_render_stats.vertices_rendered += alloc.count;
+                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                    }
+                }
+                if (layer != .terrain) {
+                    if (data.mesh.fluid_allocation) |alloc| {
+                        self.last_render_stats.vertices_rendered += alloc.count;
+                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                    }
+                }
+                continue;
+            }
 
             const instance_idx: u32 = @intCast(self.instance_data.items.len);
 
@@ -335,8 +379,8 @@ pub const WorldRenderer = struct {
         }
     }
 
-    fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
-        const frustum = Frustum.fromViewProj(view_proj);
+    fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, _: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        _ = view_proj;
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -344,13 +388,9 @@ pub const WorldRenderer = struct {
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
-                        if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.visible_chunks.append(self.allocator, data) catch |err| {
-                                log.log.debug("MDI: visible_chunks append failed: {}", .{err});
-                            };
-                        } else {
-                            self.last_render_stats.chunks_culled += 1;
-                        }
+                        self.visible_chunks.append(self.allocator, data) catch |err| {
+                            log.log.debug("MDI: visible_chunks append failed: {}", .{err});
+                        };
                     }
                 }
             }
@@ -421,8 +461,10 @@ pub const WorldRenderer = struct {
         cs.updateAABBData(fi, self.aabb_data.items);
         const screen_w = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.width));
         const screen_h = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.height));
-        const prev_frame_valid = self.vk_ctx.depth_pyramid.isValid();
-        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, prev_frame_valid);
+        // The previous-frame depth pyramid is currently too unstable during camera
+        // rotation and causes chunks to be wrongly occluded. Keep GPU frustum
+        // culling, but disable temporal occlusion until the reprojection path is fixed.
+        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, false);
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {

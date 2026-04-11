@@ -322,8 +322,28 @@ pub const App = struct {
     pub fn run(self: *App) !void {
         self.render_system.setViewport(self.input.interface().getWindowWidth(), self.input.interface().getWindowHeight());
         log.log.info("=== ZigCraft ===", .{});
+        var last_fault_count: u32 = self.render_system.getRHI().getFaultCount();
+        var gpu_recovery_attempts: u32 = 0;
         while (!self.input.interface().shouldQuit()) {
-            try self.runSingleFrame();
+            self.runSingleFrame() catch |err| {
+                log.log.err("Frame error: {}", .{err});
+                return err;
+            };
+            const current_faults = self.render_system.getRHI().getFaultCount();
+            if (current_faults > last_fault_count) {
+                gpu_recovery_attempts += 1;
+                last_fault_count = current_faults;
+                if (gpu_recovery_attempts > 3) {
+                    log.log.err("GPU lost after {d} recovery attempts. Exiting.", .{gpu_recovery_attempts});
+                    return error.GpuLost;
+                }
+                log.log.warn("GPU fault detected (total faults: {d}), attempting recovery ({d}/3)...", .{ current_faults, gpu_recovery_attempts });
+                self.render_system.getRHI().recover() catch {
+                    log.log.err("GPU recovery failed. Exiting.", .{});
+                    return error.GpuLost;
+                };
+                log.log.info("GPU recovery step completed.", .{});
+            }
         }
     }
 };

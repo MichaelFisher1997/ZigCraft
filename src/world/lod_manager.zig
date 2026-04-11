@@ -190,6 +190,9 @@ pub const LODManager = struct {
     // Type-erased renderer interface (replaces direct LODRenderer(RHI) field)
     renderer: LODRenderInterface,
 
+    // Keep cleanup behavior testable, but allow the live world to opt out.
+    cleanup_covered_regions: bool = true,
+
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;
 
@@ -258,6 +261,7 @@ pub const LODManager = struct {
             .deletion_queue = .empty,
             .deletion_timer = 0,
             .renderer = render_iface,
+            .cleanup_covered_regions = false,
         };
 
         // Initialize worker pool for LOD generation and meshing (3 workers for LOD tasks)
@@ -353,9 +357,10 @@ pub const LODManager = struct {
         self.update_tick += 1;
         if (self.update_tick % 4 != 0) return;
 
-        // Issue #211: Clean up LOD chunks that are fully covered by LOD0 (throttled)
-        if (chunk_checker) |checker| {
-            self.unloadLODWhereChunksLoaded(checker, checker_ctx.?);
+        if (self.cleanup_covered_regions) {
+            if (chunk_checker) |checker| {
+                self.unloadLODWhereChunksLoaded(checker, checker_ctx.?);
+            }
         }
 
         // Safety: Check for NaN/Inf player position
@@ -419,10 +424,7 @@ pub const LODManager = struct {
         const lod_bits: i32 = @as(i32, @intCast(@intFromEnum(lod))) << 28;
 
         // Calculate velocity direction for priority
-        const vel_len = @sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-        const has_velocity = vel_len > 0.1;
-        const vel_dx: f32 = if (has_velocity) velocity.x / vel_len else 0;
-        const vel_dz: f32 = if (has_velocity) velocity.z / vel_len else 0;
+        _ = velocity;
 
         var rz = player_rz - region_radius;
         while (rz <= player_rz + region_radius) : (rz += 1) {
@@ -435,12 +437,12 @@ pub const LODManager = struct {
 
                 const key = LODRegionKey{ .rx = rx, .rz = rz, .lod = lod };
 
-                // Check if region is covered by higher detail chunks
-                if (chunk_checker) |checker| {
-                    // We use a temporary chunk to calculate bounds
-                    const temp_chunk = LODChunk.init(rx, rz, lod);
-                    if (self.areAllChunksLoaded(temp_chunk.worldBounds(), checker, checker_ctx.?)) {
-                        continue;
+                if (self.cleanup_covered_regions) {
+                    if (chunk_checker) |checker| {
+                        const temp_chunk = LODChunk.init(rx, rz, lod);
+                        if (self.areAllChunksLoaded(temp_chunk.worldBounds(), checker, checker_ctx.?)) {
+                            continue;
+                        }
                     }
                 }
 
@@ -467,24 +469,12 @@ pub const LODManager = struct {
                     chunk.job_token = self.next_job_token;
                     self.next_job_token += 1;
 
-                    // Calculate velocity-weighted priority
-                    // (dx, dz calculated above)
+                    // Calculate radial priority only so loading stays symmetric.
                     const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
                     // Scale priority to match chunk-distance units used by meshing jobs (which are prioritized by chunk dist)
                     // This ensures generation doesn't starve meshing
                     const priority_full = dist_sq * @as(i64, scale) * @as(i64, scale);
-                    var priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
-                    if (has_velocity) {
-                        const fdx: f32 = @floatFromInt(dx);
-                        const fdz: f32 = @floatFromInt(dz);
-                        const dist = @sqrt(fdx * fdx + fdz * fdz);
-                        if (dist > 0.01) {
-                            const dot = (fdx * vel_dx + fdz * vel_dz) / dist;
-                            // Ahead = lower priority number, behind = higher
-                            const weight = 1.0 - dot * 0.5;
-                            priority = @intFromFloat(@as(f32, @floatFromInt(priority)) * weight);
-                        }
-                    }
+                    const priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
 
                     // Encode LOD level in high bits of dist_sq
                     const encoded_priority = (priority & 0x0FFFFFFF) | lod_bits;
@@ -1072,6 +1062,7 @@ test "LODManager initialization" {
     };
 
     var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen);
+    mgr.cleanup_covered_regions = false;
 
     // Verify initial state
     const stats = mgr.getStats();
@@ -1159,6 +1150,7 @@ test "LODManager end-to-end covered cleanup" {
     };
 
     var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen);
+    mgr.cleanup_covered_regions = false;
     defer mgr.deinit();
 
     // 1. Initial position at origin
@@ -1200,7 +1192,7 @@ test "LODManager end-to-end covered cleanup" {
         }
     };
 
-    // Update - should unload because checker says all chunks are loaded
+    // Update - cleanup is disabled in live world, so regions should stay resident
     // Need to trigger the throttle (every 4 frames)
     try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
     try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
@@ -1208,7 +1200,7 @@ test "LODManager end-to-end covered cleanup" {
     // 4th update triggers throttled logic
     try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
 
-    try std.testing.expect(!mgr.regions[1].contains(key));
+    try std.testing.expect(mgr.regions[1].contains(key));
 }
 
 test "LODStats aggregation" {
