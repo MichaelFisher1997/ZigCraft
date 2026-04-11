@@ -230,20 +230,27 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         id: find-pr
         run: |
-          sleep 5
           PAT_USER=$(gh api user --jq '.login')
-          PR_NUM=$(gh pr list \
-            --base dev \
-            --state open \
-            --limit 10 \
-            --json number,createdAt,author \
-            --jq "[.[] | select(.author.login == \"${PAT_USER}\")] | sort_by(.createdAt) | reverse | .[0].number")
+          PR_NUM=""
+          for i in 1 2 3 4 5; do
+            sleep $((i * 3))
+            echo "Attempt $i: searching for PR by ${PAT_USER}..."
+            PR_NUM=$(gh pr list \
+              --base dev \
+              --state open \
+              --limit 10 \
+              --json number,createdAt,author \
+              --jq "[.[] | select(.author.login == \"${PAT_USER}\")] | sort_by(.createdAt) | reverse | .[0].number")
+            if [ -n "$PR_NUM" ]; then
+              break
+            fi
+          done
           if [ -n "$PR_NUM" ]; then
             echo "Found newly created PR #$PR_NUM (author: ${PAT_USER})"
             gh pr edit "$PR_NUM" --add-label "automated-test"
             echo "pr_number=${PR_NUM}" >> "$GITHUB_OUTPUT"
           else
-            echo "No PR found authored by ${PAT_USER}"
+            echo "No PR found authored by ${PAT_USER} after 5 attempts"
           fi
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
