@@ -408,6 +408,25 @@ pub const WorldRenderer = struct {
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                        if (data.chunk.state == .renderable and !data.mesh.ready) {
+                            log.log.warn("CHUNK_RENDER: ({},{}) state=renderable but mesh.ready=false | solid={} cutout={} fluid={}", .{
+                                data.chunk.chunk_x,                 data.chunk.chunk_z,
+                                data.mesh.solid_allocation != null, data.mesh.cutout_allocation != null,
+                                data.mesh.fluid_allocation != null,
+                            });
+                        }
+                        if (data.chunk.state == .renderable and data.mesh.ready and data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                            log.log.debug("CHUNK_RENDER: ({},{}) state=renderable, ready=true, but ALL allocations null (empty chunk?)", .{
+                                data.chunk.chunk_x, data.chunk.chunk_z,
+                            });
+                        }
+                        if (data.mesh.solid_allocation) |alloc| {
+                            if (alloc.count == 0) {
+                                log.log.warn("CHUNK_RENDER: ({},{}) solid_allocation has 0 vertices", .{
+                                    data.chunk.chunk_x, data.chunk.chunk_z,
+                                });
+                            }
+                        }
                         if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
                             self.last_render_stats.chunks_culled += 1;
                             continue;
@@ -415,6 +434,10 @@ pub const WorldRenderer = struct {
                         self.visible_chunks.append(self.allocator, data) catch |err| {
                             log.log.debug("MDI: visible_chunks append failed: {}", .{err});
                         };
+                    } else if (data.chunk.state != .missing) {
+                        log.log.debug("CHUNK_RENDER: ({},{}) state={} skipped (not renderable, no allocations)", .{
+                            data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.state,
+                        });
                     }
                 }
             }

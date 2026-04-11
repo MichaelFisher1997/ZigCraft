@@ -133,6 +133,10 @@ pub const Chunk = struct {
     /// Is the mesh out of date?
     dirty: bool = true,
 
+    /// Number of times this chunk has been through the mesh pipeline.
+    /// Used to detect stuck chunks and limit re-mesh attempts.
+    mesh_attempts: u8 = 0,
+
     /// Has this chunk been generated?
     generated: bool = false,
 

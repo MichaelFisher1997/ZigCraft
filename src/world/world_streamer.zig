@@ -152,9 +152,10 @@ pub const WorldStreamer = struct {
     paused: bool = false,
     save_manager: ?*SaveManager = null,
 
-    // GPU Block Buffer for compute meshing (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
     gpu_mesher: ?*GpuMesher,
+
+    frame_counter: u64 = 0,
 
     const GEN_WORKERS = 4;
     const MESH_WORKERS = 3;
@@ -253,10 +254,86 @@ pub const WorldStreamer = struct {
     pub fn updateFrame(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         if (self.paused) return;
 
+        self.frame_counter += 1;
+
         try self.updateStreaming(player_pos, dt);
         self.processUploads();
         try self.processUnloads(player_pos);
         self.checkAutoSave();
+
+        if (self.frame_counter % 300 == 0) {
+            self.logChunkStateSummary();
+        }
+    }
+
+    fn logChunkStateSummary(self: *WorldStreamer) void {
+        self.storage.chunks_mutex.lockShared();
+        defer self.storage.chunks_mutex.unlockShared();
+
+        var counts = [_]u32{0} ** 10;
+        var renderable_no_alloc: u32 = 0;
+        var renderable_not_ready: u32 = 0;
+        var total: u32 = 0;
+
+        var iter = self.storage.iteratorUnsafe();
+        while (iter.next()) |entry| {
+            const data = entry.value_ptr.*;
+            total += 1;
+            switch (data.chunk.state) {
+                .missing => counts[0] += 1,
+                .queued_for_generation => counts[1] += 1,
+                .generating => counts[2] += 1,
+                .generated => counts[3] += 1,
+                .queued_for_mesh => counts[4] += 1,
+                .meshing => counts[5] += 1,
+                .mesh_ready => counts[6] += 1,
+                .uploading => counts[7] += 1,
+                .renderable => {
+                    counts[8] += 1;
+                    if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                        renderable_no_alloc += 1;
+                    }
+                    if (!data.mesh.ready) {
+                        renderable_not_ready += 1;
+                    }
+                },
+                .unloading => counts[9] += 1,
+            }
+        }
+
+        log.log.info("CHUNK_STATES [frame={}]: total={} | missing={} qgen={} gen={} gentd={} qmesh={} meshing={} mready={} uploading={} renderable={} unloading={} | no_alloc={} not_ready={}", .{
+            self.frame_counter,  total,
+            counts[0],           counts[1],
+            counts[2],           counts[3],
+            counts[4],           counts[5],
+            counts[6],           counts[7],
+            counts[8],           counts[9],
+            renderable_no_alloc, renderable_not_ready,
+        });
+
+        if (renderable_no_alloc > 0 or renderable_not_ready > 0) {
+            var detail_iter = self.storage.iteratorUnsafe();
+            var logged: u32 = 0;
+            while (detail_iter.next()) |entry| {
+                if (logged >= 10) break;
+                const data = entry.value_ptr.*;
+                if (data.chunk.state == .renderable) {
+                    if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                        log.log.warn("  PROBLEM: ({},{}) renderable but NO allocations, ready={}", .{
+                            data.chunk.chunk_x, data.chunk.chunk_z, data.mesh.ready,
+                        });
+                        logged += 1;
+                    } else if (!data.mesh.ready) {
+                        log.log.warn("  PROBLEM: ({},{}) renderable but ready=false, solid={} cutout={} fluid={}", .{
+                            data.chunk.chunk_x,                 data.chunk.chunk_z,
+                            data.mesh.solid_allocation != null, data.mesh.cutout_allocation != null,
+                            data.mesh.fluid_allocation != null,
+                        });
+                        logged += 1;
+                    }
+                }
+            }
+        }
     }
 
     fn updateStreaming(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
@@ -335,9 +412,15 @@ pub const WorldStreamer = struct {
             } else if (data.chunk.state == .mesh_ready) {
                 data.chunk.state = .uploading;
                 try self.upload_queue.push(key);
-            } else if (data.chunk.state == .renderable and data.chunk.dirty) {
-                data.chunk.dirty = false;
-                data.chunk.state = .generated;
+            } else if (data.chunk.state == .renderable) {
+                if (data.chunk.dirty) {
+                    data.chunk.dirty = false;
+                    data.chunk.state = .generated;
+                } else if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null and data.chunk.mesh_attempts < 3) {
+                    data.chunk.mesh_attempts += 1;
+                    log.log.warn("CHUNK_RECOVERY: ({},{}) renderable with no allocations, re-meshing (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
+                    data.chunk.state = .generated;
+                }
             }
         }
         self.storage.chunks_mutex.unlockShared();
@@ -357,7 +440,12 @@ pub const WorldStreamer = struct {
         while (!self.upload_queue.isEmpty() and uploads < self.max_uploads_per_frame) {
             const key = self.upload_queue.pop() orelse break;
             if (self.storage.get(key.x, key.z)) |data| {
-                if (data.chunk.state != .uploading) continue;
+                if (data.chunk.state != .uploading) {
+                    log.log.debug("CHUNK_UPLOAD: ({},{}) skipped - expected uploading, got state={}", .{
+                        key.x, key.z, data.chunk.state,
+                    });
+                    continue;
+                }
 
                 if (self.gpu_mesher != null) {
                     if (self.gpu_block_buffer) |buf| {
@@ -366,45 +454,71 @@ pub const WorldStreamer = struct {
                         else
                             buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch |err| {
                                 log.log.err("GpuBlockBuffer allocation failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, err });
-                                return;
+                                data.chunk.state = .generated;
+                                continue;
                             };
 
                         const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
                         buf.upload(slot, blocks_slice) catch |upload_err| {
                             log.log.err("GpuBlockBuffer upload failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, upload_err });
-                            return;
+                            data.chunk.state = .generated;
+                            continue;
                         };
 
                         if (self.gpu_mesher.?.queueMesh(data.chunk.chunk_x, data.chunk.chunk_z, slot)) {
+                            log.log.debug("CHUNK_UPLOAD: ({},{}) queued for GPU meshing, slot={}", .{ key.x, key.z, slot });
                             data.chunk.state = .uploading;
                         } else {
+                            log.log.debug("CHUNK_UPLOAD: ({},{}) GPU mesher queue full, reverting to mesh_ready", .{ key.x, key.z });
                             data.chunk.state = .mesh_ready;
                         }
                     }
                 } else {
+                    const has_pending = data.mesh.pending_solid != null or data.mesh.pending_cutout != null or data.mesh.pending_fluid != null;
+                    log.log.debug("CHUNK_UPLOAD: ({},{}) uploading | pending: solid={} cutout={} fluid={} | has_pending={}", .{
+                        key.x,                           key.z,
+                        data.mesh.pending_solid != null, data.mesh.pending_cutout != null,
+                        data.mesh.pending_fluid != null, has_pending,
+                    });
+
                     data.mesh.upload(self.vertex_allocator);
 
                     if (data.mesh.ready) {
+                        log.log.debug("CHUNK_UPLOAD: ({},{}) upload OK -> renderable | solid={} ({}v) cutout={} ({}v) fluid={} ({}v)", .{
+                            key.x,                               key.z,
+                            data.mesh.solid_allocation != null,  if (data.mesh.solid_allocation) |a| a.count else @as(u32, 0),
+                            data.mesh.cutout_allocation != null, if (data.mesh.cutout_allocation) |a| a.count else @as(u32, 0),
+                            data.mesh.fluid_allocation != null,  if (data.mesh.fluid_allocation) |a| a.count else @as(u32, 0),
+                        });
                         if (self.gpu_block_buffer) |buf| {
                             const slot = if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |existing|
                                 existing
                             else
                                 buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch |err| {
                                     log.log.err("GpuBlockBuffer allocation failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, err });
-                                    return;
+                                    data.chunk.state = .renderable;
+                                    continue;
                                 };
                             const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
                             buf.upload(slot, blocks_slice) catch |upload_err| {
                                 log.log.err("GpuBlockBuffer upload failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, upload_err });
-                                return;
+                                data.chunk.state = .renderable;
+                                continue;
                             };
                         }
                         data.chunk.state = .renderable;
                     } else {
+                        log.log.warn("CHUNK_UPLOAD: ({},{}) upload FAILED (ready=false), reverting to mesh_ready | solid={} cutout={} fluid={}", .{
+                            key.x,                              key.z,
+                            data.mesh.solid_allocation != null, data.mesh.cutout_allocation != null,
+                            data.mesh.fluid_allocation != null,
+                        });
                         data.chunk.state = .mesh_ready;
                     }
                 }
                 uploads += 1;
+            } else {
+                log.log.debug("CHUNK_UPLOAD: ({},{}) chunk not found in storage (already unloaded?)", .{ key.x, key.z });
             }
         }
     }
@@ -556,6 +670,7 @@ pub const WorldStreamer = struct {
 
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
             if (self.gpu_mesher != null) {
+                log.log.debug("CHUNK_MESH: ({},{}) GPU mesher path -> mesh_ready (CPU meshing skipped)", .{ cx, cz });
                 chunk_data.chunk.state = .mesh_ready;
                 return;
             }
@@ -568,6 +683,15 @@ pub const WorldStreamer = struct {
                 chunk_data.chunk.state = .generated;
                 return;
             }
+            const ps = chunk_data.mesh.pending_solid;
+            const pc = chunk_data.mesh.pending_cutout;
+            const pf = chunk_data.mesh.pending_fluid;
+            log.log.debug("CHUNK_MESH: ({},{}) mesh built -> mesh_ready | solid={} ({}v) cutout={} ({}v) fluid={} ({}v)", .{
+                cx,         cz,
+                ps != null, if (ps) |v| v.len else @as(usize, 0),
+                pc != null, if (pc) |v| v.len else @as(usize, 0),
+                pf != null, if (pf) |v| v.len else @as(usize, 0),
+            });
             chunk_data.chunk.state = .mesh_ready;
         }
     }

@@ -51,6 +51,8 @@ pub const DescriptorManager = struct {
     shadow_ubos: [rhi.MAX_FRAMES_IN_FLIGHT]VulkanBuffer,
     shadow_ubos_mapped: [rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque,
 
+    dummy_instance_ssbo: VulkanBuffer,
+
     // Dummy textures
     dummy_texture: rhi.TextureHandle,
     dummy_texture_3d: rhi.TextureHandle,
@@ -70,6 +72,7 @@ pub const DescriptorManager = struct {
             .global_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
             .shadow_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]VulkanBuffer),
             .shadow_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
+            .dummy_instance_ssbo = std.mem.zeroes(VulkanBuffer),
             .dummy_texture = 0,
             .dummy_texture_3d = 0,
             .dummy_normal_texture = 0,
@@ -90,6 +93,11 @@ pub const DescriptorManager = struct {
             };
             self.shadow_ubos_mapped[i] = self.shadow_ubos[i].mapped_ptr;
         }
+
+        self.dummy_instance_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
+            self.deinit();
+            return err;
+        };
 
         // Create dummy textures at frame index 1 to isolate from frame 0's lifecycle.
         resource_manager.setCurrentFrame(1);
@@ -219,6 +227,11 @@ pub const DescriptorManager = struct {
                 .offset = 0,
                 .range = @sizeOf(ShadowUniforms),
             };
+            var buffer_info_instance = c.VkDescriptorBufferInfo{
+                .buffer = self.dummy_instance_ssbo.buffer,
+                .offset = 0,
+                .range = 256,
+            };
 
             var writes = [_]c.VkWriteDescriptorSet{
                 .{
@@ -243,7 +256,7 @@ pub const DescriptorManager = struct {
                     .dstBinding = 5,
                     .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                     .descriptorCount = 1,
-                    .pBufferInfo = &buffer_info_global,
+                    .pBufferInfo = &buffer_info_instance,
                 },
                 .{
                     .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -267,7 +280,7 @@ pub const DescriptorManager = struct {
                     .dstBinding = 5,
                     .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                     .descriptorCount = 1,
-                    .pBufferInfo = &buffer_info_global,
+                    .pBufferInfo = &buffer_info_instance,
                 },
             };
             c.vkUpdateDescriptorSets(vulkan_device.vk_device, writes.len, &writes[0], 0, null);
@@ -292,6 +305,12 @@ pub const DescriptorManager = struct {
                 c.vkDestroyBuffer(device, self.shadow_ubos[i].buffer, null);
                 c.vkFreeMemory(device, self.shadow_ubos[i].memory, null);
             }
+        }
+
+        if (self.dummy_instance_ssbo.buffer != null) {
+            if (self.dummy_instance_ssbo.mapped_ptr != null) c.vkUnmapMemory(device, self.dummy_instance_ssbo.memory);
+            c.vkDestroyBuffer(device, self.dummy_instance_ssbo.buffer, null);
+            c.vkFreeMemory(device, self.dummy_instance_ssbo.memory, null);
         }
 
         if (self.descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(device, self.descriptor_set_layout, null);

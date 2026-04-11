@@ -421,7 +421,7 @@ pub fn endFrame(ctx: anytype) void {
         ctx.shadow_system.endPass(command_buffer);
     }
 
-    if (!ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
+    if (ctx.runtime.draw_call_count > 0 and !ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
         beginPostProcessPassInternal(ctx);
         if (ctx.post_process.pass_active) {
             const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -442,22 +442,20 @@ pub fn endFrame(ctx: anytype) void {
         if (transfer_cb) |cb| {
             ctx.resources.transfer.recordPendingCopies(cb);
 
-            var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
-            barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            var barrier = std.mem.zeroes(c.VkMemoryBarrier);
+            barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
             barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.dstAccessMask = ctx.resources.transfer.getPendingDstAccessMask();
-            barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
-            barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
 
             c.vkCmdPipelineBarrier(
                 cb,
                 c.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+                c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                 0,
-                0,
-                null,
                 1,
                 &barrier,
+                0,
+                null,
                 0,
                 null,
             );

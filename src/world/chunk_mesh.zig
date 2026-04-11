@@ -239,14 +239,17 @@ pub const ChunkMesh = struct {
         }
     }
 
-    /// Upload pending mesh data to the GPU using GlobalVertexAllocator.
     pub fn upload(self: *ChunkMesh, allocator: *GlobalVertexAllocator) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        // Handle solid pass
+        self.ready = false;
+
+        const had_solid_alloc = self.solid_allocation != null;
+        const had_cutout_alloc = self.cutout_allocation != null;
+        const had_fluid_alloc = self.fluid_allocation != null;
+
         if (self.pending_solid) |v| {
-            // Always free existing allocation first to reduce peak usage
             if (self.solid_allocation) |alloc| {
                 allocator.free(alloc);
                 self.solid_allocation = null;
@@ -255,6 +258,9 @@ pub const ChunkMesh = struct {
             if (v.len > 0) {
                 self.solid_allocation = allocator.allocate(v) catch |err| {
                     log.log.errWithTrace("Failed to allocate chunk mesh vertices (will retry): {}", .{err});
+                    log.log.warn("CHUNK_MESH_UPLOAD: solid alloc failed ({} verts), had_existing={} pending_cutout={} pending_fluid={}", .{
+                        v.len, had_solid_alloc, self.pending_cutout != null, self.pending_fluid != null,
+                    });
                     return;
                 };
             }
@@ -262,13 +268,11 @@ pub const ChunkMesh = struct {
             self.pending_solid = null;
             self.ready = true;
         } else if (self.solid_allocation != null) {
-            // Chunk became empty in solid pass, free the old allocation
             allocator.free(self.solid_allocation.?);
             self.solid_allocation = null;
             self.ready = true;
         }
 
-        // Handle cutout pass
         if (self.pending_cutout) |v| {
             if (self.cutout_allocation) |alloc| {
                 allocator.free(alloc);
@@ -278,6 +282,9 @@ pub const ChunkMesh = struct {
             if (v.len > 0) {
                 self.cutout_allocation = allocator.allocate(v) catch |err| {
                     log.log.errWithTrace("Failed to allocate chunk cutout vertices (will retry): {}", .{err});
+                    log.log.warn("CHUNK_MESH_UPLOAD: cutout alloc failed ({} verts), solid_ok={} had_cutout={} pending_fluid={}", .{
+                        v.len, self.solid_allocation != null, had_cutout_alloc, self.pending_fluid != null,
+                    });
                     return;
                 };
             }
@@ -290,7 +297,6 @@ pub const ChunkMesh = struct {
             self.ready = true;
         }
 
-        // Handle fluid pass
         if (self.pending_fluid) |v| {
             if (self.fluid_allocation) |alloc| {
                 allocator.free(alloc);
@@ -300,6 +306,9 @@ pub const ChunkMesh = struct {
             if (v.len > 0) {
                 self.fluid_allocation = allocator.allocate(v) catch |err| {
                     log.log.errWithTrace("Failed to allocate chunk fluid vertices (will retry): {}", .{err});
+                    log.log.warn("CHUNK_MESH_UPLOAD: fluid alloc failed ({} verts), solid_ok={} cutout_ok={} had_fluid={}", .{
+                        v.len, self.solid_allocation != null, self.cutout_allocation != null, had_fluid_alloc,
+                    });
                     return;
                 };
             }
@@ -307,9 +316,13 @@ pub const ChunkMesh = struct {
             self.pending_fluid = null;
             self.ready = true;
         } else if (self.fluid_allocation != null) {
-            // Chunk became empty in fluid pass, free the old allocation
             allocator.free(self.fluid_allocation.?);
             self.fluid_allocation = null;
+            self.ready = true;
+        }
+
+        if (!self.ready) {
+            log.log.debug("CHUNK_MESH_UPLOAD: no pending data and no existing allocations -> marking ready (empty chunk)", .{});
             self.ready = true;
         }
     }
