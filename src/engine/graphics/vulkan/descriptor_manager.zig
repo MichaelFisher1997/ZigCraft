@@ -239,6 +239,14 @@ pub const DescriptorManager = struct {
                 },
                 .{
                     .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.descriptor_sets[i],
+                    .dstBinding = 5,
+                    .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .descriptorCount = 1,
+                    .pBufferInfo = &buffer_info_global,
+                },
+                .{
+                    .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet = self.lod_descriptor_sets[i],
                     .dstBinding = 0,
                     .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -252,6 +260,14 @@ pub const DescriptorManager = struct {
                     .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                     .descriptorCount = 1,
                     .pBufferInfo = &buffer_info_shadow,
+                },
+                .{
+                    .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.lod_descriptor_sets[i],
+                    .dstBinding = 5,
+                    .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                    .descriptorCount = 1,
+                    .pBufferInfo = &buffer_info_global,
                 },
             };
             c.vkUpdateDescriptorSets(vulkan_device.vk_device, writes.len, &writes[0], 0, null);

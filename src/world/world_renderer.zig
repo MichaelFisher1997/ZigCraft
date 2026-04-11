@@ -83,10 +83,30 @@ pub const WorldRenderer = struct {
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
-        const vertex_capacity_mb: usize = if (safe_mode) 1024 else 2048;
+
+        const vram_bytes = query.getDeviceLocalVramBytes();
+        const vram_mb = vram_bytes / (1024 * 1024);
+        const MB: usize = 1024 * 1024;
+
+        const vertex_capacity_mb: usize = if (safe_mode)
+            @min(512, @divFloor(vram_mb, 4))
+        else blk: {
+            const budget_mb = if (vram_mb >= 8192) @as(usize, 2048) else if (vram_mb >= 6144) @as(usize, 1024) else if (vram_mb >= 4096) @as(usize, 512) else @as(usize, 256);
+            break :blk budget_mb;
+        };
+
+        const gpu_block_capacity: usize = blk: {
+            const slot_size = 16 * 16 * 256;
+            const block_budget_mb = if (vram_mb >= 8192) @as(usize, 16384) else if (vram_mb >= 6144) @as(usize, 8192) else if (vram_mb >= 4096) @as(usize, 4096) else @as(usize, 2048);
+            const budget_bytes = block_budget_mb * MB;
+            const max_by_budget = budget_bytes / slot_size;
+            break :blk @min(MAX_MDI_CHUNKS, max_by_budget);
+        };
+
+        log.log.info("VRAM budget: {}MB | vertex_allocator: {}MB | gpu_block_buffer: {} slots", .{ vram_mb, vertex_capacity_mb, gpu_block_capacity });
 
         if (safe_mode) {
-            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: GlobalVertexAllocator reduced to {}MB", .{vertex_capacity_mb});
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: reduced GPU buffer sizes", .{});
         }
 
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
@@ -119,8 +139,8 @@ pub const WorldRenderer = struct {
 
         var gpu_block_buffer: ?*GpuBlockBuffer = null;
         errdefer if (gpu_block_buffer) |buf| buf.deinit();
-        gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, max_chunks);
-        log.log.info("GpuBlockBuffer initialized (capacity={})", .{max_chunks});
+        gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, gpu_block_capacity);
+        log.log.info("GpuBlockBuffer initialized (capacity={})", .{gpu_block_capacity});
 
         var gpu_mesher: ?*GpuMesher = null;
         errdefer if (gpu_mesher) |m| m.deinit();

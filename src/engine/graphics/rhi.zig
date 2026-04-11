@@ -802,6 +802,7 @@ pub const IDeviceQuery = struct {
         getFaultCount: *const fn (ptr: *anyopaque) u32,
         getValidationErrorCount: *const fn (ptr: *anyopaque) u32,
         getDrawCallCount: *const fn (ptr: *anyopaque) u32,
+        getDeviceLocalVramBytes: *const fn (ptr: *anyopaque) u64,
         waitIdle: *const fn (ptr: *anyopaque) void,
     };
 
@@ -820,6 +821,10 @@ pub const IDeviceQuery = struct {
 
     pub fn getDrawCallCount(self: IDeviceQuery) u32 {
         return self.vtable.getDrawCallCount(self.ptr);
+    }
+
+    pub fn getDeviceLocalVramBytes(self: IDeviceQuery) u64 {
+        return self.vtable.getDeviceLocalVramBytes(self.ptr);
     }
 };
 

@@ -348,6 +348,7 @@ const MockContext = struct {
         .getFaultCount = undefined,
         .getValidationErrorCount = undefined,
         .getDrawCallCount = undefined,
+        .getDeviceLocalVramBytes = undefined,
         .waitIdle = undefined,
     };
 

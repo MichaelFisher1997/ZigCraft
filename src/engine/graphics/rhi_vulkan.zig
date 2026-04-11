@@ -628,6 +628,11 @@ fn getValidationErrorCount(ctx_ptr: *anyopaque) u32 {
     return state_control.getValidationErrorCount(ctx);
 }
 
+fn getDeviceLocalVramBytes(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return ctx.vulkan_device.getDeviceLocalVramBytes();
+}
+
 fn getDrawCallCount(ctx_ptr: *anyopaque) u32 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return ctx.runtime.draw_call_count;
@@ -962,6 +967,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getFaultCount = getFaultCount,
         .getValidationErrorCount = getValidationErrorCount,
         .getDrawCallCount = getDrawCallCount,
+        .getDeviceLocalVramBytes = getDeviceLocalVramBytes,
         .waitIdle = waitIdle,
     },
     .timing = .{
