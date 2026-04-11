@@ -226,20 +226,36 @@ jobs:
             5. Commit your changes: `git add` and `git commit` with message `test: add {area} tests for ${{ steps.select-module.outputs.module }}`
             6. STOP. Do not push or create a PR.
 
-      - name: Trigger downstream workflows
+      - name: Find and label created PR
         if: steps.check-existing.outputs.skip != 'true'
+        id: find-pr
         run: |
           sleep 5
-          BRANCH="${{ steps.select-module.outputs.branch }}"
-          PR_NUM=$(gh pr list --base dev --head "$BRANCH" --label automated-test --state open --json number --jq '.[0].number')
+          PAT_USER=$(gh api user --jq '.login')
+          PR_NUM=$(gh pr list \
+            --base dev \
+            --state open \
+            --limit 10 \
+            --json number,createdAt,author \
+            --jq "[.[] | select(.author.login == \"${PAT_USER}\")] | sort_by(.createdAt) | reverse | .[0].number")
           if [ -n "$PR_NUM" ]; then
-            echo "Triggering Build and opencode review for PR #$PR_NUM"
-            SHA=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.sha')
-            BRANCH=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.ref')
-            gh workflow run build.yml --field ref="$BRANCH" || echo "Build trigger attempted"
-            gh workflow run opencode-pr.yml --field pr_number="$PR_NUM" --field head_sha="$SHA"
+            echo "Found newly created PR #$PR_NUM (author: ${PAT_USER})"
+            gh pr edit "$PR_NUM" --add-label "automated-test"
+            echo "pr_number=${PR_NUM}" >> "$GITHUB_OUTPUT"
           else
-            echo "No PR found to trigger workflows"
+            echo "No PR found authored by ${PAT_USER}"
           fi
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+
+      - name: Trigger downstream workflows
+        if: steps.find-pr.outputs.pr_number != ''
+        run: |
+          PR_NUM="${{ steps.find-pr.outputs.pr_number }}"
+          echo "Triggering Build and opencode review for PR #$PR_NUM"
+          SHA=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.sha')
+          BRANCH=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.ref')
+          gh workflow run build.yml --field ref="$BRANCH" || echo "Build trigger attempted"
+          gh workflow run opencode-pr.yml --field pr_number="$PR_NUM" --field head_sha="$SHA"
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
