@@ -253,3 +253,100 @@ test "VulkanDevice mutex is initialized" {
     // If we get here without deadlock or panic, mutex is properly initialized
     try testing.expect(true);
 }
+
+// ============================================================================
+// initDebugMessenger Early Return Tests
+// ============================================================================
+
+test "initDebugMessenger early returns when debug_utils_enabled is false" {
+    var device = VulkanDevice{
+        .allocator = testing.allocator,
+        .vk_device = null,
+        .queue = null,
+        .instance = @ptrFromInt(0x1234),
+        .debug_utils_enabled = false,
+        .debug_messenger = null,
+    };
+
+    // Should return early without trying to create messenger
+    device.initDebugMessenger();
+
+    // debug_messenger should remain null
+    try testing.expect(device.debug_messenger == null);
+}
+
+test "initDebugMessenger early returns when debug_messenger already set" {
+    var device = VulkanDevice{
+        .allocator = testing.allocator,
+        .vk_device = null,
+        .queue = null,
+        .instance = @ptrFromInt(0x1234),
+        .debug_utils_enabled = true,
+        .debug_messenger = @as(c.VkDebugUtilsMessengerEXT, @ptrFromInt(0xDEADBEEF)),
+    };
+
+    // Should return early without trying to create another messenger
+    device.initDebugMessenger();
+
+    // debug_messenger should remain unchanged
+    try testing.expect(device.debug_messenger == @as(c.VkDebugUtilsMessengerEXT, @ptrFromInt(0xDEADBEEF)));
+}
+
+// ============================================================================
+// has_dedicated_transfer_queue Tests
+// ============================================================================
+
+test "VulkanDevice has_dedicated_transfer_queue defaults to false" {
+    const device = VulkanDevice{
+        .allocator = testing.allocator,
+        .vk_device = null,
+        .queue = null,
+    };
+
+    try testing.expect(!device.has_dedicated_transfer_queue);
+}
+
+test "VulkanDevice has_dedicated_transfer_queue can be set to true" {
+    var device = VulkanDevice{
+        .allocator = testing.allocator,
+        .vk_device = null,
+        .queue = null,
+        .has_dedicated_transfer_queue = true,
+    };
+
+    try testing.expect(device.has_dedicated_transfer_queue);
+
+    // Setting back to false
+    device.has_dedicated_transfer_queue = false;
+    try testing.expect(!device.has_dedicated_transfer_queue);
+}
+
+// ============================================================================
+// transfer_family Assignment Tests
+// ============================================================================
+
+test "VulkanDevice transfer_family defaults to graphics_family" {
+    var device = VulkanDevice{
+        .allocator = testing.allocator,
+        .vk_device = null,
+        .queue = null,
+        .graphics_family = 4,
+        .transfer_family = 4, // When no dedicated transfer, equals graphics_family
+    };
+
+    try testing.expectEqual(device.graphics_family, device.transfer_family);
+}
+
+test "VulkanDevice transfer_family separate from graphics_family when dedicated" {
+    var device = VulkanDevice{
+        .allocator = testing.allocator,
+        .vk_device = null,
+        .queue = null,
+        .graphics_family = 0,
+        .transfer_family = 2,
+        .has_dedicated_transfer_queue = true,
+    };
+
+    try testing.expect(device.has_dedicated_transfer_queue);
+    try testing.expect(device.graphics_family != device.transfer_family);
+}
