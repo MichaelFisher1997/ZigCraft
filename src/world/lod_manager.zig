@@ -355,6 +355,13 @@ pub const LODManager = struct {
             self.deletion_timer = 0;
         }
 
+        // Safety: Check for NaN/Inf player position
+        if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
+
+        const pc = worldToChunk(@as(i32, @intFromFloat(player_pos.x)), @as(i32, @intFromFloat(player_pos.z)));
+        self.player_cx = pc.chunk_x;
+        self.player_cz = pc.chunk_z;
+
         // Throttle heavy LOD management logic (generation queuing, state processing, unloads).
         // LOD management involves iterating over thousands of potential regions and can
         // take several milliseconds. Throttling to every 4 frames (approx 15Hz at 60fps)
@@ -367,13 +374,6 @@ pub const LODManager = struct {
                 self.unloadLODWhereChunksLoaded(checker, checker_ctx.?);
             }
         }
-
-        // Safety: Check for NaN/Inf player position
-        if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
-
-        const pc = worldToChunk(@as(i32, @intFromFloat(player_pos.x)), @as(i32, @intFromFloat(player_pos.z)));
-        self.player_cx = pc.chunk_x;
-        self.player_cz = pc.chunk_z;
 
         // Issue #119 Phase 4: Recenter classification cache if player moved far enough.
         // This ensures LOD chunks have cache coverage for consistent biome/surface data.
@@ -777,29 +777,34 @@ pub const LODManager = struct {
     }
 
     /// Check if all chunks within the given world bounds are loaded and renderable.
-    /// Includes a small chunk halo around bounds to avoid exposing border cut-faces.
+    /// Checks if all chunks within the LOD0 radius that could cover this LOD region
+    /// are loaded and renderable. Chunks outside the LOD0 radius are skipped since
+    /// they represent LOD terrain, not full-detail chunks that would cover this region.
     pub fn areAllChunksLoaded(self: *Self, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
-        _ = self;
-        // Convert world bounds to chunk coordinates (inclusive)
-        // Use divFloor consistently for both min and max to handle negative coords symmetrically
+        const radii = self.config.getRadii();
+        const lod0_radius: i64 = @as(i64, radii[0]);
+        const radius_sq = lod0_radius * lod0_radius;
+
         const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
         const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
-        // For max bounds, subtract 1 only after converting to chunk coords to maintain symmetry
-        // This ensures that a region ending at world boundary 32 includes chunks up to cx=1, not cx=2
         const max_cx = @divFloor(bounds.max_x, CHUNK_SIZE_X) - 1 + CHUNK_COVERAGE_PADDING;
         const max_cz = @divFloor(bounds.max_z, CHUNK_SIZE_Z) - 1 + CHUNK_COVERAGE_PADDING;
 
-        // Check every chunk in the region
         var cz = min_cz;
         while (cz <= max_cz) : (cz += 1) {
             var cx = min_cx;
             while (cx <= max_cx) : (cx += 1) {
+                const dx: i64 = @as(i64, cx) - @as(i64, self.player_cx);
+                const dz: i64 = @as(i64, cz) - @as(i64, self.player_cz);
+                if (dx * dx + dz * dz > radius_sq) {
+                    return false;
+                }
                 if (!checker(cx, cz, ctx)) {
-                    return false; // At least one chunk is not loaded
+                    return false;
                 }
             }
         }
-        return true; // All chunks are loaded
+        return true;
     }
 
     /// Get or create mesh for a LOD region

@@ -404,6 +404,9 @@ pub const WorldRenderer = struct {
 
         var not_renderable: u32 = 0;
         var not_in_storage: u32 = 0;
+        var missing_in_circle: u32 = 0;
+        var missing_cx: i32 = 0;
+        var missing_cz: i32 = 0;
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -412,7 +415,6 @@ pub const WorldRenderer = struct {
                 const dx = cx - pc_x;
                 const dz = cz - pc_z;
                 const dist_sq = dx * dx + dz * dz;
-                _ = dist_sq;
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
@@ -422,16 +424,28 @@ pub const WorldRenderer = struct {
                         self.visible_chunks.append(self.allocator, data) catch {};
                     } else {
                         not_renderable += 1;
+                        if (dist_sq <= r_dist * r_dist) {
+                            missing_in_circle += 1;
+                            missing_cx = @intCast(cx);
+                            missing_cz = @intCast(cz);
+                        }
                     }
                 } else {
+                    if (dist_sq <= r_dist * r_dist) {
+                        missing_in_circle += 1;
+                        missing_cx = @intCast(cx);
+                        missing_cz = @intCast(cz);
+                    }
                     not_in_storage += 1;
                 }
             }
         }
 
-        if (not_renderable > 0 or not_in_storage > 0) {
-            log.log.debug("CPU_CULL: visible={} culled={} not_renderable={} not_in_storage={}", .{
-                self.visible_chunks.items.len, self.last_render_stats.chunks_culled, not_renderable, not_in_storage,
+        if (missing_in_circle > 0) {
+            log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} pc=({},{}) rd={}", .{
+                missing_in_circle,                                                                                                     missing_cx, missing_cz,
+                if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| @intFromEnum(d.chunk.state) else @as(u32, 99), pc_x,       pc_z,
+                r_dist,
             });
         }
     }

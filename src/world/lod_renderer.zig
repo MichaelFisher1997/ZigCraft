@@ -166,6 +166,11 @@ pub fn LODRenderer(comptime RHI: type) type {
             use_frustum: bool,
             max_distance_chunks: ?i32,
         ) !void {
+            var lod_rendered: u32 = 0;
+            var lod_covered: u32 = 0;
+            var first_missing_cx: i32 = 0;
+            var first_missing_cz: i32 = 0;
+
             var iter = meshes.iterator();
             while (iter.next()) |entry| {
                 const mesh = entry.value_ptr.*;
@@ -178,12 +183,24 @@ pub fn LODRenderer(comptime RHI: type) type {
                         if (!isRegionInRange(bounds, camera_pos, max_dist)) continue;
                     }
 
-                    // Skip the LOD region only when the entire covered chunk area is loaded.
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
-                            if (self.isCoveredByChunks(bounds, checker, ctx_ptr)) continue;
+                            const pc_x: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.x)), CHUNK_SIZE_X);
+                            const pc_z: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.z)), CHUNK_SIZE_Z);
+                            const lod0_radius = config.getRadii()[0];
+                            const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, pc_x, pc_z, lod0_radius);
+                            if (cov.covered) {
+                                lod_covered += 1;
+                                continue;
+                            }
+                            if (lod_rendered == 0) {
+                                first_missing_cx = cov.missing_cx;
+                                first_missing_cz = cov.missing_cz;
+                            }
                         }
                     }
+
+                    lod_rendered += 1;
 
                     const aabb_min = Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, 0.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z);
                     const aabb_max = Vec3.init(@as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, 256.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z);
@@ -203,31 +220,53 @@ pub fn LODRenderer(comptime RHI: type) type {
                     try self.draw_list.append(self.allocator, mesh);
                 }
             }
+
+            if (lod_rendered > 0 or lod_covered > 0) {
+                log.log.debug("LOD_DIAG: rendered={} covered={} first_missing=({},{}) cam=({d:.0},{d:.0})", .{
+                    lod_rendered,     lod_covered,
+                    first_missing_cx, first_missing_cz,
+                    camera_pos.x,     camera_pos.z,
+                });
+            }
         }
+
+        const CoverageResult = struct {
+            covered: bool,
+            missing_cx: i32,
+            missing_cz: i32,
+        };
 
         fn isCoveredByChunks(
             _: *Self,
             bounds: LODChunk.WorldBounds,
             checker: ChunkChecker,
             ctx: *anyopaque,
-        ) bool {
-            // Convert world bounds to chunk coordinates (inclusive)
-            // Use divFloor consistently for both min and max to handle negative coords symmetrically
+            pc_x: i32,
+            pc_z: i32,
+            lod0_radius: i32,
+        ) CoverageResult {
             const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
             const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
-            // For max bounds, subtract 1 only after converting to chunk coords to maintain symmetry
-            // This ensures that a region ending at world boundary 32 includes chunks up to cx=1, not cx=2
             const max_cx = @divFloor(bounds.max_x, CHUNK_SIZE_X) - 1 + CHUNK_COVERAGE_PADDING;
             const max_cz = @divFloor(bounds.max_z, CHUNK_SIZE_Z) - 1 + CHUNK_COVERAGE_PADDING;
+
+            const radius_sq: i64 = @as(i64, lod0_radius) * @as(i64, lod0_radius);
 
             var cz = min_cz;
             while (cz <= max_cz) : (cz += 1) {
                 var cx = min_cx;
                 while (cx <= max_cx) : (cx += 1) {
-                    if (!checker(cx, cz, ctx)) return false;
+                    const dx: i64 = @as(i64, cx) - @as(i64, pc_x);
+                    const dz: i64 = @as(i64, cz) - @as(i64, pc_z);
+                    if (dx * dx + dz * dz > radius_sq) {
+                        return .{ .covered = false, .missing_cx = cx, .missing_cz = cz };
+                    }
+                    if (!checker(cx, cz, ctx)) {
+                        return .{ .covered = false, .missing_cx = cx, .missing_cz = cz };
+                    }
                 }
             }
-            return true;
+            return .{ .covered = true, .missing_cx = 0, .missing_cz = 0 };
         }
 
         /// Create a LODGPUBridge that delegates to this renderer's RHI.

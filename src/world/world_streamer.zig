@@ -317,7 +317,6 @@ pub const WorldStreamer = struct {
     }
 
     fn updateStreaming(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
-        // Update velocity tracking for predictive loading
         _ = self.player_movement.update(player_pos, dt);
 
         const pc = worldToChunk(@intFromFloat(player_pos.x), @intFromFloat(player_pos.z));
@@ -327,51 +326,21 @@ pub const WorldStreamer = struct {
             self.logMissingChunkDiagnostic(pc.chunk_x, pc.chunk_z);
         }
 
+        const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+
         if (moved) {
             self.last_pc = .{ .x = pc.chunk_x, .z = pc.chunk_z };
 
             try self.gen_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z);
             try self.mesh_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z);
 
-            const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
-
-            var cz = pc.chunk_z - render_dist;
-            while (cz <= pc.chunk_z + render_dist) : (cz += 1) {
-                var cx = pc.chunk_x - render_dist;
-                while (cx <= pc.chunk_x + render_dist) : (cx += 1) {
-                    const dx = cx - pc.chunk_x;
-                    const dz = cz - pc.chunk_z;
-                    const dist_sq = dx * dx + dz * dz;
-
-                    if (dist_sq > render_dist * render_dist) continue;
-
-                    const data = try self.storage.getOrCreate(cx, cz);
-
-                    switch (data.chunk.state) {
-                        .missing => {
-                            try self.gen_queue.push(.{
-                                .type = .chunk_generation,
-                                .dist_sq = dist_sq,
-                                .data = .{
-                                    .chunk = .{
-                                        .x = cx,
-                                        .z = cz,
-                                        .job_token = data.chunk.job_token,
-                                    },
-                                },
-                            });
-                            data.chunk.state = .generating;
-                        },
-                        else => {},
-                    }
-                }
-            }
+            try self.scanForMissingChunks(pc.chunk_x, pc.chunk_z, render_dist);
+        } else if (self.frame_counter % 30 == 0) {
+            try self.scanForMissingChunks(pc.chunk_x, pc.chunk_z, render_dist);
         }
 
         self.storage.chunks_mutex.lock();
         var mesh_iter = self.storage.iteratorUnsafe();
-
-        const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
 
         while (mesh_iter.next()) |entry| {
             const key = entry.key_ptr.*;
@@ -405,6 +374,15 @@ pub const WorldStreamer = struct {
                     log.log.warn("CHUNK_RECOVERY: ({},{}) renderable with no allocations, re-meshing (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
                     data.chunk.state = .generated;
                 }
+            } else if (data.chunk.state == .generating and self.frame_counter % 120 == 0) {
+                const dx = data.chunk.chunk_x - pc.chunk_x;
+                const dz = data.chunk.chunk_z - pc.chunk_z;
+                const max_dist = self.render_distance + CHUNK_UNLOAD_BUFFER;
+                if (dx * dx + dz * dz <= max_dist * max_dist) {
+                    data.chunk.job_token += 1;
+                    data.chunk.state = .missing;
+                    log.log.warn("CHUNK_STUCK: ({},{}) in generating state too long, resetting to missing", .{ data.chunk.chunk_x, data.chunk.chunk_z });
+                }
             }
         }
         self.storage.chunks_mutex.unlock();
@@ -416,6 +394,40 @@ pub const WorldStreamer = struct {
                 self.player_movement.dir_z * self.player_movement.speed,
             );
             try lod_mgr.update(player_pos, velocity, ChunkStorage.isChunkRenderable, self.storage);
+        }
+    }
+
+    fn scanForMissingChunks(self: *WorldStreamer, pc_x: i32, pc_z: i32, render_dist: i32) !void {
+        var cz: i32 = pc_z - render_dist;
+        while (cz <= pc_z + render_dist) : (cz += 1) {
+            var cx: i32 = pc_x - render_dist;
+            while (cx <= pc_x + render_dist) : (cx += 1) {
+                const dx = cx - pc_x;
+                const dz = cz - pc_z;
+                const dist_sq = dx * dx + dz * dz;
+
+                if (dist_sq > render_dist * render_dist) continue;
+
+                const data = try self.storage.getOrCreate(cx, cz);
+
+                switch (data.chunk.state) {
+                    .missing => {
+                        try self.gen_queue.push(.{
+                            .type = .chunk_generation,
+                            .dist_sq = dist_sq,
+                            .data = .{
+                                .chunk = .{
+                                    .x = cx,
+                                    .z = cz,
+                                    .job_token = data.chunk.job_token,
+                                },
+                            },
+                        });
+                        data.chunk.state = .generating;
+                    },
+                    else => {},
+                }
+            }
         }
     }
 
