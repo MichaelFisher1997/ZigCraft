@@ -1,5 +1,11 @@
 name: opencode-test-writer
 
+# Required repository secrets:
+# - OPENCODE_PAT: Classic PAT with `repo` scope OR fine-grained PAT with:
+#     Contents: Read & Write, Pull requests: Read & Write, Metadata: Read
+#   Without `repo` scope, git push will fail with 403 permission denied.
+# - MINIMAX_API_KEY: API key for the MiniMax M2.7 model
+
 on:
   schedule:
     - cron: '0 4 * * *'
@@ -133,12 +139,20 @@ jobs:
               ;;
           esac
 
+      # OPENCODE_PAT must be a classic PAT with `repo` scope (full control of private repositories)
+      # or a fine-grained PAT with Contents: Read & Write on this repository.
+      # Without write permission, git push will fail with 403.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.select-module.outputs.base_branch }}
           fetch-depth: 0
           token: ${{ secrets.OPENCODE_PAT }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "opencode[bot]"
+          git config user.email "opencode[bot]@users.noreply.github.com"
 
       - name: Ensure test label exists
         run: |
@@ -183,6 +197,15 @@ jobs:
           if [ "$MISSING" -gt 0 ]; then
             echo "::warning::$MISSING scan path(s) missing — the scan_paths case statement in this workflow may need updating"
           fi
+
+      - name: Verify PAT push permissions
+        if: steps.check-existing.outputs.skip != 'true'
+        run: |
+          if ! git push --dry-run origin HEAD:${{ steps.select-module.outputs.base_branch }} 2>/dev/null; then
+            echo "::error::OPENCODE_PAT cannot push to repository. Ensure the PAT has 'repo' scope (classic) or Contents: Read & Write (fine-grained)."
+            exit 1
+          fi
+          echo "PAT has push permissions."
 
       - name: Setup Nix
         if: steps.check-existing.outputs.skip != 'true'
