@@ -351,6 +351,17 @@ pub const Chunk = struct {
     }
 };
 
+pub fn worldToChunkFromFloat(world_x: f32, world_z: f32) struct { chunk_x: i32, chunk_z: i32 } {
+    const chunk = worldToChunk(
+        @as(i32, @intFromFloat(@floor(world_x))),
+        @as(i32, @intFromFloat(@floor(world_z))),
+    );
+    return .{
+        .chunk_x = chunk.chunk_x,
+        .chunk_z = chunk.chunk_z,
+    };
+}
+
 /// Convert world coordinates to chunk coordinates
 pub fn worldToChunk(world_x: i32, world_z: i32) struct { chunk_x: i32, chunk_z: i32 } {
     return .{

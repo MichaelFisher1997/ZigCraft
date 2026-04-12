@@ -29,6 +29,7 @@ const CHUNK_SIZE_X = @import("world/chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = @import("world/chunk.zig").CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = @import("world/chunk.zig").CHUNK_SIZE_Z;
 const worldToChunk = @import("world/chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("world/chunk.zig").worldToChunkFromFloat;
 const worldToLocal = @import("world/chunk.zig").worldToLocal;
 const BlockType = @import("world/block.zig").BlockType;
 const block_registry = @import("world/block_registry.zig");
@@ -505,6 +506,24 @@ test "worldToChunk zero" {
     const result = worldToChunk(0, 0);
     try testing.expectEqual(@as(i32, 0), result.chunk_x);
     try testing.expectEqual(@as(i32, 0), result.chunk_z);
+}
+
+test "worldToChunkFromFloat negative boundary coordinates" {
+    const result1 = worldToChunkFromFloat(-0.1, -0.1);
+    try testing.expectEqual(@as(i32, -1), result1.chunk_x);
+    try testing.expectEqual(@as(i32, -1), result1.chunk_z);
+
+    const result2 = worldToChunkFromFloat(-15.9, -15.9);
+    try testing.expectEqual(@as(i32, -1), result2.chunk_x);
+    try testing.expectEqual(@as(i32, -1), result2.chunk_z);
+
+    const result3 = worldToChunkFromFloat(-16.0, -16.0);
+    try testing.expectEqual(@as(i32, -1), result3.chunk_x);
+    try testing.expectEqual(@as(i32, -1), result3.chunk_z);
+
+    const result4 = worldToChunkFromFloat(-16.1, -16.1);
+    try testing.expectEqual(@as(i32, -2), result4.chunk_x);
+    try testing.expectEqual(@as(i32, -2), result4.chunk_z);
 }
 
 test "worldToLocal positive coordinates" {

@@ -28,7 +28,7 @@ const Chunk = @import("chunk.zig").Chunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
-const worldToChunk = @import("chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("chunk.zig").worldToChunkFromFloat;
 const BlockType = @import("block.zig").BlockType;
 const BiomeId = @import("worldgen/biome.zig").BiomeId;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
@@ -358,7 +358,7 @@ pub const LODManager = struct {
         // Safety: Check for NaN/Inf player position
         if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
 
-        const pc = worldToChunk(@as(i32, @intFromFloat(player_pos.x)), @as(i32, @intFromFloat(player_pos.z)));
+        const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
         self.player_cx = pc.chunk_x;
         self.player_cz = pc.chunk_z;
 

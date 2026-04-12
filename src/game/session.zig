@@ -33,7 +33,7 @@ const Font = @import("../engine/ui/font.zig");
 const Widgets = @import("../engine/ui/widgets.zig");
 const region_pkg = @import("../world/worldgen/region.zig");
 const hotbar = @import("ui/hotbar.zig");
-const worldToChunk = @import("../world/chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("../world/chunk.zig").worldToChunkFromFloat;
 
 const ECSManager = @import("../engine/ecs/manager.zig");
 const ECSRegistry = ECSManager.Registry;
@@ -336,7 +336,7 @@ pub const GameSession = struct {
 
         const stats = self.world.getStats();
         const rs = self.world.getRenderStats();
-        const pc = worldToChunk(@intFromFloat(self.camera.position.x), @intFromFloat(self.camera.position.z));
+        const pc = worldToChunkFromFloat(self.camera.position.x, self.camera.position.z);
         const hy: f32 = 50.0;
         const fault_count = self.rhi.getFaultCount();
         const hud_h: f32 = if (fault_count > 0) 230 else 210;

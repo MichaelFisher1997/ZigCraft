@@ -2,7 +2,7 @@ const std = @import("std");
 const log = @import("../engine/core/log.zig");
 const ChunkData = @import("chunk_storage.zig").ChunkData;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
-const worldToChunk = @import("chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("chunk.zig").worldToChunkFromFloat;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const CHUNK_SIZE_Y = @import("chunk.zig").CHUNK_SIZE_Y;
@@ -255,10 +255,9 @@ pub const WorldRenderer = struct {
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        const world_x: i64 = @intFromFloat(camera_pos.x);
-        const world_z: i64 = @intFromFloat(camera_pos.z);
-        const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
-        const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
+        const pc = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+        const pc_x: i64 = pc.chunk_x;
+        const pc_z: i64 = pc.chunk_z;
 
         const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, @as(i32, @intCast(mgr.config.getRadii()[0]))) else render_distance;
         const r_dist: i64 = @as(i64, @intCast(r_dist_val));
@@ -528,10 +527,9 @@ pub const WorldRenderer = struct {
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        const world_x: i64 = @intFromFloat(camera_pos.x);
-        const world_z: i64 = @intFromFloat(camera_pos.z);
-        const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
-        const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
+        const pc = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+        const pc_x: i64 = pc.chunk_x;
+        const pc_z: i64 = pc.chunk_z;
 
         const r_dist: i64 = @as(i64, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
 

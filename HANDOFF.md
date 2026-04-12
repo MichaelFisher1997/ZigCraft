@@ -2,72 +2,86 @@
 
 ## Current State
 - Branch: `handoff/world-rendering-handoff`
-- Build/test status: `nix develop --command zig build test` passes
-- GPU crash path: fixed enough that normal mode no longer segfaults after `VK_ERROR_DEVICE_LOST`
-- Remaining problem: world rendering still has gaps/peeling, and some distant features are missing or unstable
+- Status: terrain-gap investigation is still **work in progress**
+- Main user-visible bug: a large one-sided white terrain hole / missing full-chunk coverage remains near the LOD0 radius
+- Latest change is **not yet retested**: GPU mesher allocation failures now reset chunks back to `.generated` instead of leaving them orphaned in `.uploading`
 
-## Symptoms Observed
-- Terrain chunks disappear or "peel away" when the camera rotates
-- There are visible holes/gaps in the terrain coverage
-- Clouds are inconsistent or absent in some runs
-- LOD rendering still looks unreliable
-- Shadows may be missing or not showing as expected in normal mode
+## Problem Summary
+- The original suspicion was chunk-coordinate rounding on negative float positions.
+- That issue was real and was fixed with a shared floor-based float-to-chunk helper.
+- The visual gap still remained after that fix.
+- LOD coverage / masking was then investigated and tightened, but that also did not remove the hole.
+- The strongest current suspect is now the **full-chunk meshing/upload pipeline**, especially the GPU mesher path.
 
-## What Was Fixed Already
-- `VK_ERROR_DEVICE_LOST` no longer cascades into a RADV segfault
-- `gpu_fault_detected` is now set when the frame ends with `GpuLost`
-- Transfer flushes are guarded so the app stops calling into Vulkan after loss
-- GPU recovery path was added to the main loop
-- `ZIGCRAFT_SAFE_MODE` / `ZIGCRAFT_SAFE_RENDER` distinction was preserved
-
-## Rendering Changes Made
-- `src/game/session.zig`
-  - Re-enabled LOD use in normal mode by removing the hardcoded `effective_lod_enabled = false`
-  - Safe mode still disables LOD
+## Changes Made In This WIP
+- `src/world/chunk.zig`
+  - Added `worldToChunkFromFloat()` using floor semantics for negative float world positions.
 - `src/world/world_renderer.zig`
-  - Removed the chunk frustum-culling path that was likely causing chunks to vanish when looking around
-- `src/world/lod_renderer.zig`
-  - Restored proper region coverage checks instead of skipping based on only one chunk
-  - Added a full chunk-coverage test for LOD coverage decisions
+  - Switched camera chunk selection to `worldToChunkFromFloat()`.
+- `src/world/world_streamer.zig`
+  - Switched streamer player-chunk logic to `worldToChunkFromFloat()`.
 - `src/world/lod_manager.zig`
-  - `cleanup_covered_regions` was changed to `false` by default to keep LOD meshes around
-
-## Important Suspects
-1. `src/world/lod_renderer.zig`
-   - LOD visibility/coverage logic is still the most likely cause of holes
-   - The region coverage check may still be too aggressive or use the wrong coordinate range
-2. `src/world/lod_manager.zig`
-   - Covered-region cleanup may still be interfering with visible terrain if it gets re-enabled elsewhere
-3. `src/world/world_renderer.zig`
-   - CPU-side chunk visibility logic was simplified to stop peel-away, but the deeper cause may still be in the render flow
-4. `src/game/screens/world.zig` and `src/engine/graphics/render_system.zig`
-   - Cloud/shadow pass wiring and runtime flags should be rechecked if those features still fail to appear
-
-## File References
-- `src/engine/graphics/vulkan/rhi_pass_orchestration.zig`
-- `src/engine/graphics/rhi_vulkan.zig`
-- `src/engine/graphics/vulkan/transfer_queue.zig`
-- `src/engine/graphics/vulkan/rhi_state_control.zig`
-- `src/game/app.zig`
+  - Switched LOD player chunk tracking to `worldToChunkFromFloat()`.
+- `src/world/lod_renderer.zig`
+  - Switched camera chunk logic to `worldToChunkFromFloat()`.
+  - Added logic to disable the LOD near-camera mask when a region is missing real full chunks inside the LOD0 radius.
+  - Fixed `isCoveredByChunks()` so it scans the full region instead of bailing on the first chunk outside the radius.
 - `src/game/session.zig`
-- `src/world/world_renderer.zig`
-- `src/world/lod_renderer.zig`
+  - Switched HUD chunk display to `worldToChunkFromFloat()`.
+- `src/tests.zig`
+  - Added regression tests for negative float positions such as `-0.1`, `-15.9`, `-16.0`, and `-16.1`.
+- `src/world/gpu_mesher.zig`
+  - Fixed GPU mesher finalize failure handling so vertex-allocation failures reset chunks to `.generated` for retry instead of leaving them stuck in `.uploading`.
+
+## What Was Tried But Did Not Fix The Hole
+- Shared floor-based float-to-chunk conversion for negative positions.
+- LOD mask disable for missing full chunks inside the LOD0 radius.
+- LOD coverage-scan fix for boundary LOD regions.
+
+## Current Findings
+- CPU chunk culling is the active full-chunk render path.
+- GPU chunk culling is initialized but **disabled by default** in `WorldRenderer`.
+- GPU mesh build dispatch runs in `MeshBuildPass`, which is scheduled before `OpaquePass` in the render graph.
+- `WorldStreamer.updateFrame()` runs before rendering each frame.
+- `ChunkStorage.isChunkRenderable()` returns true for chunks in `.renderable` or for chunks that already have any mesh allocation.
+- Before the latest `gpu_mesher.zig` fix, a GPU mesher allocation failure could leave a chunk stuck in `.uploading` with no recovery path.
+- The boundary meshing helpers in `src/world/meshing/boundary.zig` currently treat missing neighbors as `air`, so that code does **not** yet look like the primary cause.
+
+## Why The Latest Fix Matters
+- In `GpuMesher.finalizeCompletedMeshes()`, allocation failure previously just logged and `continue`d.
+- That discarded the submitted request while leaving the chunk state unchanged.
+- Because the chunk was already in `.uploading`, it could become permanently invisible with no retry path.
+- The new behavior resets such chunks to `.generated`, allowing them to re-enter meshing instead of being orphaned forever.
+
+## Recommended Next Steps
+1. Retest the exact same scene / camera position after the `src/world/gpu_mesher.zig` recovery change.
+2. Capture and compare logs for:
+   - `GPU_MESHER`
+   - `CHUNK_STATES`
+   - `CHUNK_DIAG`
+   - `CPU_CULL_GAP`
+3. If the hole still persists:
+   - temporarily disable GPU meshing / force CPU meshing to determine whether the bug is GPU-path-specific
+   - compare the missing chunk coordinates reported by diagnostics against the visible hole
+   - add explicit recovery / diagnostics for chunks that remain in `.uploading` too long
+4. If CPU meshing also reproduces the hole:
+   - revisit boundary-face generation and neighbor lookup with targeted coordinate logging on the missing side
+
+## Build / Test Status
+- Full project tests were **not** successfully rerun to completion in this session.
+- Prior test attempts were blocked by local environment / dependency issues, including missing external tools or modules such as:
+  - `glslangValidator`
+  - `SDL3/SDL.h`
+  - `zig-math`
+  - `zig-noise`
+
+## Modified Files In This WIP
+- `HANDOFF.md`
+- `src/game/session.zig`
+- `src/tests.zig`
+- `src/world/chunk.zig`
+- `src/world/gpu_mesher.zig`
 - `src/world/lod_manager.zig`
-- `src/game/screens/world.zig`
-- `src/engine/graphics/render_system.zig`
-
-## Runtime Notes
-- Current settings were tuned away from the earlier very-low profile
-- The app now runs without crashing, but visual correctness is still incomplete
-- The bug appears view-dependent, which points more toward culling/LOD than texture issues
-
-## Suggested Next Steps
-1. Reproduce the hole/peel behavior with logging disabled
-2. Inspect LOD region coverage and chunk coverage math in `lod_renderer.zig`
-3. Confirm whether LOD meshes are being drawn over or under normal chunks as the camera turns
-4. Revisit shadow/cloud pass enablement only after terrain coverage is stable
-5. If needed, temporarily draw debug bounds for LOD regions and chunk coverage to confirm which regions are being skipped
-
-## Verification
-- `nix develop --command zig build test`
-- Runtime still needs visual retesting in normal mode
+- `src/world/lod_renderer.zig`
+- `src/world/world_renderer.zig`
+- `src/world/world_streamer.zig`

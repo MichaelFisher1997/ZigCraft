@@ -55,7 +55,7 @@ const WorkerPool = @import("../engine/core/job_system.zig").WorkerPool;
 const Job = @import("../engine/core/job_system.zig").Job;
 const RingBuffer = @import("../engine/core/ring_buffer.zig").RingBuffer;
 const Generator = @import("worldgen/generator_interface.zig").Generator;
-const worldToChunk = @import("chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("chunk.zig").worldToChunkFromFloat;
 const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
 const LODManager = @import("lod_manager.zig").LODManager;
@@ -319,7 +319,7 @@ pub const WorldStreamer = struct {
     fn updateStreaming(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         _ = self.player_movement.update(player_pos, dt);
 
-        const pc = worldToChunk(@intFromFloat(player_pos.x), @intFromFloat(player_pos.z));
+        const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
         const moved = pc.chunk_x != self.last_pc.x or pc.chunk_z != self.last_pc.z;
 
         if (self.frame_counter % 600 == 0) {
@@ -502,7 +502,7 @@ pub const WorldStreamer = struct {
     }
 
     fn processUnloads(self: *WorldStreamer, player_pos: Vec3) !void {
-        const pc = worldToChunk(@intFromFloat(player_pos.x), @intFromFloat(player_pos.z));
+        const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
         const render_dist_unload = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
         const unload_dist_sq = (render_dist_unload + CHUNK_UNLOAD_BUFFER) * (render_dist_unload + CHUNK_UNLOAD_BUFFER);
 

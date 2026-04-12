@@ -201,16 +201,19 @@ pub const GpuMesher = struct {
                 if (result.solid_count > 0 and solid_alloc == null) {
                     log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve solid allocation ({} verts)", .{ req.cx, req.cz, result.solid_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.state = .generated;
                     continue;
                 }
                 if (result.cutout_count > 0 and cutout_alloc == null) {
                     log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve cutout allocation ({} verts)", .{ req.cx, req.cz, result.cutout_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.state = .generated;
                     continue;
                 }
                 if (result.fluid_count > 0 and fluid_alloc == null) {
                     log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve fluid allocation ({} verts)", .{ req.cx, req.cz, result.fluid_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.state = .generated;
                     continue;
                 }
 
