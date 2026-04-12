@@ -1,5 +1,11 @@
 name: opencode-audit
 
+# Required repository secrets:
+# - OPENCODE_PAT: Classic PAT with `repo` scope OR fine-grained PAT with:
+#     Contents: Read, Issues: Read & Write, Pull requests: Read & Write
+#   Without proper scopes, gh issue create and label operations will fail.
+# - MINIMAX_API_KEY: API key for the MiniMax M2.7 model
+
 on:
   schedule:
     - cron: '0 6 * * *'
@@ -65,7 +71,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.OPENCODE_PAT }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "opencode[bot]"
+          git config user.email "opencode[bot]@users.noreply.github.com"
 
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
@@ -78,7 +89,21 @@ jobs:
               --color "1D76DB" || true
           fi
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+
+      - name: Validate module directory exists
+        run: |
+          MODULE_PATH="${{ steps.select-module.outputs.module_path }}"
+          if [ ! -d "$MODULE_PATH" ]; then
+            echo "::warning::Module directory '$MODULE_PATH' does not exist — audit may be limited to partial or no source files"
+            echo "Listing parent directory:"
+            PARENT=$(dirname "$MODULE_PATH")
+            ls -la "$PARENT" 2>/dev/null || echo "Parent directory '$PARENT' also missing"
+          else
+            echo "Module directory confirmed: $MODULE_PATH"
+            echo "Files in module:"
+            find "$MODULE_PATH" -name '*.zig' | head -20
+          fi
 
       - name: Ensure opencode cache dir exists
         run: |
@@ -323,4 +348,4 @@ jobs:
             echo "✅ No compliance violations detected."
           fi
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
