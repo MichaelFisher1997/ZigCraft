@@ -70,6 +70,16 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         log.log.errWithTrace("Failed to recreate water resources: {}", .{err});
         return;
     };
+
+    ctx.draw.current_water_reflection_texture = if (ctx.water_system.reflection_texture_handle != 0)
+        ctx.water_system.reflection_texture_handle
+    else
+        ctx.draw.dummy_texture;
+    ctx.draw.current_scene_depth_texture = if (ctx.gpass.g_depth_handle != 0)
+        ctx.gpass.g_depth_handle
+    else
+        ctx.draw.dummy_texture;
+
     ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass) catch |err| {
         log.log.errWithTrace("Failed to recreate water pipeline: {}", .{err});
         return;
@@ -128,9 +138,6 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
             lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.warn("Failed to transition images: {}", .{err});
         }
 
-        if (ctx.gpass.g_depth_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| log.log.warn("Failed to transition G-depth image: {}", .{err});
-        }
         if (ctx.shadow_system.shadow_image != null) {
             lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true) catch |err| log.log.warn("Failed to transition Shadow image: {}", .{err});
             for (0..rhi.SHADOW_CASCADE_COUNT) |i| {

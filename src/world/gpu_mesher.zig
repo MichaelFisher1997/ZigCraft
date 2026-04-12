@@ -109,7 +109,7 @@ pub const GpuMesher = struct {
             self.result_buffers[i] = try Utils.createVulkanBuffer(
                 &vk_ctx.vulkan_device,
                 result_size,
-                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             );
         }
@@ -160,8 +160,9 @@ pub const GpuMesher = struct {
     fn finalizeCompletedMeshes(self: *GpuMesher, vertex_allocator: *GlobalVertexAllocator, storage: *ChunkStorage) void {
         const fi = self.vk_ctx.frames.current_frame;
         const prev_fi = (fi + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
-        log.log.debug("GPU_MESHER_FINALIZE: fi={} prev_fi={} submitted_count={}", .{ fi, prev_fi, self.submitted[prev_fi].items.len });
         if (self.submitted[prev_fi].items.len == 0) return;
+
+        _ = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &self.vk_ctx.frames.in_flight_fences[prev_fi], c.VK_TRUE, std.math.maxInt(u64));
 
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
@@ -188,14 +189,6 @@ pub const GpuMesher = struct {
                     data.chunk.state = .generated;
                     continue;
                 }
-
-                const total_verts = result.solid_count + result.cutout_count + result.fluid_count;
-                log.log.debug("GPU_MESHER: ({},{}) results: solid={} cutout={} fluid={} total={} overflow=0x{x}", .{
-                    req.cx,               req.cz,
-                    result.solid_count,   result.cutout_count,
-                    result.fluid_count,   total_verts,
-                    result.overflow_mask,
-                });
 
                 var solid_alloc: ?VertexAllocation = null;
                 var cutout_alloc: ?VertexAllocation = null;
@@ -238,9 +231,6 @@ pub const GpuMesher = struct {
 
                 data.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                 data.chunk.state = .renderable;
-                if (total_verts == 0) {
-                    log.log.debug("GPU_MESHER: ({},{}) -> renderable with ZERO vertices (empty chunk, may be underground)", .{ req.cx, req.cz });
-                }
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
             }
         }
@@ -272,7 +262,6 @@ pub const GpuMesher = struct {
         self.submitted[fi].clearRetainingCapacity();
 
         if (self.mesh_queue.items.len == 0) return;
-        log.log.debug("GPU_MESHER_DISPATCH_START: fi={} queue_count={}", .{ fi, self.mesh_queue.items.len });
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
 

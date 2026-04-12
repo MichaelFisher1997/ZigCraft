@@ -243,86 +243,71 @@ pub const ChunkMesh = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        const old_solid = self.solid_allocation;
+        const old_cutout = self.cutout_allocation;
+        const old_fluid = self.fluid_allocation;
+        self.solid_allocation = null;
+        self.cutout_allocation = null;
+        self.fluid_allocation = null;
         self.ready = false;
 
-        const had_solid_alloc = self.solid_allocation != null;
-        const had_cutout_alloc = self.cutout_allocation != null;
-        const had_fluid_alloc = self.fluid_allocation != null;
+        var new_solid: ?VertexAllocation = null;
+        var new_cutout: ?VertexAllocation = null;
+        var new_fluid: ?VertexAllocation = null;
+        var alloc_ok = true;
 
         if (self.pending_solid) |v| {
-            if (self.solid_allocation) |alloc| {
-                allocator.free(alloc);
-                self.solid_allocation = null;
-            }
-
-            if (v.len > 0) {
-                self.solid_allocation = allocator.allocate(v) catch |err| {
-                    log.log.errWithTrace("Failed to allocate chunk mesh vertices (will retry): {}", .{err});
-                    log.log.warn("CHUNK_MESH_UPLOAD: solid alloc failed ({} verts), had_existing={} pending_cutout={} pending_fluid={}", .{
-                        v.len, had_solid_alloc, self.pending_cutout != null, self.pending_fluid != null,
-                    });
-                    return;
+            if (v.len > 0) blk: {
+                new_solid = allocator.allocate(v) catch {
+                    alloc_ok = false;
+                    break :blk;
                 };
             }
             self.allocator.free(v);
             self.pending_solid = null;
-            self.ready = true;
-        } else if (self.solid_allocation != null) {
-            allocator.free(self.solid_allocation.?);
-            self.solid_allocation = null;
-            self.ready = true;
         }
 
-        if (self.pending_cutout) |v| {
-            if (self.cutout_allocation) |alloc| {
-                allocator.free(alloc);
-                self.cutout_allocation = null;
+        if (alloc_ok) {
+            if (self.pending_cutout) |v| {
+                if (v.len > 0) blk: {
+                    new_cutout = allocator.allocate(v) catch {
+                        alloc_ok = false;
+                        break :blk;
+                    };
+                }
+                self.allocator.free(v);
+                self.pending_cutout = null;
             }
-
-            if (v.len > 0) {
-                self.cutout_allocation = allocator.allocate(v) catch |err| {
-                    log.log.errWithTrace("Failed to allocate chunk cutout vertices (will retry): {}", .{err});
-                    log.log.warn("CHUNK_MESH_UPLOAD: cutout alloc failed ({} verts), solid_ok={} had_cutout={} pending_fluid={}", .{
-                        v.len, self.solid_allocation != null, had_cutout_alloc, self.pending_fluid != null,
-                    });
-                    return;
-                };
-            }
-            self.allocator.free(v);
-            self.pending_cutout = null;
-            self.ready = true;
-        } else if (self.cutout_allocation != null) {
-            allocator.free(self.cutout_allocation.?);
-            self.cutout_allocation = null;
-            self.ready = true;
         }
 
-        if (self.pending_fluid) |v| {
-            if (self.fluid_allocation) |alloc| {
-                allocator.free(alloc);
-                self.fluid_allocation = null;
+        if (alloc_ok) {
+            if (self.pending_fluid) |v| {
+                if (v.len > 0) blk: {
+                    new_fluid = allocator.allocate(v) catch {
+                        alloc_ok = false;
+                        break :blk;
+                    };
+                }
+                self.allocator.free(v);
+                self.pending_fluid = null;
             }
-
-            if (v.len > 0) {
-                self.fluid_allocation = allocator.allocate(v) catch |err| {
-                    log.log.errWithTrace("Failed to allocate chunk fluid vertices (will retry): {}", .{err});
-                    log.log.warn("CHUNK_MESH_UPLOAD: fluid alloc failed ({} verts), solid_ok={} cutout_ok={} had_fluid={}", .{
-                        v.len, self.solid_allocation != null, self.cutout_allocation != null, had_fluid_alloc,
-                    });
-                    return;
-                };
-            }
-            self.allocator.free(v);
-            self.pending_fluid = null;
-            self.ready = true;
-        } else if (self.fluid_allocation != null) {
-            allocator.free(self.fluid_allocation.?);
-            self.fluid_allocation = null;
-            self.ready = true;
         }
 
-        if (!self.ready) {
-            log.log.debug("CHUNK_MESH_UPLOAD: no pending data and no existing allocations -> marking ready (empty chunk)", .{});
+        if (alloc_ok) {
+            if (old_solid) |a| allocator.free(a);
+            if (old_cutout) |a| allocator.free(a);
+            if (old_fluid) |a| allocator.free(a);
+            self.solid_allocation = new_solid;
+            self.cutout_allocation = new_cutout;
+            self.fluid_allocation = new_fluid;
+            self.ready = true;
+        } else {
+            if (new_solid) |a| allocator.free(a);
+            if (new_cutout) |a| allocator.free(a);
+            if (new_fluid) |a| allocator.free(a);
+            self.solid_allocation = old_solid;
+            self.cutout_allocation = old_cutout;
+            self.fluid_allocation = old_fluid;
             self.ready = true;
         }
     }

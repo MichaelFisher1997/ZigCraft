@@ -311,28 +311,8 @@ pub const WorldStreamer = struct {
             renderable_no_alloc, renderable_not_ready,
         });
 
-        if (renderable_no_alloc > 0 or renderable_not_ready > 0) {
-            var detail_iter = self.storage.iteratorUnsafe();
-            var logged: u32 = 0;
-            while (detail_iter.next()) |entry| {
-                if (logged >= 10) break;
-                const data = entry.value_ptr.*;
-                if (data.chunk.state == .renderable) {
-                    if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
-                        log.log.warn("  PROBLEM: ({},{}) renderable but NO allocations, ready={}", .{
-                            data.chunk.chunk_x, data.chunk.chunk_z, data.mesh.ready,
-                        });
-                        logged += 1;
-                    } else if (!data.mesh.ready) {
-                        log.log.warn("  PROBLEM: ({},{}) renderable but ready=false, solid={} cutout={} fluid={}", .{
-                            data.chunk.chunk_x,                 data.chunk.chunk_z,
-                            data.mesh.solid_allocation != null, data.mesh.cutout_allocation != null,
-                            data.mesh.fluid_allocation != null,
-                        });
-                        logged += 1;
-                    }
-                }
-            }
+        if (renderable_no_alloc > 0) {
+            log.log.warn("  {} chunks renderable with no allocations (max 3 recovery attempts)", .{renderable_no_alloc});
         }
     }
 
@@ -384,7 +364,7 @@ pub const WorldStreamer = struct {
             }
         }
 
-        self.storage.chunks_mutex.lockShared();
+        self.storage.chunks_mutex.lock();
         var mesh_iter = self.storage.iteratorUnsafe();
 
         const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
@@ -423,7 +403,7 @@ pub const WorldStreamer = struct {
                 }
             }
         }
-        self.storage.chunks_mutex.unlockShared();
+        self.storage.chunks_mutex.unlock();
 
         if (self.lod_manager) |lod_mgr| {
             const velocity = Vec3.init(
@@ -441,9 +421,6 @@ pub const WorldStreamer = struct {
             const key = self.upload_queue.pop() orelse break;
             if (self.storage.get(key.x, key.z)) |data| {
                 if (data.chunk.state != .uploading) {
-                    log.log.debug("CHUNK_UPLOAD: ({},{}) skipped - expected uploading, got state={}", .{
-                        key.x, key.z, data.chunk.state,
-                    });
                     continue;
                 }
 
@@ -466,30 +443,15 @@ pub const WorldStreamer = struct {
                         };
 
                         if (self.gpu_mesher.?.queueMesh(data.chunk.chunk_x, data.chunk.chunk_z, slot)) {
-                            log.log.debug("CHUNK_UPLOAD: ({},{}) queued for GPU meshing, slot={}", .{ key.x, key.z, slot });
                             data.chunk.state = .uploading;
                         } else {
-                            log.log.debug("CHUNK_UPLOAD: ({},{}) GPU mesher queue full, reverting to mesh_ready", .{ key.x, key.z });
                             data.chunk.state = .mesh_ready;
                         }
                     }
                 } else {
-                    const has_pending = data.mesh.pending_solid != null or data.mesh.pending_cutout != null or data.mesh.pending_fluid != null;
-                    log.log.debug("CHUNK_UPLOAD: ({},{}) uploading | pending: solid={} cutout={} fluid={} | has_pending={}", .{
-                        key.x,                           key.z,
-                        data.mesh.pending_solid != null, data.mesh.pending_cutout != null,
-                        data.mesh.pending_fluid != null, has_pending,
-                    });
-
                     data.mesh.upload(self.vertex_allocator);
 
                     if (data.mesh.ready) {
-                        log.log.debug("CHUNK_UPLOAD: ({},{}) upload OK -> renderable | solid={} ({}v) cutout={} ({}v) fluid={} ({}v)", .{
-                            key.x,                               key.z,
-                            data.mesh.solid_allocation != null,  if (data.mesh.solid_allocation) |a| a.count else @as(u32, 0),
-                            data.mesh.cutout_allocation != null, if (data.mesh.cutout_allocation) |a| a.count else @as(u32, 0),
-                            data.mesh.fluid_allocation != null,  if (data.mesh.fluid_allocation) |a| a.count else @as(u32, 0),
-                        });
                         if (self.gpu_block_buffer) |buf| {
                             const slot = if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |existing|
                                 existing
@@ -518,7 +480,7 @@ pub const WorldStreamer = struct {
                 }
                 uploads += 1;
             } else {
-                log.log.debug("CHUNK_UPLOAD: ({},{}) chunk not found in storage (already unloaded?)", .{ key.x, key.z });
+                continue;
             }
         }
     }
@@ -581,10 +543,15 @@ pub const WorldStreamer = struct {
         const dz = cz - self.last_pc.z;
         const max_dist = self.render_distance + CHUNK_UNLOAD_BUFFER;
         if (dx * dx + dz * dz > max_dist * max_dist) {
-            if (chunk_data.chunk.state == .generating) {
-                chunk_data.chunk.state = .missing;
-            }
             self.storage.chunks_mutex.unlockShared();
+            self.storage.chunks_mutex.lock();
+            defer self.storage.chunks_mutex.unlock();
+
+            if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
+                if (data.chunk.job_token == job.data.chunk.job_token and data.chunk.state == .generating) {
+                    data.chunk.state = .missing;
+                }
+            }
             return;
         }
 
@@ -605,14 +572,16 @@ pub const WorldStreamer = struct {
                 }
                 self.generator.generate(&chunk_data.chunk, &self.gen_queue.abort_worker);
                 if (self.gen_queue.abort_worker) {
+                    self.storage.chunks_mutex.lock();
                     chunk_data.chunk.state = .missing;
+                    self.storage.chunks_mutex.unlock();
                     return;
                 }
             }
 
-            self.storage.chunks_mutex.lockShared();
+            self.storage.chunks_mutex.lock();
             chunk_data.chunk.state = .generated;
-            self.storage.chunks_mutex.unlockShared();
+            self.storage.chunks_mutex.unlock();
             self.markNeighborsForRemesh(cx, cz);
         }
     }
@@ -632,10 +601,15 @@ pub const WorldStreamer = struct {
         const dz = cz - self.last_pc.z;
         const max_dist = self.render_distance + CHUNK_UNLOAD_BUFFER;
         if (dx * dx + dz * dz > max_dist * max_dist) {
-            if (chunk_data.chunk.state == .meshing) {
-                chunk_data.chunk.state = .generated;
-            }
             self.storage.chunks_mutex.unlockShared();
+            self.storage.chunks_mutex.lock();
+            defer self.storage.chunks_mutex.unlock();
+
+            if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
+                if (data.chunk.job_token == job.data.chunk.job_token and data.chunk.state == .meshing) {
+                    data.chunk.state = .generated;
+                }
+            }
             return;
         }
 
@@ -670,36 +644,34 @@ pub const WorldStreamer = struct {
 
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
             if (self.gpu_mesher != null) {
-                log.log.debug("CHUNK_MESH: ({},{}) GPU mesher path -> mesh_ready (CPU meshing skipped)", .{ cx, cz });
+                self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .mesh_ready;
+                self.storage.chunks_mutex.unlock();
                 return;
             }
             chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
                 log.log.errWithTrace("Mesh build failed for chunk ({}, {}): {}", .{ cx, cz, err });
+                self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .generated;
+                self.storage.chunks_mutex.unlock();
                 return;
             };
             if (self.mesh_queue.abort_worker) {
+                self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .generated;
+                self.storage.chunks_mutex.unlock();
                 return;
             }
-            const ps = chunk_data.mesh.pending_solid;
-            const pc = chunk_data.mesh.pending_cutout;
-            const pf = chunk_data.mesh.pending_fluid;
-            log.log.debug("CHUNK_MESH: ({},{}) mesh built -> mesh_ready | solid={} ({}v) cutout={} ({}v) fluid={} ({}v)", .{
-                cx,         cz,
-                ps != null, if (ps) |v| v.len else @as(usize, 0),
-                pc != null, if (pc) |v| v.len else @as(usize, 0),
-                pf != null, if (pf) |v| v.len else @as(usize, 0),
-            });
+            self.storage.chunks_mutex.lock();
             chunk_data.chunk.state = .mesh_ready;
+            self.storage.chunks_mutex.unlock();
         }
     }
 
     fn markNeighborsForRemesh(self: *WorldStreamer, cx: i32, cz: i32) void {
         const offsets = [_][2]i32{ .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
-        self.storage.chunks_mutex.lockShared();
-        defer self.storage.chunks_mutex.unlockShared();
+        self.storage.chunks_mutex.lock();
+        defer self.storage.chunks_mutex.unlock();
         for (offsets) |off| {
             if (self.storage.chunks.get(ChunkKey{ .x = cx + off[0], .z = cz + off[1] })) |data| {
                 if (data.chunk.state == .renderable) {

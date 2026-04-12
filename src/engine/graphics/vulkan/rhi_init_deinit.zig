@@ -107,18 +107,6 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try ctx.pipeline_manager.createSwapchainUIPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.ui_swapchain_render_pass);
     try ctx.bloom.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.hdr.hdr_view, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height, c.VK_FORMAT_R16G16B16A16_SFLOAT);
 
-    if (ctx.gpass.g_depth_view != null) {
-        ctx.depth_pyramid.init(
-            &ctx.vulkan_device,
-            ctx.allocator,
-            ctx.gpass.g_depth_view,
-            ctx.swapchain.getExtent().width,
-            ctx.swapchain.getExtent().height,
-        ) catch |err| {
-            log.log.warn("DepthPyramidSystem init failed (non-fatal): {}", .{err});
-        };
-    }
-
     setup.updatePostProcessDescriptorsWithBloom(ctx);
 
     ctx.draw.dummy_texture = ctx.descriptors.dummy_texture;
@@ -195,17 +183,8 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
                 count += 1;
             }
         }
-        if (ctx.depth_pyramid.pyramid_image != null) {
-            list[count] = ctx.depth_pyramid.pyramid_image;
-            count += 1;
-        }
-
         if (count > 0) {
             lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.err("Failed to transition images during init: {}", .{err});
-        }
-
-        if (ctx.gpass.g_depth_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| log.log.err("Failed to transition G-depth image during init: {}", .{err});
         }
     }
 
@@ -235,7 +214,6 @@ pub fn deinit(ctx: anytype) void {
         lifecycle.destroyTAAResources(ctx);
         lifecycle.destroyBloomResources(ctx);
         lifecycle.destroyVelocityResources(ctx);
-        ctx.depth_pyramid.deinit(vk_device);
         lifecycle.destroyPostProcessResources(ctx);
         lifecycle.destroyGPassResources(ctx);
         if (ctx.water_system.reflection_texture_handle != 0) {

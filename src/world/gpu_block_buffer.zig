@@ -103,7 +103,6 @@ pub const GpuBlockBuffer = struct {
                 const slot = entry.key_ptr.*;
                 _ = self.slot_to_chunk.swapRemove(slot);
                 self.free_list.append(self.allocator, slot) catch {};
-                log.log.debug("GPU_BLOCK_BUFFER: freed slot {} for chunk ({},{})", .{ slot, cx, cz });
                 return slot;
             }
         }

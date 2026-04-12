@@ -71,8 +71,13 @@ pub fn destroyPostProcessResources(ctx: anytype) void {
 
 pub fn destroyGPassResources(ctx: anytype) void {
     const vk = ctx.vulkan_device.vk_device;
+    ctx.depth_pyramid.deinit(vk);
     destroyVelocityResources(ctx);
     ctx.ssao_system.deinit(vk, ctx.allocator, ctx.descriptors.descriptor_pool);
+    if (ctx.gpass.g_depth_handle != 0) {
+        ctx.resources.destroyTexture(ctx.gpass.g_depth_handle);
+        ctx.gpass.g_depth_handle = 0;
+    }
     if (ctx.pipeline_manager.g_pipeline != null) {
         c.vkDestroyPipeline(vk, ctx.pipeline_manager.g_pipeline, null);
         ctx.pipeline_manager.g_pipeline = null;

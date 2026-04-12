@@ -121,11 +121,22 @@ pub const Frustum = struct {
         const world_z: f32 = @as(f32, @floatFromInt(chunk_z * 16)) - cam_z;
         const world_y: f32 = -cam_y;
 
-        const aabb = AABB.init(
-            Vec3.init(world_x, world_y, world_z),
-            Vec3.init(world_x + CHUNK_SIZE_X, world_y + CHUNK_SIZE_Y, world_z + CHUNK_SIZE_Z),
+        const center = Vec3.init(
+            world_x + CHUNK_SIZE_X * 0.5,
+            world_y + CHUNK_SIZE_Y * 0.5,
+            world_z + CHUNK_SIZE_Z * 0.5,
         );
+        const radius: f32 = CHUNK_SIZE_Y * 0.5 + CHUNK_SIZE_X;
 
-        return self.intersectsAABB(aabb);
+        return self.intersectsSphere(center, radius);
     }
 };
+
+test "Frustum culls front-facing chunks" {
+    const view = Mat4.lookAt(Vec3.init(0, 0, 0), Vec3.init(0, 0, -1), Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 2.0, 1.0, 0.1, 512.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    try std.testing.expect(frustum.intersectsChunkRelative(0, -4, 0, 0, 0));
+    try std.testing.expect(!frustum.intersectsChunkRelative(0, 40, 0, 0, 0));
+}

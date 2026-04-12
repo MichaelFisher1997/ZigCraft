@@ -322,9 +322,6 @@ pub fn createGPassResources(ctx: anytype) !void {
 
     const g_images = [_]c.VkImage{ ctx.gpass.g_normal_image, ctx.velocity.velocity_image };
     try lifecycle.transitionImagesToShaderRead(ctx, &g_images, false);
-    const d_images = [_]c.VkImage{ctx.gpass.g_depth_image};
-    try lifecycle.transitionImagesToShaderRead(ctx, &d_images, true);
-
     var depth_sampler_info = std.mem.zeroes(c.VkSamplerCreateInfo);
     depth_sampler_info.sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     depth_sampler_info.magFilter = c.VK_FILTER_NEAREST;
@@ -348,6 +345,20 @@ pub fn createGPassResources(ctx: anytype) !void {
     ctx.gpass.g_depth_sampler = depth_sampler;
 
     ctx.gpass.g_pass_extent = extent;
+
+    // Depth pyramid samples the G-Pass depth view, so keep it in sync here.
+    if (ctx.gpass.g_depth_view != null) {
+        ctx.depth_pyramid.init(
+            &ctx.vulkan_device,
+            ctx.allocator,
+            ctx.gpass.g_depth_view,
+            extent.width,
+            extent.height,
+        ) catch |err| {
+            log.log.warn("DepthPyramidSystem init failed (non-fatal): {}", .{err});
+        };
+    }
+
     log.log.debug("G-Pass resources created ({}x{}) with velocity buffer", .{ extent.width, extent.height });
 }
 

@@ -160,7 +160,7 @@ pub const LODMesh = struct {
         min_input_triangles: u32,
         atlas: *const TextureAtlas,
     ) !void {
-        const full_mesh = buildFullDetailHeightmapMesh(self.allocator, data, atlas) catch |err| {
+        const full_mesh = buildFullDetailHeightmapMesh(self.allocator, self.lod_level, data, atlas) catch |err| {
             log.log.warn("LOD{} full-detail mesh build failed, falling back: {}", .{ @intFromEnum(self.lod_level), err });
             return self.buildFromSimplifiedData(data, world_x, world_z, atlas);
         };
@@ -439,6 +439,7 @@ fn makeSkirtQuad(params: SkirtParams, tile_id: u16) [4]Vertex {
 
 fn buildFullDetailHeightmapMesh(
     allocator: std.mem.Allocator,
+    lod_level: LODLevel,
     data: *const LODSimplifiedData,
     atlas: *const TextureAtlas,
 ) !FullDetailMesh {
@@ -447,8 +448,7 @@ fn buildFullDetailHeightmapMesh(
     if (grid_total == 0) return error.EmptyData;
     std.debug.assert(w <= data.heightmap.len and w <= data.biomes.len);
 
-    const region_size_32: u32 = 32;
-    const cell_size: u32 = if (w > 0 and w <= region_size_32) region_size_32 / w else 2;
+    const cell_size: u32 = lod_level.regionSizeBlocks() / w;
     std.debug.assert(cell_size >= 1);
 
     var vertices = std.ArrayListUnmanaged(Vertex){};
@@ -888,6 +888,41 @@ test "getCellSize" {
     try std.testing.expectEqual(@as(u32, 2), getCellSize(.lod1));
     try std.testing.expectEqual(@as(u32, 4), getCellSize(.lod2));
     try std.testing.expectEqual(@as(u32, 8), getCellSize(.lod3));
+}
+
+test "buildFullDetailHeightmapMesh spans full LOD region" {
+    const allocator = std.testing.allocator;
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var data = try LODSimplifiedData.init(allocator, .lod3);
+    defer data.deinit();
+
+    const cell_count: usize = @intCast(data.width * data.width);
+    var i: usize = 0;
+    while (i < cell_count) : (i += 1) {
+        data.heightmap[i] = 0.0;
+        data.biomes[i] = .plains;
+        data.top_blocks[i] = .air;
+        data.colors[i] = 0;
+    }
+
+    const mesh = try buildFullDetailHeightmapMesh(allocator, .lod3, &data, &atlas);
+    defer {
+        allocator.free(mesh.vertices);
+        allocator.free(mesh.indices);
+    }
+
+    var max_x: f32 = 0.0;
+    var max_z: f32 = 0.0;
+    for (mesh.vertices) |v| {
+        max_x = @max(max_x, v.pos[0]);
+        max_z = @max(max_z, v.pos[2]);
+    }
+
+    try std.testing.expectEqual(@as(f32, 256.0), max_x);
+    try std.testing.expectEqual(@as(f32, 256.0), max_z);
 }
 
 // ============================================================================
