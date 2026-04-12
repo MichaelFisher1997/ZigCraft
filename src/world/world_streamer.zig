@@ -323,6 +323,10 @@ pub const WorldStreamer = struct {
         const pc = worldToChunk(@intFromFloat(player_pos.x), @intFromFloat(player_pos.z));
         const moved = pc.chunk_x != self.last_pc.x or pc.chunk_z != self.last_pc.z;
 
+        if (self.frame_counter % 600 == 0) {
+            self.logMissingChunkDiagnostic(pc.chunk_x, pc.chunk_z);
+        }
+
         if (moved) {
             self.last_pc = .{ .x = pc.chunk_x, .z = pc.chunk_z };
 
@@ -680,6 +684,70 @@ pub const WorldStreamer = struct {
                     data.chunk.dirty = true;
                 }
             }
+        }
+    }
+
+    fn logMissingChunkDiagnostic(self: *WorldStreamer, pc_x: i32, pc_z: i32) void {
+        const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+
+        var counts = [_]u32{0} ** 10;
+        var missing_keys = std.ArrayListUnmanaged(ChunkKey).empty;
+        defer missing_keys.deinit(self.allocator);
+
+        self.storage.chunks_mutex.lockShared();
+        var cz: i32 = pc_z - render_dist;
+        while (cz <= pc_z + render_dist) : (cz += 1) {
+            var cx: i32 = pc_x - render_dist;
+            while (cx <= pc_x + render_dist) : (cx += 1) {
+                const dx = cx - pc_x;
+                const dz = cz - pc_z;
+                if (dx * dx + dz * dz > render_dist * render_dist) continue;
+
+                if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+                    switch (data.chunk.state) {
+                        .missing => counts[0] += 1,
+                        .queued_for_generation => counts[1] += 1,
+                        .generating => counts[2] += 1,
+                        .generated => counts[3] += 1,
+                        .queued_for_mesh => counts[4] += 1,
+                        .meshing => counts[5] += 1,
+                        .mesh_ready => counts[6] += 1,
+                        .uploading => counts[7] += 1,
+                        .renderable => counts[8] += 1,
+                        .unloading => counts[9] += 1,
+                    }
+                } else {
+                    counts[0] += 1;
+                    missing_keys.append(self.allocator, .{ .x = cx, .z = cz }) catch {};
+                }
+            }
+        }
+        self.storage.chunks_mutex.unlockShared();
+
+        log.log.info("CHUNK_DIAG [frame={}] pc=({},{}) rd={} | missing={} qgen={} gen={} gentd={} qmesh={} mesh={} mready={} upload={} render={} unload={} | not_in_storage={}", .{
+            self.frame_counter, pc_x,      pc_z,                   render_dist,
+            counts[0],          counts[1], counts[2],              counts[3],
+            counts[4],          counts[5], counts[6],              counts[7],
+            counts[8],          counts[9], missing_keys.items.len,
+        });
+
+        if (missing_keys.items.len > 0 and missing_keys.items.len <= 20) {
+            var buf: [512]u8 = undefined;
+            var len: usize = 0;
+            const prefix = "  NOT_IN_STORAGE: ";
+            @memcpy(buf[0..prefix.len], prefix);
+            len = prefix.len;
+            for (missing_keys.items) |k| {
+                const txt = std.fmt.bufPrint(buf[len..], "({},{}) ", .{ k.x, k.z }) catch break;
+                len += txt.len;
+            }
+            log.log.info("{s}", .{buf[0..len]});
+        }
+
+        if (counts[3] > 0 or counts[6] > 0 or counts[7] > 0) {
+            log.log.warn("  stalled chunks: generated={} mesh_ready={} uploading={} (should be 0 at steady state)", .{
+                counts[3], counts[6], counts[7],
+            });
         }
     }
 

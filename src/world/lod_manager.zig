@@ -26,6 +26,7 @@ const LODSimplifiedData = lod_chunk.LODSimplifiedData;
 
 const Chunk = @import("chunk.zig").Chunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
+const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const BlockType = @import("block.zig").BlockType;
@@ -779,11 +780,14 @@ pub const LODManager = struct {
     /// Includes a small chunk halo around bounds to avoid exposing border cut-faces.
     pub fn areAllChunksLoaded(self: *Self, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
         _ = self;
-        // Convert world bounds to chunk coordinates
+        // Convert world bounds to chunk coordinates (inclusive)
+        // Use divFloor consistently for both min and max to handle negative coords symmetrically
         const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
-        const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
-        const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING; // -1 because max is exclusive
-        const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING;
+        const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
+        // For max bounds, subtract 1 only after converting to chunk coords to maintain symmetry
+        // This ensures that a region ending at world boundary 32 includes chunks up to cx=1, not cx=2
+        const max_cx = @divFloor(bounds.max_x, CHUNK_SIZE_X) - 1 + CHUNK_COVERAGE_PADDING;
+        const max_cz = @divFloor(bounds.max_z, CHUNK_SIZE_Z) - 1 + CHUNK_COVERAGE_PADDING;
 
         // Check every chunk in the region
         var cz = min_cz;

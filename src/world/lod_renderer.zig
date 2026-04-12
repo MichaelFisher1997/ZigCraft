@@ -211,10 +211,14 @@ pub fn LODRenderer(comptime RHI: type) type {
             checker: ChunkChecker,
             ctx: *anyopaque,
         ) bool {
+            // Convert world bounds to chunk coordinates (inclusive)
+            // Use divFloor consistently for both min and max to handle negative coords symmetrically
             const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
             const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
-            const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING;
-            const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_Z) + CHUNK_COVERAGE_PADDING;
+            // For max bounds, subtract 1 only after converting to chunk coords to maintain symmetry
+            // This ensures that a region ending at world boundary 32 includes chunks up to cx=1, not cx=2
+            const max_cx = @divFloor(bounds.max_x, CHUNK_SIZE_X) - 1 + CHUNK_COVERAGE_PADDING;
+            const max_cz = @divFloor(bounds.max_z, CHUNK_SIZE_Z) - 1 + CHUNK_COVERAGE_PADDING;
 
             var cz = min_cz;
             while (cz <= max_cz) : (cz += 1) {
@@ -284,12 +288,12 @@ pub fn LODRenderer(comptime RHI: type) type {
 
 fn isRegionInRange(bounds: LODChunk.WorldBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
     const cam_cx: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.x)), CHUNK_SIZE_X);
-    const cam_cz: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.z)), CHUNK_SIZE_X);
+    const cam_cz: i32 = @divFloor(@as(i32, @intFromFloat(camera_pos.z)), CHUNK_SIZE_Z);
 
     const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X);
     const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X);
-    const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_X);
-    const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_X);
+    const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z);
+    const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_Z);
 
     const dx: i32 = if (cam_cx < min_cx)
         min_cx - cam_cx

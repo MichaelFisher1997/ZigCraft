@@ -140,3 +140,23 @@ test "Frustum culls front-facing chunks" {
     try std.testing.expect(frustum.intersectsChunkRelative(0, -4, 0, 0, 0));
     try std.testing.expect(!frustum.intersectsChunkRelative(0, 40, 0, 0, 0));
 }
+
+test "Frustum forward view at y=80 sees all nearby chunks" {
+    const view = Mat4.lookAt(Vec3.init(0, 0, 0), Vec3.init(0, 0, -1), Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 4.0, 1.5, 0.5, 10000.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    var not_visible: u32 = 0;
+    const rd: i32 = 8;
+    var cz: i32 = -rd;
+    while (cz <= rd) : (cz += 1) {
+        var cx: i32 = -rd;
+        while (cx <= rd) : (cx += 1) {
+            if (cx * cx + cz * cz > rd * rd) continue;
+            if (!frustum.intersectsChunkRelative(cx, cz, 0, 80, 0)) {
+                not_visible += 1;
+            }
+        }
+    }
+    try std.testing.expectEqual(@as(u32, 0), not_visible);
+}

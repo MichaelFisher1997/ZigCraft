@@ -402,10 +402,17 @@ pub const WorldRenderer = struct {
     fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
         const frustum = Frustum.fromViewProj(view_proj);
 
+        var not_renderable: u32 = 0;
+        var not_in_storage: u32 = 0;
+
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
             var cx = pc_x - r_dist;
             while (cx <= pc_x + r_dist) : (cx += 1) {
+                const dx = cx - pc_x;
+                const dz = cz - pc_z;
+                const dist_sq = dx * dx + dz * dz;
+                _ = dist_sq;
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
@@ -413,9 +420,19 @@ pub const WorldRenderer = struct {
                             continue;
                         }
                         self.visible_chunks.append(self.allocator, data) catch {};
+                    } else {
+                        not_renderable += 1;
                     }
+                } else {
+                    not_in_storage += 1;
                 }
             }
+        }
+
+        if (not_renderable > 0 or not_in_storage > 0) {
+            log.log.debug("CPU_CULL: visible={} culled={} not_renderable={} not_in_storage={}", .{
+                self.visible_chunks.items.len, self.last_render_stats.chunks_culled, not_renderable, not_in_storage,
+            });
         }
     }
 
