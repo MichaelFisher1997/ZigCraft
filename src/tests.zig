@@ -77,6 +77,7 @@ test {
     _ = @import("engine/graphics/vulkan/frame_manager_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
+    _ = @import("engine/graphics/shadow_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
     _ = @import("world/world_tests.zig");
     _ = @import("world/worldgen/schematics.zig");
