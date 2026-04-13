@@ -171,6 +171,11 @@ pub fn LODRenderer(comptime RHI: type) type {
             var lod_covered: u32 = 0;
             var first_missing_cx: i32 = 0;
             var first_missing_cz: i32 = 0;
+            var first_missing_in_radius: bool = false;
+
+            const camera_chunk_diag = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+            const pc_x_diag = camera_chunk_diag.chunk_x;
+            const pc_z_diag = camera_chunk_diag.chunk_z;
 
             var iter = meshes.iterator();
             while (iter.next()) |entry| {
@@ -200,6 +205,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                             if (lod_rendered == 0) {
                                 first_missing_cx = cov.missing_cx;
                                 first_missing_cz = cov.missing_cz;
+                                first_missing_in_radius = cov.missing_chunk_in_radius;
                             }
                         }
                     }
@@ -226,11 +232,26 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
 
             if (lod_rendered > 0 or lod_covered > 0) {
-                log.log.debug("LOD_DIAG: rendered={} covered={} first_missing=({},{}) cam=({d:.0},{d:.0})", .{
-                    lod_rendered,     lod_covered,
-                    first_missing_cx, first_missing_cz,
-                    camera_pos.x,     camera_pos.z,
-                });
+                const missing_dx = first_missing_cx - pc_x_diag;
+                const missing_dz = first_missing_cz - pc_z_diag;
+                const missing_dist_sq = missing_dx * missing_dx + missing_dz * missing_dz;
+                // Only log every 300 frames to reduce spam
+                if (lod_covered == 0 and lod_rendered > 0) {
+                    // Track a static counter for throttling
+                    const S = struct {
+                        var counter: u64 = 0;
+                    };
+                    S.counter += 1;
+                    if (S.counter % 300 == 1) {
+                        log.log.debug("LOD_DIAG: rendered={} covered={} first_missing=({},{}) missing_dist2={} in_radius={} cam=({d:.0},{d:.0}) cam_chunk=({},{})", .{
+                            lod_rendered,     lod_covered,
+                            first_missing_cx, first_missing_cz,
+                            missing_dist_sq,  first_missing_in_radius,
+                            camera_pos.x,     camera_pos.z,
+                            pc_x_diag,        pc_z_diag,
+                        });
+                    }
+                }
             }
         }
 

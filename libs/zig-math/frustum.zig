@@ -62,9 +62,12 @@ pub const Frustum = struct {
             m[3][3] - m[3][1],
         ).normalize();
 
+        // Near and far planes: correct for reverse-Z projection (z_ndc in [0, 1]).
+        // Near: z_clip >= 0  →  VP[2] alone
+        // Far:  w_clip - z_clip >= 0  →  VP[3] - VP[2]
         planes[4] = Plane.init(
-            Vec3.init(m[0][3] + m[0][2], m[1][3] + m[1][2], m[2][3] + m[2][2]),
-            m[3][3] + m[3][2],
+            Vec3.init(m[0][2], m[1][2], m[2][2]),
+            m[3][2],
         ).normalize();
 
         planes[5] = Plane.init(

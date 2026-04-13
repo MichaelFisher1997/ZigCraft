@@ -45,6 +45,8 @@ const int DEBUG_SHADOW_FACTOR = 1;
 const int DEBUG_CASCADE_INDEX = 2;
 const int DEBUG_CASTER_COVERAGE = 3;
 const int DEBUG_SEAM_DIAG = 4;
+const int DEBUG_TILE_ID = 5;
+const int DEBUG_TEX_COLOR = 6;
 
 // Cloud shadow noise functions
 float cloudHash(vec2 p) {
@@ -578,6 +580,18 @@ void main() {
             float inBlend = (vViewDepth > blendStart && layer < 2) ? (vViewDepth - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
             float splitLine = 1.0 - smoothstep(0.0, 0.05, distToSplit);
             color = vec3(splitLine, distToSplit * 2.0, clamp(inBlend, 0.0, 1.0));
+        } else if (debugChannel < DEBUG_TILE_ID + 0.5) {
+            if (vTileID < 0) {
+                color = vec3(1.0, 0.0, 1.0);
+            } else if (vTileID == 0) {
+                color = vec3(1.0, 1.0, 1.0);
+            } else {
+                float tid = float(vTileID);
+                color = vec3(fract(tid * 0.618), fract(tid * 0.381), fract(tid * 0.236));
+            }
+        } else if (debugChannel < DEBUG_TEX_COLOR + 0.5) {
+            vec4 texColor = texture(uTexture, uv);
+            color = texColor.rgb;
         }
     }
 

@@ -43,6 +43,7 @@ pub const ChunkMeshRequest = struct {
     cx: i32,
     cz: i32,
     gpu_slot: usize,
+    job_token: u32,
 };
 
 pub const GpuMesherStats = struct {
@@ -135,7 +136,7 @@ pub const GpuMesher = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn queueMesh(self: *GpuMesher, cx: i32, cz: i32, gpu_slot: usize) bool {
+    pub fn queueMesh(self: *GpuMesher, cx: i32, cz: i32, gpu_slot: usize, job_token: u32) bool {
         if (!self.available) return false;
         if (self.mesh_queue.items.len >= MAX_GPU_MESH_BATCH) return false;
 
@@ -143,7 +144,7 @@ pub const GpuMesher = struct {
             if (queued.cx == cx and queued.cz == cz) return true;
         }
 
-        self.mesh_queue.append(self.allocator, .{ .cx = cx, .cz = cz, .gpu_slot = gpu_slot }) catch return false;
+        self.mesh_queue.append(self.allocator, .{ .cx = cx, .cz = cz, .gpu_slot = gpu_slot, .job_token = job_token }) catch return false;
         return true;
     }
 
@@ -184,6 +185,8 @@ pub const GpuMesher = struct {
             const result = results[idx];
 
             if (storage.chunks.get(.{ .x = req.cx, .z = req.cz })) |data| {
+                if (data.chunk.job_token != req.job_token) continue;
+
                 if (result.overflow_mask != 0) {
                     log.log.warn("GpuMesher overflow for chunk ({}, {}), falling back to CPU meshing", .{ req.cx, req.cz });
                     data.chunk.state = .generated;
@@ -234,6 +237,7 @@ pub const GpuMesher = struct {
 
                 data.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                 data.chunk.state = .renderable;
+                data.chunk.dirty = false;
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
             }
         }

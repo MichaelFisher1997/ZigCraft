@@ -386,11 +386,15 @@ pub const LODManager = struct {
         // We iterate backwards from LODLevel.count-1 down to 1
         var i: usize = LODLevel.count - 1;
         while (i > 0) : (i -= 1) {
-            try self.queueLODRegions(@enumFromInt(@as(u3, @intCast(i))), player_velocity, chunk_checker, checker_ctx);
+            self.queueLODRegions(@enumFromInt(@as(u3, @intCast(i))), player_velocity, chunk_checker, checker_ctx) catch |err| {
+                log.log.warn("LOD queue error for level {}: {} (non-fatal)", .{ i, err });
+            };
         }
 
         // Process state transitions
-        try self.processStateTransitions();
+        self.processStateTransitions() catch |err| {
+            log.log.warn("LOD state transitions error: {} (non-fatal)", .{err});
+        };
 
         // Process uploads (limited per frame)
         self.processUploads();
@@ -399,7 +403,9 @@ pub const LODManager = struct {
         self.updateStats();
 
         // Unload distant regions
-        try self.unloadDistantRegions();
+        self.unloadDistantRegions() catch |err| {
+            log.log.warn("LOD unload error: {} (non-fatal)", .{err});
+        };
     }
 
     /// Queue LOD regions that need generation

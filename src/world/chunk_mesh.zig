@@ -57,6 +57,10 @@ pub const ChunkMesh = struct {
     subchunk_cutout: [NUM_SUBCHUNKS]?[]Vertex = [_]?[]Vertex{null} ** NUM_SUBCHUNKS,
     subchunk_fluid: [NUM_SUBCHUNKS]?[]Vertex = [_]?[]Vertex{null} ** NUM_SUBCHUNKS,
 
+    // Diagnostic: count of vertices with tile_id == 0 (white)
+    diag_tile0_count: u32 = 0,
+    diag_total_verts: u32 = 0,
+
     pub fn init(allocator: std.mem.Allocator) ChunkMesh {
         return .{
             .allocator = allocator,
@@ -237,6 +241,20 @@ pub const ChunkMesh = struct {
         } else {
             self.pending_fluid = null;
         }
+
+        var tile0: u32 = 0;
+        var total: u32 = 0;
+        for ([_]?[]Vertex{ self.pending_solid, self.pending_cutout, self.pending_fluid }) |opt| {
+            if (opt) |verts| {
+                total += @intCast(verts.len);
+                for (verts) |v| {
+                    const tid: u16 = @intCast(v.packed_meta & 0xFFFF);
+                    if (tid == 0 and tid != Vertex.LOD_TILE_ID) tile0 += 1;
+                }
+            }
+        }
+        self.diag_tile0_count = tile0;
+        self.diag_total_verts = total;
     }
 
     pub fn upload(self: *ChunkMesh, allocator: *GlobalVertexAllocator) void {
@@ -246,10 +264,6 @@ pub const ChunkMesh = struct {
         const old_solid = self.solid_allocation;
         const old_cutout = self.cutout_allocation;
         const old_fluid = self.fluid_allocation;
-        self.solid_allocation = null;
-        self.cutout_allocation = null;
-        self.fluid_allocation = null;
-        self.ready = false;
 
         var new_solid: ?VertexAllocation = null;
         var new_cutout: ?VertexAllocation = null;
@@ -324,14 +338,24 @@ pub const ChunkMesh = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.solid_allocation) |alloc| allocator.free(alloc);
-        if (self.cutout_allocation) |alloc| allocator.free(alloc);
-        if (self.fluid_allocation) |alloc| allocator.free(alloc);
+        const old_solid = self.solid_allocation;
+        const old_cutout = self.cutout_allocation;
+        const old_fluid = self.fluid_allocation;
+
+        const freeing_allocs = old_solid != null or old_cutout != null or old_fluid != null;
+        const setting_allocs = solid != null or cutout != null or fluid != null;
+        if (freeing_allocs and !setting_allocs) {
+            log.log.warn("REPLACE_FREE: freeing allocations without replacement (underground/empty re-mesh)", .{});
+        }
 
         self.solid_allocation = solid;
         self.cutout_allocation = cutout;
         self.fluid_allocation = fluid;
         self.ready = true;
+
+        if (old_solid) |a| allocator.free(a);
+        if (old_cutout) |a| allocator.free(a);
+        if (old_fluid) |a| allocator.free(a);
     }
 
     /// Draw the chunk mesh with a single draw call per pass.

@@ -53,6 +53,18 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
         .lpv_origin = .{ cloud_params.lpv_origin.x, cloud_params.lpv_origin.y, cloud_params.lpv_origin.z, 0.0 },
     };
 
+    // Env var override for debug channel (ZIGCRAFT_DEBUG_SHADER=5 for tile_id, 6 for tex_color)
+    if (std.posix.getenv("ZIGCRAFT_DEBUG_SHADER")) |ds| {
+        const ch: u32 = std.fmt.parseInt(u32, ds, 10) catch 0;
+        if (ch > 0) {
+            var gu = global_uniforms;
+            gu.viewport_size[2] = 1.0;
+            gu.viewport_size[3] = @floatFromInt(ch);
+            try ctx.descriptors.updateGlobalUniforms(ctx.frames.current_frame, &gu);
+            return;
+        }
+    }
+
     try ctx.descriptors.updateGlobalUniforms(ctx.frames.current_frame, &global_uniforms);
     ctx.velocity.view_proj_prev = view_proj;
 }

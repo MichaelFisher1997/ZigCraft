@@ -75,6 +75,9 @@ pub const WorldRenderer = struct {
     // GPU Mesher (Batch 6 - Issue #391)
     gpu_mesher: ?*GpuMesher,
 
+    // Diagnostic frame counter
+    render_frame_count: u64 = 0,
+
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
@@ -399,6 +402,7 @@ pub const WorldRenderer = struct {
     }
 
     fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        self.render_frame_count += 1;
         const frustum = Frustum.fromViewProj(view_proj);
 
         var not_renderable: u32 = 0;
@@ -406,6 +410,29 @@ pub const WorldRenderer = struct {
         var missing_in_circle: u32 = 0;
         var missing_cx: i32 = 0;
         var missing_cz: i32 = 0;
+        var frustum_culled: u32 = 0;
+        var visible_no_mesh: u32 = 0;
+        var visible_zero_verts: u32 = 0;
+        var first_no_mesh_cx: i32 = 0;
+        var first_no_mesh_cz: i32 = 0;
+        var first_zero_verts_cx: i32 = 0;
+        var first_zero_verts_cz: i32 = 0;
+
+        // Parse diagnostic region from environment variable
+        // Format: ZIGCRAFT_DIAGNOSE_REGION=min_x,min_z,max_x,max_z
+        var diag_min_x: i32 = 0;
+        var diag_min_z: i32 = 0;
+        var diag_max_x: i32 = 0;
+        var diag_max_z: i32 = 0;
+        var diag_region_enabled = false;
+        if (std.posix.getenv("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
+            var parts = std.mem.splitScalar(u8, region_str, ',');
+            if (parts.next()) |x1| diag_min_x = std.fmt.parseInt(i32, x1, 10) catch 0;
+            if (parts.next()) |z1| diag_min_z = std.fmt.parseInt(i32, z1, 10) catch 0;
+            if (parts.next()) |x2| diag_max_x = std.fmt.parseInt(i32, x2, 10) catch 0;
+            if (parts.next()) |z2| diag_max_z = std.fmt.parseInt(i32, z2, 10) catch 0;
+            diag_region_enabled = true;
+        }
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -417,10 +444,52 @@ pub const WorldRenderer = struct {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
+                            frustum_culled += 1;
                             self.last_render_stats.chunks_culled += 1;
                             continue;
                         }
                         self.visible_chunks.append(self.allocator, data) catch {};
+
+                        // Diagnostic: Log block types for chunks in the diagnostic region
+                        if (diag_region_enabled and cx >= diag_min_x and cx <= diag_max_x and cz >= diag_min_z and cz <= diag_max_z) {
+                            var block_type_counts = std.mem.zeroes([256]u32);
+                            for (data.chunk.blocks) |block| {
+                                block_type_counts[@intFromEnum(block)] += 1;
+                            }
+                            var buf: [4096]u8 = undefined;
+                            var len: usize = 0;
+                            for (block_type_counts, 0..) |count, i| {
+                                if (count > 0 and len < buf.len - 30) {
+                                    const written = std.fmt.bufPrint(buf[len..], "{}:{},", .{ i, count }) catch unreachable;
+                                    len += written.len;
+                                }
+                            }
+                            log.log.warn("DIAGNOSE_CHUNK ({},{}): block_counts=[{s}] verts={}", .{
+                                cx, cz, buf[0..len],
+                                (if (data.mesh.solid_allocation) |a| a.count else 0) +
+                                    (if (data.mesh.cutout_allocation) |a| a.count else 0) +
+                                    (if (data.mesh.fluid_allocation) |a| a.count else 0),
+                            });
+                        }
+
+                        if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                            visible_no_mesh += 1;
+                            if (visible_no_mesh == 1) {
+                                first_no_mesh_cx = @intCast(cx);
+                                first_no_mesh_cz = @intCast(cz);
+                            }
+                        } else {
+                            const solid_verts = if (data.mesh.solid_allocation) |a| a.count else 0;
+                            const cutout_verts = if (data.mesh.cutout_allocation) |a| a.count else 0;
+                            const fluid_verts = if (data.mesh.fluid_allocation) |a| a.count else 0;
+                            if (solid_verts + cutout_verts + fluid_verts == 0) {
+                                visible_zero_verts += 1;
+                                if (visible_zero_verts == 1) {
+                                    first_zero_verts_cx = @intCast(cx);
+                                    first_zero_verts_cz = @intCast(cz);
+                                }
+                            }
+                        }
                     } else {
                         not_renderable += 1;
                         if (dist_sq <= r_dist * r_dist) {
@@ -441,11 +510,73 @@ pub const WorldRenderer = struct {
         }
 
         if (missing_in_circle > 0) {
-            log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} pc=({},{}) rd={}", .{
-                missing_in_circle,                                                                                                     missing_cx, missing_cz,
-                if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| @intFromEnum(d.chunk.state) else @as(u32, 99), pc_x,       pc_z,
-                r_dist,
+            if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| {
+                log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} has_alloc={} pc=({},{}) rd={}", .{
+                    missing_in_circle,           missing_cx,                                                                                             missing_cz,
+                    @intFromEnum(d.chunk.state), d.mesh.solid_allocation != null or d.mesh.cutout_allocation != null or d.mesh.fluid_allocation != null, pc_x,
+                    pc_z,                        r_dist,
+                });
+            } else {
+                log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) NOT_IN_STORAGE pc=({},{}) rd={}", .{
+                    missing_in_circle, missing_cx, missing_cz, pc_x, pc_z, r_dist,
+                });
+            }
+        }
+
+        if (self.render_frame_count % 300 == 0) {
+            log.log.info("CPU_CULL: visible={} with_mesh={} no_mesh={} zero_verts={} frustum_culled={} not_renderable={} not_in_storage={} missing_circle={}", .{
+                self.visible_chunks.items.len,
+                self.visible_chunks.items.len - visible_no_mesh,
+                visible_no_mesh,
+                visible_zero_verts,
+                frustum_culled,
+                not_renderable,
+                not_in_storage,
+                missing_in_circle,
             });
+            if (visible_no_mesh > 0) {
+                log.log.warn("  {} visible chunks have NO mesh data! first=({},{})", .{ visible_no_mesh, first_no_mesh_cx, first_no_mesh_cz });
+            }
+            if (visible_zero_verts > 0) {
+                log.log.warn("  {} visible chunks have ZERO vertices! first=({},{})", .{ visible_zero_verts, first_zero_verts_cx, first_zero_verts_cz });
+            }
+
+            // Dump boundary chunks at distance r_dist to find the missing slice
+            var boundary_renderable: u32 = 0;
+            var boundary_missing: u32 = 0;
+            var boundary_buf: [4096]u8 = undefined;
+            var boundary_len: usize = 0;
+            var bz: i64 = pc_z - r_dist;
+            while (bz <= pc_z + r_dist) : (bz += 1) {
+                var bx: i64 = pc_x - r_dist;
+                while (bx <= pc_x + r_dist) : (bx += 1) {
+                    const bdx = bx - pc_x;
+                    const bdz = bz - pc_z;
+                    const bdist = bdx * bdx + bdz * bdz;
+                    if (bdist >= (r_dist - 1) * (r_dist - 1) and bdist <= r_dist * r_dist) {
+                        if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(bx)), .z = @as(i32, @intCast(bz)) })) |data| {
+                            if (data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                                boundary_renderable += 1;
+                            } else {
+                                boundary_missing += 1;
+                                if (boundary_len < boundary_buf.len - 20) {
+                                    const written = std.fmt.bufPrint(boundary_buf[boundary_len..], "({},{}) ", .{ bx, bz }) catch unreachable;
+                                    boundary_len += written.len;
+                                }
+                            }
+                        } else {
+                            boundary_missing += 1;
+                            if (boundary_len < boundary_buf.len - 20) {
+                                const written = std.fmt.bufPrint(boundary_buf[boundary_len..], "({},{})! ", .{ bx, bz }) catch unreachable;
+                                boundary_len += written.len;
+                            }
+                        }
+                    }
+                }
+            }
+            if (boundary_missing > 0) {
+                log.log.warn("  BOUNDARY: {}/{} boundary chunks have NO mesh. Missing: {s}", .{ boundary_missing, boundary_renderable + boundary_missing, boundary_buf[0..boundary_len] });
+            }
         }
     }
 

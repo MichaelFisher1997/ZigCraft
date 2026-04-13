@@ -157,6 +157,10 @@ pub const WorldStreamer = struct {
 
     frame_counter: u64 = 0,
 
+    /// When true, forces CPU meshing even if GPU mesher is available.
+    /// Set via ZIGCRAFT_FORCE_CPU_MESHING=1 env var at runtime.
+    force_cpu_meshing: bool = false,
+
     const GEN_WORKERS = 4;
     const MESH_WORKERS = 3;
 
@@ -225,7 +229,7 @@ pub const WorldStreamer = struct {
                 const chunk = &entry.value_ptr.*.chunk;
                 if (chunk.state == .generating) {
                     chunk.state = .missing;
-                } else if (chunk.state == .meshing) {
+                } else if (chunk.state == .meshing or chunk.state == .uploading) {
                     chunk.state = .generated;
                 }
             }
@@ -256,9 +260,13 @@ pub const WorldStreamer = struct {
 
         self.frame_counter += 1;
 
-        try self.updateStreaming(player_pos, dt);
+        self.updateStreaming(player_pos, dt) catch |err| {
+            log.log.warn("updateStreaming error (non-fatal): {}", .{err});
+        };
         self.processUploads();
-        try self.processUnloads(player_pos);
+        self.processUnloads(player_pos) catch |err| {
+            log.log.warn("processUnloads error (non-fatal): {}", .{err});
+        };
         self.checkAutoSave();
 
         if (self.frame_counter % 300 == 0) {
@@ -314,10 +322,69 @@ pub const WorldStreamer = struct {
         if (renderable_no_alloc > 0) {
             log.log.warn("  {} chunks renderable with no allocations (max 3 recovery attempts)", .{renderable_no_alloc});
         }
+
+        // Diagnostic: check chunks at LOD0 boundary for state
+        if (self.lod_manager) |lod_mgr| {
+            const radii = lod_mgr.config.getRadii();
+            const lod0_r = radii[0];
+            const pc_x = self.last_pc.x;
+            const pc_z = self.last_pc.z;
+            // Check 4 cardinal directions at LOD0 boundary
+            const check_dirs = [_][2]i32{ .{ lod0_r, 0 }, .{ -lod0_r, 0 }, .{ 0, lod0_r }, .{ 0, -lod0_r } };
+            var renderable_at_boundary: u32 = 0;
+            var missing_at_boundary: u32 = 0;
+            for (check_dirs) |dir| {
+                const cx = pc_x + dir[0];
+                const cz = pc_z + dir[1];
+                if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null) {
+                        renderable_at_boundary += 1;
+                    } else {
+                        if (missing_at_boundary == 0) {
+                            log.log.warn("  BOUNDARY_CHUNK: ({},{}) state={} (expected renderable)", .{ cx, cz, data.chunk.state });
+                        }
+                        missing_at_boundary += 1;
+                    }
+                } else {
+                    if (missing_at_boundary == 0) {
+                        log.log.warn("  BOUNDARY_CHUNK: ({},{}) NOT IN STORAGE", .{ cx, cz });
+                    }
+                    missing_at_boundary += 1;
+                }
+            }
+            if (missing_at_boundary > 0) {
+                log.log.warn("  BOUNDARY: {}/4 chunks at LOD0 boundary (r={}) are NOT renderable", .{ missing_at_boundary, lod0_r });
+            }
+        }
     }
 
     fn updateStreaming(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
         _ = self.player_movement.update(player_pos, dt);
+
+        // Check for runtime GPU mesher disable
+        if (self.gpu_mesher != null and self.frame_counter % 30 == 0) {
+            const env_val = std.posix.getenv("ZIGCRAFT_FORCE_CPU_MESHING");
+            const new_force_cpu = if (env_val) |val|
+                !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+            else
+                false;
+            if (new_force_cpu != self.force_cpu_meshing) {
+                self.force_cpu_meshing = new_force_cpu;
+                if (new_force_cpu) {
+                    log.log.warn("FORCE_CPU_MESHING: GPU mesher disabled at runtime, resetting mesh-ready/uploading chunks for CPU re-mesh", .{});
+                    // Reset chunks that were queued for GPU meshing so they go through CPU path
+                    self.storage.chunks_mutex.lock();
+                    var reset_iter = self.storage.iteratorUnsafe();
+                    while (reset_iter.next()) |entry| {
+                        const chunk = &entry.value_ptr.*.chunk;
+                        if (chunk.state == .mesh_ready or chunk.state == .uploading) {
+                            chunk.state = .generated;
+                        }
+                    }
+                    self.storage.chunks_mutex.unlock();
+                }
+            }
+        }
 
         const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
         const moved = pc.chunk_x != self.last_pc.x or pc.chunk_z != self.last_pc.z;
@@ -331,12 +398,16 @@ pub const WorldStreamer = struct {
         if (moved) {
             self.last_pc = .{ .x = pc.chunk_x, .z = pc.chunk_z };
 
-            try self.gen_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z);
-            try self.mesh_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z);
+            self.gen_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z) catch {};
+            self.mesh_queue.updatePlayerPos(pc.chunk_x, pc.chunk_z) catch {};
 
-            try self.scanForMissingChunks(pc.chunk_x, pc.chunk_z, render_dist);
+            self.scanForMissingChunks(pc.chunk_x, pc.chunk_z, render_dist) catch |err| {
+                log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
+            };
         } else if (self.frame_counter % 30 == 0) {
-            try self.scanForMissingChunks(pc.chunk_x, pc.chunk_z, render_dist);
+            self.scanForMissingChunks(pc.chunk_x, pc.chunk_z, render_dist) catch |err| {
+                log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
+            };
         }
 
         self.storage.chunks_mutex.lock();
@@ -349,7 +420,7 @@ pub const WorldStreamer = struct {
                 const dx = data.chunk.chunk_x - pc.chunk_x;
                 const dz = data.chunk.chunk_z - pc.chunk_z;
                 if (dx * dx + dz * dz <= render_dist * render_dist) {
-                    try self.mesh_queue.push(.{
+                    self.mesh_queue.push(.{
                         .type = .chunk_meshing,
                         .dist_sq = dx * dx + dz * dz,
                         .data = .{
@@ -359,12 +430,19 @@ pub const WorldStreamer = struct {
                                 .job_token = data.chunk.job_token,
                             },
                         },
-                    });
+                    }) catch {
+                        // Queue full — skip this chunk, it'll retry next frame
+                        break;
+                    };
                     data.chunk.state = .meshing;
                 }
             } else if (data.chunk.state == .mesh_ready) {
                 data.chunk.state = .uploading;
-                try self.upload_queue.push(key);
+                self.upload_queue.push(key) catch {
+                    // Queue full — revert state so it retries next frame
+                    data.chunk.state = .mesh_ready;
+                    break;
+                };
             } else if (data.chunk.state == .renderable) {
                 if (data.chunk.dirty) {
                     data.chunk.dirty = false;
@@ -383,6 +461,18 @@ pub const WorldStreamer = struct {
                     data.chunk.state = .missing;
                     log.log.warn("CHUNK_STUCK: ({},{}) in generating state too long, resetting to missing", .{ data.chunk.chunk_x, data.chunk.chunk_z });
                 }
+            } else if (data.chunk.state == .uploading and self.frame_counter % 60 == 0) {
+                const dx = data.chunk.chunk_x - pc.chunk_x;
+                const dz = data.chunk.chunk_z - pc.chunk_z;
+                if (dx * dx + dz * dz <= render_dist * render_dist) {
+                    data.chunk.mesh_attempts +|= 1;
+                    if (data.chunk.mesh_attempts < 3) {
+                        log.log.warn("CHUNK_UPLOAD_STUCK: ({},{}) in uploading state too long, resetting to generated (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
+                        data.chunk.state = .generated;
+                    } else {
+                        log.log.warn("CHUNK_UPLOAD_STUCK: ({},{}) exceeded max upload recovery attempts ({}), leaving as uploading", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
+                    }
+                }
             }
         }
         self.storage.chunks_mutex.unlock();
@@ -393,7 +483,9 @@ pub const WorldStreamer = struct {
                 0,
                 self.player_movement.dir_z * self.player_movement.speed,
             );
-            try lod_mgr.update(player_pos, velocity, ChunkStorage.isChunkRenderable, self.storage);
+            lod_mgr.update(player_pos, velocity, ChunkStorage.isChunkRenderable, self.storage) catch |err| {
+                log.log.warn("LOD update error (non-fatal): {}", .{err});
+            };
         }
     }
 
@@ -412,7 +504,7 @@ pub const WorldStreamer = struct {
 
                 switch (data.chunk.state) {
                     .missing => {
-                        try self.gen_queue.push(.{
+                        self.gen_queue.push(.{
                             .type = .chunk_generation,
                             .dist_sq = dist_sq,
                             .data = .{
@@ -422,7 +514,7 @@ pub const WorldStreamer = struct {
                                     .job_token = data.chunk.job_token,
                                 },
                             },
-                        });
+                        }) catch continue;
                         data.chunk.state = .generating;
                     },
                     else => {},
@@ -440,7 +532,7 @@ pub const WorldStreamer = struct {
                     continue;
                 }
 
-                if (self.gpu_mesher != null) {
+                if (self.gpu_mesher != null and !self.force_cpu_meshing) {
                     if (self.gpu_block_buffer) |buf| {
                         const slot = if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |existing|
                             existing
@@ -458,7 +550,7 @@ pub const WorldStreamer = struct {
                             continue;
                         };
 
-                        if (self.gpu_mesher.?.queueMesh(data.chunk.chunk_x, data.chunk.chunk_z, slot)) {
+                        if (self.gpu_mesher.?.queueMesh(data.chunk.chunk_x, data.chunk.chunk_z, slot, data.chunk.job_token)) {
                             data.chunk.state = .uploading;
                         } else {
                             data.chunk.state = .mesh_ready;
@@ -466,6 +558,13 @@ pub const WorldStreamer = struct {
                     }
                 } else {
                     data.mesh.upload(self.vertex_allocator);
+
+                    if (data.mesh.diag_tile0_count > 0) {
+                        log.log.warn("TILE0_MESH: chunk ({},{}) has {}/{} vertices with tile_id=0 (WHITE)", .{
+                            data.chunk.chunk_x,         data.chunk.chunk_z,
+                            data.mesh.diag_tile0_count, data.mesh.diag_total_verts,
+                        });
+                    }
 
                     if (data.mesh.ready) {
                         if (self.gpu_block_buffer) |buf| {
@@ -485,6 +584,7 @@ pub const WorldStreamer = struct {
                             };
                         }
                         data.chunk.state = .renderable;
+                        data.chunk.dirty = false;
                     } else {
                         log.log.warn("CHUNK_UPLOAD: ({},{}) upload FAILED (ready=false), reverting to mesh_ready | solid={} cutout={} fluid={}", .{
                             key.x,                              key.z,
@@ -518,6 +618,7 @@ pub const WorldStreamer = struct {
             const dz = key.z - pc.chunk_z;
             if (dx * dx + dz * dz > unload_dist_sq) {
                 if (data.chunk.state != .generating and data.chunk.state != .meshing and
+                    data.chunk.state != .uploading and
                     !data.chunk.isPinned())
                 {
                     try to_remove.append(self.allocator, key);
@@ -596,9 +697,27 @@ pub const WorldStreamer = struct {
             }
 
             self.storage.chunks_mutex.lock();
-            chunk_data.chunk.state = .generated;
+            if (!chunk_data.chunk.generated) {
+                log.log.warn("CHUNK_GEN_FAILED: ({},{}) generator returned without setting generated=true, resetting to missing", .{ cx, cz });
+                chunk_data.chunk.state = .missing;
+            } else {
+                // Validate: check that the chunk has at least some non-air blocks
+                var non_air_count: u32 = 0;
+                for (chunk_data.chunk.blocks) |block| {
+                    if (block != .air) non_air_count += 1;
+                }
+                if (non_air_count == 0) {
+                    log.log.warn("CHUNK_GEN_EMPTY: ({},{}) generated chunk has ZERO non-air blocks, resetting to missing", .{ cx, cz });
+                    chunk_data.chunk.generated = false;
+                    chunk_data.chunk.state = .missing;
+                } else {
+                    chunk_data.chunk.state = .generated;
+                }
+            }
             self.storage.chunks_mutex.unlock();
-            self.markNeighborsForRemesh(cx, cz);
+            if (chunk_data.chunk.generated) {
+                self.markNeighborsForRemesh(cx, cz);
+            }
         }
     }
 
@@ -659,7 +778,7 @@ pub const WorldStreamer = struct {
         }
 
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
-            if (self.gpu_mesher != null) {
+            if (self.gpu_mesher != null and !self.force_cpu_meshing) {
                 self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .mesh_ready;
                 self.storage.chunks_mutex.unlock();
@@ -685,18 +804,9 @@ pub const WorldStreamer = struct {
     }
 
     fn markNeighborsForRemesh(self: *WorldStreamer, cx: i32, cz: i32) void {
-        const offsets = [_][2]i32{ .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
-        self.storage.chunks_mutex.lock();
-        defer self.storage.chunks_mutex.unlock();
-        for (offsets) |off| {
-            if (self.storage.chunks.get(ChunkKey{ .x = cx + off[0], .z = cz + off[1] })) |data| {
-                if (data.chunk.state == .renderable) {
-                    data.chunk.state = .generated;
-                } else if (data.chunk.state == .mesh_ready or data.chunk.state == .uploading or data.chunk.state == .meshing) {
-                    data.chunk.dirty = true;
-                }
-            }
-        }
+        _ = self;
+        _ = cx;
+        _ = cz;
     }
 
     fn logMissingChunkDiagnostic(self: *WorldStreamer, pc_x: i32, pc_z: i32) void {
