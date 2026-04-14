@@ -271,7 +271,7 @@ pub const LODManager = struct {
 
         // Initialize worker pool for LOD generation and meshing (3 workers for LOD tasks)
         // All LOD jobs go to LOD3 queue in original code, we keep it consistent but use generic index
-        mgr.lod_gen_pool = try WorkerPool.init(allocator, 3, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
+        mgr.lod_gen_pool = try WorkerPool.init(allocator, 4, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
 
         const radii = config.getRadii();
         log.log.info("LODManager initialized with radii: LOD0={}, LOD1={}, LOD2={}, LOD3={}", .{

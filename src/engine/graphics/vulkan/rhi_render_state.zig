@@ -71,7 +71,7 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
 
 pub fn setModelMatrix(ctx: anytype, model: Mat4, color: Vec3, mask_radius: f32) void {
     ctx.draw.current_model = model;
-    ctx.draw.current_color = .{ color.x, color.y, color.z };
+    ctx.draw.current_color = .{ color.x, color.y, color.z, 1.0 };
     ctx.draw.current_mask_radius = mask_radius;
 }
 

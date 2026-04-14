@@ -127,7 +127,7 @@ layout(set = 0, binding = 4) uniform sampler2DArray uShadowMapsRegular;
 
 layout(push_constant) uniform ModelUniforms {
     mat4 model;
-    vec3 color_override;
+    vec4 color_override;
     float mask_radius;
 } model_data;
 

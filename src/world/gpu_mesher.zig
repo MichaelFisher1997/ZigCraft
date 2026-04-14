@@ -14,7 +14,7 @@ const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocat
 const VertexAllocation = @import("chunk_allocator.zig").VertexAllocation;
 
 pub const MESH_SHADER_PATH = "assets/shaders/vulkan/mesh.comp.spv";
-pub const MAX_GPU_MESH_BATCH: usize = 8;
+pub const MAX_GPU_MESH_BATCH: usize = 32;
 pub const MAX_PASS_VERTICES: u32 = 65536;
 pub const MAX_VERTICES_PER_CHUNK: u32 = MAX_PASS_VERTICES * 3;
 pub const VERTEX_SIZE: u32 = @sizeOf(rhi_pkg.Vertex);

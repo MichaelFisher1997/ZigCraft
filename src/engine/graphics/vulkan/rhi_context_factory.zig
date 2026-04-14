@@ -202,7 +202,7 @@ pub fn createRHI(
     ctx.legacy.dummy_shadow_memory = null;
     ctx.legacy.dummy_shadow_view = null;
     ctx.draw.current_model = Mat4.identity;
-    ctx.draw.current_color = .{ 1.0, 1.0, 1.0 };
+    ctx.draw.current_color = .{ 1.0, 1.0, 1.0, 1.0 };
     ctx.draw.current_mask_radius = 0;
 
     return rhi.RHI{

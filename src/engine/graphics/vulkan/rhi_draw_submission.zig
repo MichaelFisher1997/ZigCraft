@@ -7,7 +7,7 @@ const pass_orchestration = @import("rhi_pass_orchestration.zig");
 
 const ModelUniforms = extern struct {
     model: Mat4,
-    color: [3]f32,
+    color: [4]f32,
     mask_radius: f32,
 };
 
@@ -118,7 +118,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
             } else {
                 const uniforms = ModelUniforms{
                     .model = Mat4.identity,
-                    .color = .{ 1.0, 1.0, 1.0 },
+                    .color = .{ 1.0, 1.0, 1.0, 1.0 },
                     .mask_radius = -1.0,
                 };
                 c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
@@ -217,7 +217,7 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
         } else {
             const uniforms = ModelUniforms{
                 .model = Mat4.identity,
-                .color = .{ 1.0, 1.0, 1.0 },
+                .color = .{ 1.0, 1.0, 1.0, 1.0 },
                 .mask_radius = 0,
             };
             c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);

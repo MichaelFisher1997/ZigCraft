@@ -161,7 +161,7 @@ const DrawState = struct {
     pending_lod_instance_buffer: rhi.BufferHandle = 0,
     current_view_proj: Mat4 = Mat4.identity,
     current_model: Mat4 = Mat4.identity,
-    current_color: [3]f32 = .{ 1.0, 1.0, 1.0 },
+    current_color: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 },
     current_mask_radius: f32 = 0.0,
 };
 

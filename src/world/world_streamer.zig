@@ -156,13 +156,14 @@ pub const WorldStreamer = struct {
     gpu_mesher: ?*GpuMesher,
 
     frame_counter: u64 = 0,
+    effective_render_dist: i32 = 0,
 
     /// When true, forces CPU meshing even if GPU mesher is available.
     /// Set via ZIGCRAFT_FORCE_CPU_MESHING=1 env var at runtime.
     force_cpu_meshing: bool = false,
 
-    const GEN_WORKERS = 4;
-    const MESH_WORKERS = 3;
+    const GEN_WORKERS = 6;
+    const MESH_WORKERS = 4;
 
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
@@ -394,6 +395,7 @@ pub const WorldStreamer = struct {
         }
 
         const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        self.effective_render_dist = render_dist;
 
         if (moved) {
             self.last_pc = .{ .x = pc.chunk_x, .z = pc.chunk_z };
@@ -431,17 +433,15 @@ pub const WorldStreamer = struct {
                             },
                         },
                     }) catch {
-                        // Queue full — skip this chunk, it'll retry next frame
-                        break;
+                        continue;
                     };
                     data.chunk.state = .meshing;
                 }
             } else if (data.chunk.state == .mesh_ready) {
                 data.chunk.state = .uploading;
                 self.upload_queue.push(key) catch {
-                    // Queue full — revert state so it retries next frame
                     data.chunk.state = .mesh_ready;
-                    break;
+                    continue;
                 };
             } else if (data.chunk.state == .renderable) {
                 if (data.chunk.dirty) {
@@ -455,7 +455,7 @@ pub const WorldStreamer = struct {
             } else if (data.chunk.state == .generating and self.frame_counter % 120 == 0) {
                 const dx = data.chunk.chunk_x - pc.chunk_x;
                 const dz = data.chunk.chunk_z - pc.chunk_z;
-                const max_dist = self.render_distance + CHUNK_UNLOAD_BUFFER;
+                const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
                 if (dx * dx + dz * dz <= max_dist * max_dist) {
                     data.chunk.job_token += 1;
                     data.chunk.state = .missing;
@@ -658,17 +658,9 @@ pub const WorldStreamer = struct {
 
         const dx = cx - self.last_pc.x;
         const dz = cz - self.last_pc.z;
-        const max_dist = self.render_distance + CHUNK_UNLOAD_BUFFER;
+        const max_dist = self.effective_render_dist + CHUNK_UNLOAD_BUFFER;
         if (dx * dx + dz * dz > max_dist * max_dist) {
             self.storage.chunks_mutex.unlockShared();
-            self.storage.chunks_mutex.lock();
-            defer self.storage.chunks_mutex.unlock();
-
-            if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
-                if (data.chunk.job_token == job.data.chunk.job_token and data.chunk.state == .generating) {
-                    data.chunk.state = .missing;
-                }
-            }
             return;
         }
 
@@ -734,17 +726,9 @@ pub const WorldStreamer = struct {
 
         const dx = cx - self.last_pc.x;
         const dz = cz - self.last_pc.z;
-        const max_dist = self.render_distance + CHUNK_UNLOAD_BUFFER;
+        const max_dist = self.effective_render_dist + CHUNK_UNLOAD_BUFFER;
         if (dx * dx + dz * dz > max_dist * max_dist) {
             self.storage.chunks_mutex.unlockShared();
-            self.storage.chunks_mutex.lock();
-            defer self.storage.chunks_mutex.unlock();
-
-            if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
-                if (data.chunk.job_token == job.data.chunk.job_token and data.chunk.state == .meshing) {
-                    data.chunk.state = .generated;
-                }
-            }
             return;
         }
 
