@@ -75,6 +75,9 @@ test {
     _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
     _ = @import("engine/graphics/vulkan/descriptor_manager_tests.zig");
     _ = @import("engine/graphics/vulkan/frame_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/render_pass_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/rhi_frame_orchestration_tests.zig");
+    _ = @import("engine/graphics/vulkan/rhi_pass_orchestration_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
