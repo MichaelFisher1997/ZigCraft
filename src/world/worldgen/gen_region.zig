@@ -312,8 +312,10 @@ pub const ClimateCache = struct {
     /// Invalidates all cells.
     pub fn recenter(self: *ClimateCache, center_x: i32, center_z: i32) void {
         const half_size: i32 = @intCast((GRID_SIZE * CELL_SIZE) / 2);
-        self.origin_x = center_x - half_size;
-        self.origin_z = center_z - half_size;
+        const aligned_center_x = @divFloor(center_x, @as(i32, @intCast(CELL_SIZE))) * @as(i32, @intCast(CELL_SIZE));
+        const aligned_center_z = @divFloor(center_z, @as(i32, @intCast(CELL_SIZE))) * @as(i32, @intCast(CELL_SIZE));
+        self.origin_x = aligned_center_x - half_size;
+        self.origin_z = aligned_center_z - half_size;
 
         // Invalidate all cells
         for (&self.cells) |*cell| {
