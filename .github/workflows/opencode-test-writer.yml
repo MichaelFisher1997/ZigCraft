@@ -164,25 +164,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
-      - name: Check for existing PR
+      - name: Check for existing automated test PRs
         id: check-existing
+        env:
+          INPUT_MODULE: ${{ inputs.module }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
         run: |
-          MODULE="${{ steps.select-module.outputs.module }}"
           EXISTING=$(gh pr list \
             --base ${{ steps.select-module.outputs.base_branch }} \
-            --label "automated-test" \
             --state open \
-            --limit 20 \
-            --json title,headRefName \
-            --jq '.[] | select(.title | startswith("test: ['"$MODULE"']")) | .headRefName' || echo "")
-          if [ -n "$EXISTING" ]; then
+            --limit 50 \
+            --json number,headRefName,labels \
+            --jq '.[] | select((.headRefName | startswith("opencode/schedule-")) or ((.labels | map(.name)) | index("automated-test"))) | "#\(.number) (\(.headRefName))"' || true)
+          if [ -n "$EXISTING" ] && [ -z "$INPUT_MODULE" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Existing PR found on branch: ${EXISTING}"
+            echo "Existing automated test PRs already open:"
+            printf '%s\n' "$EXISTING"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Validate scan paths exist
         if: steps.check-existing.outputs.skip != 'true'
@@ -252,45 +252,27 @@ jobs:
 
       - name: Find and label created PR
         if: steps.check-existing.outputs.skip != 'true'
-        id: find-pr
         run: |
-          BASE="${{ steps.select-module.outputs.base_branch }}"
           MAX_RETRIES=8
-          PAT_USER=$(gh api user --jq '.login')
+          HEAD_SHA=$(git rev-parse HEAD)
           PR_NUM=""
           for i in $(seq 1 "$MAX_RETRIES"); do
             sleep $((i * 3))
-            echo "Attempt $i/$MAX_RETRIES: searching for PR by ${PAT_USER} targeting ${BASE}..."
-            PR_NUM=$(gh pr list \
-              --base "$BASE" \
-              --state open \
-              --limit 10 \
-              --json number,createdAt,author \
-              --jq "[.[] | select(.author.login == \"${PAT_USER}\")] | sort_by(.createdAt) | reverse | .[0].number")
+            echo "Attempt $i/$MAX_RETRIES: searching for PR for commit ${HEAD_SHA}..."
+            PR_NUM=$(gh api \
+              repos/${{ github.repository }}/commits/${HEAD_SHA}/pulls \
+              --jq '[.[] | select(.state == "open")] | .[0].number // empty' 2>/dev/null || true)
             if [ -n "$PR_NUM" ]; then
               break
             fi
           done
           if [ -n "$PR_NUM" ]; then
-            echo "Found newly created PR #$PR_NUM (author: ${PAT_USER})"
+            echo "Found newly created PR #$PR_NUM for commit ${HEAD_SHA}"
             if ! gh pr edit "$PR_NUM" --add-label "automated-test" 2>/dev/null; then
               echo "::warning::Failed to add automated-test label to PR #$PR_NUM"
             fi
-            echo "pr_number=${PR_NUM}" >> "$GITHUB_OUTPUT"
           else
-            echo "No PR found authored by ${PAT_USER} after $MAX_RETRIES attempts"
+            echo "::warning::No open PR found for commit ${HEAD_SHA} after $MAX_RETRIES attempts"
           fi
-        env:
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-
-      - name: Trigger downstream workflows
-        if: steps.find-pr.outputs.pr_number != ''
-        run: |
-          PR_NUM="${{ steps.find-pr.outputs.pr_number }}"
-          echo "Triggering Build and opencode review for PR #$PR_NUM"
-          SHA=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.sha')
-          BRANCH=$(gh api repos/OpenStaticFish/ZigCraft/pulls/$PR_NUM --jq '.head.ref')
-          gh workflow run build.yml --field ref="$BRANCH" || echo "Build trigger attempted"
-          gh workflow run opencode-pr.yml --field pr_number="$PR_NUM" --field head_sha="$SHA"
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
