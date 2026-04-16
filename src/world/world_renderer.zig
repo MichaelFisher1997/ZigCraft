@@ -1,12 +1,8 @@
-//! World renderer - handles chunk rendering, culling, and MDI.
-//! Integrates GPU compute frustum culling (CullingSystem) with CPU fallback.
-//! Supports GPU-driven meshing via batched compute dispatches.
-
 const std = @import("std");
 const log = @import("../engine/core/log.zig");
 const ChunkData = @import("chunk_storage.zig").ChunkData;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
-const worldToChunk = @import("chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("chunk.zig").worldToChunkFromFloat;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const CHUNK_SIZE_Y = @import("chunk.zig").CHUNK_SIZE_Y;
@@ -25,6 +21,7 @@ const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig")
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
+const build_options = @import("build_options");
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -79,6 +76,9 @@ pub const WorldRenderer = struct {
     // GPU Mesher (Batch 6 - Issue #391)
     gpu_mesher: ?*GpuMesher,
 
+    // Diagnostic frame counter
+    render_frame_count: u64 = 0,
+
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
@@ -87,14 +87,43 @@ pub const WorldRenderer = struct {
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
-        const vertex_capacity_mb: usize = if (safe_mode) 1024 else 2048;
+
+        const vram_bytes = query.getDeviceLocalVramBytes();
+        const vram_mb = vram_bytes / (1024 * 1024);
+        const MB: usize = 1024 * 1024;
+
+        const vertex_capacity_mb: usize = if (safe_mode)
+            @min(512, @divFloor(vram_mb, 4))
+        else blk: {
+            const budget_mb = if (vram_mb >= 8192) @as(usize, 2048) else if (vram_mb >= 6144) @as(usize, 1024) else if (vram_mb >= 4096) @as(usize, 512) else @as(usize, 256);
+            break :blk budget_mb;
+        };
+
+        const gpu_block_capacity: usize = blk: {
+            const slot_size = 16 * 16 * 256;
+            const block_budget_mb = if (vram_mb >= 8192) @as(usize, 16384) else if (vram_mb >= 6144) @as(usize, 8192) else if (vram_mb >= 4096) @as(usize, 4096) else @as(usize, 2048);
+            const budget_bytes = block_budget_mb * MB;
+            const max_by_budget = budget_bytes / slot_size;
+            break :blk @min(MAX_MDI_CHUNKS, max_by_budget);
+        };
+
+        log.log.info("VRAM budget: {}MB | vertex_allocator: {}MB | gpu_block_buffer: {} slots", .{ vram_mb, vertex_capacity_mb, gpu_block_capacity });
 
         if (safe_mode) {
-            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: GlobalVertexAllocator reduced to {}MB", .{vertex_capacity_mb});
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: reduced GPU buffer sizes", .{});
         }
 
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
+
+        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
+
+        const safe_mode_enabled = vk_ctx.options.safe_mode;
+        const gpu_meshing_env = std.posix.getenv("ZIGCRAFT_ENABLE_GPU_MESHING");
+        const gpu_meshing_enabled = if (gpu_meshing_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
 
         const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
@@ -105,27 +134,38 @@ pub const WorldRenderer = struct {
         }
 
         var culling_system: ?*CullingSystem = null;
-        var use_gpu = false;
-        if (CullingSystem.init(allocator, rhi, max_chunks)) |cs| {
-            culling_system = cs;
-            use_gpu = true;
-            log.log.info("GPU frustum culling initialized (max_chunks={})", .{max_chunks});
-        } else |err| {
-            log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
+        const use_gpu = false;
+        if (!safe_mode_enabled) {
+            if (CullingSystem.init(allocator, rhi, max_chunks)) |cs| {
+                culling_system = cs;
+                log.log.warn("GPU chunk culling initialized but kept disabled due unstable visibility", .{});
+            } else |err| {
+                log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
+            }
+        } else {
+            log.log.info("Safe mode: GPU frustum culling disabled, using CPU culling", .{});
         }
 
         var gpu_block_buffer: ?*GpuBlockBuffer = null;
         errdefer if (gpu_block_buffer) |buf| buf.deinit();
-        gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, max_chunks);
-        log.log.info("GpuBlockBuffer initialized (capacity={})", .{max_chunks});
+        if (!safe_mode_enabled and gpu_meshing_enabled) {
+            gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, gpu_block_capacity);
+            log.log.info("GpuBlockBuffer initialized (capacity={})", .{gpu_block_capacity});
+        }
 
         var gpu_mesher: ?*GpuMesher = null;
         errdefer if (gpu_mesher) |m| m.deinit();
-        if (gpu_block_buffer) |buf| {
-            gpu_mesher = GpuMesher.init(allocator, rhi, atlas, buf) catch |err| blk: {
-                log.log.warn("GpuMesher init failed ({}), CPU meshing fallback active", .{err});
-                break :blk null;
-            };
+        if (!safe_mode_enabled and gpu_meshing_enabled) {
+            if (gpu_block_buffer) |buf| {
+                gpu_mesher = GpuMesher.init(allocator, rhi, atlas, buf) catch |err| blk: {
+                    log.log.warn("GpuMesher init failed ({}), CPU meshing fallback active", .{err});
+                    break :blk null;
+                };
+            }
+        } else if (!safe_mode_enabled) {
+            log.log.warn("GPU meshing disabled by default due stale block-upload sync causing incorrect chunk texturing; set ZIGCRAFT_ENABLE_GPU_MESHING=1 to re-enable for testing", .{});
+        } else {
+            log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }
 
         renderer.* = .{
@@ -134,7 +174,7 @@ pub const WorldRenderer = struct {
             .rm = rm,
             .render_ctx = render_ctx,
             .query = query,
-            .vk_ctx = @ptrCast(@alignCast(rhi.ptr)),
+            .vk_ctx = vk_ctx,
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
             .last_render_stats = .{},
@@ -219,16 +259,18 @@ pub const WorldRenderer = struct {
             }
         }
 
+        // LOD rendering uses a separate descriptor set path; switch back before drawing full chunks.
+        self.render_ctx.setInstanceBuffer(0);
+
         self.visible_chunks.clearRetainingCapacity();
         self.instance_data.clearRetainingCapacity();
         self.draw_commands.clearRetainingCapacity();
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        const world_x: i64 = @intFromFloat(camera_pos.x);
-        const world_z: i64 = @intFromFloat(camera_pos.z);
-        const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
-        const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
+        const pc = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+        const pc_x: i64 = pc.chunk_x;
+        const pc_z: i64 = pc.chunk_z;
 
         const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, @as(i32, @intCast(mgr.config.getRadii()[0]))) else render_distance;
         const r_dist: i64 = @as(i64, @intCast(r_dist_val));
@@ -242,6 +284,17 @@ pub const WorldRenderer = struct {
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
 
         const vertex_size = @sizeOf(rhi_mod.Vertex);
+        const supports_indirect_first_instance = self.query.supportsIndirectFirstInstance();
+
+        // Environment override to force MDI fallback for debugging
+        const force_mdi_fallback = blk: {
+            const env_val = std.posix.getenv("ZIGCRAFT_FORCE_MDI_FALLBACK");
+            break :blk if (env_val) |val|
+                !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+            else
+                false;
+        };
+        var total_vertices: u64 = 0;
 
         for (self.visible_chunks.items) |data| {
             self.last_render_stats.chunks_rendered += 1;
@@ -251,6 +304,29 @@ pub const WorldRenderer = struct {
             const rel_z = chunk_world_z - camera_pos.z;
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
+
+            if (!supports_indirect_first_instance or force_mdi_fallback) {
+                self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+
+                if (layer != .fluid) {
+                    if (data.mesh.solid_allocation) |alloc| {
+                        total_vertices += alloc.count;
+                        self.last_render_stats.vertices_rendered += alloc.count;
+                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                    }
+                    if (data.mesh.cutout_allocation) |alloc| {
+                        self.last_render_stats.vertices_rendered += alloc.count;
+                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                    }
+                }
+                if (layer != .terrain) {
+                    if (data.mesh.fluid_allocation) |alloc| {
+                        self.last_render_stats.vertices_rendered += alloc.count;
+                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                    }
+                }
+                continue;
+            }
 
             const instance_idx: u32 = @intCast(self.instance_data.items.len);
 
@@ -336,23 +412,180 @@ pub const WorldRenderer = struct {
     }
 
     fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        self.render_frame_count += 1;
         const frustum = Frustum.fromViewProj(view_proj);
+
+        var not_renderable: u32 = 0;
+        var not_in_storage: u32 = 0;
+        var missing_in_circle: u32 = 0;
+        var missing_cx: i32 = 0;
+        var missing_cz: i32 = 0;
+        var frustum_culled: u32 = 0;
+        var visible_no_mesh: u32 = 0;
+        var visible_zero_verts: u32 = 0;
+        var first_no_mesh_cx: i32 = 0;
+        var first_no_mesh_cz: i32 = 0;
+        var first_zero_verts_cx: i32 = 0;
+        var first_zero_verts_cz: i32 = 0;
+
+        // Parse diagnostic region from environment variable
+        // Format: ZIGCRAFT_DIAGNOSE_REGION=min_x,min_z,max_x,max_z
+        var diag_min_x: i32 = 0;
+        var diag_min_z: i32 = 0;
+        var diag_max_x: i32 = 0;
+        var diag_max_z: i32 = 0;
+        var diag_region_enabled = false;
+        if (std.posix.getenv("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
+            var parts = std.mem.splitScalar(u8, region_str, ',');
+            if (parts.next()) |x1| diag_min_x = std.fmt.parseInt(i32, x1, 10) catch 0;
+            if (parts.next()) |z1| diag_min_z = std.fmt.parseInt(i32, z1, 10) catch 0;
+            if (parts.next()) |x2| diag_max_x = std.fmt.parseInt(i32, x2, 10) catch 0;
+            if (parts.next()) |z2| diag_max_z = std.fmt.parseInt(i32, z2, 10) catch 0;
+            diag_region_enabled = true;
+        }
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
             var cx = pc_x - r_dist;
             while (cx <= pc_x + r_dist) : (cx += 1) {
+                const dx = cx - pc_x;
+                const dz = cz - pc_z;
+                const dist_sq = dx * dx + dz * dz;
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
-                        if (frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.visible_chunks.append(self.allocator, data) catch |err| {
-                                log.log.debug("MDI: visible_chunks append failed: {}", .{err});
-                            };
-                        } else {
+                        if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
+                            frustum_culled += 1;
                             self.last_render_stats.chunks_culled += 1;
+                            continue;
+                        }
+                        self.visible_chunks.append(self.allocator, data) catch {};
+
+                        // Diagnostic: Log block types for chunks in the diagnostic region
+                        if (diag_region_enabled and cx >= diag_min_x and cx <= diag_max_x and cz >= diag_min_z and cz <= diag_max_z) {
+                            var block_type_counts = std.mem.zeroes([256]u32);
+                            for (data.chunk.blocks) |block| {
+                                block_type_counts[@intFromEnum(block)] += 1;
+                            }
+                            var buf: [4096]u8 = undefined;
+                            var len: usize = 0;
+                            for (block_type_counts, 0..) |count, i| {
+                                if (count > 0 and len < buf.len - 30) {
+                                    const written = std.fmt.bufPrint(buf[len..], "{}:{},", .{ i, count }) catch unreachable;
+                                    len += written.len;
+                                }
+                            }
+                            log.log.warn("DIAGNOSE_CHUNK ({},{}): block_counts=[{s}] verts={}", .{
+                                cx, cz, buf[0..len],
+                                (if (data.mesh.solid_allocation) |a| a.count else 0) +
+                                    (if (data.mesh.cutout_allocation) |a| a.count else 0) +
+                                    (if (data.mesh.fluid_allocation) |a| a.count else 0),
+                            });
+                        }
+
+                        if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                            visible_no_mesh += 1;
+                            if (visible_no_mesh == 1) {
+                                first_no_mesh_cx = @intCast(cx);
+                                first_no_mesh_cz = @intCast(cz);
+                            }
+                        } else {
+                            const solid_verts = if (data.mesh.solid_allocation) |a| a.count else 0;
+                            const cutout_verts = if (data.mesh.cutout_allocation) |a| a.count else 0;
+                            const fluid_verts = if (data.mesh.fluid_allocation) |a| a.count else 0;
+                            if (solid_verts + cutout_verts + fluid_verts == 0) {
+                                visible_zero_verts += 1;
+                                if (visible_zero_verts == 1) {
+                                    first_zero_verts_cx = @intCast(cx);
+                                    first_zero_verts_cz = @intCast(cz);
+                                }
+                            }
+                        }
+                    } else {
+                        not_renderable += 1;
+                        if (dist_sq <= r_dist * r_dist) {
+                            missing_in_circle += 1;
+                            missing_cx = @intCast(cx);
+                            missing_cz = @intCast(cz);
+                        }
+                    }
+                } else {
+                    if (dist_sq <= r_dist * r_dist) {
+                        missing_in_circle += 1;
+                        missing_cx = @intCast(cx);
+                        missing_cz = @intCast(cz);
+                    }
+                    not_in_storage += 1;
+                }
+            }
+        }
+
+        if (build_options.startup_diagnostic_seconds == 0 and missing_in_circle > 0) {
+            if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| {
+                log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} has_alloc={} pc=({},{}) rd={}", .{
+                    missing_in_circle,           missing_cx,                                                                                             missing_cz,
+                    @intFromEnum(d.chunk.state), d.mesh.solid_allocation != null or d.mesh.cutout_allocation != null or d.mesh.fluid_allocation != null, pc_x,
+                    pc_z,                        r_dist,
+                });
+            } else {
+                log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) NOT_IN_STORAGE pc=({},{}) rd={}", .{
+                    missing_in_circle, missing_cx, missing_cz, pc_x, pc_z, r_dist,
+                });
+            }
+        }
+
+        if (build_options.startup_diagnostic_seconds == 0 and self.render_frame_count % 300 == 0) {
+            log.log.info("CPU_CULL: visible={} with_mesh={} no_mesh={} zero_verts={} frustum_culled={} not_renderable={} not_in_storage={} missing_circle={}", .{
+                self.visible_chunks.items.len,
+                self.visible_chunks.items.len - visible_no_mesh,
+                visible_no_mesh,
+                visible_zero_verts,
+                frustum_culled,
+                not_renderable,
+                not_in_storage,
+                missing_in_circle,
+            });
+            if (visible_no_mesh > 0) {
+                log.log.warn("  {} visible chunks have NO mesh data! first=({},{})", .{ visible_no_mesh, first_no_mesh_cx, first_no_mesh_cz });
+            }
+            if (visible_zero_verts > 0) {
+                log.log.warn("  {} visible chunks have ZERO vertices! first=({},{})", .{ visible_zero_verts, first_zero_verts_cx, first_zero_verts_cz });
+            }
+
+            // Dump boundary chunks at distance r_dist to find the missing slice
+            var boundary_renderable: u32 = 0;
+            var boundary_missing: u32 = 0;
+            var boundary_buf: [4096]u8 = undefined;
+            var boundary_len: usize = 0;
+            var bz: i64 = pc_z - r_dist;
+            while (bz <= pc_z + r_dist) : (bz += 1) {
+                var bx: i64 = pc_x - r_dist;
+                while (bx <= pc_x + r_dist) : (bx += 1) {
+                    const bdx = bx - pc_x;
+                    const bdz = bz - pc_z;
+                    const bdist = bdx * bdx + bdz * bdz;
+                    if (bdist >= (r_dist - 1) * (r_dist - 1) and bdist <= r_dist * r_dist) {
+                        if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(bx)), .z = @as(i32, @intCast(bz)) })) |data| {
+                            if (data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                                boundary_renderable += 1;
+                            } else {
+                                boundary_missing += 1;
+                                if (boundary_len < boundary_buf.len - 20) {
+                                    const written = std.fmt.bufPrint(boundary_buf[boundary_len..], "({},{}) ", .{ bx, bz }) catch unreachable;
+                                    boundary_len += written.len;
+                                }
+                            }
+                        } else {
+                            boundary_missing += 1;
+                            if (boundary_len < boundary_buf.len - 20) {
+                                const written = std.fmt.bufPrint(boundary_buf[boundary_len..], "({},{})! ", .{ bx, bz }) catch unreachable;
+                                boundary_len += written.len;
+                            }
                         }
                     }
                 }
+            }
+            if (boundary_missing > 0) {
+                log.log.warn("  BOUNDARY: {}/{} boundary chunks have NO mesh. Missing: {s}", .{ boundary_missing, boundary_renderable + boundary_missing, boundary_buf[0..boundary_len] });
             }
         }
     }
@@ -421,8 +654,10 @@ pub const WorldRenderer = struct {
         cs.updateAABBData(fi, self.aabb_data.items);
         const screen_w = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.width));
         const screen_h = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.height));
-        const prev_frame_valid = self.vk_ctx.depth_pyramid.isValid();
-        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, prev_frame_valid);
+        // The previous-frame depth pyramid is currently too unstable during camera
+        // rotation and causes chunks to be wrongly occluded. Keep GPU frustum
+        // culling, but disable temporal occlusion until the reprojection path is fixed.
+        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, false);
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
@@ -433,10 +668,9 @@ pub const WorldRenderer = struct {
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        const world_x: i64 = @intFromFloat(camera_pos.x);
-        const world_z: i64 = @intFromFloat(camera_pos.z);
-        const pc_x = @divFloor(world_x, CHUNK_SIZE_X);
-        const pc_z = @divFloor(world_z, CHUNK_SIZE_Z);
+        const pc = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+        const pc_x: i64 = pc.chunk_x;
+        const pc_z: i64 = pc.chunk_z;
 
         const r_dist: i64 = @as(i64, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
 

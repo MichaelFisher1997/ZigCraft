@@ -7,6 +7,8 @@ pub const ShadowDebugChannel = enum(u32) {
     cascade_index = 2,
     caster_coverage = 3,
     seam_diagnostics = 4,
+    tile_id = 5,
+    tex_color = 6,
 };
 
 pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {

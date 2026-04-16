@@ -208,14 +208,12 @@ pub const ResourceManager = struct {
 
         self.transfer.recordPendingCopies(cb);
 
-        var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
-        barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        var barrier = std.mem.zeroes(c.VkMemoryBarrier);
+        barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = self.transfer.getPendingDstAccessMask();
-        barrier.srcQueueFamilyIndex = self.transfer.family_index;
-        barrier.dstQueueFamilyIndex = self.vulkan_device.graphics_family;
 
-        c.vkCmdPipelineBarrier(cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 0, null, 1, &barrier, 0, null);
+        c.vkCmdPipelineBarrier(cb, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, null, 0, null);
 
         try self.transfer.endTransferCommandBuffer();
         try Utils.checkVk(c.vkResetFences(self.vulkan_device.vk_device, 1, &self.transfer.frame_fences[self.transfer.current_frame]));

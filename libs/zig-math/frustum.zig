@@ -62,9 +62,12 @@ pub const Frustum = struct {
             m[3][3] - m[3][1],
         ).normalize();
 
+        // Near and far planes: correct for reverse-Z projection (z_ndc in [0, 1]).
+        // Near: z_clip >= 0  →  VP[2] alone
+        // Far:  w_clip - z_clip >= 0  →  VP[3] - VP[2]
         planes[4] = Plane.init(
-            Vec3.init(m[0][3] + m[0][2], m[1][3] + m[1][2], m[2][3] + m[2][2]),
-            m[3][3] + m[3][2],
+            Vec3.init(m[0][2], m[1][2], m[2][2]),
+            m[3][2],
         ).normalize();
 
         planes[5] = Plane.init(
@@ -121,11 +124,42 @@ pub const Frustum = struct {
         const world_z: f32 = @as(f32, @floatFromInt(chunk_z * 16)) - cam_z;
         const world_y: f32 = -cam_y;
 
-        const aabb = AABB.init(
-            Vec3.init(world_x, world_y, world_z),
-            Vec3.init(world_x + CHUNK_SIZE_X, world_y + CHUNK_SIZE_Y, world_z + CHUNK_SIZE_Z),
+        const center = Vec3.init(
+            world_x + CHUNK_SIZE_X * 0.5,
+            world_y + CHUNK_SIZE_Y * 0.5,
+            world_z + CHUNK_SIZE_Z * 0.5,
         );
+        const radius: f32 = CHUNK_SIZE_Y * 0.5 + CHUNK_SIZE_X;
 
-        return self.intersectsAABB(aabb);
+        return self.intersectsSphere(center, radius);
     }
 };
+
+test "Frustum culls front-facing chunks" {
+    const view = Mat4.lookAt(Vec3.init(0, 0, 0), Vec3.init(0, 0, -1), Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 2.0, 1.0, 0.1, 512.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    try std.testing.expect(frustum.intersectsChunkRelative(0, -4, 0, 0, 0));
+    try std.testing.expect(!frustum.intersectsChunkRelative(0, 40, 0, 0, 0));
+}
+
+test "Frustum forward view at y=80 sees all nearby chunks" {
+    const view = Mat4.lookAt(Vec3.init(0, 0, 0), Vec3.init(0, 0, -1), Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 4.0, 1.5, 0.5, 10000.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    var not_visible: u32 = 0;
+    const rd: i32 = 8;
+    var cz: i32 = -rd;
+    while (cz <= rd) : (cz += 1) {
+        var cx: i32 = -rd;
+        while (cx <= rd) : (cx += 1) {
+            if (cx * cx + cz * cz > rd * rd) continue;
+            if (!frustum.intersectsChunkRelative(cx, cz, 0, 80, 0)) {
+                not_visible += 1;
+            }
+        }
+    }
+    try std.testing.expectEqual(@as(u32, 0), not_visible);
+}

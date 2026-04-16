@@ -15,6 +15,7 @@ const CHUNK_SIZE_X = @import("../chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = @import("../chunk.zig").CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = @import("../chunk.zig").CHUNK_SIZE_Z;
 const Biome = @import("../block.zig").Biome;
+const BlockType = @import("../block.zig").BlockType;
 const noise_sampler_mod = @import("noise_sampler.zig");
 pub const NoiseSampler = noise_sampler_mod.NoiseSampler;
 const height_sampler_mod = @import("height_sampler.zig");
@@ -31,6 +32,7 @@ pub const Params = struct {
     ridge_inland_min: f32 = 0.50,
     ridge_inland_max: f32 = 0.70,
     ridge_sparsity: f32 = 0.50,
+    disable_caves: bool = false,
 };
 
 pub const ColumnData = struct {
@@ -355,12 +357,12 @@ pub const TerrainShapeGenerator = struct {
                         phase_data.coastal_types[idx],
                     );
 
-                    if (block != .air and block != .water and block != .bedrock) {
+                    if (!self.params.disable_caves and block != .air and block != .water and block != .bedrock) {
                         const wy: f32 = @floatFromInt(y);
                         const should_carve_worm = if (worm_carve_map) |map| map.get(local_x, @intCast(y), local_z) else false;
                         const should_carve_cavity = self.cave_system.shouldCarve(wx, wy, wz, terrain_height_i, phase_data.cave_region_values[idx]);
                         if (should_carve_worm or should_carve_cavity) {
-                            block = if (y < sea_level) .water else .air;
+                            block = carvedBlockReplacement(phase_data.is_underwater_flags[idx], y, sea_level);
                         }
                     }
                     chunk.setBlock(local_x, @intCast(y), local_z, block);
@@ -443,3 +445,19 @@ pub const TerrainShapeGenerator = struct {
         return self.coastal_generator.isInlandWater(&self.noise_sampler, wx, wz, height, self.params.sea_level);
     }
 };
+
+fn carvedBlockReplacement(is_underwater_column: bool, y: i32, sea_level: i32) BlockType {
+    return if (is_underwater_column and y < sea_level) .water else .air;
+}
+
+test "dry caves carve to air below sea level" {
+    try std.testing.expectEqual(BlockType.air, carvedBlockReplacement(false, 20, 64));
+}
+
+test "underwater caves remain flooded below sea level" {
+    try std.testing.expectEqual(BlockType.water, carvedBlockReplacement(true, 20, 64));
+}
+
+test "underwater caves above sea level carve to air" {
+    try std.testing.expectEqual(BlockType.air, carvedBlockReplacement(true, 80, 64));
+}

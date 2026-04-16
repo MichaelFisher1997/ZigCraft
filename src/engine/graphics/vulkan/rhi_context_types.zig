@@ -130,6 +130,8 @@ const DrawState = struct {
     current_roughness_texture: rhi.TextureHandle,
     current_displacement_texture: rhi.TextureHandle,
     current_env_texture: rhi.TextureHandle,
+    current_water_reflection_texture: rhi.TextureHandle,
+    current_scene_depth_texture: rhi.TextureHandle,
     current_lpv_texture: rhi.TextureHandle,
     current_lpv_texture_g: rhi.TextureHandle,
     current_lpv_texture_b: rhi.TextureHandle,
@@ -142,6 +144,8 @@ const DrawState = struct {
     bound_roughness_texture: rhi.TextureHandle,
     bound_displacement_texture: rhi.TextureHandle,
     bound_env_texture: rhi.TextureHandle,
+    bound_water_reflection_texture: rhi.TextureHandle = 0,
+    bound_scene_depth_texture: rhi.TextureHandle = 0,
     bound_lpv_texture: rhi.TextureHandle,
     bound_lpv_texture_g: rhi.TextureHandle = 0,
     bound_lpv_texture_b: rhi.TextureHandle = 0,
@@ -157,12 +161,13 @@ const DrawState = struct {
     pending_lod_instance_buffer: rhi.BufferHandle = 0,
     current_view_proj: Mat4 = Mat4.identity,
     current_model: Mat4 = Mat4.identity,
-    current_color: [3]f32 = .{ 1.0, 1.0, 1.0 },
+    current_color: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 },
     current_mask_radius: f32 = 0.0,
 };
 
 const RuntimeState = struct {
     gpu_fault_detected: bool = false,
+    recovering: bool = false,
     memory_type_index: u32,
     framebuffer_resized: bool,
     draw_call_count: u32,
@@ -175,6 +180,7 @@ const RuntimeState = struct {
     frame_index: usize,
     image_index: u32,
     clear_color: [4]f32 = .{ 0.07, 0.08, 0.1, 1.0 },
+    first_main_pass_draw_logged: bool = false,
 };
 
 const TimingState = struct {

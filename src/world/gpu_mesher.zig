@@ -14,7 +14,7 @@ const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocat
 const VertexAllocation = @import("chunk_allocator.zig").VertexAllocation;
 
 pub const MESH_SHADER_PATH = "assets/shaders/vulkan/mesh.comp.spv";
-pub const MAX_GPU_MESH_BATCH: usize = 8;
+pub const MAX_GPU_MESH_BATCH: usize = 32;
 pub const MAX_PASS_VERTICES: u32 = 65536;
 pub const MAX_VERTICES_PER_CHUNK: u32 = MAX_PASS_VERTICES * 3;
 pub const VERTEX_SIZE: u32 = @sizeOf(rhi_pkg.Vertex);
@@ -43,6 +43,7 @@ pub const ChunkMeshRequest = struct {
     cx: i32,
     cz: i32,
     gpu_slot: usize,
+    job_token: u32,
 };
 
 pub const GpuMesherStats = struct {
@@ -109,7 +110,7 @@ pub const GpuMesher = struct {
             self.result_buffers[i] = try Utils.createVulkanBuffer(
                 &vk_ctx.vulkan_device,
                 result_size,
-                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                 c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             );
         }
@@ -135,7 +136,7 @@ pub const GpuMesher = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn queueMesh(self: *GpuMesher, cx: i32, cz: i32, gpu_slot: usize) bool {
+    pub fn queueMesh(self: *GpuMesher, cx: i32, cz: i32, gpu_slot: usize, job_token: u32) bool {
         if (!self.available) return false;
         if (self.mesh_queue.items.len >= MAX_GPU_MESH_BATCH) return false;
 
@@ -143,7 +144,7 @@ pub const GpuMesher = struct {
             if (queued.cx == cx and queued.cz == cz) return true;
         }
 
-        self.mesh_queue.append(self.allocator, .{ .cx = cx, .cz = cz, .gpu_slot = gpu_slot }) catch return false;
+        self.mesh_queue.append(self.allocator, .{ .cx = cx, .cz = cz, .gpu_slot = gpu_slot, .job_token = job_token }) catch return false;
         return true;
     }
 
@@ -162,12 +163,17 @@ pub const GpuMesher = struct {
         const prev_fi = (fi + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
         if (self.submitted[prev_fi].items.len == 0) return;
 
+        _ = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &self.vk_ctx.frames.in_flight_fences[prev_fi], c.VK_TRUE, std.math.maxInt(u64));
+
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
 
         const src = self.vk_ctx.resources.buffers.get(self.output_handles[prev_fi]) orelse return;
         const dst = self.vk_ctx.resources.buffers.get(vertex_allocator.buffer) orelse return;
-        const results = self.getMappedResults(prev_fi) orelse return;
+        const results = self.getMappedResults(prev_fi) orelse {
+            log.log.warn("GPU_MESHER_FINALIZE: no mapped results for prev_fi={}", .{prev_fi});
+            return;
+        };
 
         var copied_any = false;
 
@@ -179,9 +185,7 @@ pub const GpuMesher = struct {
             const result = results[idx];
 
             if (storage.chunks.get(.{ .x = req.cx, .z = req.cz })) |data| {
-                var solid_alloc: ?VertexAllocation = null;
-                var cutout_alloc: ?VertexAllocation = null;
-                var fluid_alloc: ?VertexAllocation = null;
+                if (data.chunk.job_token != req.job_token) continue;
 
                 if (result.overflow_mask != 0) {
                     log.log.warn("GpuMesher overflow for chunk ({}, {}), falling back to CPU meshing", .{ req.cx, req.cz });
@@ -189,20 +193,30 @@ pub const GpuMesher = struct {
                     continue;
                 }
 
+                var solid_alloc: ?VertexAllocation = null;
+                var cutout_alloc: ?VertexAllocation = null;
+                var fluid_alloc: ?VertexAllocation = null;
+
                 solid_alloc = reserveCopyAllocation(vertex_allocator, result.solid_count) catch null;
                 cutout_alloc = reserveCopyAllocation(vertex_allocator, result.cutout_count) catch null;
                 fluid_alloc = reserveCopyAllocation(vertex_allocator, result.fluid_count) catch null;
 
                 if (result.solid_count > 0 and solid_alloc == null) {
+                    log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve solid allocation ({} verts)", .{ req.cx, req.cz, result.solid_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.state = .generated;
                     continue;
                 }
                 if (result.cutout_count > 0 and cutout_alloc == null) {
+                    log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve cutout allocation ({} verts)", .{ req.cx, req.cz, result.cutout_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.state = .generated;
                     continue;
                 }
                 if (result.fluid_count > 0 and fluid_alloc == null) {
+                    log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve fluid allocation ({} verts)", .{ req.cx, req.cz, result.fluid_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.state = .generated;
                     continue;
                 }
 
@@ -223,6 +237,7 @@ pub const GpuMesher = struct {
 
                 data.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                 data.chunk.state = .renderable;
+                data.chunk.dirty = false;
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
             }
         }
@@ -250,28 +265,42 @@ pub const GpuMesher = struct {
     }
 
     fn dispatchQueuedMeshes(self: *GpuMesher, gpu_block_buffer: *GpuBlockBuffer) void {
-        if (self.mesh_queue.items.len == 0) return;
-
         const fi = self.vk_ctx.frames.current_frame;
+        self.submitted[fi].clearRetainingCapacity();
+
+        if (self.mesh_queue.items.len == 0) return;
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
 
-        self.zeroResults(fi);
-        self.submitted[fi].clearRetainingCapacity();
         self.submitted[fi].appendSlice(self.allocator, self.mesh_queue.items) catch return;
+
+        const result_buf = self.result_buffers[fi].buffer;
+        const result_size: c.VkDeviceSize = MAX_GPU_MESH_BATCH * @sizeOf(MeshBuildResult);
+        c.vkCmdFillBuffer(cmd, result_buf, 0, result_size, 0);
+        {
+            var fill_barrier = std.mem.zeroes(c.VkMemoryBarrier);
+            fill_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            fill_barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+            fill_barrier.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_SHADER_WRITE_BIT;
+            c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fill_barrier, 0, null, 0, null);
+        }
 
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
         c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[fi], 0, null);
 
         for (self.mesh_queue.items, 0..) |req, idx| {
+            const n_slot = gpu_block_buffer.getSlotForChunk(req.cx, req.cz - 1);
+            const s_slot = gpu_block_buffer.getSlotForChunk(req.cx, req.cz + 1);
+            const e_slot = gpu_block_buffer.getSlotForChunk(req.cx + 1, req.cz);
+            const w_slot = gpu_block_buffer.getSlotForChunk(req.cx - 1, req.cz);
             const push = MeshPushConstants{
                 .chunk_slot = @intCast(req.gpu_slot),
                 .request_index = @intCast(idx),
                 .output_offset = @intCast(idx * @as(usize, MAX_VERTICES_PER_CHUNK)),
-                .neighbor_north_slot = slotOrMissing(gpu_block_buffer.getSlotForChunk(req.cx, req.cz - 1)),
-                .neighbor_south_slot = slotOrMissing(gpu_block_buffer.getSlotForChunk(req.cx, req.cz + 1)),
-                .neighbor_east_slot = slotOrMissing(gpu_block_buffer.getSlotForChunk(req.cx + 1, req.cz)),
-                .neighbor_west_slot = slotOrMissing(gpu_block_buffer.getSlotForChunk(req.cx - 1, req.cz)),
+                .neighbor_north_slot = slotOrMissing(n_slot),
+                .neighbor_south_slot = slotOrMissing(s_slot),
+                .neighbor_east_slot = slotOrMissing(e_slot),
+                .neighbor_west_slot = slotOrMissing(w_slot),
             };
             c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(MeshPushConstants), &push);
             c.vkCmdDispatch(cmd, CHUNK_Y, 1, 1);
@@ -302,6 +331,8 @@ pub const GpuMesher = struct {
         if (self.result_buffers[frame_index].mapped_ptr) |ptr| {
             const bytes = @as([*]u8, @ptrCast(ptr))[0 .. MAX_GPU_MESH_BATCH * @sizeOf(MeshBuildResult)];
             @memset(bytes, 0);
+        } else {
+            log.log.warn("GPU_MESHER: zeroResults called but result_buffers[{}] has no mapped_ptr!", .{frame_index});
         }
     }
 

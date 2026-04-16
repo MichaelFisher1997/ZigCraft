@@ -421,7 +421,7 @@ pub fn endFrame(ctx: anytype) void {
         ctx.shadow_system.endPass(command_buffer);
     }
 
-    if (!ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
+    if (ctx.runtime.draw_call_count > 0 and !ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
         beginPostProcessPassInternal(ctx);
         if (ctx.post_process.pass_active) {
             const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -438,6 +438,30 @@ pub fn endFrame(ctx: anytype) void {
 
     const transfer_cb = ctx.resources.getTransferCommandBuffer();
 
+    if (!ctx.resources.transfer.is_dedicated) {
+        if (transfer_cb) |cb| {
+            ctx.resources.transfer.recordPendingCopies(cb);
+
+            var barrier = std.mem.zeroes(c.VkMemoryBarrier);
+            barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = ctx.resources.transfer.getPendingDstAccessMask();
+
+            c.vkCmdPipelineBarrier(
+                cb,
+                c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+                c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0,
+                1,
+                &barrier,
+                0,
+                null,
+                0,
+                null,
+            );
+        }
+    }
+
     if (ctx.resources.transfer.is_dedicated and transfer_cb != null) {
         ctx.resources.submitTransfer() catch |err| {
             log.log.errWithTrace("Failed to submit transfer: {}", .{err});
@@ -448,6 +472,9 @@ pub fn endFrame(ctx: anytype) void {
 
     ctx.frames.endFrame(&ctx.swapchain, transfer_cb, transfer_sem) catch |err| {
         log.log.errWithTrace("endFrame failed: {}", .{err});
+        if (err == error.GpuLost) {
+            ctx.runtime.gpu_fault_detected = true;
+        }
     };
 
     if (transfer_cb != null) {

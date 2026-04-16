@@ -77,6 +77,10 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (ctx.resources.transfer.transfer_ready[ctx.resources.transfer.current_frame]) {
         ctx.resources.flushTransfer() catch |err| {
             log.log.errWithTrace("Failed to flush inter-frame transfers: {}", .{err});
+            if (err == error.VulkanError) {
+                ctx.runtime.gpu_fault_detected = true;
+                return;
+            }
         };
     }
 
@@ -391,6 +395,7 @@ fn endFrame(ctx_ptr: *anyopaque) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
+    if (ctx.runtime.gpu_fault_detected) return;
     pass_orchestration.endFrame(ctx);
 }
 
@@ -455,6 +460,11 @@ fn setLODInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     render_state.setLODInstanceBuffer(ctx, handle);
 }
 
+fn setTerrainPipelineBound(ctx_ptr: *anyopaque, bound: bool) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setTerrainPipelineBound(ctx, bound);
+}
+
 fn setSelectionMode(ctx_ptr: *anyopaque, enabled: bool) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     render_state.setSelectionMode(ctx, enabled);
@@ -517,10 +527,12 @@ fn bindTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         7 => ctx.draw.current_roughness_texture = resolved,
         8 => ctx.draw.current_displacement_texture = resolved,
         9 => ctx.draw.current_env_texture = resolved,
+        14 => ctx.draw.current_water_reflection_texture = resolved,
+        15 => ctx.draw.current_scene_depth_texture = resolved,
         11 => ctx.draw.current_lpv_texture = resolved,
         12 => ctx.draw.current_lpv_texture_g = resolved,
         13 => ctx.draw.current_lpv_texture_b = resolved,
-        else => ctx.draw.current_texture = resolved,
+        else => {},
     }
 }
 
@@ -619,6 +631,11 @@ fn getFaultCount(ctx_ptr: *anyopaque) u32 {
 fn getValidationErrorCount(ctx_ptr: *anyopaque) u32 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return state_control.getValidationErrorCount(ctx);
+}
+
+fn getDeviceLocalVramBytes(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return ctx.vulkan_device.getDeviceLocalVramBytes();
 }
 
 fn getDrawCallCount(ctx_ptr: *anyopaque) u32 {
@@ -872,6 +889,7 @@ const VULKAN_STATE_CONTEXT_VTABLE = rhi.IRenderStateContext.VTable{
     .setModelMatrix = setModelMatrix,
     .setInstanceBuffer = setInstanceBuffer,
     .setLODInstanceBuffer = setLODInstanceBuffer,
+    .setTerrainPipelineBound = setTerrainPipelineBound,
     .setSelectionMode = setSelectionMode,
     .updateGlobalUniforms = updateGlobalUniforms,
     .setTextureUniforms = setTextureUniforms,
@@ -955,6 +973,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getFaultCount = getFaultCount,
         .getValidationErrorCount = getValidationErrorCount,
         .getDrawCallCount = getDrawCallCount,
+        .getDeviceLocalVramBytes = getDeviceLocalVramBytes,
         .waitIdle = waitIdle,
     },
     .timing = .{

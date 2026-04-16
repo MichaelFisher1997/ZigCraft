@@ -85,6 +85,19 @@ pub const TextureAtlas = struct {
             log.log.warn("Texture atlas: used solid color fallback for {} textures", .{stats.fallback_count});
         }
 
+        // Validate: warn about any block type mapped to tile 0 (renders white)
+        for (&block_registry.BLOCK_REGISTRY) |*def| {
+            if (def.id == .air) continue;
+            if (std.mem.eql(u8, def.name, "unknown")) continue;
+            const idx = @intFromEnum(def.id);
+            if (idx < MAX_BLOCK_TYPES) {
+                const tiles = tile_mappings[idx];
+                if (tiles.top == 0 and tiles.bottom == 0 and tiles.side == 0) {
+                    log.log.warn("ATLAS_TILE0: block '{s}' (id={}) has tile index 0 — will render WHITE", .{ def.name, idx });
+                }
+            }
+        }
+
         // 4. Create GPU textures
         const atlas_textures = try createRhiTextures(resources, atlas_size, &buffers);
 

@@ -29,6 +29,7 @@ test "DescriptorManager default state has null handles" {
         .global_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
         .shadow_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]@import("resource_manager.zig").VulkanBuffer),
         .shadow_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
+        .dummy_instance_ssbo = std.mem.zeroes(@import("resource_manager.zig").VulkanBuffer),
         .dummy_texture = 0,
         .dummy_texture_3d = 0,
         .dummy_normal_texture = 0,

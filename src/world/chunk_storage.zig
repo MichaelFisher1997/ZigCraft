@@ -205,4 +205,16 @@ pub const ChunkStorage = struct {
         }
         return false;
     }
+
+    /// Diagnostic: get chunk state as a string for logging (not for hot path).
+    pub fn getChunkState(cx: i32, cz: i32, ctx: *anyopaque) ?@import("chunk.zig").Chunk.State {
+        const self: *ChunkStorage = @ptrCast(@alignCast(ctx));
+        self.chunks_mutex.lockShared();
+        defer self.chunks_mutex.unlockShared();
+
+        if (self.chunks.get(.{ .x = cx, .z = cz })) |data| {
+            return data.chunk.state;
+        }
+        return null; // not in storage
+    }
 };

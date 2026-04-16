@@ -88,8 +88,8 @@ vec3 getProceduralWaveNormal(vec2 pos, float time) {
     return normalize(normal);
 }
 
-float linearizeDepth(float depth, float near, float far) {
-    return (2.0 * near * far) / (far + near - depth * (far - near));
+float linearizeDepthReverseZ(float depth, float near, float far) {
+    return (near * far) / (near + depth * (far - near));
 }
 
 void main() {
@@ -120,12 +120,12 @@ void main() {
     vec2 envUV = SampleSphericalMap(R);
     vec3 envColor = textureLod(uEnvMap, envUV, 2.0).rgb;
     
-    vec2 reflectUV = screenUV + N.xz * 0.03;
+    vec2 reflectUV = screenUV + N.xz * 0.015;
     reflectUV = clamp(reflectUV, 0.001, 0.999);
     vec3 reflectionColor = texture(uReflection, reflectUV).rgb;
     
     float scene_depth_raw = texture(uSceneDepth, screenUV).r;
-    float scene_depth_linear = linearizeDepth(scene_depth_raw, 0.1, 1000.0);
+    float scene_depth_linear = linearizeDepthReverseZ(scene_depth_raw, 0.5, 10000.0);
     float surface_depth = -vViewDepth;
     float water_depth = scene_depth_linear - surface_depth;
     water_depth = max(water_depth, 0.0);
@@ -163,9 +163,9 @@ void main() {
         waterColor = mix(waterColor, global.fog_color.rgb, clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0));
     }
     
-    float alpha = mix(0.6, 0.95, depth_factor);
-    alpha = mix(alpha, 1.0, fresnel * 0.5);
-    alpha = clamp(alpha, 0.5, 1.0);
+    float alpha = mix(0.8, 0.98, depth_factor);
+    alpha = mix(alpha, 1.0, fresnel * 0.35);
+    alpha = clamp(alpha, 0.75, 1.0);
     
     FragColor = vec4(waterColor, alpha);
 }

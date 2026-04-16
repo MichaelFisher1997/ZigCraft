@@ -61,7 +61,7 @@ pub const SSAOSystem = struct {
     params: SSAOParams = undefined,
     sampler: c.VkSampler = null,
 
-    pub fn init(self: *SSAOSystem, device: *VulkanDevice, allocator: Allocator, descriptor_pool: c.VkDescriptorPool, upload_cmd_pool: c.VkCommandPool, width: u32, height: u32, g_normal_view: c.VkImageView, g_depth_view: c.VkImageView) !void {
+    pub fn init(self: *SSAOSystem, device: *VulkanDevice, allocator: Allocator, descriptor_pool: c.VkDescriptorPool, upload_cmd_pool: c.VkCommandPool, width: u32, height: u32, g_normal_view: c.VkImageView, g_depth_view: c.VkImageView, skip_noise_upload: bool) !void {
         const vk = device.vk_device;
         const ao_format = c.VK_FORMAT_R8_UNORM;
 
@@ -75,7 +75,7 @@ pub const SSAOSystem = struct {
 
         try self.initImages(device, width, height, ao_format);
         try self.initFramebuffers(vk, width, height);
-        try self.initNoiseTexture(device, upload_cmd_pool);
+        try self.initNoiseTexture(device, upload_cmd_pool, skip_noise_upload);
         try self.initKernelUBO(device);
         try self.initSampler(vk);
         try self.initDescriptorLayouts(vk);
@@ -211,7 +211,7 @@ pub const SSAOSystem = struct {
         return noise_data;
     }
 
-    fn initNoiseTexture(self: *SSAOSystem, device: *VulkanDevice, upload_cmd_pool: c.VkCommandPool) !void {
+    fn initNoiseTexture(self: *SSAOSystem, device: *VulkanDevice, upload_cmd_pool: c.VkCommandPool, skip_upload: bool) !void {
         const vk = device.vk_device;
         var rng = std.Random.DefaultPrng.init(12345);
         const noise_data = generateNoiseData(&rng);
@@ -246,6 +246,8 @@ pub const SSAOSystem = struct {
         view_info.format = c.VK_FORMAT_R8G8B8A8_UNORM;
         view_info.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
         try Utils.checkVk(c.vkCreateImageView(vk, &view_info, null, &self.noise_view));
+
+        if (skip_upload) return;
 
         const staging = try Utils.createVulkanBuffer(device, NOISE_SIZE * NOISE_SIZE * 4, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         defer {
