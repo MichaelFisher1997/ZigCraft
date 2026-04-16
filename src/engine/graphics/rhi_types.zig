@@ -13,6 +13,7 @@ pub const RhiError = error{
     InitializationFailed,
     ExtensionNotPresent,
     FeatureNotPresent,
+    ShaderCreationNotSupported,
     TooManyObjects,
     FormatNotSupported,
     InvalidImageView,

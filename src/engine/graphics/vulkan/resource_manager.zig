@@ -432,10 +432,7 @@ pub const ResourceManager = struct {
         _ = self;
         _ = vertex_src;
         _ = fragment_src;
-        // TODO: Implement actual shader creation when ready.
-        // For now, return error to avoid silent failure.
-        // NOTE: If engine code calls this, it will now fail loudly, which is better than silent failure.
-        return error.ExtensionNotPresent; // Or proper NotImpl error
+        return error.ShaderCreationNotSupported;
     }
 
     pub fn destroyShader(self: *ResourceManager, handle: rhi.ShaderHandle) void {
