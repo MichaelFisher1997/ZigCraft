@@ -112,7 +112,10 @@ test {
     _ = @import("world/block_registry_tests.zig");
     _ = @import("world/block_biome_tests.zig");
     _ = @import("world/chunk_tests.zig");
+    _ = @import("world/chunk_fill_tests.zig");
     _ = @import("world/chunk_mesh_tests.zig");
+    _ = @import("world/chunk_storage_interface_tests.zig");
+    _ = @import("world/biome_and_block_tests.zig");
     _ = @import("world/packed_light_tests.zig");
     _ = @import("world/meshing/boundary_tests.zig");
 }
