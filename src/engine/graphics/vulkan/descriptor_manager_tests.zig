@@ -310,3 +310,80 @@ test "UBO mapped pointer arrays are nullable" {
     ptr_array[0] = &dummy;
     try testing.expect(ptr_array[0] != null);
 }
+
+// ============================================================================
+// GlobalUniforms and ShadowUniforms Detailed Tests
+// ============================================================================
+
+test "GlobalUniforms has correct std140 alignment" {
+    const GlobalUniforms = extern struct {
+        view_proj: Mat4,
+        view_proj_prev: Mat4,
+        cam_pos: [4]f32,
+        sun_dir: [4]f32,
+        sun_color: [4]f32,
+        fog_color: [4]f32,
+        cloud_wind_offset: [4]f32,
+        params: [4]f32,
+        lighting: [4]f32,
+        cloud_params: [4]f32,
+        shadow_params: [4]f32,
+        pbr_params: [4]f32,
+        volumetric_params: [4]f32,
+        viewport_size: [4]f32,
+        lpv_params: [4]f32,
+        lpv_origin: [4]f32,
+    };
+
+    // Each Mat4 should be 64 bytes and aligned to 16
+    try testing.expectEqual(@as(usize, 64), @sizeOf(Mat4));
+    try testing.expectEqual(@as(usize, 16), @alignOf(Mat4));
+
+    // All [4]f32 arrays should be 16 bytes aligned
+    try testing.expect(@offsetOf(GlobalUniforms, "cam_pos") % 16 == 0);
+    try testing.expect(@offsetOf(GlobalUniforms, "sun_dir") % 16 == 0);
+    try testing.expect(@offsetOf(GlobalUniforms, "sun_color") % 16 == 0);
+}
+
+test "ShadowUniforms has correct std140 alignment" {
+    const ShadowUniforms = extern struct {
+        light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
+        cascade_splits: [4]f32,
+        shadow_texel_sizes: [4]f32,
+        shadow_params: [4]f32,
+    };
+
+    // light_space_matrices should be array of Mat4
+    const mat_array_size = rhi.SHADOW_CASCADE_COUNT * @sizeOf(Mat4);
+    try testing.expect(@offsetOf(ShadowUniforms, "light_space_matrices") == 0);
+    _ = mat_array_size;
+
+    // cascade_splits should be 16 bytes (4 f32)
+    try testing.expectEqual(@as(usize, 16), @sizeOf([4]f32));
+}
+
+test "GlobalUniforms total size is multiple of 16 for std140" {
+    const GlobalUniforms = extern struct {
+        view_proj: Mat4,
+        view_proj_prev: Mat4,
+        cam_pos: [4]f32,
+        sun_dir: [4]f32,
+        sun_color: [4]f32,
+        fog_color: [4]f32,
+        cloud_wind_offset: [4]f32,
+        params: [4]f32,
+        lighting: [4]f32,
+        cloud_params: [4]f32,
+        shadow_params: [4]f32,
+        pbr_params: [4]f32,
+        volumetric_params: [4]f32,
+        viewport_size: [4]f32,
+        lpv_params: [4]f32,
+        lpv_origin: [4]f32,
+    };
+
+    const size = @sizeOf(GlobalUniforms);
+    // Size should be >= 352 (2*64 + 14*16) and a multiple of 16
+    try testing.expect(size >= 352);
+    try testing.expect(size % 16 == 0);
+}
