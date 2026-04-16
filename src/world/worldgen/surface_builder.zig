@@ -44,10 +44,6 @@ pub const SurfaceParams = struct {
     // Coastal zone (continentalness thresholds)
     ocean_threshold: f32 = 0.35,
     beach_band: f32 = 0.05, // Width of beach zone in continentalness units
-
-    // Coastal tree restriction zone
-    coastal_no_tree_min: i32 = 8,
-    coastal_no_tree_max: i32 = 18,
 };
 
 // ============================================================================
