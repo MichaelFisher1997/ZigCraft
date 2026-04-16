@@ -71,8 +71,13 @@ pub fn destroyPostProcessResources(ctx: anytype) void {
 
 pub fn destroyGPassResources(ctx: anytype) void {
     const vk = ctx.vulkan_device.vk_device;
+    ctx.depth_pyramid.deinit(vk);
     destroyVelocityResources(ctx);
     ctx.ssao_system.deinit(vk, ctx.allocator, ctx.descriptors.descriptor_pool);
+    if (ctx.gpass.g_depth_handle != 0) {
+        ctx.resources.destroyTexture(ctx.gpass.g_depth_handle);
+        ctx.gpass.g_depth_handle = 0;
+    }
     if (ctx.pipeline_manager.g_pipeline != null) {
         c.vkDestroyPipeline(vk, ctx.pipeline_manager.g_pipeline, null);
         ctx.pipeline_manager.g_pipeline = null;
@@ -177,6 +182,8 @@ pub fn destroyVelocityResources(ctx: anytype) void {
 }
 
 pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_depth: bool) !void {
+    if (ctx.runtime.recovering) return;
+
     const aspect_mask: c.VkImageAspectFlags = if (is_depth) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
     var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
     alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -220,6 +227,8 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
 }
 
 pub fn transitionImagesToPresent(ctx: anytype, images: []const c.VkImage) !void {
+    if (ctx.runtime.recovering) return;
+
     var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
     alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;

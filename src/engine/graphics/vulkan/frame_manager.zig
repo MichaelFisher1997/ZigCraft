@@ -147,7 +147,7 @@ pub const FrameManager = struct {
         var wait_semaphores: [2]c.VkSemaphore = .{ null, null };
         var wait_stages: [2]c.VkPipelineStageFlags = .{
             c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+            c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         };
         var wait_count: u32 = 0;
 

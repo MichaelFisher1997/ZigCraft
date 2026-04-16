@@ -131,14 +131,21 @@ test "ChunkStorage multiple chunks at different positions" {
     try testing.expect(result != null);
 }
 
-test "ChunkStorage interface isChunkRenderable with no renderable chunks" {
+test "ChunkStorage interface isChunkRenderable returns false for fresh chunk" {
     var storage = ChunkStorage.init(testing.allocator);
     defer storage.deinitWithoutRHI();
 
     _ = try storage.getOrCreate(0, 0);
     const iface = storage.interface();
 
-    try testing.expect(!iface.isChunkRenderable(0, 0));
+    const is_renderable = iface.isChunkRenderable(0, 0);
+    try testing.expect(!is_renderable);
+}
+
+test "ChunkKey eql same x same z returns true" {
+    const a = ChunkKey{ .x = 3, .z = 7 };
+    const b = ChunkKey{ .x = 3, .z = 7 };
+    try testing.expect(a.eql(b));
 }
 
 test "ChunkKey eql different x same z" {

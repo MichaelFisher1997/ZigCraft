@@ -7,6 +7,7 @@ const log = @import("../../core/log.zig");
 pub fn beginWaterReflectionPassInternal(ctx: anytype) void {
     if (!ctx.frames.frame_in_progress) return;
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+    ctx.draw.terrain_pipeline_bound = false;
     ctx.water_system.beginReflectionPass(command_buffer);
 }
 

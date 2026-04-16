@@ -1,48 +1,54 @@
 const std = @import("std");
 const testing = std.testing;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
+const NUM_SUBCHUNKS = @import("chunk_mesh.zig").NUM_SUBCHUNKS;
+const RenderContext = @import("../engine/graphics/rhi.zig").RenderContext;
 
-test "ChunkMesh.init sets ready to false" {
+test "ChunkMesh.init creates mesh with null allocations" {
     var mesh = ChunkMesh.init(testing.allocator);
-    try testing.expect(!mesh.ready);
-}
+    defer mesh.deinitWithoutRHI();
 
-test "ChunkMesh.init has null allocations" {
-    var mesh = ChunkMesh.init(testing.allocator);
+    try testing.expectEqual(false, mesh.ready);
     try testing.expectEqual(null, mesh.solid_allocation);
     try testing.expectEqual(null, mesh.cutout_allocation);
     try testing.expectEqual(null, mesh.fluid_allocation);
-}
-
-test "ChunkMesh.init has null pending arrays" {
-    var mesh = ChunkMesh.init(testing.allocator);
     try testing.expectEqual(null, mesh.pending_solid);
     try testing.expectEqual(null, mesh.pending_cutout);
     try testing.expectEqual(null, mesh.pending_fluid);
 }
 
-test "ChunkMesh.deinitWithoutRHI clears all subchunk data" {
+test "ChunkMesh.init sets allocator" {
     var mesh = ChunkMesh.init(testing.allocator);
     defer mesh.deinitWithoutRHI();
 
-    try testing.expect(!mesh.ready);
-    try testing.expectEqual(null, mesh.solid_allocation);
-    try testing.expectEqual(null, mesh.cutout_allocation);
-    try testing.expectEqual(null, mesh.fluid_allocation);
+    try testing.expectEqual(testing.allocator, mesh.allocator);
 }
 
-test "ChunkMesh.draw early return when not ready" {
+test "ChunkMesh.deinitWithoutRHI can be called on fresh mesh" {
     var mesh = ChunkMesh.init(testing.allocator);
-    defer mesh.deinitWithoutRHI();
-
-    try testing.expect(!mesh.ready);
+    mesh.deinitWithoutRHI();
 }
 
-test "ChunkMesh subchunk arrays initialized to null" {
+test "ChunkMesh.deinitWithoutRHI can be called twice safely" {
+    var mesh = ChunkMesh.init(testing.allocator);
+    mesh.deinitWithoutRHI();
+    mesh.deinitWithoutRHI();
+}
+
+test "ChunkMesh.draw returns early when not ready" {
     var mesh = ChunkMesh.init(testing.allocator);
     defer mesh.deinitWithoutRHI();
 
-    const NUM_SUBCHUNKS = @import("chunk_mesh.zig").NUM_SUBCHUNKS;
+    const ctx: RenderContext = undefined;
+    mesh.draw(ctx, .solid);
+
+    try testing.expectEqual(false, mesh.ready);
+}
+
+test "ChunkMesh subchunk arrays are initially null" {
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
     try testing.expectEqual(NUM_SUBCHUNKS, mesh.subchunk_solid.len);
     try testing.expectEqual(NUM_SUBCHUNKS, mesh.subchunk_cutout.len);
     try testing.expectEqual(NUM_SUBCHUNKS, mesh.subchunk_fluid.len);

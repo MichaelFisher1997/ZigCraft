@@ -514,7 +514,7 @@ pub const WaterReflectionPass = struct {
         defer ctx.water_ctx.endReflectionPass();
 
         const view = ctx.camera.getViewMatrixOriginCentered();
-        const proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled);
+        const proj = ctx.camera.getProjectionMatrixReverseZ(ctx.aspect);
         const reflected_vp = ctx.water_ctx.computeReflectedViewProj(view, proj, ctx.camera.position);
 
         ctx.render_ctx.bindShader(ctx.main_shader);
@@ -565,9 +565,13 @@ pub const WaterPass = struct {
         if (descriptor_set_u64 != 0) {
             c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
         }
+        ctx.render_ctx.setTerrainPipelineBound(true);
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        ctx.world.renderFluid(view_proj, ctx.camera.position, true);
+        // Reflection rendering skips LOD water here to avoid doubling distant water with
+        // the dedicated water pass and to keep the reflection pass aligned with chunk water.
+        ctx.world.renderFluid(view_proj, ctx.camera.position, false);
+        ctx.render_ctx.setTerrainPipelineBound(false);
     }
 };
 

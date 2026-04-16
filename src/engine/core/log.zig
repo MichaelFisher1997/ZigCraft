@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 
 pub const LogLevel = enum {
     trace,
@@ -74,4 +75,9 @@ pub const Logger = struct {
     }
 };
 
-pub var log = Logger.init(if (builtin.is_test) .err else .debug);
+pub var log = Logger.init(if (builtin.is_test)
+    .err
+else if (build_options.startup_diagnostic_seconds > 0)
+    .info
+else
+    .debug);

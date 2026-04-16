@@ -44,8 +44,8 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
         .cloud_wind_offset = .{ cloud_params.wind_offset_x, cloud_params.wind_offset_z, cloud_params.cloud_scale, cloud_params.cloud_coverage },
         .params = .{ time_val, fog_density, if (fog_enabled) 1.0 else 0.0, sun_intensity },
         .lighting = .{ ambient, if (use_texture) 1.0 else 0.0, if (cloud_params.pbr_enabled) 1.0 else 0.0, cloud_params.shadow.strength },
-        .cloud_params = .{ cloud_params.cloud_height, if (cloud_params.cloud_shadows) 1.0 else 0.0, 0.0, 0.0 },
-        .shadow_params = .{ @floatFromInt(cloud_params.shadow.pcf_samples), if (cloud_params.shadow.cascade_blend) 1.0 else 0.0, 0.0, 0.0 },
+        .cloud_params = .{ cloud_params.cloud_height, if (cloud_params.cloud_shadows) 1.0 else 0.0, if (cloud_params.pbr_enabled) 1.0 else 0.0, 0.0 },
+        .shadow_params = .{ @floatFromInt(cloud_params.shadow.pcf_samples), if (cloud_params.shadow.cascade_blend) 1.0 else 0.0, cloud_params.shadow.strength, 0.0 },
         .pbr_params = .{ @floatFromInt(cloud_params.pbr_quality), cloud_params.exposure, cloud_params.saturation, if (cloud_params.ssao_enabled) 1.0 else 0.0 },
         .volumetric_params = .{ if (cloud_params.volumetric_enabled) 1.0 else 0.0, cloud_params.volumetric_density, @floatFromInt(cloud_params.volumetric_steps), cloud_params.volumetric_scattering },
         .viewport_size = .{ @floatFromInt(ctx.swapchain.swapchain.extent.width), @floatFromInt(ctx.swapchain.swapchain.extent.height), if (ctx.options.debug_shadows_active) 1.0 else 0.0, @floatFromInt(ctx.options.shadow_debug_channel) },
@@ -53,13 +53,25 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
         .lpv_origin = .{ cloud_params.lpv_origin.x, cloud_params.lpv_origin.y, cloud_params.lpv_origin.z, 0.0 },
     };
 
+    // Env var override for debug channel (ZIGCRAFT_DEBUG_SHADER=5 for tile_id, 6 for tex_color)
+    if (std.posix.getenv("ZIGCRAFT_DEBUG_SHADER")) |ds| {
+        const ch: u32 = std.fmt.parseInt(u32, ds, 10) catch 0;
+        if (ch > 0) {
+            var gu = global_uniforms;
+            gu.viewport_size[2] = 1.0;
+            gu.viewport_size[3] = @floatFromInt(ch);
+            try ctx.descriptors.updateGlobalUniforms(ctx.frames.current_frame, &gu);
+            return;
+        }
+    }
+
     try ctx.descriptors.updateGlobalUniforms(ctx.frames.current_frame, &global_uniforms);
     ctx.velocity.view_proj_prev = view_proj;
 }
 
 pub fn setModelMatrix(ctx: anytype, model: Mat4, color: Vec3, mask_radius: f32) void {
     ctx.draw.current_model = model;
-    ctx.draw.current_color = .{ color.x, color.y, color.z };
+    ctx.draw.current_color = .{ color.x, color.y, color.z, 1.0 };
     ctx.draw.current_mask_radius = mask_radius;
 }
 
@@ -75,6 +87,10 @@ pub fn setLODInstanceBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
     ctx.draw.pending_lod_instance_buffer = handle;
     ctx.draw.lod_mode = true;
     applyPendingDescriptorUpdates(ctx, ctx.frames.current_frame);
+}
+
+pub fn setTerrainPipelineBound(ctx: anytype, bound: bool) void {
+    ctx.draw.terrain_pipeline_bound = bound;
 }
 
 pub fn setSelectionMode(ctx: anytype, enabled: bool) void {
@@ -132,7 +148,7 @@ pub fn applyPendingDescriptorUpdates(ctx: anytype, frame_index: usize) void {
 pub fn beginCloudPass(ctx: anytype, params: rhi.CloudParams) void {
     if (!ctx.frames.frame_in_progress) return;
 
-    if (!ctx.runtime.main_pass_active) pass_orchestration.beginMainPassInternal(ctx);
+    if (!ctx.runtime.main_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
     if (!ctx.runtime.main_pass_active) return;
 
     if (ctx.pipeline_manager.cloud_pipeline == null) return;

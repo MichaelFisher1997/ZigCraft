@@ -176,6 +176,21 @@ pub const GlobalVertexAllocator = struct {
             return allocation;
         }
 
+        // Diagnostic: report why reserve failed
+        var largest_block: usize = 0;
+        var total_free: usize = 0;
+        for (self.free_blocks.items) |block| {
+            if (block.size > largest_block) largest_block = block.size;
+            total_free += block.size;
+        }
+        log.log.err("GlobalVertexAllocator RESERVE OOM: needed {} ({} vertices), capacity {}MB, total free: {} KB, free blocks: {}. Largest block: {} KB", .{
+            size_needed,
+            vertex_count,
+            self.capacity / (1024 * 1024),
+            total_free / 1024,
+            self.free_blocks.items.len,
+            largest_block / 1024,
+        });
         return error.OutOfMemory;
     }
 
@@ -226,7 +241,12 @@ pub const GlobalVertexAllocator = struct {
         }
 
         self.free_blocks.insert(self.allocator, insert_idx, new_block) catch {
-            log.log.err("Failed to track free block in GlobalVertexAllocator", .{});
+            // Fallback: append to end (loses sort but prevents memory leak)
+            self.free_blocks.append(self.allocator, new_block) catch {
+                log.log.err("Failed to track free block in GlobalVertexAllocator (insert AND append failed), {} bytes leaked", .{size});
+                return;
+            };
+            // No coalescing possible after unsorted append
             return;
         };
 

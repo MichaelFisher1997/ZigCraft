@@ -77,7 +77,7 @@ test "Biome.getFillerBlock snowy_tundra returns dirt" {
 }
 
 test "Biome.getFillerBlock mountains returns stone" {
-    try testing.expectEqual(BlockType.stone, Biome.mountains.getSurfaceBlock());
+    try testing.expectEqual(BlockType.stone, Biome.mountains.getFillerBlock());
 }
 
 test "Biome.getFillerBlock mangrove_swamp returns mud" {

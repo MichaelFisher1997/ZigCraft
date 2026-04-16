@@ -339,8 +339,8 @@ pub const RenderPassManager = struct {
         deps[1] = std.mem.zeroes(c.VkSubpassDependency);
         deps[1].srcSubpass = 0;
         deps[1].dstSubpass = c.VK_SUBPASS_EXTERNAL;
-        deps[1].srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[1].dstStageMask = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[1].srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[1].dstStageMask = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
         deps[1].srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         deps[1].dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
         deps[1].dependencyFlags = c.VK_DEPENDENCY_BY_REGION_BIT;
@@ -574,8 +574,7 @@ pub const RenderPassManager = struct {
     }
 };
 
-/// Converts MSAA sample count (1, 2, 4, 8) to Vulkan sample count flag.
-fn getMSAASampleCountFlag(samples: u8) c.VkSampleCountFlagBits {
+pub fn getMSAASampleCountFlag(samples: u8) c.VkSampleCountFlagBits {
     return switch (samples) {
         2 => c.VK_SAMPLE_COUNT_2_BIT,
         4 => c.VK_SAMPLE_COUNT_4_BIT,

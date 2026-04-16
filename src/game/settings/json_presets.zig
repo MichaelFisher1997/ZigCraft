@@ -156,7 +156,6 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.lpv_cell_size = config.lpv_cell_size;
     settings.lpv_grid_size = config.lpv_grid_size;
     settings.lpv_propagation_iterations = config.lpv_propagation_iterations;
-    settings.lod_enabled = config.lod_enabled;
     settings.render_distance = config.render_distance;
     settings.render_distance_preset = config.render_distance_preset;
     settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
@@ -201,7 +200,6 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.lpv_cell_size, preset.lpv_cell_size, epsilon) and
         settings.lpv_grid_size == preset.lpv_grid_size and
         settings.lpv_propagation_iterations == preset.lpv_propagation_iterations and
-        settings.lod_enabled == preset.lod_enabled and
         settings.fxaa_enabled == preset.fxaa_enabled and
         settings.bloom_enabled == preset.bloom_enabled and
         std.math.approxEqAbs(f32, settings.bloom_intensity, preset.bloom_intensity, epsilon);

@@ -429,6 +429,19 @@ pub const VulkanDevice = struct {
         c.vkDestroyInstance(self.instance, null);
     }
 
+    pub fn getDeviceLocalVramBytes(self: VulkanDevice) u64 {
+        var mem_properties: c.VkPhysicalDeviceMemoryProperties = undefined;
+        c.vkGetPhysicalDeviceMemoryProperties(self.physical_device, &mem_properties);
+
+        var max_heap: u64 = 0;
+        for (0..mem_properties.memoryHeapCount) |i| {
+            if ((mem_properties.memoryHeaps[i].flags & c.VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) {
+                max_heap = @max(max_heap, mem_properties.memoryHeaps[i].size);
+            }
+        }
+        return max_heap;
+    }
+
     pub fn findMemoryType(self: VulkanDevice, type_filter: u32, properties: c.VkMemoryPropertyFlags) !u32 {
         var mem_properties: c.VkPhysicalDeviceMemoryProperties = undefined;
         c.vkGetPhysicalDeviceMemoryProperties(self.physical_device, &mem_properties);

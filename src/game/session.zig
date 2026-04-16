@@ -21,6 +21,7 @@ const LODLevel = @import("../world/lod_chunk.zig").LODLevel;
 const render_settings = @import("../engine/graphics/render_settings.zig");
 const RenderDistancePreset = render_settings.RenderDistancePreset;
 const log = @import("../engine/core/log.zig");
+const build_options = @import("build_options");
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
 const IInputMapper = input_mapper_pkg.IInputMapper;
@@ -33,7 +34,7 @@ const Font = @import("../engine/ui/font.zig");
 const Widgets = @import("../engine/ui/widgets.zig");
 const region_pkg = @import("../world/worldgen/region.zig");
 const hotbar = @import("ui/hotbar.zig");
-const worldToChunk = @import("../world/chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("../world/chunk.zig").worldToChunkFromFloat;
 
 const ECSManager = @import("../engine/ecs/manager.zig");
 const ECSRegistry = ECSManager.Registry;
@@ -115,10 +116,19 @@ pub const GameSession = struct {
         else
             false;
         const effective_render_distance: i32 = if (safe_mode) @min(render_distance, 8) else render_distance;
-        const effective_lod_enabled = if (safe_mode) false else lod_enabled;
+        const chunk_debug_restore_lod = chunkDebugRestoreEnabled("lod");
+        const effective_lod_enabled = if (safe_mode)
+            false
+        else if (build_options.chunk_debug_mode)
+            chunk_debug_restore_lod
+        else
+            lod_enabled;
 
         if (safe_mode) {
             log.log.warn("ZIGCRAFT_SAFE_MODE enabled: render distance capped to {} and LOD disabled", .{effective_render_distance});
+        }
+        if (build_options.chunk_debug_mode) {
+            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_options.chunk_debug_enable});
         }
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
@@ -179,10 +189,14 @@ pub const GameSession = struct {
         var ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
         errdefer ecs_render_system.deinit();
 
-        const player = Player.init(Vec3.init(8, 100, 8), true);
+        const spawn = findSpawnColumn(world, 8, 8);
+        const spawn_y: f32 = @floatFromInt(spawn.info.height + 16);
+        var player = Player.init(Vec3.init(@floatFromInt(spawn.x), spawn_y, @floatFromInt(spawn.z)), true);
+        // Aim toward the terrain so the first frame shows the ground.
+        player.camera.setYawPitch(player.camera.yaw, -std.math.degreesToRadians(35.0));
 
         var atmosphere = Atmosphere.init();
-        atmosphere.setTimeOfDay(0.25);
+        atmosphere.setTimeOfDay(0.5);
 
         session.* = .{
             .allocator = allocator,
@@ -330,7 +344,7 @@ pub const GameSession = struct {
 
         const stats = self.world.getStats();
         const rs = self.world.getRenderStats();
-        const pc = worldToChunk(@intFromFloat(self.camera.position.x), @intFromFloat(self.camera.position.z));
+        const pc = worldToChunkFromFloat(self.camera.position.x, self.camera.position.z);
         const hy: f32 = 50.0;
         const fault_count = self.rhi.getFaultCount();
         const hud_h: f32 = if (fault_count > 0) 230 else 210;
@@ -422,3 +436,48 @@ pub const GameSession = struct {
         }
     }
 };
+
+fn chunkDebugRestoreEnabled(name: []const u8) bool {
+    if (!build_options.chunk_debug_mode) return false;
+
+    var it = std.mem.tokenizeScalar(u8, build_options.chunk_debug_enable, ',');
+    while (it.next()) |token| {
+        const trimmed = std.mem.trim(u8, token, " \t");
+        if (std.ascii.eqlIgnoreCase(trimmed, name)) return true;
+    }
+    return false;
+}
+
+fn findSpawnColumn(world: *World, default_x: i32, default_z: i32) struct {
+    x: i32,
+    z: i32,
+    info: @import("../world/worldgen/generator_interface.zig").ColumnInfo,
+} {
+    const sea_level = 64;
+    const default_info = world.getColumnInfo(default_x, default_z);
+    const needs_dry_spawn = build_options.chunk_debug_mode and (chunkDebugRestoreEnabled("water") or chunkDebugRestoreEnabled("watergen") or chunkDebugRestoreEnabled("waterrender"));
+    if (!needs_dry_spawn or (!default_info.is_ocean and default_info.height >= sea_level)) {
+        return .{ .x = default_x, .z = default_z, .info = default_info };
+    }
+
+    var radius: i32 = 1;
+    while (radius <= 64) : (radius += 1) {
+        var dz: i32 = -radius;
+        while (dz <= radius) : (dz += 1) {
+            var dx: i32 = -radius;
+            while (dx <= radius) : (dx += 1) {
+                if (@max(@abs(dx), @abs(dz)) != radius) continue;
+
+                const x = default_x + dx;
+                const z = default_z + dz;
+                const info = world.getColumnInfo(x, z);
+                if (!info.is_ocean and info.height >= sea_level) {
+                    log.log.info("Chunk debug water spawn moved from ({},{}) to ({},{})", .{ default_x, default_z, x, z });
+                    return .{ .x = x, .z = z, .info = info };
+                }
+            }
+        }
+    }
+
+    return .{ .x = default_x, .z = default_z, .info = default_info };
+}
