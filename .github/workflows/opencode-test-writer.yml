@@ -81,63 +81,67 @@ jobs:
           fi
 
           BRANCH_NAME="test/$(echo "${SELECTED}" | tr '/' '-')"
-          echo "module=${SELECTED}" >> "$GITHUB_OUTPUT"
-          echo "branch=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
-          echo "base_branch=${{ github.event.repository.default_branch }}" >> "$GITHUB_OUTPUT"
 
           case "$SELECTED" in
             graphics/vulkan-device)
-              echo "scan_paths=src/engine/graphics/vulkan_device.zig src/engine/graphics/vulkan/device.zig src/engine/graphics/vulkan/rhi_state_control.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/vulkan_device.zig src/engine/graphics/vulkan/device.zig src/engine/graphics/vulkan/rhi_state_control.zig"
               ;;
             graphics/vulkan-resources)
-              echo "scan_paths=src/engine/graphics/vulkan/resource_manager.zig src/engine/graphics/vulkan/resource_texture_ops.zig src/engine/graphics/vulkan/rhi_resource_lifecycle.zig src/engine/graphics/vulkan/rhi_resource_setup.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/vulkan/resource_manager.zig src/engine/graphics/vulkan/resource_texture_ops.zig src/engine/graphics/vulkan/rhi_resource_lifecycle.zig src/engine/graphics/vulkan/rhi_resource_setup.zig"
               ;;
             graphics/vulkan-pipelines)
-              echo "scan_paths=src/engine/graphics/vulkan/pipeline_manager.zig src/engine/graphics/vulkan/pipeline_specialized.zig src/engine/graphics/vulkan/shader_registry.zig src/engine/graphics/vulkan/descriptor_manager.zig src/engine/graphics/vulkan/descriptor_bindings.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/vulkan/pipeline_manager.zig src/engine/graphics/vulkan/pipeline_specialized.zig src/engine/graphics/vulkan/shader_registry.zig src/engine/graphics/vulkan/descriptor_manager.zig src/engine/graphics/vulkan/descriptor_bindings.zig"
               ;;
             graphics/vulkan-swapchain)
-              echo "scan_paths=src/engine/graphics/vulkan/swapchain.zig src/engine/graphics/vulkan/swapchain_presenter.zig src/engine/graphics/vulkan_swapchain.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/vulkan/swapchain.zig src/engine/graphics/vulkan/swapchain_presenter.zig src/engine/graphics/vulkan_swapchain.zig"
               ;;
             graphics/vulkan-frame)
-              echo "scan_paths=src/engine/graphics/vulkan/frame_manager.zig src/engine/graphics/vulkan/rhi_frame_orchestration.zig src/engine/graphics/vulkan/render_pass_manager.zig src/engine/graphics/vulkan/rhi_pass_orchestration.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/vulkan/frame_manager.zig src/engine/graphics/vulkan/rhi_frame_orchestration.zig src/engine/graphics/vulkan/render_pass_manager.zig src/engine/graphics/vulkan/rhi_pass_orchestration.zig"
               ;;
             graphics/rhi-types)
-              echo "scan_paths=src/engine/graphics/rhi.zig src/engine/graphics/rhi_types.zig src/engine/graphics/rhi_vulkan.zig src/engine/graphics/rhi_tests.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/rhi.zig src/engine/graphics/rhi_types.zig src/engine/graphics/rhi_vulkan.zig src/engine/graphics/rhi_tests.zig"
               ;;
             graphics/shadows)
-              echo "scan_paths=src/engine/graphics/shadow_system.zig src/engine/graphics/csm.zig src/engine/graphics/vulkan/shadow_system.zig src/engine/graphics/vulkan/rhi_shadow_bridge.zig src/engine/graphics/shadow_scene.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/shadow_system.zig src/engine/graphics/csm.zig src/engine/graphics/vulkan/shadow_system.zig src/engine/graphics/vulkan/rhi_shadow_bridge.zig src/engine/graphics/shadow_scene.zig"
               ;;
             graphics/post-process)
-              echo "scan_paths=src/engine/graphics/vulkan/bloom_system.zig src/engine/graphics/vulkan/fxaa_system.zig src/engine/graphics/vulkan/taa_system.zig src/engine/graphics/vulkan/ssao_system.zig src/engine/graphics/vulkan/post_process_system.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/graphics/vulkan/bloom_system.zig src/engine/graphics/vulkan/fxaa_system.zig src/engine/graphics/vulkan/taa_system.zig src/engine/graphics/vulkan/ssao_system.zig src/engine/graphics/vulkan/post_process_system.zig"
               ;;
             engine/core)
-              echo "scan_paths=src/engine/core/job_system.zig src/engine/core/ring_buffer.zig src/engine/core/time.zig src/engine/core/log.zig src/engine/core/window.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/core/job_system.zig src/engine/core/ring_buffer.zig src/engine/core/time.zig src/engine/core/log.zig src/engine/core/window.zig"
               ;;
             engine/math)
-              echo "scan_paths=src/engine/math/vec3.zig src/engine/math/mat4.zig src/engine/math/frustum.zig src/engine/math/utils.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/math/vec3.zig src/engine/math/mat4.zig src/engine/math/frustum.zig src/engine/math/utils.zig"
               ;;
             engine/input)
-              echo "scan_paths=src/engine/input/input.zig src/engine/input/interfaces.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/input/input.zig src/engine/input/interfaces.zig"
               ;;
             world)
-              echo "scan_paths=src/world/chunk.zig src/world/block.zig src/world/block_registry.zig src/world/chunk_storage.zig src/world/chunk_allocator.zig src/world/chunk_mesh.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/world/chunk.zig src/world/block.zig src/world/block_registry.zig src/world/chunk_storage.zig src/world/chunk_allocator.zig src/world/chunk_mesh.zig"
               ;;
             world/meshing)
-              echo "scan_paths=src/world/meshing/greedy_mesher.zig src/world/meshing/ao_calculator.zig src/world/meshing/lighting_sampler.zig src/world/meshing/biome_color_sampler.zig src/world/meshing/boundary.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/world/meshing/greedy_mesher.zig src/world/meshing/ao_calculator.zig src/world/meshing/lighting_sampler.zig src/world/meshing/biome_color_sampler.zig src/world/meshing/boundary.zig"
               ;;
             world/worldgen)
-              echo "scan_paths=src/world/worldgen/overworld_generator.zig src/world/worldgen/biome.zig src/world/worldgen/caves.zig src/world/worldgen/terrain_shape_generator.zig src/world/worldgen/coastal_generator.zig src/world/worldgen/noise_sampler.zig src/world/worldgen/height_sampler.zig src/world/worldgen/surface_builder.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/world/worldgen/overworld_generator.zig src/world/worldgen/biome.zig src/world/worldgen/caves.zig src/world/worldgen/terrain_shape_generator.zig src/world/worldgen/coastal_generator.zig src/world/worldgen/noise_sampler.zig src/world/worldgen/height_sampler.zig src/world/worldgen/surface_builder.zig"
               ;;
             engine/ecs)
-              echo "scan_paths=src/engine/ecs/storage.zig src/engine/ecs/manager.zig src/engine/ecs/entity.zig src/engine/ecs/components.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/engine/ecs/storage.zig src/engine/ecs/manager.zig src/engine/ecs/entity.zig src/engine/ecs/components.zig"
               ;;
             game)
-              echo "scan_paths=src/game/player.zig src/game/screen.zig src/game/inventory.zig src/game/settings/ src/game/input_mapper.zig src/game/session.zig" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/game/player.zig src/game/screen.zig src/game/inventory.zig src/game/settings/ src/game/input_mapper.zig src/game/session.zig"
               ;;
             *)
-              echo "scan_paths=src/${SELECTED}" >> "$GITHUB_OUTPUT"
+              SCAN_PATHS="src/${SELECTED}"
               ;;
           esac
+
+          {
+            echo "module=${SELECTED}"
+            echo "branch=${BRANCH_NAME}"
+            echo "base_branch=${{ github.event.repository.default_branch }}"
+            echo "scan_paths=${SCAN_PATHS}"
+          } >> "$GITHUB_OUTPUT"
 
       # OPENCODE_PAT must be a classic PAT with `repo` scope (full control of private repositories)
       # or a fine-grained PAT with Contents: Read & Write on this repository.
@@ -260,7 +264,7 @@ jobs:
             sleep $((i * 3))
             echo "Attempt $i/$MAX_RETRIES: searching for PR for commit ${HEAD_SHA}..."
             PR_NUM=$(gh api \
-              repos/${{ github.repository }}/commits/${HEAD_SHA}/pulls \
+              "repos/${{ github.repository }}/commits/${HEAD_SHA}/pulls" \
               --jq '[.[] | select(.state == "open")] | .[0].number // empty' 2>/dev/null || true)
             if [ -n "$PR_NUM" ]; then
               break
