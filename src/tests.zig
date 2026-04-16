@@ -84,6 +84,8 @@ test {
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/graphics/shadow_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
+    _ = @import("engine/math/frustum_tests.zig");
+    _ = @import("engine/math/mat4_tests.zig");
     _ = @import("world/world_tests.zig");
     _ = @import("world/worldgen/schematics.zig");
     _ = @import("world/worldgen/tree_registry.zig");
