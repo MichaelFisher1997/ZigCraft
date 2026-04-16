@@ -28,7 +28,7 @@ const GlobalUniforms = extern struct {
     lpv_origin: [4]f32,
 };
 
-const ShadowUniforms = extern struct {
+pub const ShadowUniforms = extern struct {
     light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
     cascade_splits: [4]f32,
     shadow_texel_sizes: [4]f32,
