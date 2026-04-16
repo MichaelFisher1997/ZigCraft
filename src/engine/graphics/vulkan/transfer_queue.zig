@@ -16,7 +16,7 @@ const log = @import("../../core/log.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 
-pub const DEFAULT_STAGING_CAPACITY: u64 = 64 * 1024 * 1024;
+pub const DEFAULT_STAGING_CAPACITY: u64 = 256 * 1024 * 1024;
 const ALIGNMENT: u64 = 256;
 
 pub const StagingRing = struct {
@@ -135,7 +135,7 @@ pub const PendingCopy = struct {
     size: u64,
 };
 
-pub const MAX_PENDING_COPIES = 256;
+pub const MAX_PENDING_COPIES = 2048;
 
 pub const TransferQueue = struct {
     queue: c.VkQueue = null,

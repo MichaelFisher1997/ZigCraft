@@ -366,10 +366,12 @@ pub const World = struct {
         const local = worldToLocal(world_x, world_z);
         data.chunk.setBlock(local.x, @intCast(world_y), local.z, block);
 
-        if (self.gpu_block_buffer) |buf| {
-            buf.updateBlock(cp.chunk_x, cp.chunk_z, local.x, @intCast(world_y), local.z, @intFromEnum(block)) catch |err| {
-                log.log.debug("GPU block buffer update failed: {}", .{err});
-            };
+        if (self.renderer.getGpuMesher() != null) {
+            if (self.gpu_block_buffer) |buf| {
+                buf.updateBlock(cp.chunk_x, cp.chunk_z, local.x, @intCast(world_y), local.z, @intFromEnum(block)) catch |err| {
+                    log.log.debug("GPU block buffer update failed: {}", .{err});
+                };
+            }
         }
 
         data.chunk.updateSkylightColumn(local.x, local.z);

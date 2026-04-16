@@ -144,6 +144,10 @@ pub const App = struct {
             log.log.info("BENCHMARK MODE: Loading world and collecting metrics", .{});
             const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
             app.screen_manager.setScreen(world_screen.screen());
+        } else if (resolveAutoWorldGenerator()) |generator_index| {
+            log.log.info("AUTO WORLD MODE: Loading '{s}' generator", .{build_options.auto_world});
+            const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, generator_index);
+            app.screen_manager.setScreen(world_screen.screen());
         } else if (build_options.smoke_test) {
             log.log.info("SMOKE TEST MODE: Bypassing menu and loading world", .{});
             const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
@@ -358,4 +362,17 @@ fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
     }
 
     log.log.warn("BENCHMARK: Unknown preset '{s}', keeping loaded settings", .{preset_name});
+}
+
+fn resolveAutoWorldGenerator() ?usize {
+    if (build_options.auto_world.len == 0) return null;
+    if (std.ascii.eqlIgnoreCase(build_options.auto_world, "normal") or std.ascii.eqlIgnoreCase(build_options.auto_world, "overworld")) {
+        return 0;
+    }
+    if (std.ascii.eqlIgnoreCase(build_options.auto_world, "flat")) {
+        return 1;
+    }
+
+    log.log.warn("Unknown -Dauto-world value '{s}', defaulting to overworld", .{build_options.auto_world});
+    return 0;
 }

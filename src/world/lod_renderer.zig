@@ -52,6 +52,7 @@ const Frustum = @import("../engine/math/frustum.zig").Frustum;
 const AABB = @import("../engine/math/aabb.zig").AABB;
 const rhi_types = @import("../engine/graphics/rhi_types.zig");
 const log = @import("../engine/core/log.zig");
+const build_options = @import("build_options");
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 
@@ -242,7 +243,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                         var counter: u64 = 0;
                     };
                     S.counter += 1;
-                    if (S.counter % 300 == 1) {
+                    if (build_options.startup_diagnostic_seconds == 0 and S.counter % 300 == 1) {
                         log.log.debug("LOD_DIAG: rendered={} covered={} first_missing=({},{}) missing_dist2={} in_radius={} cam=({d:.0},{d:.0}) cam_chunk=({},{})", .{
                             lod_rendered,     lod_covered,
                             first_missing_cx, first_missing_cz,

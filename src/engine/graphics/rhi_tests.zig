@@ -427,6 +427,7 @@ const MockContext = struct {
         .setModelMatrix = undefined,
         .setInstanceBuffer = undefined,
         .setLODInstanceBuffer = undefined,
+        .setTerrainPipelineBound = undefined,
         .setSelectionMode = undefined,
         .updateGlobalUniforms = undefined,
         .setTextureUniforms = undefined,

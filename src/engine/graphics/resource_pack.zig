@@ -53,13 +53,19 @@ pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "wood_side", .files = &.{ "wood_side.png", "oak_log.png", "log_oak.png" } },
     .{ .name = "wood_top", .files = &.{ "wood_top.png", "oak_log_top.png", "log_oak_top.png" } },
     .{ .name = "leaves", .files = &.{ "leaves.png", "oak_leaves.png", "leaves_oak.png" } },
+    .{ .name = "birch_log_side", .files = &.{ "birch_log_side.png", "log_birch.png", "wood_side.png", "oak_log.png", "log_oak.png" } },
+    .{ .name = "birch_log_top", .files = &.{ "birch_log_top.png", "log_birch_top.png", "wood_top.png", "oak_log_top.png", "log_oak_top.png" } },
+    .{ .name = "birch_leaves", .files = &.{ "birch_leaves.png", "leaves_birch.png", "leaves.png", "oak_leaves.png", "leaves_oak.png" } },
+    .{ .name = "spruce_log_side", .files = &.{ "spruce_log_side.png", "log_spruce.png", "wood_side.png", "oak_log.png", "log_oak.png" } },
+    .{ .name = "spruce_log_top", .files = &.{ "spruce_log_top.png", "log_spruce_top.png", "wood_top.png", "oak_log_top.png", "log_oak_top.png" } },
+    .{ .name = "spruce_leaves", .files = &.{ "spruce_leaves.png", "leaves_spruce.png", "leaves.png", "oak_leaves.png", "leaves_oak.png" } },
     .{ .name = "water", .files = &.{ "water.png", "water_still.png" } },
     .{ .name = "glass", .files = &.{"glass.png"} },
     .{ .name = "glowstone", .files = &.{"glowstone.png"} },
     .{ .name = "mud", .files = &.{"mud.png"} },
     .{ .name = "snow_block", .files = &.{ "snow_block.png", "snow.png" } },
-    .{ .name = "cactus_side", .files = &.{ "cactus_side.png", "cactus.png" } },
-    .{ .name = "cactus_top", .files = &.{ "cactus_top.png", "cactus.png" } },
+    .{ .name = "cactus_side", .files = &.{ "cactus_side.png", "cactus.png", "melon_side.png" } },
+    .{ .name = "cactus_top", .files = &.{ "cactus_top.png", "cactus.png", "melon_top.png" } },
     .{ .name = "coal_ore", .files = &.{"coal_ore.png"} },
     .{ .name = "iron_ore", .files = &.{"iron_ore.png"} },
     .{ .name = "gold_ore", .files = &.{"gold_ore.png"} },
@@ -85,6 +91,7 @@ pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "mushroom_stem", .files = &.{ "mushroom_stem.png", "mushroom_block_skin_stem.png" } },
     .{ .name = "red_mushroom_block", .files = &.{ "red_mushroom_block.png", "mushroom_block_skin_red.png" } },
     .{ .name = "brown_mushroom_block", .files = &.{ "brown_mushroom_block.png", "mushroom_block_skin_brown.png" } },
+    .{ .name = "vine", .files = &.{ "vine.png", "vines.png", "tall_grass.png", "leaves.png" } },
     .{ .name = "tall_grass", .files = &.{ "tall_grass.png", "tallgrass.png" } },
     .{ .name = "flower_red", .files = &.{ "flower_red.png", "flower_rose.png", "poppy.png" } },
     .{ .name = "flower_yellow", .files = &.{ "flower_yellow.png", "flower_dandelion.png", "dandelion.png" } },
@@ -275,14 +282,11 @@ pub const ResourcePackManager = struct {
 
     /// Helper to load a flat texture from a specific pack path
     pub fn loadFlatTexture(self: *Self, pack_path: []const u8, texture_name: []const u8) ?LoadedTexture {
-        for (BLOCK_TEXTURES) |mapping| {
-            if (std.mem.eql(u8, mapping.name, texture_name)) {
-                for (mapping.files) |file_name| {
-                    const full_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ pack_path, file_name }) catch continue;
-                    defer self.allocator.free(full_path);
-                    if (self.loadImageFile(full_path)) |texture| return texture;
-                }
-                break;
+        if (getTextureMapping(texture_name)) |mapping| {
+            for (mapping.files) |file_name| {
+                const full_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ pack_path, file_name }) catch continue;
+                defer self.allocator.free(full_path);
+                if (self.loadImageFile(full_path)) |texture| return texture;
             }
         }
         return null;
@@ -493,3 +497,49 @@ pub const ResourcePackManager = struct {
         return self.available_packs.items;
     }
 };
+
+fn getTextureMapping(texture_name: []const u8) ?TextureMapping {
+    for (BLOCK_TEXTURES) |mapping| {
+        if (std.mem.eql(u8, mapping.name, texture_name)) return mapping;
+    }
+    return null;
+}
+
+test "block registry textures all have resource pack mappings" {
+    const testing = std.testing;
+    const block_registry = @import("../../world/block_registry.zig");
+
+    for (&block_registry.BLOCK_REGISTRY) |*def| {
+        if (def.id == .air) continue;
+        if (std.mem.eql(u8, def.name, "unknown")) continue;
+
+        try testing.expect(getTextureMapping(def.texture_top) != null);
+        try testing.expect(getTextureMapping(def.texture_bottom) != null);
+        try testing.expect(getTextureMapping(def.texture_side) != null);
+    }
+}
+
+test "default pack covers mapped block textures" {
+    const testing = std.testing;
+    const block_registry = @import("../../world/block_registry.zig");
+
+    for (&block_registry.BLOCK_REGISTRY) |*def| {
+        if (def.id == .air) continue;
+        if (std.mem.eql(u8, def.name, "unknown")) continue;
+
+        const block_textures = [_][]const u8{ def.texture_top, def.texture_bottom, def.texture_side };
+        for (block_textures) |texture_name| {
+            const mapping = getTextureMapping(texture_name) orelse continue;
+            try testing.expect(defaultPackHasAnyFile(mapping));
+        }
+    }
+}
+
+fn defaultPackHasAnyFile(mapping: TextureMapping) bool {
+    var path_buf: [256]u8 = undefined;
+    for (mapping.files) |file_name| {
+        const path = std.fmt.bufPrint(&path_buf, "assets/textures/default/{s}", .{file_name}) catch continue;
+        if (std.fs.cwd().access(path, .{})) |_| return true else |_| {}
+    }
+    return false;
+}

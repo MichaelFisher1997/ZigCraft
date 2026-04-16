@@ -264,6 +264,7 @@ pub const ChunkMesh = struct {
         const old_solid = self.solid_allocation;
         const old_cutout = self.cutout_allocation;
         const old_fluid = self.fluid_allocation;
+        const had_old_allocations = old_solid != null or old_cutout != null or old_fluid != null;
 
         var new_solid: ?VertexAllocation = null;
         var new_cutout: ?VertexAllocation = null;
@@ -277,8 +278,6 @@ pub const ChunkMesh = struct {
                     break :blk;
                 };
             }
-            self.allocator.free(v);
-            self.pending_solid = null;
         }
 
         if (alloc_ok) {
@@ -289,8 +288,6 @@ pub const ChunkMesh = struct {
                         break :blk;
                     };
                 }
-                self.allocator.free(v);
-                self.pending_cutout = null;
             }
         }
 
@@ -302,12 +299,17 @@ pub const ChunkMesh = struct {
                         break :blk;
                     };
                 }
-                self.allocator.free(v);
-                self.pending_fluid = null;
             }
         }
 
         if (alloc_ok) {
+            if (self.pending_solid) |v| self.allocator.free(v);
+            if (self.pending_cutout) |v| self.allocator.free(v);
+            if (self.pending_fluid) |v| self.allocator.free(v);
+            self.pending_solid = null;
+            self.pending_cutout = null;
+            self.pending_fluid = null;
+
             if (old_solid) |a| allocator.free(a);
             if (old_cutout) |a| allocator.free(a);
             if (old_fluid) |a| allocator.free(a);
@@ -322,7 +324,7 @@ pub const ChunkMesh = struct {
             self.solid_allocation = old_solid;
             self.cutout_allocation = old_cutout;
             self.fluid_allocation = old_fluid;
-            self.ready = true;
+            self.ready = had_old_allocations;
         }
     }
 

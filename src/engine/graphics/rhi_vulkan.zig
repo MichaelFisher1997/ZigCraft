@@ -460,6 +460,11 @@ fn setLODInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     render_state.setLODInstanceBuffer(ctx, handle);
 }
 
+fn setTerrainPipelineBound(ctx_ptr: *anyopaque, bound: bool) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setTerrainPipelineBound(ctx, bound);
+}
+
 fn setSelectionMode(ctx_ptr: *anyopaque, enabled: bool) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     render_state.setSelectionMode(ctx, enabled);
@@ -884,6 +889,7 @@ const VULKAN_STATE_CONTEXT_VTABLE = rhi.IRenderStateContext.VTable{
     .setModelMatrix = setModelMatrix,
     .setInstanceBuffer = setInstanceBuffer,
     .setLODInstanceBuffer = setLODInstanceBuffer,
+    .setTerrainPipelineBound = setTerrainPipelineBound,
     .setSelectionMode = setSelectionMode,
     .updateGlobalUniforms = updateGlobalUniforms,
     .setTextureUniforms = setTextureUniforms,

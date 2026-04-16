@@ -565,9 +565,11 @@ pub const WaterPass = struct {
         if (descriptor_set_u64 != 0) {
             c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
         }
+        ctx.render_ctx.setTerrainPipelineBound(true);
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.renderFluid(view_proj, ctx.camera.position, false);
+        ctx.render_ctx.setTerrainPipelineBound(false);
     }
 };
 

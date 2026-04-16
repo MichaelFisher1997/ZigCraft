@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("../../c.zig").c;
+const build_options = @import("build_options");
 
 const log = @import("../core/log.zig");
 const rhi_pkg = @import("rhi.zig");
@@ -90,14 +91,16 @@ pub const RenderSystem = struct {
         else
             false;
 
+        const chunk_debug_restore_clouds = chunkDebugRestoreEnabled("clouds");
         const disable_clouds_env = std.posix.getenv("ZIGCRAFT_DISABLE_CLOUDS");
-        const disable_clouds = if (disable_clouds_env) |val|
+        const disable_clouds = (build_options.chunk_debug_mode and !chunk_debug_restore_clouds) or if (disable_clouds_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
 
+        const chunk_debug_restore_water = chunkDebugRestoreEnabled("water") or chunkDebugRestoreEnabled("waterrender");
         const disable_water_env = std.posix.getenv("ZIGCRAFT_DISABLE_WATER");
-        const disable_water = if (disable_water_env) |val|
+        const disable_water = (build_options.chunk_debug_mode and !chunk_debug_restore_water) or if (disable_water_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
@@ -120,6 +123,9 @@ pub const RenderSystem = struct {
         else
             false;
 
+        if (build_options.chunk_debug_mode) {
+            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_options.chunk_debug_enable});
+        }
         if (safe_render_mode) {
             log.log.warn("ZIGCRAFT_SAFE_RENDER enabled: skipping world rendering passes", .{});
         }
@@ -276,7 +282,9 @@ pub const RenderSystem = struct {
             if (!safe_mode) {
                 try self.render_graph.addPass(self.depth_pyramid_pass.pass());
             }
-            try self.render_graph.addPass(self.water_reflection_pass.pass());
+            if (!disable_water) {
+                try self.render_graph.addPass(self.water_reflection_pass.pass());
+            }
             try self.render_graph.addPass(self.sky_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());
             if (!disable_water) {
@@ -431,3 +439,14 @@ pub const RenderSystem = struct {
         self.disable_clouds = value;
     }
 };
+
+fn chunkDebugRestoreEnabled(name: []const u8) bool {
+    if (!build_options.chunk_debug_mode) return false;
+
+    var it = std.mem.tokenizeScalar(u8, build_options.chunk_debug_enable, ',');
+    while (it.next()) |token| {
+        const trimmed = std.mem.trim(u8, token, " \t");
+        if (std.ascii.eqlIgnoreCase(trimmed, name)) return true;
+    }
+    return false;
+}

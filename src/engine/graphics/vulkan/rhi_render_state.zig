@@ -89,6 +89,10 @@ pub fn setLODInstanceBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
     applyPendingDescriptorUpdates(ctx, ctx.frames.current_frame);
 }
 
+pub fn setTerrainPipelineBound(ctx: anytype, bound: bool) void {
+    ctx.draw.terrain_pipeline_bound = bound;
+}
+
 pub fn setSelectionMode(ctx: anytype, enabled: bool) void {
     ctx.ui.selection_mode = enabled;
 }

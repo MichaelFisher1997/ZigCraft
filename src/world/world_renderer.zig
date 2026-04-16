@@ -21,6 +21,7 @@ const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig")
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
+const build_options = @import("build_options");
 
 const MAX_MDI_CHUNKS: usize = 16384;
 
@@ -118,6 +119,11 @@ pub const WorldRenderer = struct {
         const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
 
         const safe_mode_enabled = vk_ctx.options.safe_mode;
+        const gpu_meshing_env = std.posix.getenv("ZIGCRAFT_ENABLE_GPU_MESHING");
+        const gpu_meshing_enabled = if (gpu_meshing_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
 
         const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
@@ -142,18 +148,22 @@ pub const WorldRenderer = struct {
 
         var gpu_block_buffer: ?*GpuBlockBuffer = null;
         errdefer if (gpu_block_buffer) |buf| buf.deinit();
-        gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, gpu_block_capacity);
-        log.log.info("GpuBlockBuffer initialized (capacity={})", .{gpu_block_capacity});
+        if (!safe_mode_enabled and gpu_meshing_enabled) {
+            gpu_block_buffer = try GpuBlockBuffer.init(allocator, rm, gpu_block_capacity);
+            log.log.info("GpuBlockBuffer initialized (capacity={})", .{gpu_block_capacity});
+        }
 
         var gpu_mesher: ?*GpuMesher = null;
         errdefer if (gpu_mesher) |m| m.deinit();
-        if (!safe_mode_enabled) {
+        if (!safe_mode_enabled and gpu_meshing_enabled) {
             if (gpu_block_buffer) |buf| {
                 gpu_mesher = GpuMesher.init(allocator, rhi, atlas, buf) catch |err| blk: {
                     log.log.warn("GpuMesher init failed ({}), CPU meshing fallback active", .{err});
                     break :blk null;
                 };
             }
+        } else if (!safe_mode_enabled) {
+            log.log.warn("GPU meshing disabled by default due stale block-upload sync causing incorrect chunk texturing; set ZIGCRAFT_ENABLE_GPU_MESHING=1 to re-enable for testing", .{});
         } else {
             log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }
@@ -509,7 +519,7 @@ pub const WorldRenderer = struct {
             }
         }
 
-        if (missing_in_circle > 0) {
+        if (build_options.startup_diagnostic_seconds == 0 and missing_in_circle > 0) {
             if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| {
                 log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} has_alloc={} pc=({},{}) rd={}", .{
                     missing_in_circle,           missing_cx,                                                                                             missing_cz,
@@ -523,7 +533,7 @@ pub const WorldRenderer = struct {
             }
         }
 
-        if (self.render_frame_count % 300 == 0) {
+        if (build_options.startup_diagnostic_seconds == 0 and self.render_frame_count % 300 == 0) {
             log.log.info("CPU_CULL: visible={} with_mesh={} no_mesh={} zero_verts={} frustum_culled={} not_renderable={} not_in_storage={} missing_circle={}", .{
                 self.visible_chunks.items.len,
                 self.visible_chunks.items.len - visible_no_mesh,

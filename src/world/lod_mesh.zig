@@ -245,7 +245,7 @@ pub const LODMesh = struct {
         width: u32,
         _: i32,
         _: i32,
-        atlas: *const TextureAtlas,
+        _: *const TextureAtlas,
     ) !void {
         const cell_size = getCellSize(self.lod_level);
 
@@ -267,37 +267,37 @@ pub const LODMesh = struct {
 
                 const wx: f32 = @floatFromInt(gx * cell_size);
                 const wz: f32 = @floatFromInt(gz * cell_size);
-                const wy: f32 = @floatFromInt(height);
+                const wy: f32 = height;
                 const size: f32 = @floatFromInt(cell_size);
 
-                try addTopFaceQuad(self.allocator, &vertices, wx, wy, wz, size, r, g, b, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).top);
+                try addTopFaceQuad(self.allocator, &vertices, wx, wy, wz, size, r, g, b, Vertex.LOD_TILE_ID);
 
                 // Add skirts
                 const skirt_depth = size * 4.0;
                 if (gx == 0) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
                 }
                 if (gx == width - 1) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
                 }
                 if (gz == 0) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
                 }
                 if (gz == width - 1) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
                 }
 
                 // Side faces for height differences
                 if (gx > 0) {
                     const nh = heightmap[(gx - 1) + gz * width];
                     if (height > nh + 2) {
-                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, @floatFromInt(nh), r * 0.7, g * 0.7, b * 0.7, .west, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, nh, r * 0.7, g * 0.7, b * 0.7, .west, Vertex.LOD_TILE_ID);
                     }
                 }
                 if (gz > 0) {
                     const nh = heightmap[gx + (gz - 1) * width];
                     if (height > nh + 2) {
-                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, @floatFromInt(nh), r * 0.8, g * 0.8, b * 0.8, .north, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, nh, r * 0.8, g * 0.8, b * 0.8, .north, Vertex.LOD_TILE_ID);
                     }
                 }
             }
@@ -706,7 +706,7 @@ pub const LODMeshBuilder = struct {
         biomes: [4][]const BiomeId,
         _: i32,
         _: i32,
-        atlas: *const TextureAtlas,
+        _: *const TextureAtlas,
     ) !void {
         _ = self;
         const chunk_size: u32 = 16;
@@ -752,14 +752,14 @@ pub const LODMeshBuilder = struct {
                     const wy: f32 = @floatFromInt(height);
                     const size: f32 = @floatFromInt(cell_size);
 
-                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).top);
+                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, Vertex.LOD_TILE_ID);
 
                     // Skirts
                     const skirt_depth = size * 4.0;
-                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
-                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
-                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
-                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
+                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
+                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
+                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
                 }
             }
         }
@@ -786,7 +786,7 @@ pub const LODMeshBuilder = struct {
         biomes_data: [16][]const BiomeId,
         _: i32,
         _: i32,
-        atlas: *const TextureAtlas,
+        _: *const TextureAtlas,
     ) !void {
         _ = self;
         const chunk_size: u32 = 16;
@@ -829,14 +829,14 @@ pub const LODMeshBuilder = struct {
                     const wy: f32 = @floatFromInt(height);
                     const size: f32 = @floatFromInt(cell_size);
 
-                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).top);
+                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, Vertex.LOD_TILE_ID);
 
                     // Skirts
                     const skirt_depth = size * 4.0;
-                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
-                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
-                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
-                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, atlas.getTilesForBlock(@intCast(@intFromEnum(BlockType.air))).side);
+                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
+                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
+                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
+                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
                 }
             }
         }
@@ -923,6 +923,83 @@ test "buildFullDetailHeightmapMesh spans full LOD region" {
 
     try std.testing.expectEqual(@as(f32, 256.0), max_x);
     try std.testing.expectEqual(@as(f32, 256.0), max_z);
+}
+
+test "buildFromSimplifiedData preserves top block tile ids" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = TextureAtlas.BlockTiles.uniform(23);
+
+    var data = try LODSimplifiedData.init(allocator, .lod3);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = 64.0;
+        data.biomes[i] = .plains;
+        data.top_blocks[i] = .grass;
+        data.colors[i] = biome_mod.getBiomeColor(.plains);
+    }
+
+    var mesh = LODMesh.init(allocator, .lod3);
+    const MockRHI = struct {
+        pub fn destroyBuffer(_: @This(), _: BufferHandle) void {}
+    };
+    defer mesh.deinit(MockRHI{});
+
+    try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expect(verts.len > 0);
+
+    for (verts) |v| try std.testing.expectEqual(@as(u16, 23), @as(u16, @intCast(v.packed_meta & 0xFFFF)));
+}
+
+test "buildFromHeightmap marks vertices as LOD" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** MAX_BLOCK_TYPES,
+    };
+
+    const width: u32 = 4;
+    const count = width * width;
+    const heightmap = [_]f32{64.0} ** count;
+    const biomes = [_]BiomeId{.plains} ** count;
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    const MockRHI = struct {
+        pub fn destroyBuffer(_: @This(), _: BufferHandle) void {}
+    };
+    defer mesh.deinit(MockRHI{});
+
+    try mesh.buildFromHeightmap(&heightmap, &biomes, width, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expect(verts.len > 0);
+    for (verts) |v| try std.testing.expectEqual(@as(u16, Vertex.LOD_TILE_ID), @as(u16, @intCast(v.packed_meta & 0xFFFF)));
 }
 
 // ============================================================================

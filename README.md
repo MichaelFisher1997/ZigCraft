@@ -110,6 +110,43 @@ To bypass in emergencies: `git push --no-verify`
 - **Run**: `nix develop --command zig build run`
 - **Release build**: `nix develop --command zig build run -Doptimize=ReleaseFast`
 
+### Debug Build Flags
+
+- **Smoke test**: `nix develop --command zig build run -Dsmoke-test`
+- **Headless / no present**: `nix develop --command zig build run -Dskip-present`
+- **Auto-open a world**: `nix develop --command zig build run -Dauto-world=normal`
+- **Startup diagnostic**: `nix develop --command zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
+- **Chunk-only debug mode**: `nix develop --command zig build run -Dchunk-debug-mode -Dauto-world=normal`
+
+`-Dchunk-debug-mode` strips the overworld down to basic chunks for isolation work:
+- LOD off by default
+- water generation/rendering off by default
+- caves off by default
+- clouds off by default
+- decorations/features off by default
+
+Re-enable individual systems with `-Dchunk-debug-enable=` using a comma-separated list:
+- `lod`
+- `water`
+- `watergen`
+- `waterrender`
+- `caves`
+- `clouds`
+- `decorations`
+
+Examples:
+
+```bash
+# LOD only
+nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod -Dauto-world=normal
+
+# LOD plus cave generation
+nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,caves -Dauto-world=normal
+
+# Headless startup comparison after 5 seconds
+nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,water,caves -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present
+```
+
 ### 🧪 Running Tests
 - **All Tests**: `nix develop --command zig build test`
 - **Single Test**: `nix develop --command zig build test -- --test-filter "Test Name"`

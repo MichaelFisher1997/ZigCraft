@@ -359,6 +359,9 @@ pub const RenderContext = struct {
     pub fn setLODInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setLODInstanceBuffer(handle);
     }
+    pub fn setTerrainPipelineBound(self: RenderContext, bound: bool) void {
+        self.state.setTerrainPipelineBound(bound);
+    }
     pub fn setSelectionMode(self: RenderContext, enabled: bool) void {
         self.state.setSelectionMode(enabled);
     }
@@ -599,6 +602,7 @@ pub const IRenderStateContext = struct {
         setModelMatrix: *const fn (ptr: *anyopaque, model: Mat4, color: Vec3, mask_radius: f32) void,
         setInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setLODInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+        setTerrainPipelineBound: *const fn (ptr: *anyopaque, bound: bool) void,
         setSelectionMode: *const fn (ptr: *anyopaque, enabled: bool) void,
         updateGlobalUniforms: *const fn (ptr: *anyopaque, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: CloudParams) anyerror!void,
         setTextureUniforms: *const fn (ptr: *anyopaque, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void,
@@ -612,6 +616,9 @@ pub const IRenderStateContext = struct {
     }
     pub fn setLODInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setLODInstanceBuffer(self.ptr, handle);
+    }
+    pub fn setTerrainPipelineBound(self: IRenderStateContext, bound: bool) void {
+        self.vtable.setTerrainPipelineBound(self.ptr, bound);
     }
     pub fn setSelectionMode(self: IRenderStateContext, enabled: bool) void {
         self.vtable.setSelectionMode(self.ptr, enabled);

@@ -24,6 +24,7 @@ const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDi
 const log = @import("../../engine/core/log.zig");
 const CSM = @import("../../engine/graphics/csm.zig");
 const WorldRenderer = @import("../../world/world_renderer.zig").WorldRenderer;
+const build_options = @import("build_options");
 
 pub const WorldScreen = struct {
     context: EngineContext,
@@ -34,6 +35,8 @@ pub const WorldScreen = struct {
     frustum_buffer: rhi_pkg.BufferHandle = 0,
     frustum_initialized: bool = false,
     chunk_inspector_overlay: ChunkInspectorOverlay = .{},
+    startup_diagnostic_start: f32 = 0,
+    startup_diagnostic_logged: bool = false,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -57,6 +60,8 @@ pub const WorldScreen = struct {
             .world = world,
             .last_debug_toggle_time = 0,
             .debug_menu = .{},
+            .startup_diagnostic_start = context.time.elapsed,
+            .startup_diagnostic_logged = false,
         };
         return self;
     }
@@ -190,6 +195,61 @@ pub const WorldScreen = struct {
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
         }
+
+        self.maybeLogStartupDiagnostic(now);
+    }
+
+    fn maybeLogStartupDiagnostic(self: *@This(), now: f32) void {
+        if (build_options.startup_diagnostic_seconds == 0 or self.startup_diagnostic_logged) return;
+
+        const delay_s: f32 = @floatFromInt(build_options.startup_diagnostic_seconds);
+        if (now - self.startup_diagnostic_start < delay_s) return;
+
+        const stats = self.session.world.getStats();
+        const render_stats = self.session.world.getRenderStats();
+        const state_counts = self.session.world.getChunkStateCounts();
+        const lod_stats = self.session.world.getLODStats();
+        const lod_radii = self.session.lod_config.radii;
+
+        log.log.info(
+            "STARTUP_DIAG: generator='{s}' elapsed={d:.2}s rd={} lod0={} chunks_loaded={} chunks_total={} chunks_rendered={} chunks_culled={} gen_queue={} mesh_queue={} upload_queue={} lod_loaded={}",
+            .{
+                self.session.world.generator.info.name,
+                now - self.startup_diagnostic_start,
+                self.session.world.render_distance,
+                lod_radii[0],
+                stats.chunks_loaded,
+                render_stats.chunks_total,
+                render_stats.chunks_rendered,
+                render_stats.chunks_culled,
+                stats.gen_queue,
+                stats.mesh_queue,
+                stats.upload_queue,
+                if (lod_stats) |ls| ls.totalLoaded() else @as(u32, 0),
+            },
+        );
+        log.log.info(
+            "STARTUP_DIAG_STATES: total={} missing={} generating={} meshing={} renderable={} other={} dirty={} vertices_rendered={}",
+            .{
+                state_counts.total,
+                state_counts.missing,
+                state_counts.generating,
+                state_counts.meshing,
+                state_counts.renderable,
+                state_counts.other_states,
+                state_counts.dirty,
+                render_stats.vertices_rendered,
+            },
+        );
+        if (lod_stats) |ls| {
+            log.log.info(
+                "STARTUP_DIAG_LOD: loaded=[{}, {}, {}, {}] memory_mb={}",
+                .{ ls.loaded[0], ls.loaded[1], ls.loaded[2], ls.loaded[3], ls.memory_used_mb },
+            );
+        }
+
+        self.startup_diagnostic_logged = true;
+        self.context.input.setShouldQuit(true);
     }
 
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
