@@ -25,7 +25,9 @@ test "ShadowSystem init rejects zero resolution" {
 
 test "ShadowSystem init accepts valid resolution" {
     var sys = try ShadowSystem.init(testing.allocator, 1024);
-    defer sys.deinit(null);
+    defer {
+        sys.deinit(null);
+    }
 
     try testing.expectEqual(@as(u32, 1024), sys.shadow_extent.width);
     try testing.expectEqual(@as(u32, 1024), sys.shadow_extent.height);
@@ -286,24 +288,14 @@ test "computeCascades handles extreme sun direction (near-horizontal)" {
 }
 
 test "ShadowUniforms extern struct has correct size" {
-    const ShadowUniforms = extern struct {
-        light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
-        cascade_splits: [4]f32,
-        shadow_texel_sizes: [4]f32,
-        shadow_params: [4]f32,
-    };
+    const ShadowUniforms = @import("vulkan/descriptor_manager.zig").ShadowUniforms;
 
     const expected_size = @sizeOf([rhi.SHADOW_CASCADE_COUNT]Mat4) + (@sizeOf(f32) * 12);
     try testing.expectEqual(@as(usize, expected_size), @sizeOf(ShadowUniforms));
 }
 
 test "ShadowUniforms field offsets" {
-    const ShadowUniforms = extern struct {
-        light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
-        cascade_splits: [4]f32,
-        shadow_texel_sizes: [4]f32,
-        shadow_params: [4]f32,
-    };
+    const ShadowUniforms = @import("vulkan/descriptor_manager.zig").ShadowUniforms;
 
     const matrices_size = @sizeOf([rhi.SHADOW_CASCADE_COUNT]Mat4);
     const splits_offset = @offsetOf(ShadowUniforms, "cascade_splits");
@@ -317,7 +309,8 @@ test "ShadowUniforms field offsets" {
 
 test "getShadowMapHandle returns 0 for out-of-bounds cascade" {
     const MockShadowCtx = struct {
-        fn getShadowMapHandle(_: *anyopaque, cascade_index: u32) rhi.TextureHandle {
+        fn getShadowMapHandle(ctx: *anyopaque, cascade_index: u32) rhi.TextureHandle {
+            _ = ctx;
             if (cascade_index >= rhi.SHADOW_CASCADE_COUNT) return 0;
             return cascade_index + 1;
         }
@@ -339,7 +332,8 @@ test "getShadowMapHandle returns 0 for out-of-bounds cascade" {
 
 test "getShadowMapHandle returns valid handle for valid cascade" {
     const MockShadowCtx = struct {
-        fn getShadowMapHandle(_: *anyopaque, cascade_index: u32) rhi.TextureHandle {
+        fn getShadowMapHandle(ctx: *anyopaque, cascade_index: u32) rhi.TextureHandle {
+            _ = ctx;
             if (cascade_index >= rhi.SHADOW_CASCADE_COUNT) return 0;
             return cascade_index + 1;
         }
