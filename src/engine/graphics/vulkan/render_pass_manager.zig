@@ -14,7 +14,7 @@ const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 
 /// Depth format used throughout the renderer
-const DEPTH_FORMAT = c.VK_FORMAT_D32_SFLOAT;
+pub const DEPTH_FORMAT = c.VK_FORMAT_D32_SFLOAT;
 
 /// Render pass manager handles all render pass and framebuffer resources
 pub const RenderPassManager = struct {

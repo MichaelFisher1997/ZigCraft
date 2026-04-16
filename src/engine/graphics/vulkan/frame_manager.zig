@@ -1,10 +1,13 @@
 const std = @import("std");
 const c = @import("../../../c.zig").c;
+const build_options = @import("build_options");
 const log = @import("../../core/log.zig");
 const rhi = @import("../rhi.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const SwapchainPresenter = @import("swapchain_presenter.zig").SwapchainPresenter;
 const Utils = @import("utils.zig");
+
+pub const DRY_RUN_ACTIVE = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
 
 pub const FrameManager = struct {
     vulkan_device: *VulkanDevice,
@@ -22,9 +25,6 @@ pub const FrameManager = struct {
     dry_run: bool = false,
 
     pub fn init(vulkan_device: *VulkanDevice) !FrameManager {
-        const build_options = @import("build_options");
-        const dry_run_active = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
-
         var self = FrameManager{
             .vulkan_device = vulkan_device,
             .command_pool = null,
@@ -32,7 +32,7 @@ pub const FrameManager = struct {
             .image_available_semaphores = undefined,
             .render_finished_semaphores = undefined,
             .in_flight_fences = undefined,
-            .dry_run = dry_run_active,
+            .dry_run = DRY_RUN_ACTIVE,
         };
 
         var pool_info = std.mem.zeroes(c.VkCommandPoolCreateInfo);
