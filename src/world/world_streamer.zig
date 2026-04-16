@@ -553,6 +553,7 @@ pub const WorldStreamer = struct {
                         const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
                         buf.upload(slot, blocks_slice) catch |upload_err| {
                             log.log.err("GpuBlockBuffer upload failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, upload_err });
+                            buf.free(slot);
                             data.chunk.state = .generated;
                             continue;
                         };
@@ -795,9 +796,28 @@ pub const WorldStreamer = struct {
     }
 
     fn markNeighborsForRemesh(self: *WorldStreamer, cx: i32, cz: i32) void {
-        _ = self;
-        _ = cx;
-        _ = cz;
+        const offsets = [_][2]i32{ .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
+
+        self.storage.chunks_mutex.lock();
+        defer self.storage.chunks_mutex.unlock();
+
+        for (offsets) |off| {
+            if (self.storage.chunks.get(ChunkKey{ .x = cx + off[0], .z = cz + off[1] })) |data| {
+                switch (data.chunk.state) {
+                    .renderable => {
+                        // Neighbor was meshed before this chunk existed, so it may still
+                        // expose boundary faces that should now be culled.
+                        data.chunk.state = .generated;
+                    },
+                    .mesh_ready, .uploading, .meshing => {
+                        // Let the in-flight mesh finish, then immediately remesh once it
+                        // returns to the renderable state.
+                        data.chunk.dirty = true;
+                    },
+                    else => {},
+                }
+            }
+        }
     }
 
     fn logMissingChunkDiagnostic(self: *WorldStreamer, pc_x: i32, pc_z: i32) void {

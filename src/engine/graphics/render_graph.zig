@@ -568,6 +568,8 @@ pub const WaterPass = struct {
         ctx.render_ctx.setTerrainPipelineBound(true);
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
+        // Reflection rendering skips LOD water here to avoid doubling distant water with
+        // the dedicated water pass and to keep the reflection pass aligned with chunk water.
         ctx.world.renderFluid(view_proj, ctx.camera.position, false);
         ctx.render_ctx.setTerrainPipelineBound(false);
     }
