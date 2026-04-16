@@ -225,6 +225,7 @@ pub const JobQueue = struct {
         for (temp.items) |job| {
             self.jobs.add(job) catch {
                 log.log.warn("Job queue: failed to re-add job after priority update", .{});
+                job.cleanup();
                 continue;
             };
         }
