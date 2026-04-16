@@ -233,13 +233,6 @@ pub const SurfaceBuilder = struct {
         return block;
     }
 
-    /// Check if position is in coastal no-tree zone
-    pub fn isInCoastalNoTreeZone(self: *const SurfaceBuilder, height: i32) bool {
-        const p = self.params;
-        const diff = height - p.sea_level;
-        return diff >= 0 and diff <= p.coastal_no_tree_max and diff >= p.coastal_no_tree_min;
-    }
-
     /// Get filler depth for a biome
     pub fn getFillerDepth(_: *const SurfaceBuilder, biome_id: BiomeId) i32 {
         const biome_def = biome_mod.getBiomeDefinition(biome_id);
