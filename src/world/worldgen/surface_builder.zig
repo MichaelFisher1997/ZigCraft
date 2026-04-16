@@ -44,10 +44,6 @@ pub const SurfaceParams = struct {
     // Coastal zone (continentalness thresholds)
     ocean_threshold: f32 = 0.35,
     beach_band: f32 = 0.05, // Width of beach zone in continentalness units
-
-    // Coastal tree restriction zone
-    coastal_no_tree_min: i32 = 8,
-    coastal_no_tree_max: i32 = 18,
 };
 
 // ============================================================================
@@ -231,13 +227,6 @@ pub const SurfaceBuilder = struct {
         }
 
         return block;
-    }
-
-    /// Check if position is in coastal no-tree zone
-    pub fn isInCoastalNoTreeZone(self: *const SurfaceBuilder, height: i32) bool {
-        const p = self.params;
-        const diff = height - p.sea_level;
-        return diff >= 0 and diff <= p.coastal_no_tree_max and diff >= p.coastal_no_tree_min;
     }
 
     /// Get filler depth for a biome
