@@ -27,12 +27,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.OPENCODE_PAT }}
 
-      - name: Configure git
+      - name: Configure git identity
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PAT_USER_ID="$(gh api user --jq '.id')"
+          PAT_USER_LOGIN="$(gh api user --jq '.login')"
+          git config user.name "$PAT_USER_LOGIN"
+          git config user.email "${PAT_USER_ID}+${PAT_USER_LOGIN}@users.noreply.github.com"
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
@@ -43,8 +47,8 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         with:
           model: minimax-coding-plan/MiniMax-M2.7
