@@ -8,6 +8,8 @@ const ShadowSystem = @import("shadow_system.zig").ShadowSystem;
 const computeCascades = @import("csm.zig").computeCascades;
 const ShadowCascades = @import("csm.zig").ShadowCascades;
 const CASCADE_COUNT = @import("csm.zig").CASCADE_COUNT;
+const shadow_scene = @import("shadow_scene.zig");
+const ShadowConfig = rhi.ShadowConfig;
 
 fn mat4IsIdentity(m: Mat4) bool {
     for (0..4) |row| {
@@ -397,4 +399,122 @@ test "ShadowCascades isValid returns false for zero split" {
     cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
 
     try testing.expect(!cascades.isValid());
+}
+
+test "IShadowScene renderShadowPass delegates to vtable" {
+    const CallTracker = struct {
+        calls: u32 = 0,
+        last_matrix: Mat4 = Mat4.identity,
+        last_camera: Vec3 = Vec3.zero,
+        last_config: ShadowConfig = .{},
+
+        fn render(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            self.last_matrix = light_space_matrix;
+            self.last_camera = camera_pos;
+            self.last_config = shadow_config;
+        }
+    };
+
+    var tracker = CallTracker{};
+    const vtable = shadow_scene.IShadowScene.VTable{
+        .renderShadowPass = CallTracker.render,
+    };
+    const scene = shadow_scene.IShadowScene{
+        .ptr = &tracker,
+        .vtable = &vtable,
+    };
+
+    const matrix = Mat4.identity;
+    const camera = Vec3.init(1.0, 2.0, 3.0);
+    const config = ShadowConfig{ .distance = 500.0, .resolution = 2048 };
+
+    scene.renderShadowPass(matrix, camera, config);
+
+    try testing.expectEqual(@as(u32, 1), tracker.calls);
+    try testing.expectEqual(@as(f32, 1.0), tracker.last_camera.x);
+    try testing.expectEqual(@as(f32, 2.0), tracker.last_camera.y);
+    try testing.expectEqual(@as(f32, 3.0), tracker.last_camera.z);
+    try testing.expectEqual(@as(f32, 500.0), tracker.last_config.distance);
+}
+
+test "ShadowParams default light_size is 3.0" {
+    const params = rhi.ShadowParams{
+        .light_space_matrices = .{Mat4.identity} ** rhi.SHADOW_CASCADE_COUNT,
+        .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
+        .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
+    };
+
+    try testing.expectEqual(@as(f32, 3.0), params.light_size);
+}
+
+test "ShadowSystem endPass is safe when pass not active" {
+    var sys = try ShadowSystem.init(testing.allocator, 1024);
+    defer sys.deinit(null);
+
+    try testing.expect(!sys.pass_active);
+    sys.pass_index = 2;
+
+    sys.endPass(null);
+
+    try testing.expect(!sys.pass_active);
+    try testing.expectEqual(@as(u32, 2), sys.pass_index);
+}
+
+test "ShadowSystem deinit resets pass state" {
+    var sys = try ShadowSystem.init(testing.allocator, 2048);
+    defer sys.deinit(null);
+
+    sys.pass_active = true;
+    sys.pass_index = 3;
+    sys.pass_matrix = Mat4.identity;
+    sys.pipeline_bound = true;
+
+    sys.deinit(null);
+
+    try testing.expect(!sys.pass_active);
+    try testing.expectEqual(@as(u32, 0), sys.pass_index);
+    try testing.expect(!sys.pipeline_bound);
+}
+
+test "IShadowScene vtable renderShadowPass is called with correct parameters" {
+    const VerifyParams = struct {
+        called: bool = false,
+        matrix_received: Mat4 = Mat4.identity,
+        camera_received: Vec3 = Vec3.zero,
+        config_received: ShadowConfig = .{},
+
+        fn render(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.called = true;
+            self.matrix_received = light_space_matrix;
+            self.camera_received = camera_pos;
+            self.config_received = shadow_config;
+        }
+    };
+
+    var verify = VerifyParams{};
+    const vtable = shadow_scene.IShadowScene.VTable{
+        .renderShadowPass = VerifyParams.render,
+    };
+    const scene = shadow_scene.IShadowScene{
+        .ptr = &verify,
+        .vtable = &vtable,
+    };
+
+    var custom_matrix = Mat4.identity;
+    custom_matrix.data[0][0] = 5.0;
+    const custom_camera = Vec3.init(100.0, -50.0, 200.0);
+    const custom_config = ShadowConfig{ .strength = 0.5, .light_size = 10.0 };
+
+    scene.renderShadowPass(custom_matrix, custom_camera, custom_config);
+
+    try testing.expect(verify.called);
+    try testing.expectEqual(@as(f32, 5.0), verify.matrix_received.data[0][0]);
+    try testing.expectEqual(@as(f32, 100.0), verify.camera_received.x);
+    try testing.expectEqual(@as(f32, -50.0), verify.camera_received.y);
+    try testing.expectEqual(@as(f32, 200.0), verify.camera_received.z);
+    try testing.expectEqual(@as(f32, 0.5), verify.config_received.strength);
+    try testing.expectEqual(@as(f32, 10.0), verify.config_received.light_size);
 }
