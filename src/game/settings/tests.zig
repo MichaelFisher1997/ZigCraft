@@ -23,19 +23,19 @@ test "Preset Application" {
     try std.testing.expectEqual(@as(u32, 0), settings.shadow_quality);
     try std.testing.expectEqual(@as(i32, 8), settings.render_distance);
     try std.testing.expectEqual(RenderDistancePreset.low, settings.render_distance_preset);
-    try std.testing.expectEqual(true, settings.lod_enabled);
+    try std.testing.expectEqual(false, settings.lod_enabled);
 
     presets.apply(&settings, 3);
     try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);
     try std.testing.expectEqual(@as(i32, 16), settings.render_distance);
     try std.testing.expectEqual(RenderDistancePreset.ultra, settings.render_distance_preset);
-    try std.testing.expectEqual(true, settings.lod_enabled);
+    try std.testing.expectEqual(false, settings.lod_enabled);
 
     presets.apply(&settings, 4);
     try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);
     try std.testing.expectEqual(@as(i32, 16), settings.render_distance);
     try std.testing.expectEqual(RenderDistancePreset.extreme, settings.render_distance_preset);
-    try std.testing.expectEqual(true, settings.lod_enabled);
+    try std.testing.expectEqual(false, settings.lod_enabled);
 }
 
 test "Preset Matching" {

@@ -284,3 +284,85 @@ test "critical shader paths are valid" {
         try testing.expect(has_vert or has_frag);
     }
 }
+
+// ============================================================================
+// Additional Shader Path Validation Tests
+// ============================================================================
+
+test "compute shader CULLING_COMP exists and has correct extension" {
+    try testing.expect(std.mem.endsWith(u8, shader_registry.CULLING_COMP, ".comp.spv"));
+    try testing.expect(std.mem.startsWith(u8, shader_registry.CULLING_COMP, "assets/shaders/vulkan/"));
+}
+
+test "water shaders exist with correct naming convention" {
+    try testing.expect(std.mem.endsWith(u8, shader_registry.WATER_VERT, ".vert.spv"));
+    try testing.expect(std.mem.endsWith(u8, shader_registry.WATER_FRAG, ".frag.spv"));
+    try testing.expect(std.mem.indexOf(u8, shader_registry.WATER_VERT, "water") != null);
+    try testing.expect(std.mem.indexOf(u8, shader_registry.WATER_FRAG, "water") != null);
+}
+
+test "all shader paths have unique base names" {
+    // No two shaders should have the same filename
+    const paths = [_][]const u8{
+        shader_registry.SSAO_VERT,
+        shader_registry.SSAO_FRAG,
+        shader_registry.SSAO_BLUR_FRAG,
+        shader_registry.BLOOM_DOWNSAMPLE_VERT,
+        shader_registry.BLOOM_DOWNSAMPLE_FRAG,
+        shader_registry.BLOOM_UPSAMPLE_FRAG,
+        shader_registry.FXAA_VERT,
+        shader_registry.FXAA_FRAG,
+        shader_registry.POST_PROCESS_VERT,
+        shader_registry.POST_PROCESS_FRAG,
+        shader_registry.TAA_VERT,
+        shader_registry.TAA_FRAG,
+        shader_registry.SHADOW_VERT,
+        shader_registry.SHADOW_FRAG,
+        shader_registry.TERRAIN_VERT,
+        shader_registry.TERRAIN_FRAG,
+        shader_registry.G_PASS_FRAG,
+        shader_registry.SKY_VERT,
+        shader_registry.SKY_FRAG,
+        shader_registry.UI_VERT,
+        shader_registry.UI_FRAG,
+        shader_registry.UI_TEX_VERT,
+        shader_registry.UI_TEX_FRAG,
+        shader_registry.DEBUG_SHADOW_VERT,
+        shader_registry.DEBUG_SHADOW_FRAG,
+        shader_registry.CLOUD_VERT,
+        shader_registry.CLOUD_FRAG,
+        shader_registry.CULLING_COMP,
+        shader_registry.WATER_VERT,
+        shader_registry.WATER_FRAG,
+    };
+
+    for (0..paths.len) |i| {
+        const basename_i = std.fs.path.basename(paths[i]);
+        for (i + 1..paths.len) |j| {
+            const basename_j = std.fs.path.basename(paths[j]);
+            try testing.expect(!std.mem.eql(u8, basename_i, basename_j));
+        }
+    }
+}
+
+test "compute shader is only non-graphics shader" {
+    // Only CULLING_COMP should be a compute shader
+    const compute_shader = shader_registry.CULLING_COMP;
+    try testing.expect(std.mem.endsWith(u8, compute_shader, ".comp.spv"));
+
+    // All other shaders should be vert or frag (not comp)
+    const non_compute_shaders = [_][]const u8{
+        shader_registry.SSAO_VERT,
+        shader_registry.SSAO_FRAG,
+        shader_registry.TERRAIN_VERT,
+        shader_registry.TERRAIN_FRAG,
+        shader_registry.SKY_VERT,
+        shader_registry.SKY_FRAG,
+        shader_registry.UI_VERT,
+        shader_registry.UI_FRAG,
+    };
+
+    for (non_compute_shaders) |path| {
+        try testing.expect(!std.mem.endsWith(u8, path, ".comp.spv"));
+    }
+}

@@ -29,6 +29,7 @@ const CHUNK_SIZE_X = @import("world/chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = @import("world/chunk.zig").CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = @import("world/chunk.zig").CHUNK_SIZE_Z;
 const worldToChunk = @import("world/chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("world/chunk.zig").worldToChunkFromFloat;
 const worldToLocal = @import("world/chunk.zig").worldToLocal;
 const BlockType = @import("world/block.zig").BlockType;
 const block_registry = @import("world/block_registry.zig");
@@ -78,6 +79,7 @@ test {
     _ = @import("engine/graphics/vulkan/render_pass_manager_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_frame_orchestration_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_pass_orchestration_tests.zig");
+    _ = @import("engine/graphics/vulkan/vulkan_frame_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
@@ -96,15 +98,20 @@ test {
     _ = @import("game/screen_tests.zig");
     _ = @import("game/session_tests.zig");
     _ = @import("game/world_list_tests.zig");
+    _ = @import("game/input_mapper_tests.zig");
+    _ = @import("game/settings/persistence_tests.zig");
     _ = @import("world/persistence/region_file.zig");
     _ = @import("world/persistence/chunk_serializer.zig");
     _ = @import("world/persistence/level_data.zig");
     _ = @import("world/persistence/save_manager.zig");
     _ = @import("world/meshing/quadric_simplifier.zig");
     _ = @import("world/chunk_storage_tests.zig");
+    _ = @import("world/chunk_storage_extended_tests.zig");
     _ = @import("world/block_tests.zig");
     _ = @import("world/block_registry_tests.zig");
+    _ = @import("world/block_biome_tests.zig");
     _ = @import("world/chunk_tests.zig");
+    _ = @import("world/chunk_mesh_tests.zig");
     _ = @import("world/packed_light_tests.zig");
     _ = @import("world/meshing/boundary_tests.zig");
 }
@@ -425,13 +432,29 @@ test "Plane normalize" {
 }
 
 test "Frustum intersectsSphere" {
-    // Create a simple view-projection matrix (identity for testing)
-    // This creates a frustum that contains points near origin
     const vp = Mat4.identity;
     const frustum = Frustum.fromViewProj(vp);
-
-    // Sphere at origin should be inside
     try testing.expect(frustum.intersectsSphere(Vec3.init(0, 0, 0), 0.5));
+}
+
+test "Frustum forward view at y=80 sees all nearby chunks" {
+    const view = Mat4.lookAt(Vec3.init(0, 0, 0), Vec3.init(0, 0, -1), Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 4.0, 1.5, 0.5, 10000.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    var not_visible: u32 = 0;
+    const rd: i32 = 8;
+    var cz: i32 = -rd;
+    while (cz <= rd) : (cz += 1) {
+        var cx: i32 = -rd;
+        while (cx <= rd) : (cx += 1) {
+            if (cx * cx + cz * cz > rd * rd) continue;
+            if (!frustum.intersectsChunkRelative(cx, cz, 0, 80, 0)) {
+                not_visible += 1;
+            }
+        }
+    }
+    try testing.expectEqual(@as(u32, 0), not_visible);
 }
 
 // ============================================================================
@@ -493,6 +516,24 @@ test "worldToChunk zero" {
     const result = worldToChunk(0, 0);
     try testing.expectEqual(@as(i32, 0), result.chunk_x);
     try testing.expectEqual(@as(i32, 0), result.chunk_z);
+}
+
+test "worldToChunkFromFloat negative boundary coordinates" {
+    const result1 = worldToChunkFromFloat(-0.1, -0.1);
+    try testing.expectEqual(@as(i32, -1), result1.chunk_x);
+    try testing.expectEqual(@as(i32, -1), result1.chunk_z);
+
+    const result2 = worldToChunkFromFloat(-15.9, -15.9);
+    try testing.expectEqual(@as(i32, -1), result2.chunk_x);
+    try testing.expectEqual(@as(i32, -1), result2.chunk_z);
+
+    const result3 = worldToChunkFromFloat(-16.0, -16.0);
+    try testing.expectEqual(@as(i32, -1), result3.chunk_x);
+    try testing.expectEqual(@as(i32, -1), result3.chunk_z);
+
+    const result4 = worldToChunkFromFloat(-16.1, -16.1);
+    try testing.expectEqual(@as(i32, -2), result4.chunk_x);
+    try testing.expectEqual(@as(i32, -2), result4.chunk_z);
 }
 
 test "worldToLocal positive coordinates" {
@@ -1170,9 +1211,9 @@ test "WorldGen stable chunk fingerprints for known seed" {
     };
 
     const expected = [_]u64{
-        3930377586382103994,
-        9537000129428755126,
-        17337144674893402850,
+        2394066680656000157,
+        7033835718524966398,
+        117907781102104432,
     };
 
     for (positions, 0..) |pos, i| {

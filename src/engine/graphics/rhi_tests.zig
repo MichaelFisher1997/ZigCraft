@@ -348,6 +348,7 @@ const MockContext = struct {
         .getFaultCount = undefined,
         .getValidationErrorCount = undefined,
         .getDrawCallCount = undefined,
+        .getDeviceLocalVramBytes = undefined,
         .waitIdle = undefined,
     };
 
@@ -426,6 +427,7 @@ const MockContext = struct {
         .setModelMatrix = undefined,
         .setInstanceBuffer = undefined,
         .setLODInstanceBuffer = undefined,
+        .setTerrainPipelineBound = undefined,
         .setSelectionMode = undefined,
         .updateGlobalUniforms = undefined,
         .setTextureUniforms = undefined,

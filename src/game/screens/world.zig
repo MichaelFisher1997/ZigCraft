@@ -24,6 +24,7 @@ const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDi
 const log = @import("../../engine/core/log.zig");
 const CSM = @import("../../engine/graphics/csm.zig");
 const WorldRenderer = @import("../../world/world_renderer.zig").WorldRenderer;
+const build_options = @import("build_options");
 
 pub const WorldScreen = struct {
     context: EngineContext,
@@ -34,6 +35,8 @@ pub const WorldScreen = struct {
     frustum_buffer: rhi_pkg.BufferHandle = 0,
     frustum_initialized: bool = false,
     chunk_inspector_overlay: ChunkInspectorOverlay = .{},
+    startup_diagnostic_start: f32 = 0,
+    startup_diagnostic_logged: bool = false,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -57,6 +60,8 @@ pub const WorldScreen = struct {
             .world = world,
             .last_debug_toggle_time = 0,
             .debug_menu = .{},
+            .startup_diagnostic_start = context.time.elapsed,
+            .startup_diagnostic_logged = false,
         };
         return self;
     }
@@ -190,6 +195,61 @@ pub const WorldScreen = struct {
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
         }
+
+        self.maybeLogStartupDiagnostic(now);
+    }
+
+    fn maybeLogStartupDiagnostic(self: *@This(), now: f32) void {
+        if (build_options.startup_diagnostic_seconds == 0 or self.startup_diagnostic_logged) return;
+
+        const delay_s: f32 = @floatFromInt(build_options.startup_diagnostic_seconds);
+        if (now - self.startup_diagnostic_start < delay_s) return;
+
+        const stats = self.session.world.getStats();
+        const render_stats = self.session.world.getRenderStats();
+        const state_counts = self.session.world.getChunkStateCounts();
+        const lod_stats = self.session.world.getLODStats();
+        const lod_radii = self.session.lod_config.radii;
+
+        log.log.info(
+            "STARTUP_DIAG: generator='{s}' elapsed={d:.2}s rd={} lod0={} chunks_loaded={} chunks_total={} chunks_rendered={} chunks_culled={} gen_queue={} mesh_queue={} upload_queue={} lod_loaded={}",
+            .{
+                self.session.world.generator.info.name,
+                now - self.startup_diagnostic_start,
+                self.session.world.render_distance,
+                lod_radii[0],
+                stats.chunks_loaded,
+                render_stats.chunks_total,
+                render_stats.chunks_rendered,
+                render_stats.chunks_culled,
+                stats.gen_queue,
+                stats.mesh_queue,
+                stats.upload_queue,
+                if (lod_stats) |ls| ls.totalLoaded() else @as(u32, 0),
+            },
+        );
+        log.log.info(
+            "STARTUP_DIAG_STATES: total={} missing={} generating={} meshing={} renderable={} other={} dirty={} vertices_rendered={}",
+            .{
+                state_counts.total,
+                state_counts.missing,
+                state_counts.generating,
+                state_counts.meshing,
+                state_counts.renderable,
+                state_counts.other_states,
+                state_counts.dirty,
+                render_stats.vertices_rendered,
+            },
+        );
+        if (lod_stats) |ls| {
+            log.log.info(
+                "STARTUP_DIAG_LOD: loaded=[{}, {}, {}, {}] memory_mb={}",
+                .{ ls.loaded[0], ls.loaded[1], ls.loaded[2], ls.loaded[3], ls.memory_used_mb },
+            );
+        }
+
+        self.startup_diagnostic_logged = true;
+        self.context.input.setShouldQuit(true);
     }
 
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
@@ -221,22 +281,25 @@ pub const WorldScreen = struct {
             .time = self.session.atmosphere.time.time_of_day,
         };
 
-        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw();
-        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.getDisableClouds();
+        const safe_mode = render_system.getSafeMode();
+        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode;
+        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.getDisableClouds() and !safe_mode;
 
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
-            ctx.settings.lpv_enabled,
+            ctx.settings.lpv_enabled and !safe_mode,
             ctx.settings.lpv_intensity,
             ctx.settings.lpv_cell_size,
             lpv_quality.propagation_iterations,
             lpv_quality.grid_size,
             lpv_quality.update_interval_frames,
         );
-        rhi.timing().beginPassTiming("LPVPass");
-        try lpv_system.update(self.session.world, camera.position, ctx.settings.debug_lpv_overlay_active);
-        rhi.timing().endPassTiming("LPVPass");
+        if (!safe_mode) {
+            rhi.timing().beginPassTiming("LPVPass");
+            try lpv_system.update(self.session.world, camera.position, ctx.settings.debug_lpv_overlay_active);
+            rhi.timing().endPassTiming("LPVPass");
+        }
 
         const lpv_origin = lpv_system.getOrigin();
         const cloud_params: rhi_pkg.CloudParams = blk: {
@@ -254,19 +317,20 @@ pub const WorldScreen = struct {
                 .cloud_coverage = p.cloud_coverage,
                 .cloud_height = p.cloud_height,
                 .base_color = self.session.clouds.base_color,
-                .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr,
+                .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr and !safe_mode,
                 .shadow = .{
                     .distance = ctx.settings.shadow_distance,
                     .resolution = ctx.settings.getShadowResolution(),
                     .pcf_samples = ctx.settings.shadow_pcf_samples,
                     .cascade_blend = ctx.settings.shadow_cascade_blend,
                     .caster_distance = ctx.settings.shadow_caster_distance,
+                    .strength = if (safe_mode) 0.0 else 0.35,
                 },
                 .cloud_shadows = cloud_shadows_enabled,
                 .pbr_quality = ctx.settings.pbr_quality,
                 .exposure = ctx.settings.exposure,
                 .saturation = ctx.settings.saturation,
-                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled,
+                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode,
                 .volumetric_density = ctx.settings.volumetric_density,
                 .volumetric_steps = ctx.settings.volumetric_steps,
                 .volumetric_scattering = ctx.settings.volumetric_scattering,
@@ -281,7 +345,7 @@ pub const WorldScreen = struct {
 
         const skip_world_render = render_system.getSafeRenderMode();
         if (!skip_world_render) {
-            try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
+            try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;
@@ -316,7 +380,7 @@ pub const WorldScreen = struct {
                 .disable_shadow_draw = render_system.getDisableShadowDraw(),
                 .disable_gpass_draw = render_system.getDisableGPassDraw(),
                 .disable_ssao = render_system.getDisableSSAO(),
-                .disable_clouds = render_system.getDisableClouds(),
+                .disable_clouds = false,
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled,
                 .resolution_scale = resolution_scale,

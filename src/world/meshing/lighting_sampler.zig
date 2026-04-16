@@ -21,8 +21,8 @@ pub inline fn sampleLightAtBoundary(chunk: *const Chunk, neighbors: NeighborChun
     const y_off: i32 = @intCast(si * SUBCHUNK_SIZE);
     return switch (axis) {
         .top => chunk.getLightSafe(@intCast(u), s, @intCast(v)),
-        .east => boundary.getLightCross(chunk, neighbors, s, y_off + @as(i32, @intCast(u)), @intCast(v)),
-        .south => boundary.getLightCross(chunk, neighbors, @intCast(u), y_off + @as(i32, @intCast(v)), s),
+        .east => boundary.getLightCross(chunk, neighbors, s - 1, y_off + @as(i32, @intCast(u)), @intCast(v)),
+        .south => boundary.getLightCross(chunk, neighbors, @intCast(u), y_off + @as(i32, @intCast(v)), s - 1),
         else => unreachable,
     };
 }

@@ -67,7 +67,7 @@ test "texture binding comparison with null texture handle" {
 }
 
 test "shadow views binding needs_update detection" {
-    var bound_shadow_views: [4]c.VkImageView = .{ null, null, null, null };
+    const bound_shadow_views: [4]c.VkImageView = .{ null, null, null, null };
     const shadow_image_views: [4]c.VkImageView = .{ @ptrFromInt(1), null, null, null };
     var needs_update = false;
 
@@ -130,12 +130,14 @@ test "descriptor set array size for MAX_FRAMES_IN_FLIGHT" {
     try testing.expectEqual(@as(usize, rhi.MAX_FRAMES_IN_FLIGHT), 2);
 }
 
-test "frame index increments after each frame" {
-    var frame_index: u32 = 0;
-    frame_index += 1;
-    try testing.expectEqual(@as(u32, 1), frame_index);
-    frame_index += 1;
-    try testing.expectEqual(@as(u32, 2), frame_index);
+test "frame index wraps modulo MAX_FRAMES_IN_FLIGHT" {
+    var frame_index: usize = 0;
+
+    for (0..rhi.MAX_FRAMES_IN_FLIGHT) |_| {
+        frame_index = (frame_index + 1) % rhi.MAX_FRAMES_IN_FLIGHT;
+    }
+
+    try testing.expectEqual(@as(usize, 0), frame_index);
 }
 
 test "draw call count increments" {

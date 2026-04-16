@@ -7,6 +7,7 @@ const testing = std.testing;
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 
+const frame_manager = @import("frame_manager.zig");
 const Utils = @import("utils.zig");
 
 test "checkVk returns success for VK_SUCCESS" {
@@ -120,10 +121,10 @@ test "FrameManager getCurrentCommandBuffer returns correct buffer by index" {
     try testing.expect(cb2 == @as(c.VkCommandBuffer, @ptrFromInt(200)));
 }
 
-test "FrameManager dry_run flag is set from build_options" {
+test "FrameManager DRY_RUN_ACTIVE matches build_options" {
     const build_options = @import("build_options");
-    const dry_run_active = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
-    try testing.expect(dry_run_active == true or dry_run_active == false);
+    const expected = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
+    try testing.expectEqual(expected, frame_manager.DRY_RUN_ACTIVE);
 }
 
 test "VkCommandBufferBeginInfo sType is correct" {

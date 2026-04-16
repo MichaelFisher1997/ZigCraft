@@ -7,7 +7,7 @@ const pass_orchestration = @import("rhi_pass_orchestration.zig");
 
 const ModelUniforms = extern struct {
     model: Mat4,
-    color: [3]f32,
+    color: [4]f32,
     mask_radius: f32,
 };
 
@@ -19,9 +19,9 @@ const ShadowModelUniforms = extern struct {
 pub fn drawIndexed(ctx: anytype, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.BufferHandle, count: u32) void {
     if (!ctx.frames.frame_in_progress) return;
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) pass_orchestration.beginMainPassInternal(ctx);
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) return;
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) return;
 
     const vbo_opt = ctx.resources.buffers.get(vbo_handle);
     const ebo_opt = ctx.resources.buffers.get(ebo_handle);
@@ -32,13 +32,18 @@ pub fn drawIndexed(ctx: anytype, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.B
             const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
 
             if (!ctx.draw.terrain_pipeline_bound) {
-                const selected_pipeline = if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null)
+                const selected_pipeline = if (ctx.water_system.pass_active)
+                    if (ctx.options.wireframe_enabled and ctx.water_system.reflection_wireframe_pipeline != null)
+                        ctx.water_system.reflection_wireframe_pipeline
+                    else
+                        ctx.water_system.reflection_terrain_pipeline
+                else if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null)
                     ctx.pipeline_manager.wireframe_pipeline
                 else
                     ctx.pipeline_manager.terrain_pipeline;
                 if (selected_pipeline == null) return;
                 c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, selected_pipeline);
-                ctx.draw.terrain_pipeline_bound = true;
+                ctx.draw.terrain_pipeline_bound = !ctx.water_system.pass_active;
             }
 
             const descriptor_set = &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
@@ -55,9 +60,9 @@ pub fn drawIndexed(ctx: anytype, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.B
 pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
     if (!ctx.frames.frame_in_progress) return;
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) pass_orchestration.beginMainPassInternal(ctx);
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) return;
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) return;
 
     const use_shadow = ctx.shadow_system.pass_active;
     const use_g_pass = ctx.runtime.g_pass_active;
@@ -81,7 +86,12 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                 c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.g_pipeline);
             } else {
                 if (!ctx.draw.terrain_pipeline_bound) {
-                    const selected_pipeline = if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null)
+                    const selected_pipeline = if (ctx.water_system.pass_active)
+                        if (ctx.options.wireframe_enabled and ctx.water_system.reflection_wireframe_pipeline != null)
+                            ctx.water_system.reflection_wireframe_pipeline
+                        else
+                            ctx.water_system.reflection_terrain_pipeline
+                    else if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null)
                         ctx.pipeline_manager.wireframe_pipeline
                     else
                         ctx.pipeline_manager.terrain_pipeline;
@@ -90,7 +100,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                         return;
                     }
                     c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, selected_pipeline);
-                    ctx.draw.terrain_pipeline_bound = true;
+                    ctx.draw.terrain_pipeline_bound = !ctx.water_system.pass_active and selected_pipeline == ctx.pipeline_manager.terrain_pipeline;
                 }
             }
 
@@ -108,7 +118,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
             } else {
                 const uniforms = ModelUniforms{
                     .model = Mat4.identity,
-                    .color = .{ 1.0, 1.0, 1.0 },
+                    .color = .{ 1.0, 1.0, 1.0, 1.0 },
                     .mask_radius = -1.0,
                 };
                 c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
@@ -147,7 +157,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                     const draw_offset = offset + @as(usize, draw_index) * stride_bytes;
                     c.vkCmdDrawIndirect(cb, cmd.buffer, @intCast(draw_offset), 1, stride);
                 }
-                log.log.info("drawIndirect: MDI unsupported - drew {} draws via single-draw fallback", .{draw_count});
+                log.log.trace("drawIndirect: MDI unsupported - drew {} draws via single-draw fallback", .{draw_count});
             }
         }
     }
@@ -156,7 +166,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
 pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance_index: u32) void {
     if (!ctx.frames.frame_in_progress) return;
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) pass_orchestration.beginMainPassInternal(ctx);
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
     const use_shadow = ctx.shadow_system.pass_active;
     const use_g_pass = ctx.runtime.g_pass_active;
@@ -178,13 +188,18 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
             c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.g_pipeline);
         } else {
             if (!ctx.draw.terrain_pipeline_bound) {
-                const selected_pipeline = if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null)
+                const selected_pipeline = if (ctx.water_system.pass_active)
+                    if (ctx.options.wireframe_enabled and ctx.water_system.reflection_wireframe_pipeline != null)
+                        ctx.water_system.reflection_wireframe_pipeline
+                    else
+                        ctx.water_system.reflection_terrain_pipeline
+                else if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null)
                     ctx.pipeline_manager.wireframe_pipeline
                 else
                     ctx.pipeline_manager.terrain_pipeline;
                 if (selected_pipeline == null) return;
                 c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, selected_pipeline);
-                ctx.draw.terrain_pipeline_bound = true;
+                ctx.draw.terrain_pipeline_bound = !ctx.water_system.pass_active and selected_pipeline == ctx.pipeline_manager.terrain_pipeline;
             }
         }
 
@@ -202,7 +217,7 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
         } else {
             const uniforms = ModelUniforms{
                 .model = Mat4.identity,
-                .color = .{ 1.0, 1.0, 1.0 },
+                .color = .{ 1.0, 1.0, 1.0, 1.0 },
                 .mask_radius = 0,
             };
             c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
@@ -215,7 +230,10 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
 }
 
 pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.DrawMode, offset: usize) void {
-    if (!ctx.frames.frame_in_progress) return;
+    if (!ctx.frames.frame_in_progress) {
+        log.log.warn("drawOffset: no frame in progress", .{});
+        return;
+    }
 
     if (ctx.post_process.pass_active) {
         const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -224,9 +242,15 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
         return;
     }
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) pass_orchestration.beginMainPassInternal(ctx);
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) {
+        log.log.warn("drawOffset: beginning main pass internally", .{});
+        pass_orchestration.beginMainPassInternal(ctx);
+    }
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active) return;
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) {
+        log.log.warn("drawOffset: still no main pass after beginMainPassInternal", .{});
+        return;
+    }
 
     const use_shadow = ctx.shadow_system.pass_active;
     const use_g_pass = ctx.runtime.g_pass_active;
@@ -261,7 +285,16 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
         } else {
             const needs_rebinding = !ctx.draw.terrain_pipeline_bound or ctx.ui.selection_mode or mode == .lines;
             if (needs_rebinding) {
-                const selected_pipeline = if (ctx.ui.selection_mode and ctx.pipeline_manager.selection_pipeline != null)
+                const selected_pipeline = if (ctx.water_system.pass_active)
+                    if (ctx.ui.selection_mode and ctx.water_system.reflection_selection_pipeline != null)
+                        ctx.water_system.reflection_selection_pipeline
+                    else if (mode == .lines and ctx.water_system.reflection_line_pipeline != null)
+                        ctx.water_system.reflection_line_pipeline
+                    else if (ctx.options.wireframe_enabled and ctx.water_system.reflection_wireframe_pipeline != null)
+                        ctx.water_system.reflection_wireframe_pipeline
+                    else
+                        ctx.water_system.reflection_terrain_pipeline
+                else if (ctx.ui.selection_mode and ctx.pipeline_manager.selection_pipeline != null)
                     ctx.pipeline_manager.selection_pipeline
                 else if (mode == .lines and ctx.pipeline_manager.line_pipeline != null)
                     ctx.pipeline_manager.line_pipeline
@@ -269,9 +302,12 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
                     ctx.pipeline_manager.wireframe_pipeline
                 else
                     ctx.pipeline_manager.terrain_pipeline;
-                if (selected_pipeline == null) return;
+                if (selected_pipeline == null) {
+                    log.log.warn("drawOffset: selected_pipeline is null", .{});
+                    return;
+                }
                 c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, selected_pipeline);
-                ctx.draw.terrain_pipeline_bound = (selected_pipeline == ctx.pipeline_manager.terrain_pipeline);
+                ctx.draw.terrain_pipeline_bound = !ctx.water_system.pass_active and selected_pipeline == ctx.pipeline_manager.terrain_pipeline;
             }
 
             const descriptor_set = if (ctx.draw.lod_mode)
@@ -301,6 +337,8 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
         const offset_vbo: c.VkDeviceSize = @intCast(offset);
         c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vbo.buffer, &offset_vbo);
         c.vkCmdDraw(command_buffer, count, 1, 0, 0);
+    } else {
+        log.log.warn("drawOffset: vertex buffer not found (handle={})", .{handle});
     }
 }
 

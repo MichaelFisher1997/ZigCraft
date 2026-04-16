@@ -46,8 +46,8 @@ float lodTransitionNoise(vec2 worldXZ) {
 }
 
 void main() {
-    const float LOD_TRANSITION_WIDTH = 16.0;
-    if (vTileID < 0 && vMaskRadius > 0.0) {
+    const float LOD_TRANSITION_WIDTH = 24.0;
+    if (vMaskRadius > 0.0) {
         float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
         float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
         vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;

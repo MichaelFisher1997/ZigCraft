@@ -240,3 +240,51 @@ test "texture bindings start after first UBO" {
     try testing.expect(descriptor_bindings.SHADOW_COMPARE_TEXTURE > descriptor_bindings.GLOBAL_UBO);
     try testing.expect(descriptor_bindings.NORMAL_TEXTURE > descriptor_bindings.GLOBAL_UBO);
 }
+
+// ============================================================================
+// Additional Binding Tests (Water and Scene Depth)
+// ============================================================================
+
+test "water reflection texture binding exists" {
+    // Binding 14: Water reflection texture
+    try testing.expectEqual(@as(u32, 14), descriptor_bindings.WATER_REFLECTION_TEXTURE);
+    try testing.expect(descriptor_bindings.WATER_REFLECTION_TEXTURE < 20);
+}
+
+test "scene depth texture binding exists" {
+    // Binding 15: Scene depth for water refraction
+    try testing.expectEqual(@as(u32, 15), descriptor_bindings.SCENE_DEPTH_TEXTURE);
+    try testing.expect(descriptor_bindings.SCENE_DEPTH_TEXTURE < 20);
+}
+
+test "water and scene depth bindings are consecutive" {
+    // Water textures (14, 15) should be at the end of the binding range
+    try testing.expectEqual(@as(u32, 15), descriptor_bindings.SCENE_DEPTH_TEXTURE);
+    try testing.expectEqual(@as(u32, 14), descriptor_bindings.WATER_REFLECTION_TEXTURE);
+    try testing.expectEqual(descriptor_bindings.SCENE_DEPTH_TEXTURE, descriptor_bindings.WATER_REFLECTION_TEXTURE + 1);
+}
+
+test "all 16 descriptor bindings are accounted for" {
+    // We have 16 bindings (0-15), check that WATER and SCENE_DEPTH complete the set
+    const max_binding = @max(
+        descriptor_bindings.GLOBAL_UBO,
+        descriptor_bindings.ALBEDO_TEXTURE,
+        descriptor_bindings.SHADOW_UBO,
+        descriptor_bindings.SHADOW_COMPARE_TEXTURE,
+        descriptor_bindings.SHADOW_REGULAR_TEXTURE,
+        descriptor_bindings.INSTANCE_SSBO,
+        descriptor_bindings.NORMAL_TEXTURE,
+        descriptor_bindings.ROUGHNESS_TEXTURE,
+        descriptor_bindings.DISPLACEMENT_TEXTURE,
+        descriptor_bindings.ENV_TEXTURE,
+        descriptor_bindings.SSAO_TEXTURE,
+        descriptor_bindings.LPV_TEXTURE,
+        descriptor_bindings.LPV_TEXTURE_G,
+        descriptor_bindings.LPV_TEXTURE_B,
+        descriptor_bindings.WATER_REFLECTION_TEXTURE,
+        descriptor_bindings.SCENE_DEPTH_TEXTURE,
+    );
+
+    // Should be 15 (0-indexed, so 16 total bindings)
+    try testing.expectEqual(@as(u32, 15), max_binding);
+}

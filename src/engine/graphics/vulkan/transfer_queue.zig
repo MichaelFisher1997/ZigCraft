@@ -16,7 +16,7 @@ const log = @import("../../core/log.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 
-pub const DEFAULT_STAGING_CAPACITY: u64 = 64 * 1024 * 1024;
+pub const DEFAULT_STAGING_CAPACITY: u64 = 256 * 1024 * 1024;
 const ALIGNMENT: u64 = 256;
 
 pub const StagingRing = struct {
@@ -135,7 +135,7 @@ pub const PendingCopy = struct {
     size: u64,
 };
 
-pub const MAX_PENDING_COPIES = 256;
+pub const MAX_PENDING_COPIES = 2048;
 
 pub const TransferQueue = struct {
     queue: c.VkQueue = null,
@@ -318,7 +318,12 @@ pub const TransferQueue = struct {
         if (!self.transfer_ready[self.current_frame]) return;
 
         const cb = self.command_buffers[self.current_frame];
-        try Utils.checkVk(c.vkEndCommandBuffer(cb));
+        const end_result = c.vkEndCommandBuffer(cb);
+        if (end_result != c.VK_SUCCESS) {
+            self.transfer_ready[self.current_frame] = false;
+            if (end_result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
+            return error.VulkanError;
+        }
 
         var submit_info = std.mem.zeroes(c.VkSubmitInfo);
         submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -331,9 +336,12 @@ pub const TransferQueue = struct {
         const result = c.vkQueueSubmit(self.queue, 1, &submit_info, self.fence);
         queue_mutex.unlock();
 
+        if (result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
         if (result != c.VK_SUCCESS) return error.VulkanError;
 
-        try Utils.checkVk(c.vkWaitForFences(vk_device, 1, &self.fence, c.VK_TRUE, std.math.maxInt(u64)));
+        const wait_result = c.vkWaitForFences(vk_device, 1, &self.fence, c.VK_TRUE, std.math.maxInt(u64));
+        if (wait_result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
+        try Utils.checkVk(wait_result);
 
         self.transfer_ready[self.current_frame] = false;
     }

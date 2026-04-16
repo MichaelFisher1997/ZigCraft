@@ -26,8 +26,9 @@ const LODSimplifiedData = lod_chunk.LODSimplifiedData;
 
 const Chunk = @import("chunk.zig").Chunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
+const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
-const worldToChunk = @import("chunk.zig").worldToChunk;
+const worldToChunkFromFloat = @import("chunk.zig").worldToChunkFromFloat;
 const BlockType = @import("block.zig").BlockType;
 const BiomeId = @import("worldgen/biome.zig").BiomeId;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
@@ -47,6 +48,7 @@ const RingBuffer = @import("../engine/core/ring_buffer.zig").RingBuffer;
 
 const Generator = @import("worldgen/generator_interface.zig").Generator;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
+const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
@@ -174,6 +176,8 @@ pub const LODManager = struct {
     // Terrain generator for LOD generation (mutable for cache recentering)
     generator: Generator,
 
+    atlas: *const TextureAtlas,
+
     // Paused state
     paused: bool,
 
@@ -190,10 +194,13 @@ pub const LODManager = struct {
     // Type-erased renderer interface (replaces direct LODRenderer(RHI) field)
     renderer: LODRenderInterface,
 
+    // Keep cleanup behavior testable, but allow the live world to opt out.
+    cleanup_covered_regions: bool = true,
+
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;
 
-    pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPUBridge, render_iface: LODRenderInterface, generator: Generator) !*Self {
+    pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPUBridge, render_iface: LODRenderInterface, generator: Generator, atlas: *const TextureAtlas) !*Self {
         const mgr = try allocator.create(Self);
         errdefer allocator.destroy(mgr);
 
@@ -252,17 +259,19 @@ pub const LODManager = struct {
             .mutex = .{},
             .gpu_bridge = gpu_bridge,
             .generator = generator,
+            .atlas = atlas,
             .paused = false,
             .memory_used_bytes = 0,
             .update_tick = 0,
             .deletion_queue = .empty,
             .deletion_timer = 0,
             .renderer = render_iface,
+            .cleanup_covered_regions = true,
         };
 
         // Initialize worker pool for LOD generation and meshing (3 workers for LOD tasks)
         // All LOD jobs go to LOD3 queue in original code, we keep it consistent but use generic index
-        mgr.lod_gen_pool = try WorkerPool.init(allocator, 3, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
+        mgr.lod_gen_pool = try WorkerPool.init(allocator, 4, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
 
         const radii = config.getRadii();
         log.log.info("LODManager initialized with radii: LOD0={}, LOD1={}, LOD2={}, LOD3={}", .{
@@ -346,6 +355,13 @@ pub const LODManager = struct {
             self.deletion_timer = 0;
         }
 
+        // Safety: Check for NaN/Inf player position
+        if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
+
+        const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
+        self.player_cx = pc.chunk_x;
+        self.player_cz = pc.chunk_z;
+
         // Throttle heavy LOD management logic (generation queuing, state processing, unloads).
         // LOD management involves iterating over thousands of potential regions and can
         // take several milliseconds. Throttling to every 4 frames (approx 15Hz at 60fps)
@@ -353,17 +369,11 @@ pub const LODManager = struct {
         self.update_tick += 1;
         if (self.update_tick % 4 != 0) return;
 
-        // Issue #211: Clean up LOD chunks that are fully covered by LOD0 (throttled)
-        if (chunk_checker) |checker| {
-            self.unloadLODWhereChunksLoaded(checker, checker_ctx.?);
+        if (self.cleanup_covered_regions) {
+            if (chunk_checker) |checker| {
+                self.unloadLODWhereChunksLoaded(checker, checker_ctx.?);
+            }
         }
-
-        // Safety: Check for NaN/Inf player position
-        if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
-
-        const pc = worldToChunk(@as(i32, @intFromFloat(player_pos.x)), @as(i32, @intFromFloat(player_pos.z)));
-        self.player_cx = pc.chunk_x;
-        self.player_cz = pc.chunk_z;
 
         // Issue #119 Phase 4: Recenter classification cache if player moved far enough.
         // This ensures LOD chunks have cache coverage for consistent biome/surface data.
@@ -376,11 +386,15 @@ pub const LODManager = struct {
         // We iterate backwards from LODLevel.count-1 down to 1
         var i: usize = LODLevel.count - 1;
         while (i > 0) : (i -= 1) {
-            try self.queueLODRegions(@enumFromInt(@as(u3, @intCast(i))), player_velocity, chunk_checker, checker_ctx);
+            self.queueLODRegions(@enumFromInt(@as(u3, @intCast(i))), player_velocity, chunk_checker, checker_ctx) catch |err| {
+                log.log.warn("LOD queue error for level {}: {} (non-fatal)", .{ i, err });
+            };
         }
 
         // Process state transitions
-        try self.processStateTransitions();
+        self.processStateTransitions() catch |err| {
+            log.log.warn("LOD state transitions error: {} (non-fatal)", .{err});
+        };
 
         // Process uploads (limited per frame)
         self.processUploads();
@@ -389,7 +403,9 @@ pub const LODManager = struct {
         self.updateStats();
 
         // Unload distant regions
-        try self.unloadDistantRegions();
+        self.unloadDistantRegions() catch |err| {
+            log.log.warn("LOD unload error: {} (non-fatal)", .{err});
+        };
     }
 
     /// Queue LOD regions that need generation
@@ -419,10 +435,7 @@ pub const LODManager = struct {
         const lod_bits: i32 = @as(i32, @intCast(@intFromEnum(lod))) << 28;
 
         // Calculate velocity direction for priority
-        const vel_len = @sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-        const has_velocity = vel_len > 0.1;
-        const vel_dx: f32 = if (has_velocity) velocity.x / vel_len else 0;
-        const vel_dz: f32 = if (has_velocity) velocity.z / vel_len else 0;
+        _ = velocity;
 
         var rz = player_rz - region_radius;
         while (rz <= player_rz + region_radius) : (rz += 1) {
@@ -435,12 +448,12 @@ pub const LODManager = struct {
 
                 const key = LODRegionKey{ .rx = rx, .rz = rz, .lod = lod };
 
-                // Check if region is covered by higher detail chunks
-                if (chunk_checker) |checker| {
-                    // We use a temporary chunk to calculate bounds
-                    const temp_chunk = LODChunk.init(rx, rz, lod);
-                    if (self.areAllChunksLoaded(temp_chunk.worldBounds(), checker, checker_ctx.?)) {
-                        continue;
+                if (self.cleanup_covered_regions) {
+                    if (chunk_checker) |checker| {
+                        const temp_chunk = LODChunk.init(rx, rz, lod);
+                        if (self.areAllChunksLoaded(temp_chunk.worldBounds(), checker, checker_ctx.?)) {
+                            continue;
+                        }
                     }
                 }
 
@@ -467,24 +480,12 @@ pub const LODManager = struct {
                     chunk.job_token = self.next_job_token;
                     self.next_job_token += 1;
 
-                    // Calculate velocity-weighted priority
-                    // (dx, dz calculated above)
+                    // Calculate radial priority only so loading stays symmetric.
                     const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
                     // Scale priority to match chunk-distance units used by meshing jobs (which are prioritized by chunk dist)
                     // This ensures generation doesn't starve meshing
                     const priority_full = dist_sq * @as(i64, scale) * @as(i64, scale);
-                    var priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
-                    if (has_velocity) {
-                        const fdx: f32 = @floatFromInt(dx);
-                        const fdz: f32 = @floatFromInt(dz);
-                        const dist = @sqrt(fdx * fdx + fdz * fdz);
-                        if (dist > 0.01) {
-                            const dot = (fdx * vel_dx + fdz * vel_dz) / dist;
-                            // Ahead = lower priority number, behind = higher
-                            const weight = 1.0 - dot * 0.5;
-                            priority = @intFromFloat(@as(f32, @floatFromInt(priority)) * weight);
-                        }
-                    }
+                    const priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
 
                     // Encode LOD level in high bits of dist_sq
                     const encoded_priority = (priority & 0x0FFFFFFF) | lod_bits;
@@ -782,26 +783,34 @@ pub const LODManager = struct {
     }
 
     /// Check if all chunks within the given world bounds are loaded and renderable.
-    /// Includes a small chunk halo around bounds to avoid exposing border cut-faces.
+    /// Checks if all chunks within the LOD0 radius that could cover this LOD region
+    /// are loaded and renderable. Chunks outside the LOD0 radius are skipped since
+    /// they represent LOD terrain, not full-detail chunks that would cover this region.
     pub fn areAllChunksLoaded(self: *Self, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
-        _ = self;
-        // Convert world bounds to chunk coordinates
-        const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
-        const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
-        const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING; // -1 because max is exclusive
-        const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_X) + CHUNK_COVERAGE_PADDING;
+        const radii = self.config.getRadii();
+        const lod0_radius: i64 = @as(i64, radii[0]);
+        const radius_sq = lod0_radius * lod0_radius;
 
-        // Check every chunk in the region
+        const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
+        const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
+        const max_cx = @divFloor(bounds.max_x, CHUNK_SIZE_X) - 1 + CHUNK_COVERAGE_PADDING;
+        const max_cz = @divFloor(bounds.max_z, CHUNK_SIZE_Z) - 1 + CHUNK_COVERAGE_PADDING;
+
         var cz = min_cz;
         while (cz <= max_cz) : (cz += 1) {
             var cx = min_cx;
             while (cx <= max_cx) : (cx += 1) {
+                const dx: i64 = @as(i64, cx) - @as(i64, self.player_cx);
+                const dz: i64 = @as(i64, cz) - @as(i64, self.player_cz);
+                if (dx * dx + dz * dz > radius_sq) {
+                    return false;
+                }
                 if (!checker(cx, cz, ctx)) {
-                    return false; // At least one chunk is not loaded
+                    return false;
                 }
             }
         }
-        return true; // All chunks are loaded
+        return true;
     }
 
     /// Get or create mesh for a LOD region
@@ -844,7 +853,7 @@ pub const LODManager = struct {
                 const bounds = chunk.worldBounds();
                 const target_tris = self.config.getQEMTarget(chunk.lod_level);
                 const min_tris = self.config.getQEMMinInputTriangles();
-                try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target_tris, min_tris);
+                try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target_tris, min_tris, self.atlas);
             },
             .full => {
                 // LOD0 meshes handled by World, not LODManager
@@ -996,6 +1005,7 @@ pub const LODManager = struct {
 // Tests
 test "LODManager initialization" {
     const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
 
     const MockState = struct {
         buffer_created: bool = false,
@@ -1071,7 +1081,21 @@ test "LODManager initialization" {
         .ptr = @ptrCast(&mock_state),
     };
 
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen);
+    const mock_atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+
+    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen, &mock_atlas);
+    mgr.cleanup_covered_regions = false;
 
     // Verify initial state
     const stats = mgr.getStats();
@@ -1092,6 +1116,7 @@ test "LODManager initialization" {
 
 test "LODManager end-to-end covered cleanup" {
     const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
 
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
@@ -1158,7 +1183,21 @@ test "LODManager end-to-end covered cleanup" {
         .ptr = @ptrCast(&noop_ctx),
     };
 
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen);
+    const mock_atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+
+    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen, &mock_atlas);
+    mgr.cleanup_covered_regions = false;
     defer mgr.deinit();
 
     // 1. Initial position at origin
@@ -1200,7 +1239,7 @@ test "LODManager end-to-end covered cleanup" {
         }
     };
 
-    // Update - should unload because checker says all chunks are loaded
+    // Update - cleanup is disabled in live world, so regions should stay resident
     // Need to trigger the throttle (every 4 frames)
     try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
     try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
@@ -1208,7 +1247,7 @@ test "LODManager end-to-end covered cleanup" {
     // 4th update triggers throttled logic
     try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
 
-    try std.testing.expect(!mgr.regions[1].contains(key));
+    try std.testing.expect(mgr.regions[1].contains(key));
 }
 
 test "LODStats aggregation" {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("../../c.zig").c;
+const build_options = @import("build_options");
 
 const log = @import("../core/log.zig");
 const rhi_pkg = @import("rhi.zig");
@@ -46,17 +47,28 @@ pub const RenderSystem = struct {
     fxaa_pass: render_graph_pkg.FXAAPass,
     water_reflection_pass: render_graph_pkg.WaterReflectionPass,
     water_pass: render_graph_pkg.WaterPass,
+    safe_mode: bool,
     safe_render_mode: bool,
     disable_shadow_draw: bool,
     disable_gpass_draw: bool,
     disable_ssao: bool,
     disable_clouds: bool,
+    disable_water: bool,
+    disable_taa: bool,
+    disable_fxaa: bool,
+    disable_bloom: bool,
 
     pub fn init(allocator: Allocator, window: *c.SDL_Window, settings: *const Settings) !*RenderSystem {
         log.log.info("Initializing RenderSystem...", .{});
 
         const safe_render_env = std.posix.getenv("ZIGCRAFT_SAFE_RENDER");
         const safe_render_mode = if (safe_render_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
+
+        const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
+        const safe_mode = if (safe_mode_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
@@ -79,14 +91,46 @@ pub const RenderSystem = struct {
         else
             false;
 
+        const chunk_debug_restore_clouds = chunkDebugRestoreEnabled("clouds");
         const disable_clouds_env = std.posix.getenv("ZIGCRAFT_DISABLE_CLOUDS");
-        const disable_clouds = if (disable_clouds_env) |val|
+        const disable_clouds = (build_options.chunk_debug_mode and !chunk_debug_restore_clouds) or if (disable_clouds_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
 
+        const chunk_debug_restore_water = chunkDebugRestoreEnabled("water") or chunkDebugRestoreEnabled("waterrender");
+        const disable_water_env = std.posix.getenv("ZIGCRAFT_DISABLE_WATER");
+        const disable_water = (build_options.chunk_debug_mode and !chunk_debug_restore_water) or if (disable_water_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
+
+        const disable_taa_env = std.posix.getenv("ZIGCRAFT_DISABLE_TAA");
+        const disable_taa = if (disable_taa_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
+
+        const disable_fxaa_env = std.posix.getenv("ZIGCRAFT_DISABLE_FXAA");
+        const disable_fxaa = if (disable_fxaa_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
+
+        const disable_bloom_env = std.posix.getenv("ZIGCRAFT_DISABLE_BLOOM");
+        const disable_bloom = if (disable_bloom_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
+
+        if (build_options.chunk_debug_mode) {
+            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_options.chunk_debug_enable});
+        }
         if (safe_render_mode) {
             log.log.warn("ZIGCRAFT_SAFE_RENDER enabled: skipping world rendering passes", .{});
+        }
+        if (safe_mode) {
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: disabling depth pyramid and LPV compute passes", .{});
         }
         if (disable_shadow_draw) {
             log.log.warn("ZIGCRAFT_DISABLE_SHADOWS enabled", .{});
@@ -99,6 +143,18 @@ pub const RenderSystem = struct {
         }
         if (disable_clouds) {
             log.log.warn("ZIGCRAFT_DISABLE_CLOUDS enabled", .{});
+        }
+        if (disable_water) {
+            log.log.warn("ZIGCRAFT_DISABLE_WATER enabled", .{});
+        }
+        if (disable_taa) {
+            log.log.warn("ZIGCRAFT_DISABLE_TAA enabled", .{});
+        }
+        if (disable_fxaa) {
+            log.log.warn("ZIGCRAFT_DISABLE_FXAA enabled", .{});
+        }
+        if (disable_bloom) {
+            log.log.warn("ZIGCRAFT_DISABLE_BLOOM enabled", .{});
         }
 
         log.log.info("Initializing Vulkan backend...", .{});
@@ -176,17 +232,22 @@ pub const RenderSystem = struct {
             .opaque_pass = .{},
             .cloud_pass = .{},
             .entity_pass = .{},
-            .taa_pass = .{ .enabled = true },
-            .bloom_pass = .{ .enabled = false },
+            .taa_pass = .{ .enabled = !disable_taa and settings.taa_enabled },
+            .bloom_pass = .{ .enabled = !disable_bloom and settings.bloom_enabled },
             .post_process_pass = .{},
-            .fxaa_pass = .{ .enabled = true },
+            .fxaa_pass = .{ .enabled = !disable_fxaa and settings.fxaa_enabled },
             .water_reflection_pass = .{},
             .water_pass = .{ .enabled = true },
+            .safe_mode = safe_mode,
             .safe_render_mode = safe_render_mode,
             .disable_shadow_draw = disable_shadow_draw,
             .disable_gpass_draw = disable_gpass_draw,
             .disable_ssao = disable_ssao,
             .disable_clouds = disable_clouds,
+            .disable_water = disable_water,
+            .disable_taa = disable_taa,
+            .disable_fxaa = disable_fxaa,
+            .disable_bloom = disable_bloom,
         };
 
         log.log.info("RenderSystem.init: initializing MaterialSystem", .{});
@@ -204,8 +265,8 @@ pub const RenderSystem = struct {
         );
         errdefer self.lpv_system.deinit();
 
-        self.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
-        self.rhi.setBloom(false);
+        self.rhi.setFXAA((settings.fxaa_enabled and !settings.taa_enabled) and !disable_fxaa);
+        self.rhi.setBloom(settings.bloom_enabled and !disable_bloom);
         self.rhi.setBloomIntensity(settings.bloom_intensity);
 
         settings_pkg.apply_logic.applyToRHI(settings, &self.rhi);
@@ -218,11 +279,19 @@ pub const RenderSystem = struct {
             try self.render_graph.addPass(self.mesh_build_pass.pass());
             try self.render_graph.addPass(self.g_pass.pass());
             try self.render_graph.addPass(self.ssao_pass.pass());
-            try self.render_graph.addPass(self.depth_pyramid_pass.pass());
+            if (!safe_mode) {
+                try self.render_graph.addPass(self.depth_pyramid_pass.pass());
+            }
+            if (!disable_water) {
+                try self.render_graph.addPass(self.water_reflection_pass.pass());
+            }
             try self.render_graph.addPass(self.sky_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());
-            try self.render_graph.addPass(self.water_reflection_pass.pass());
-            try self.render_graph.addPass(self.water_pass.pass());
+            if (!disable_water) {
+                try self.render_graph.addPass(self.water_pass.pass());
+            } else {
+                log.log.warn("ZIGCRAFT_DISABLE_WATER enabled", .{});
+            }
             try self.render_graph.addPass(self.cloud_pass.pass());
             try self.render_graph.addPass(self.entity_pass.pass());
             try self.render_graph.addPass(self.taa_pass.pass());
@@ -338,6 +407,10 @@ pub const RenderSystem = struct {
         return self.safe_render_mode;
     }
 
+    pub fn getSafeMode(self: *const RenderSystem) bool {
+        return self.safe_mode;
+    }
+
     pub fn getDisableShadowDraw(self: *const RenderSystem) bool {
         return self.disable_shadow_draw;
     }
@@ -366,3 +439,14 @@ pub const RenderSystem = struct {
         self.disable_clouds = value;
     }
 };
+
+fn chunkDebugRestoreEnabled(name: []const u8) bool {
+    if (!build_options.chunk_debug_mode) return false;
+
+    var it = std.mem.tokenizeScalar(u8, build_options.chunk_debug_enable, ',');
+    while (it.next()) |token| {
+        const trimmed = std.mem.trim(u8, token, " \t");
+        if (std.ascii.eqlIgnoreCase(trimmed, name)) return true;
+    }
+    return false;
+}

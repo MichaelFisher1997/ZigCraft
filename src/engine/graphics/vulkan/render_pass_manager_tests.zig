@@ -6,52 +6,44 @@ const std = @import("std");
 const testing = std.testing;
 const c = @import("../../../c.zig").c;
 
-const RenderPassManager = @import("render_pass_manager.zig").RenderPassManager;
+const render_pass_manager = @import("render_pass_manager.zig");
+const RenderPassManager = render_pass_manager.RenderPassManager;
 const rhi = @import("../rhi.zig");
 
-fn getMSAASampleCountFlag(samples: u8) c.VkSampleCountFlagBits {
-    return switch (samples) {
-        2 => c.VK_SAMPLE_COUNT_2_BIT,
-        4 => c.VK_SAMPLE_COUNT_4_BIT,
-        8 => c.VK_SAMPLE_COUNT_8_BIT,
-        else => c.VK_SAMPLE_COUNT_1_BIT,
-    };
-}
-
 test "getMSAASampleCountFlag returns 1_BIT for sample count 0" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), getMSAASampleCountFlag(0));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), render_pass_manager.getMSAASampleCountFlag(0));
 }
 
 test "getMSAASampleCountFlag returns 1_BIT for sample count 1" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), getMSAASampleCountFlag(1));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), render_pass_manager.getMSAASampleCountFlag(1));
 }
 
 test "getMSAASampleCountFlag returns 2_BIT for sample count 2" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_2_BIT), getMSAASampleCountFlag(2));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_2_BIT), render_pass_manager.getMSAASampleCountFlag(2));
 }
 
 test "getMSAASampleCountFlag returns 4_BIT for sample count 4" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_4_BIT), getMSAASampleCountFlag(4));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_4_BIT), render_pass_manager.getMSAASampleCountFlag(4));
 }
 
 test "getMSAASampleCountFlag returns 8_BIT for sample count 8" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_8_BIT), getMSAASampleCountFlag(8));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_8_BIT), render_pass_manager.getMSAASampleCountFlag(8));
 }
 
 test "getMSAASampleCountFlag returns 1_BIT for sample count 3" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), getMSAASampleCountFlag(3));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), render_pass_manager.getMSAASampleCountFlag(3));
 }
 
 test "getMSAASampleCountFlag returns 1_BIT for sample count 16" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), getMSAASampleCountFlag(16));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), render_pass_manager.getMSAASampleCountFlag(16));
 }
 
 test "getMSAASampleCountFlag returns 1_BIT for max u8" {
-    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), getMSAASampleCountFlag(255));
+    try testing.expectEqual(@as(c.VkSampleCountFlagBits, c.VK_SAMPLE_COUNT_1_BIT), render_pass_manager.getMSAASampleCountFlag(255));
 }
 
 test "RenderPassManager DEPTH_FORMAT is D32_SFLOAT" {
-    try testing.expectEqual(@as(c.VkFormat, c.VK_FORMAT_D32_SFLOAT), c.VK_FORMAT_D32_SFLOAT);
+    try testing.expectEqual(@as(c.VkFormat, c.VK_FORMAT_D32_SFLOAT), render_pass_manager.DEPTH_FORMAT);
 }
 
 test "RenderPassManager destroyFramebuffers handles null handles gracefully" {
@@ -102,7 +94,7 @@ test "VkRenderPassCreateInfo sType is correct" {
 }
 
 test "VkAttachmentDescription zero initialization is valid" {
-    var desc = std.mem.zeroes(c.VkAttachmentDescription);
+    const desc = std.mem.zeroes(c.VkAttachmentDescription);
     try testing.expectEqual(@as(u32, 0), desc.flags);
 }
 
@@ -111,18 +103,18 @@ test "VkSubpassDependency external subpass constant" {
 }
 
 test "RenderPassManager init with allocator sets allocator field" {
-    var manager = RenderPassManager.init(testing.allocator);
+    const manager = RenderPassManager.init(testing.allocator);
     try testing.expectEqual(testing.allocator, manager.allocator);
 }
 
 test "RenderPassManager framebuffer arrays are empty after init" {
-    var manager = RenderPassManager.init(testing.allocator);
+    const manager = RenderPassManager.init(testing.allocator);
     try testing.expectEqual(@as(usize, 0), manager.post_process_framebuffers.items.len);
     try testing.expectEqual(@as(usize, 0), manager.ui_swapchain_framebuffers.items.len);
 }
 
 test "RenderPassManager render pass handles are null after init" {
-    var manager = RenderPassManager.init(testing.allocator);
+    const manager = RenderPassManager.init(testing.allocator);
     try testing.expect(manager.hdr_render_pass == null);
     try testing.expect(manager.g_render_pass == null);
     try testing.expect(manager.post_process_render_pass == null);
@@ -130,7 +122,7 @@ test "RenderPassManager render pass handles are null after init" {
 }
 
 test "RenderPassManager framebuffer handles are null after init" {
-    var manager = RenderPassManager.init(testing.allocator);
+    const manager = RenderPassManager.init(testing.allocator);
     try testing.expect(manager.main_framebuffer == null);
     try testing.expect(manager.g_framebuffer == null);
 }

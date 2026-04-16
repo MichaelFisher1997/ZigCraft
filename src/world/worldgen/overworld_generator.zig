@@ -49,12 +49,14 @@ pub const OverworldGenerator = struct {
     cache_center_z: i32,
     terrain_shape: TerrainShapeGenerator,
     biome_decorator: BiomeDecorator,
+    basic_chunks_only: bool,
 
     /// Distance threshold for cache recentering (blocks).
     pub const CACHE_RECENTER_THRESHOLD: i32 = 512;
 
     pub const InitParams = struct {
         terrain_shape: terrain_shape_mod.Params = .{},
+        basic_chunks_only: bool = false,
     };
 
     pub fn init(seed: u64, allocator: std.mem.Allocator, decoration_provider: DecorationProvider) OverworldGenerator {
@@ -69,6 +71,7 @@ pub const OverworldGenerator = struct {
             .cache_center_z = 0,
             .terrain_shape = TerrainShapeGenerator.initWithParams(seed, params.terrain_shape),
             .biome_decorator = BiomeDecorator.init(seed, decoration_provider),
+            .basic_chunks_only = params.basic_chunks_only,
         };
     }
 
@@ -173,32 +176,40 @@ pub const OverworldGenerator = struct {
             &phase_data.coastal_types,
         );
 
-        var worm_map_opt = self.terrain_shape.generateWormCaves(
-            chunk,
-            &phase_data.surface_heights,
-            self.allocator,
-        ) catch null;
+        var worm_map_opt = if (self.terrain_shape.params.disable_caves)
+            null
+        else
+            self.terrain_shape.generateWormCaves(
+                chunk,
+                &phase_data.surface_heights,
+                self.allocator,
+            ) catch null;
         defer if (worm_map_opt) |*map| map.deinit();
         const worm_map_ptr: ?*const terrain_shape_mod.CaveCarveMap = if (worm_map_opt) |*map| map else null;
 
         if (!self.terrain_shape.fillChunkBlocks(chunk, phase_data, worm_map_ptr, stop_flag)) return;
         if (stop_flag) |sf| if (sf.*) return;
-        self.biome_decorator.generateOres(chunk);
-        if (stop_flag) |sf| if (sf.*) return;
-        self.biome_decorator.generateFeatures(chunk, self.terrain_shape.getNoiseSampler());
-        if (stop_flag) |sf| if (sf.*) return;
+        if (!self.basic_chunks_only) {
+            self.biome_decorator.generateOres(chunk);
+            if (stop_flag) |sf| if (sf.*) return;
+            self.biome_decorator.generateFeatures(chunk, self.terrain_shape.getNoiseSampler());
+            if (stop_flag) |sf| if (sf.*) return;
+        }
         LightingComputer.computeSkylight(chunk);
         if (stop_flag) |sf| if (sf.*) return;
-        LightingComputer.computeBlockLight(chunk, self.allocator) catch |err| {
-            log.log.errWithTrace("Failed to compute block light for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
-            return;
-        };
+        if (!self.basic_chunks_only) {
+            LightingComputer.computeBlockLight(chunk, self.allocator) catch |err| {
+                log.log.errWithTrace("Failed to compute block light for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
+                return;
+            };
+        }
 
         chunk.generated = true;
         chunk.dirty = true;
     }
 
     pub fn generateFeatures(self: *const OverworldGenerator, chunk: *Chunk) void {
+        if (self.basic_chunks_only) return;
         self.biome_decorator.generateFeatures(chunk, self.terrain_shape.getNoiseSampler());
     }
 
@@ -274,7 +285,9 @@ pub const OverworldGenerator = struct {
             .sand => .sand,
             .rock => .gravel,
             .snow => .snow_block,
-            .water_deep, .water_shallow => .water,
+            // LOD terrain has no separate fluid pass, so cached water surfaces must
+            // resolve to the seabed material rather than an opaque water sheet.
+            .water_deep, .water_shallow => .sand,
             .dirt => .dirt,
             .stone => .stone,
         };
@@ -422,3 +435,8 @@ pub const OverworldGenerator = struct {
         allocator.destroy(self);
     }
 };
+
+test "LOD cached water surfaces resolve to seabed block" {
+    try std.testing.expectEqual(BlockType.sand, OverworldGenerator.surfaceTypeToBlock(undefined, .water_shallow));
+    try std.testing.expectEqual(BlockType.sand, OverworldGenerator.surfaceTypeToBlock(undefined, .water_deep));
+}

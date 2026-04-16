@@ -81,7 +81,6 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try setup.createGPassResources(ctx);
     try setup.createSSAOResources(ctx);
     try setup.createTAAResources(ctx);
-    try setup.createWaterResources(ctx);
 
     try ctx.render_pass_manager.createMainRenderPass(
         ctx.vulkan_device.vk_device,
@@ -97,24 +96,16 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
         ctx.options.msaa_samples,
     );
 
+    try setup.createWaterResources(ctx);
+    try ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass);
+    try ctx.water_system.createReflectionTerrainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.pipeline_manager.pipeline_layout);
+
     try setup.createPostProcessResources(ctx);
     try setup.createSwapchainUIResources(ctx);
 
     try ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews());
     try ctx.pipeline_manager.createSwapchainUIPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.ui_swapchain_render_pass);
     try ctx.bloom.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.hdr.hdr_view, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height, c.VK_FORMAT_R16G16B16A16_SFLOAT);
-
-    if (ctx.gpass.g_depth_view != null) {
-        ctx.depth_pyramid.init(
-            &ctx.vulkan_device,
-            ctx.allocator,
-            ctx.gpass.g_depth_view,
-            ctx.swapchain.getExtent().width,
-            ctx.swapchain.getExtent().height,
-        ) catch |err| {
-            log.log.warn("DepthPyramidSystem init failed (non-fatal): {}", .{err});
-        };
-    }
 
     setup.updatePostProcessDescriptorsWithBloom(ctx);
 
@@ -127,6 +118,8 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.draw.current_roughness_texture = ctx.draw.dummy_roughness_texture;
     ctx.draw.current_displacement_texture = ctx.draw.dummy_roughness_texture;
     ctx.draw.current_env_texture = ctx.draw.dummy_texture;
+    ctx.draw.current_water_reflection_texture = ctx.draw.dummy_texture;
+    ctx.draw.current_scene_depth_texture = ctx.draw.dummy_texture;
     ctx.draw.current_lpv_texture = ctx.draw.dummy_texture_3d;
     ctx.draw.current_lpv_texture_g = ctx.draw.dummy_texture_3d;
     ctx.draw.current_lpv_texture_b = ctx.draw.dummy_texture_3d;
@@ -190,17 +183,8 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
                 count += 1;
             }
         }
-        if (ctx.depth_pyramid.pyramid_image != null) {
-            list[count] = ctx.depth_pyramid.pyramid_image;
-            count += 1;
-        }
-
         if (count > 0) {
             lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.err("Failed to transition images during init: {}", .{err});
-        }
-
-        if (ctx.gpass.g_depth_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.gpass.g_depth_image}, true) catch |err| log.log.err("Failed to transition G-depth image during init: {}", .{err});
         }
     }
 
@@ -230,7 +214,6 @@ pub fn deinit(ctx: anytype) void {
         lifecycle.destroyTAAResources(ctx);
         lifecycle.destroyBloomResources(ctx);
         lifecycle.destroyVelocityResources(ctx);
-        ctx.depth_pyramid.deinit(vk_device);
         lifecycle.destroyPostProcessResources(ctx);
         lifecycle.destroyGPassResources(ctx);
         if (ctx.water_system.reflection_texture_handle != 0) {

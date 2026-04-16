@@ -51,7 +51,7 @@ layout(set = 0, binding = 5) readonly buffer InstanceBuffer {
 
 layout(push_constant) uniform ModelUniforms {
     mat4 model;
-    vec3 color_override;
+    vec4 color_override;
     float mask_radius;
 } model_data;
 
@@ -89,7 +89,7 @@ void main() {
     } else {
         model = model_data.model;
         mask_radius = model_data.mask_radius;
-        color_override = model_data.color_override;
+        color_override = model_data.color_override.xyz;
     }
 
     vec4 worldPos = model * vec4(aPos, 1.0);

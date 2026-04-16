@@ -62,6 +62,18 @@ pub fn recover(ctx: anytype) !void {
     ctx.vulkan_device.recovery_count += 1;
     log.log.info("RHI: Attempting GPU recovery (Attempt {d}/{d})...", .{ ctx.vulkan_device.recovery_count, ctx.vulkan_device.max_recovery_attempts });
 
+    if (ctx.frames.frame_in_progress) {
+        ctx.frames.abortFrame();
+    }
+    ctx.runtime.main_pass_active = false;
+    ctx.shadow_system.pass_active = false;
+    ctx.runtime.g_pass_active = false;
+    ctx.runtime.ssao_pass_active = false;
+    ctx.runtime.recovering = true;
+    defer ctx.runtime.recovering = false;
+    ctx.draw.descriptors_updated = false;
+    ctx.draw.bound_texture = 0;
+
     _ = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
 
     ctx.runtime.gpu_fault_detected = false;

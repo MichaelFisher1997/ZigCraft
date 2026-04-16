@@ -11,6 +11,18 @@ pub fn build(b: *std.Build) void {
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
     options.addOption(bool, "smoke_test", smoke_test);
 
+    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, clouds, and decorations for chunk-only debugging") orelse false;
+    options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
+
+    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, clouds, decorations)") orelse "";
+    options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
+
+    const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly (normal, overworld, flat)") orelse "";
+    options.addOption([]const u8, "auto_world", auto_world);
+
+    const startup_diagnostic_seconds = b.option(u32, "startup-diagnostic-seconds", "Wait N seconds after auto-world startup, log chunk counts, and exit") orelse 0;
+    options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
 
@@ -84,6 +96,10 @@ pub fn build(b: *std.Build) void {
     const benchmark_options = b.addOptions();
     benchmark_options.addOption(bool, "debug_shadows", enable_debug_shadows);
     benchmark_options.addOption(bool, "smoke_test", false);
+    benchmark_options.addOption(bool, "chunk_debug_mode", false);
+    benchmark_options.addOption([]const u8, "chunk_debug_enable", "");
+    benchmark_options.addOption([]const u8, "auto_world", "");
+    benchmark_options.addOption(u32, "startup_diagnostic_seconds", 0);
     benchmark_options.addOption(bool, "skip_present", true);
     benchmark_options.addOption([]const u8, "screenshot_path", "");
     benchmark_options.addOption(bool, "benchmark", true);

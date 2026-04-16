@@ -35,7 +35,20 @@ nix develop --command zig fmt src/                   # Format code
 -Ddebug_shadows    # Enable shadow debug visualization
 -Dsmoke-test       # Auto-load world and exit (for automated testing)
 -Dskip-present     # Headless mode (skip presentation)
+-Dauto-world=normal  # Auto-open a generator directly (normal/overworld or flat)
+-Dstartup-diagnostic-seconds=5  # Wait N seconds, log chunk/LOD counts, and exit
+-Dchunk-debug-mode  # Disable LOD, water, caves, clouds, and decorations for isolation
+-Dchunk-debug-enable=lod,caves  # Re-enable individual systems in chunk-debug-mode
 ```
+
+`-Dchunk-debug-enable=` accepts a comma-separated list of:
+- `lod`
+- `water`
+- `watergen`
+- `waterrender`
+- `caves`
+- `clouds`
+- `decorations`
 
 ---
 
