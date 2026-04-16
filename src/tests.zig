@@ -94,6 +94,8 @@ test {
     _ = @import("game/screen_tests.zig");
     _ = @import("game/session_tests.zig");
     _ = @import("game/world_list_tests.zig");
+    _ = @import("game/input_mapper_tests.zig");
+    _ = @import("game/settings/persistence_tests.zig");
     _ = @import("world/persistence/region_file.zig");
     _ = @import("world/persistence/chunk_serializer.zig");
     _ = @import("world/persistence/level_data.zig");
