@@ -2,9 +2,15 @@ const std = @import("std");
 const data = @import("data.zig");
 const Settings = data.Settings;
 const log = @import("../../engine/core/log.zig");
+const fs = @import("fs");
 
 const CONFIG_DIR = ".config/zigcraft";
 const CONFIG_FILE = "settings.json";
+
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return std.mem.span(value);
+}
 
 /// Duplicates a string field, or returns the static "default" sentinel if source equals "default".
 /// Returns error.OutOfMemory if allocation fails for non-default strings.
@@ -25,10 +31,10 @@ fn freeStringField(allocator: std.mem.Allocator, field: []const u8) void {
 /// Load settings from ~/.config/zigcraft/settings.json
 /// Returns default settings if file doesn't exist or is invalid
 pub fn load(allocator: std.mem.Allocator) Settings {
-    const home = std.posix.getenv("HOME") orelse return .{};
+    const home = getenv("HOME") orelse return .{};
 
     // Open home directory
-    var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
+    var home_dir = fs.openDirAbsolute(home, .{}) catch |err| {
         log.log.warn("Failed to open home directory '{s}': {}", .{ home, err });
         return .{};
     };
@@ -36,7 +42,7 @@ pub fn load(allocator: std.mem.Allocator) Settings {
 
     // Try to open the config file relative to home
     const config_path = CONFIG_DIR ++ "/" ++ CONFIG_FILE;
-    const content = home_dir.readFileAlloc(config_path, allocator, @enumFromInt(16 * 1024)) catch |err| {
+    const content = home_dir.readFileAlloc(config_path, allocator, 16 * 1024) catch |err| {
         if (err != error.FileNotFound) {
             log.log.warn("Failed to read settings file '{s}': {}", .{ config_path, err });
         }
@@ -98,13 +104,13 @@ pub fn setEnvironmentMap(settings: *Settings, allocator: std.mem.Allocator, name
 
 /// Save settings to ~/.config/zigcraft/settings.json
 pub fn save(settings: *const Settings, allocator: std.mem.Allocator) void {
-    const home = std.posix.getenv("HOME") orelse {
+    const home = getenv("HOME") orelse {
         log.log.warn("Cannot save settings: HOME not set", .{});
         return;
     };
 
     // Open home directory
-    var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
+    var home_dir = fs.openDirAbsolute(home, .{}) catch |err| {
         log.log.warn("Cannot open home directory: {}", .{err});
         return;
     };

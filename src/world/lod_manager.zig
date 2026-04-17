@@ -14,6 +14,7 @@
 //! GPU operations are decoupled via LODGPUBridge and LODRenderInterface (Issue #246).
 
 const std = @import("std");
+const sync = @import("sync");
 const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODChunk = lod_chunk.LODChunk;
@@ -168,7 +169,7 @@ pub const LODManager = struct {
     stats: LODStats,
 
     // Mutex for thread safety
-    mutex: std.Thread.RwLock,
+    mutex: sync.RwLock,
 
     // GPU bridge for upload/destroy/sync operations (replaces direct RHI field)
     gpu_bridge: LODGPUBridge,

@@ -187,9 +187,19 @@ pub fn LODRenderer(comptime RHI: type) type {
                 if (regions.get(entry.key_ptr.*)) |chunk| {
                     if (chunk.state != .renderable) continue;
                     const bounds = chunk.worldBounds();
+                    const lod_idx = @intFromEnum(chunk.lod_level);
+                    const radii = config.getRadii();
+                    const outer_radius = radii[lod_idx];
+                    const inner_radius = if (lod_idx > 0) radii[lod_idx - 1] else 0;
 
                     if (max_distance_chunks) |max_dist| {
-                        if (!isRegionInRange(bounds, camera_pos, max_dist)) continue;
+                        if (!isRegionInRange(bounds, camera_pos, @min(max_dist, outer_radius))) continue;
+                    } else {
+                        if (!isRegionInRange(bounds, camera_pos, outer_radius)) continue;
+                    }
+
+                    if (inner_radius > 0 and isRegionFullyWithinRange(bounds, camera_pos, inner_radius)) {
+                        continue;
                     }
 
                     var disable_mask = false;
@@ -224,7 +234,11 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
-                    const mask_radius = if (disable_mask) 0.0 else config.calculateMaskRadius();
+                    const intersects_inner_band = inner_radius > 0 and isRegionInRange(bounds, camera_pos, inner_radius);
+                    const mask_radius = if (disable_mask or !intersects_inner_band)
+                        0.0
+                    else
+                        @as(f32, @floatFromInt(radii[lod_idx - 1])) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
@@ -394,6 +408,22 @@ fn isRegionInRange(bounds: LODChunk.WorldBounds, camera_pos: Vec3, max_distance_
     return @max(dx, dz) <= max_distance_chunks;
 }
 
+fn isRegionFullyWithinRange(bounds: LODChunk.WorldBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
+    const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+    const cam_cx = camera_chunk.chunk_x;
+    const cam_cz = camera_chunk.chunk_z;
+
+    const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X);
+    const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X);
+    const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z);
+    const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_Z);
+
+    const dx = @max(@abs(cam_cx - min_cx), @abs(cam_cx - max_cx));
+    const dz = @max(@abs(cam_cz - min_cz), @abs(cam_cz - max_cz));
+
+    return @max(dx, dz) <= max_distance_chunks;
+}
+
 // Tests
 test "LODRenderer init/deinit lifecycle" {
     const allocator = std.testing.allocator;
@@ -482,7 +512,7 @@ test "LODRenderer render draw path" {
     mesh.ready = true;
 
     // Create mock LODChunk in renderable state
-    var chunk = LODChunk.init(0, 0, .lod1);
+    var chunk = LODChunk.init(5, 0, .lod1);
     chunk.state = .renderable;
 
     var meshes: [LODLevel.count]MeshMap = undefined;
@@ -499,7 +529,7 @@ test "LODRenderer render draw path" {
     }
 
     // Add mesh and region at LOD1
-    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const key = LODRegionKey{ .rx = 5, .rz = 0, .lod = .lod1 };
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
@@ -511,7 +541,7 @@ test "LODRenderer render draw path" {
     const camera_pos = Vec3.zero;
 
     // Call render with explicit parameters
-    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, true, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null);
 
     // Verify draw was called with correct parameters
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
@@ -602,17 +632,17 @@ test "LODRenderer createGPUBridge and toInterface round-trip" {
     mesh.vertex_count = 50;
     mesh.ready = true;
 
-    var chunk = LODChunk.init(0, 0, .lod1);
+    var chunk = LODChunk.init(5, 0, .lod1);
     chunk.state = .renderable;
 
-    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const key = LODRegionKey{ .rx = 5, .rz = 0, .lod = .lod1 };
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
     var mock_config = LODConfig{};
 
     // Render through the type-erased interface
-    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, true, null);
+    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null);
 
     // Verify the real renderer's draw was invoked through the interface
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);

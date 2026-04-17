@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const UISystem = @import("../../engine/ui/ui_system.zig").UISystem;
 const Color = @import("../../engine/ui/ui_system.zig").Color;
 const Rect = @import("../../engine/ui/ui_system.zig").Rect;
@@ -17,6 +18,11 @@ const WorldListScreen = @import("world_list.zig").WorldListScreen;
 const world_list = @import("world_list.zig");
 const registry = @import("../../world/worldgen/registry.zig");
 const gen_interface = @import("../../world/worldgen/generator_interface.zig");
+
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return std.mem.span(value);
+}
 
 const PANEL_WIDTH_MAX = 650.0;
 const PANEL_HEIGHT_BASE = 400.0;
@@ -160,11 +166,11 @@ pub const SingleplayerScreen = struct {
 };
 
 fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize) !void {
-    const home = std.posix.getenv("HOME") orelse {
+    const home = getenv("HOME") orelse {
         log.log.warn("Cannot save world: HOME not set", .{});
         return error.NoHome;
     };
-    var home_dir = std.fs.openDirAbsolute(home, .{}) catch |err| {
+    var home_dir = fs.openDirAbsolute(home, .{}) catch |err| {
         log.log.warn("Cannot save world: failed to open home dir: {}", .{err});
         return err;
     };
@@ -174,10 +180,7 @@ fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize)
         return err;
     };
     var dir_name_buf: [128]u8 = undefined;
-    const timestamp: i64 = blk: {
-        const t = try std.posix.clock_gettime(std.posix.CLOCK.REALTIME);
-        break :blk t.sec * 1000 + @divTrunc(t.nsec, 1000000);
-    };
+    const timestamp = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
     const dir_name = std.fmt.bufPrint(&dir_name_buf, "world_{}", .{timestamp}) catch "world_new";
     const world_dir_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ world_list.SAVE_DIR, dir_name });
     defer allocator.free(world_dir_path);

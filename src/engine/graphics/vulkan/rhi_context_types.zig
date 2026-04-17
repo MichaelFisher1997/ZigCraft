@@ -1,4 +1,5 @@
 const std = @import("std");
+const sync = @import("sync");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
@@ -212,7 +213,7 @@ pub const VulkanContext = struct {
     ssao_system: SSAOSystem = .{},
     shadow_runtime: ShadowRuntime,
     runtime: RuntimeState,
-    mutex: std.Thread.Mutex = .{},
+    mutex: sync.Mutex = .{},
 
     ui: UIState = .{},
     cloud: CloudResources = .{},

@@ -213,8 +213,8 @@ pub const QuadricSimplifier = struct {
         var edge_versions = std.AutoHashMap(u64, u32).init(allocator);
         defer edge_versions.deinit();
 
-        var heap = std.PriorityQueue(EdgeEntry, void, compareEdges).init(allocator, {});
-        defer heap.deinit();
+        var heap = std.PriorityQueue(EdgeEntry, void, compareEdges).initContext({});
+        defer heap.deinit(allocator);
 
         {
             var edge_set = std.AutoHashMap(u64, void).init(allocator);
@@ -238,7 +238,7 @@ pub const QuadricSimplifier = struct {
                     const cost = @max(QuadricMatrix.evaluate(combined, result.pos[0], result.pos[1], result.pos[2]), 0);
 
                     try edge_versions.put(key, 0);
-                    try heap.add(.{
+                    try heap.push(allocator, .{
                         .v1 = pair[0],
                         .v2 = pair[1],
                         .cost = cost,
@@ -259,7 +259,7 @@ pub const QuadricSimplifier = struct {
             if (skipped_collapses > num_triangles * max_skip_multiplier) break;
 
             var entry: ?EdgeEntry = null;
-            while (heap.removeOrNull()) |e| {
+            while (heap.pop()) |e| {
                 if (!active[e.v1] or !active[e.v2]) continue;
                 if (e.v1 == e.v2) continue;
                 const key = edgeKey(e.v1, e.v2);
@@ -349,7 +349,7 @@ pub const QuadricSimplifier = struct {
                 const cur_ver = edge_versions.get(key) orelse 0;
                 const new_ver = cur_ver + 1;
                 try edge_versions.put(key, new_ver);
-                try heap.add(.{
+                try heap.push(allocator, .{
                     .v1 = e.v1,
                     .v2 = neighbor,
                     .cost = new_cost,
@@ -409,11 +409,11 @@ fn canCollapse(
     v1: u32,
     v2: u32,
 ) !bool {
-    var link_edge = std.ArrayListUnmanaged(u32){};
+    var link_edge = std.ArrayListUnmanaged(u32).empty;
     defer link_edge.deinit(allocator);
-    var link_v1 = std.ArrayListUnmanaged(u32){};
+    var link_v1 = std.ArrayListUnmanaged(u32).empty;
     defer link_v1.deinit(allocator);
-    var link_v2 = std.ArrayListUnmanaged(u32){};
+    var link_v2 = std.ArrayListUnmanaged(u32).empty;
     defer link_v2.deinit(allocator);
 
     for (tris, 0..) |tri, ti| {
@@ -839,10 +839,10 @@ test "performance simplify mesh" {
     const original_tris: u32 = @intCast(sphere.indices.len / 3);
     const target = original_tris / 4;
 
-    const start = std.time.Instant.now() catch return;
+    const start = std.Io.Clock.awake.now(std.Options.debug_io);
     const result = try QuadricSimplifier.simplify(allocator, sphere.vertices, sphere.indices, target);
-    const end = std.time.Instant.now() catch return;
-    const elapsed_ns = end.since(start);
+    const end = std.Io.Clock.awake.now(std.Options.debug_io);
+    const elapsed_ns = start.durationTo(end).toNanoseconds();
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
 
     defer {

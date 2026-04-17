@@ -3,6 +3,7 @@
 //! Supports PBR texture maps: diffuse, normal, roughness, displacement.
 
 const std = @import("std");
+const fs = @import("fs");
 const log = @import("../core/log.zig");
 const c = @import("../../c.zig").c;
 
@@ -160,7 +161,7 @@ pub const ResourcePackManager = struct {
         return .{
             .allocator = allocator,
             .base_path = "assets/textures",
-            .available_packs = .{},
+            .available_packs = .empty,
             .active_pack = null,
             .uses_pbr_structure = false,
         };
@@ -176,7 +177,7 @@ pub const ResourcePackManager = struct {
         for (self.available_packs.items) |*pack| pack.deinit(self.allocator);
         self.available_packs.clearRetainingCapacity();
 
-        var dir = std.fs.cwd().openDir(self.base_path, .{ .iterate = true }) catch |err| {
+        var dir = fs.cwd().openDir(self.base_path, .{ .iterate = true }) catch |err| {
             log.log.warn("Could not open texture packs directory: {}", .{err});
             return;
         };
@@ -211,7 +212,7 @@ pub const ResourcePackManager = struct {
         const pack_path = self.getActivePackPath() orelse return false;
 
         // Scan the pack directory for any subdirectory that contains PBR files
-        var pack_dir = std.fs.cwd().openDir(pack_path, .{ .iterate = true }) catch return false;
+        var pack_dir = fs.cwd().openDir(pack_path, .{ .iterate = true }) catch return false;
         defer pack_dir.close();
 
         var iter = pack_dir.iterate();
@@ -225,14 +226,14 @@ pub const ResourcePackManager = struct {
                 const diff_path = std.fmt.allocPrint(self.allocator, "{s}/{s}_diff.png", .{ subfolder_path, entry.name }) catch continue;
                 defer self.allocator.free(diff_path);
 
-                if (std.fs.cwd().access(diff_path, .{})) |_| {
+                if (fs.cwd().access(diff_path, .{})) |_| {
                     log.log.debug("Detected PBR structure: found {s}", .{diff_path});
                     return true;
                 } else |_| {
                     // Also check for just block_name.png in subfolder
                     const base_path = std.fmt.allocPrint(self.allocator, "{s}/{s}.png", .{ subfolder_path, entry.name }) catch continue;
                     defer self.allocator.free(base_path);
-                    if (std.fs.cwd().access(base_path, .{})) |_| {
+                    if (fs.cwd().access(base_path, .{})) |_| {
                         log.log.debug("Detected PBR structure: found {s}", .{base_path});
                         return true;
                     } else |_| {}
@@ -365,7 +366,7 @@ pub const ResourcePackManager = struct {
 
     fn loadImageFile(self: *Self, path: []const u8) ?LoadedTexture {
         // Read file into memory
-        const file_data = std.fs.cwd().readFileAlloc(path, self.allocator, @enumFromInt(10 * 1024 * 1024)) catch |err| {
+        const file_data = fs.cwd().readFileAlloc(path, self.allocator, 10 * 1024 * 1024) catch |err| {
             log.log.debug("Failed to read file {s}: {}", .{ path, err });
             return null;
         };
@@ -409,7 +410,7 @@ pub const ResourcePackManager = struct {
     pub fn loadImageFileFloat(self: *Self, path: []const u8) ?LoadedTextureFloat {
         // Auto-convert EXR to HDR using ImageMagick (since stb_image doesn't support EXR)
         if (std.mem.endsWith(u8, path, ".exr")) {
-            _ = std.fs.cwd().access(path, .{}) catch |err| {
+            _ = fs.cwd().access(path, .{}) catch |err| {
                 log.log.warn("Environment map not found: {s} ({})", .{ path, err });
                 return null;
             };
@@ -420,14 +421,17 @@ pub const ResourcePackManager = struct {
             log.log.info("Converting EXR to HDR: {s} -> {s}", .{ path, hdr_path });
 
             const argv = [_][]const u8{ "magick", path, hdr_path };
-            var child = std.process.Child.init(&argv, self.allocator);
-            const term = child.spawnAndWait() catch |err| {
+            const process_result = std.process.run(self.allocator, std.Options.debug_io, .{
+                .argv = &argv,
+            }) catch |err| {
                 log.log.err("Failed to run ImageMagick: {}", .{err});
                 return null;
             };
+            defer self.allocator.free(process_result.stdout);
+            defer self.allocator.free(process_result.stderr);
 
-            switch (term) {
-                .Exited => |code| if (code != 0) {
+            switch (process_result.term) {
+                .exited => |code| if (code != 0) {
                     log.log.err("ImageMagick conversion failed with code {}", .{code});
                     return null;
                 },
@@ -441,7 +445,7 @@ pub const ResourcePackManager = struct {
             const result = self.loadImageFileFloat(hdr_path);
 
             // Clean up temporary file
-            std.fs.cwd().deleteFile(hdr_path) catch |err| {
+            fs.cwd().deleteFile(hdr_path) catch |err| {
                 log.log.warn("Failed to delete temp HDR file: {}", .{err});
             };
 
@@ -449,7 +453,7 @@ pub const ResourcePackManager = struct {
         }
 
         // Read file into memory (200MB limit for large HDRs)
-        const file_data = std.fs.cwd().readFileAlloc(path, self.allocator, @enumFromInt(200 * 1024 * 1024)) catch |err| {
+        const file_data = fs.cwd().readFileAlloc(path, self.allocator, 200 * 1024 * 1024) catch |err| {
             log.log.warn("Failed to read float file {s}: {}", .{ path, err });
             return null;
         };
@@ -539,7 +543,7 @@ fn defaultPackHasAnyFile(mapping: TextureMapping) bool {
     var path_buf: [256]u8 = undefined;
     for (mapping.files) |file_name| {
         const path = std.fmt.bufPrint(&path_buf, "assets/textures/default/{s}", .{file_name}) catch continue;
-        if (std.fs.cwd().access(path, .{})) |_| return true else |_| {}
+        if (fs.cwd().access(path, .{})) |_| return true else |_| {}
     }
     return false;
 }

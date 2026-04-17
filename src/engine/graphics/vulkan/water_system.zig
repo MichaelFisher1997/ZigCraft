@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const log = @import("../../core/log.zig");
@@ -283,12 +284,12 @@ pub const WaterSystem = struct {
 
         const shader_registry = @import("shader_registry.zig");
 
-        const vert_code = std.fs.cwd().readFileAlloc(shader_registry.WATER_VERT, allocator, @enumFromInt(1024 * 1024)) catch |err| {
+        const vert_code = fs.cwd().readFileAlloc(shader_registry.WATER_VERT, allocator, 1024 * 1024) catch |err| {
             log.log.err("Failed to load water vertex shader: {s} - {}", .{ shader_registry.WATER_VERT, err });
             return err;
         };
         defer allocator.free(vert_code);
-        const frag_code = std.fs.cwd().readFileAlloc(shader_registry.WATER_FRAG, allocator, @enumFromInt(1024 * 1024)) catch |err| {
+        const frag_code = fs.cwd().readFileAlloc(shader_registry.WATER_FRAG, allocator, 1024 * 1024) catch |err| {
             log.log.err("Failed to load water fragment shader: {s} - {}", .{ shader_registry.WATER_FRAG, err });
             return err;
         };

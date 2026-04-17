@@ -2,6 +2,7 @@
 //! batches into the persistent megabuffer on the following frame.
 
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("../c.zig").c;
 const log = @import("../engine/core/log.zig");
 const rhi_pkg = @import("../engine/graphics/rhi.zig");
@@ -564,7 +565,7 @@ fn destroyVulkanBuffer(vk: c.VkDevice, buf: *Utils.VulkanBuffer) void {
 }
 
 fn loadShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Allocator) !c.VkShaderModule {
-    const bytes = try std.fs.cwd().readFileAlloc(path, allocator, @enumFromInt(16 * 1024 * 1024));
+    const bytes = try fs.cwd().readFileAlloc(path, allocator, 16 * 1024 * 1024);
     defer allocator.free(bytes);
     if (bytes.len % 4 != 0) return error.InvalidShader;
 
@@ -579,7 +580,7 @@ fn loadShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Allocat
 }
 
 fn ensureShaderFileExists(path: []const u8) !void {
-    std.fs.cwd().access(path, .{}) catch |err| {
+    fs.cwd().access(path, .{}) catch |err| {
         log.log.errWithTrace("Mesh shader artifact missing: {s} ({})", .{ path, err });
         log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
         return err;

@@ -7,6 +7,7 @@
 //! - Handling pipeline state for different rendering modes
 
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
@@ -83,7 +84,7 @@ pub const PipelineManager = struct {
         vk_device: c.VkDevice,
         path: []const u8,
     ) !c.VkShaderModule {
-        const code = try std.fs.cwd().readFileAlloc(path, allocator, @enumFromInt(MAX_SHADER_MODULE_BYTES));
+        const code = try fs.cwd().readFileAlloc(path, allocator, MAX_SHADER_MODULE_BYTES);
         defer allocator.free(code);
         return try Utils.createShaderModule(vk_device, code);
     }

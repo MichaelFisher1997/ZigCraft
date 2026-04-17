@@ -9,6 +9,12 @@ const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const WorldScreen = @import("world.zig").WorldScreen;
 const log = @import("../../engine/core/log.zig");
+const fs = @import("fs");
+
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return std.mem.span(value);
+}
 
 const PANEL_WIDTH_MAX = 700.0;
 const PANEL_HEIGHT_BASE = 500.0;
@@ -40,7 +46,7 @@ pub const LevelDat = struct {
     generator_index: usize,
 };
 
-pub fn writeLevelDat(allocator: std.mem.Allocator, save_dir: std.fs.Dir, name: []const u8, seed: u64, generator_index: usize, last_played: i64) !void {
+pub fn writeLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir, name: []const u8, seed: u64, generator_index: usize, last_played: i64) !void {
     const payload = .{
         .name = name,
         .seed = seed,
@@ -54,8 +60,8 @@ pub fn writeLevelDat(allocator: std.mem.Allocator, save_dir: std.fs.Dir, name: [
     try file.writeAll(json_str);
 }
 
-pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: std.fs.Dir) ?LevelDat {
-    const content = save_dir.readFileAlloc("level.dat", allocator, @enumFromInt(4096)) catch return null;
+pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
+    const content = save_dir.readFileAlloc("level.dat", allocator, 4096) catch return null;
     defer allocator.free(content);
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return null;
     defer parsed.deinit();
@@ -93,8 +99,8 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: std.fs.Dir) ?LevelDa
 }
 
 pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
-    const home = std.posix.getenv("HOME") orelse return &[_]WorldEntry{};
-    var home_dir = std.fs.openDirAbsolute(home, .{}) catch return &[_]WorldEntry{};
+    const home = getenv("HOME") orelse return &[_]WorldEntry{};
+    var home_dir = fs.openDirAbsolute(home, .{}) catch return &[_]WorldEntry{};
     defer home_dir.close();
     home_dir.makePath(SAVE_DIR) catch {};
     var saves_dir = home_dir.openDir(SAVE_DIR, .{ .iterate = true }) catch return &[_]WorldEntry{};
@@ -148,9 +154,9 @@ fn compareWorldsByLastPlayed(_: void, a: WorldEntry, b: WorldEntry) bool {
 /// Deletes a world directory and frees dir_path.
 /// Logs errors but does not return them. Caller must not use dir_path after call.
 pub fn deleteWorld(allocator: std.mem.Allocator, dir_path: []const u8) void {
-    const parent_path = std.fs.path.dirname(dir_path) orelse return;
-    const base = std.fs.path.basename(dir_path);
-    var parent = std.fs.openDirAbsolute(parent_path, .{ .iterate = true }) catch |err| {
+    const parent_path = fs.path.dirname(dir_path) orelse return;
+    const base = fs.path.basename(dir_path);
+    var parent = fs.openDirAbsolute(parent_path, .{ .iterate = true }) catch |err| {
         log.log.err("Failed to open parent dir for deletion: {}", .{err});
         return;
     };
@@ -364,10 +370,7 @@ pub const WorldListScreen = struct {
 
 fn formatTimestamp(ts: i64) []const u8 {
     if (ts <= 0) return "NEVER";
-    const now: i64 = blk: {
-        const t = std.posix.clock_gettime(std.posix.CLOCK.REALTIME) catch return "NEVER";
-        break :blk t.sec * 1000 + @divTrunc(t.nsec, 1000000);
-    };
+    const now = std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
     const diff = now - ts;
     if (diff < 0) return "NEVER";
     if (diff < 60000) return "JUST NOW";

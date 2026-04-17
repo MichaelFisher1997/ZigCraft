@@ -1,11 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
+const fs = @import("fs");
 const c = @import("c.zig").c;
 
 pub fn main() !void {
     std.debug.print("Running integration tests...\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -17,18 +18,16 @@ pub fn main() !void {
     std.debug.print("Found robust-demo at: {s}\n", .{robust_demo_path});
 
     // Run the demo
-    var child = std.process.Child.init(&[_][]const u8{robust_demo_path}, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const run_result = try std.process.run(allocator, std.Options.debug_io, .{
+        .argv = &[_][]const u8{robust_demo_path},
+        .stdout_limit = .limited(4096),
+        .stderr_limit = .limited(4096),
+    });
+    defer allocator.free(run_result.stdout);
+    defer allocator.free(run_result.stderr);
 
-    try child.spawn();
-
-    // Read stdout
-    var stdout_buf: [4096]u8 = undefined;
-    const stdout_len = try child.stdout.?.readAll(&stdout_buf);
-    const stdout = stdout_buf[0..stdout_len];
-
-    const result = try child.wait();
+    const stdout = run_result.stdout;
+    const result = run_result.term;
 
     // Check exit code
     switch (result) {
@@ -65,8 +64,8 @@ fn findExecutable(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     };
 
     for (paths) |path| {
-        const full_path = try std.fs.path.join(allocator, &[_][]const u8{ path, name });
-        const file = std.fs.cwd().openFile(full_path, .{}) catch {
+        const full_path = try fs.path.join(allocator, &[_][]const u8{ path, name });
+        const file = fs.cwd().openFile(full_path, .{}) catch {
             allocator.free(full_path);
             continue;
         };

@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const Allocator = std.mem.Allocator;
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
@@ -433,7 +434,7 @@ pub const DepthPyramidSystem = struct {
 };
 
 fn loadShaderModule(vk: c.VkDevice, path: []const u8, allocator: Allocator) !c.VkShaderModule {
-    const bytes = try std.fs.cwd().readFileAlloc(path, allocator, @enumFromInt(16 * 1024 * 1024));
+    const bytes = try fs.cwd().readFileAlloc(path, allocator, 16 * 1024 * 1024);
     defer allocator.free(bytes);
     if (bytes.len % 4 != 0) return error.InvalidShader;
 

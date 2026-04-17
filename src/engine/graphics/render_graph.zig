@@ -38,6 +38,7 @@
 
 const std = @import("std");
 const c = @import("../../c.zig").c;
+const build_options = @import("build_options");
 const Camera = @import("camera.zig").Camera;
 const IWorld = @import("../../world/world.zig").IWorld;
 const shadow_scene = @import("shadow_scene.zig");
@@ -120,7 +121,7 @@ pub const RenderGraph = struct {
 
     pub fn init(allocator: std.mem.Allocator) RenderGraph {
         return .{
-            .passes = .{},
+            .passes = .empty,
             .allocator = allocator,
         };
     }

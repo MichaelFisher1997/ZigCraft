@@ -45,7 +45,7 @@ pub const Inventory = struct {
         var block_id: u8 = 1;
         while (slot_idx < TOTAL_SLOTS and block_id < 255) : (block_id += 1) {
             // Check if block_id is a valid enum value
-            const maybe_bt = std.meta.intToEnum(BlockType, block_id) catch null;
+            const maybe_bt = std.enums.fromInt(BlockType, block_id);
             if (maybe_bt) |bt| {
                 inv.slots[slot_idx] = .{ .block_type = bt, .count = 64 };
                 slot_idx += 1;

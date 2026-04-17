@@ -1,6 +1,7 @@
 //! Thread-safe chunk storage for World.
 
 const std = @import("std");
+const sync = @import("sync");
 const Chunk = @import("chunk.zig").Chunk;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
 
@@ -66,7 +67,7 @@ pub const ChunkData = struct {
 
 pub const ChunkStorage = struct {
     chunks: std.HashMap(ChunkKey, *ChunkData, ChunkKeyContext, 80),
-    chunks_mutex: std.Thread.RwLock,
+    chunks_mutex: sync.RwLock,
     allocator: std.mem.Allocator,
     next_job_token: u32,
 
@@ -154,10 +155,18 @@ pub const ChunkStorage = struct {
     }
 
     pub fn getOrCreate(self: *ChunkStorage, cx: i32, cz: i32) !*ChunkData {
+        const key = ChunkKey{ .x = cx, .z = cz };
+
+        self.chunks_mutex.lockShared();
+        if (self.chunks.get(key)) |data| {
+            self.chunks_mutex.unlockShared();
+            return data;
+        }
+        self.chunks_mutex.unlockShared();
+
         self.chunks_mutex.lock();
         defer self.chunks_mutex.unlock();
 
-        const key = ChunkKey{ .x = cx, .z = cz };
         if (self.chunks.get(key)) |data| return data;
 
         const data = try self.allocator.create(ChunkData);
