@@ -50,9 +50,10 @@
 //! ensure all worker threads have exited before pool memory is freed.
 
 const std = @import("std");
+const sync = @import("sync");
 const Thread = std.Thread;
-const Mutex = Thread.Mutex;
-const Condition = Thread.Condition;
+const Mutex = sync.Mutex;
+const Condition = sync.Condition;
 const Chunk = @import("../../world/chunk.zig").Chunk;
 const log = @import("log.zig");
 
@@ -154,7 +155,7 @@ pub const JobQueue = struct {
         return .{
             .mutex = Mutex{},
             .cond = Condition{},
-            .jobs = std.PriorityQueue(Job, void, compareJobs).init(allocator, {}),
+            .jobs = std.PriorityQueue(Job, void, compareJobs).initContext({}),
             .stopped = false,
             .paused = false,
             .abort_worker = false,
@@ -165,14 +166,14 @@ pub const JobQueue = struct {
     }
 
     pub fn deinit(self: *JobQueue) void {
-        self.jobs.deinit();
+        self.jobs.deinit(self.allocator);
     }
 
     pub fn push(self: *JobQueue, job: Job) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.stopped or self.paused) return;
-        try self.jobs.add(job);
+        try self.jobs.push(self.allocator, job);
         self.cond.signal();
     }
 
@@ -192,7 +193,7 @@ pub const JobQueue = struct {
             self.needs_reprioritize = false;
         }
 
-        return self.jobs.removeOrNull();
+        return self.jobs.pop();
     }
 
     /// Internal: rebuild queue with updated distances (called under lock)
@@ -204,7 +205,7 @@ pub const JobQueue = struct {
         defer temp.deinit(self.allocator);
 
         // Extract all jobs
-        while (self.jobs.removeOrNull()) |job| {
+        while (self.jobs.pop()) |job| {
             var updated_job = job;
 
             // Only update distance for chunk-based jobs
@@ -223,7 +224,7 @@ pub const JobQueue = struct {
 
         // Re-add with updated priorities
         for (temp.items) |job| {
-            self.jobs.add(job) catch {
+            self.jobs.push(self.allocator, job) catch {
                 log.log.warn("Job queue: failed to re-add job after priority update", .{});
                 job.cleanup();
                 continue;
@@ -257,7 +258,7 @@ pub const JobQueue = struct {
     pub fn clear(self: *JobQueue) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        while (self.jobs.removeOrNull()) |job| {
+        while (self.jobs.pop()) |job| {
             job.cleanup();
         }
     }
@@ -268,7 +269,7 @@ pub const JobQueue = struct {
         self.paused = paused;
         self.abort_worker = paused or self.stopped;
         if (paused) {
-            while (self.jobs.removeOrNull()) |job| {
+            while (self.jobs.pop()) |job| {
                 job.cleanup();
             }
         } else {
@@ -280,7 +281,7 @@ pub const JobQueue = struct {
         self.mutex.lock();
         self.stopped = true;
         self.abort_worker = true;
-        while (self.jobs.removeOrNull()) |job| {
+        while (self.jobs.pop()) |job| {
             job.cleanup();
         }
         self.mutex.unlock();

@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const Utils = @import("utils.zig");
@@ -84,9 +85,9 @@ pub const PostProcessSystem = struct {
             self.pipeline = null;
         }
 
-        const vert_code = try std.fs.cwd().readFileAlloc(shader_registry.POST_PROCESS_VERT, allocator, @enumFromInt(1024 * 1024));
+        const vert_code = try fs.cwd().readFileAlloc(shader_registry.POST_PROCESS_VERT, allocator, 1024 * 1024);
         defer allocator.free(vert_code);
-        const frag_code = try std.fs.cwd().readFileAlloc(shader_registry.POST_PROCESS_FRAG, allocator, @enumFromInt(1024 * 1024));
+        const frag_code = try fs.cwd().readFileAlloc(shader_registry.POST_PROCESS_FRAG, allocator, 1024 * 1024);
         defer allocator.free(frag_code);
         const vert_module = try Utils.createShaderModule(vk, vert_code);
         defer c.vkDestroyShaderModule(vk, vert_module, null);

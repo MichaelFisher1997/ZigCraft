@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const data = @import("data.zig");
 const Settings = data.Settings;
 const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
@@ -45,10 +46,10 @@ pub const PresetConfig = struct {
 pub var graphics_presets: std.ArrayListUnmanaged(PresetConfig) = .empty;
 
 pub fn initPresets(allocator: std.mem.Allocator) !void {
-    graphics_presets = std.ArrayListUnmanaged(PresetConfig){};
+    graphics_presets = std.ArrayListUnmanaged(PresetConfig).empty;
 
     // Load from assets/config/presets.json
-    const content = std.fs.cwd().readFileAlloc("assets/config/presets.json", allocator, @enumFromInt(1024 * 1024)) catch |err| {
+    const content = fs.cwd().readFileAlloc("assets/config/presets.json", allocator, 1024 * 1024) catch |err| {
         log.log.warn("Failed to open presets.json: {}", .{err});
         return err;
     };

@@ -2,6 +2,7 @@
 //! Phase responsibilities are delegated to dedicated subsystems.
 
 const std = @import("std");
+const sync = @import("sync");
 const biome_mod = @import("biome.zig");
 const BiomeId = biome_mod.BiomeId;
 const region_pkg = @import("region.zig");
@@ -15,6 +16,7 @@ const CHUNK_SIZE_X = @import("../chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = @import("../chunk.zig").CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = @import("../chunk.zig").CHUNK_SIZE_Z;
 const BlockType = @import("../block.zig").BlockType;
+const block_registry = @import("../block_registry.zig");
 const lod_chunk = @import("../lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
@@ -36,6 +38,7 @@ const CoastalSurfaceType = terrain_shape_mod.CoastalSurfaceType;
 const BiomeSource = @import("biome.zig").BiomeSource;
 const BiomeDecorator = @import("biome_decorator.zig").BiomeDecorator;
 const LightingComputer = @import("lighting_computer.zig").LightingComputer;
+const Mutex = sync.Mutex;
 
 pub const OverworldGenerator = struct {
     pub const INFO = GeneratorInfo{
@@ -47,6 +50,7 @@ pub const OverworldGenerator = struct {
     classification_cache: ClassificationCache,
     cache_center_x: i32,
     cache_center_z: i32,
+    cache_mutex: Mutex,
     terrain_shape: TerrainShapeGenerator,
     biome_decorator: BiomeDecorator,
     basic_chunks_only: bool,
@@ -69,6 +73,7 @@ pub const OverworldGenerator = struct {
             .classification_cache = ClassificationCache.init(),
             .cache_center_x = 0,
             .cache_center_z = 0,
+            .cache_mutex = .{},
             .terrain_shape = TerrainShapeGenerator.initWithParams(seed, params.terrain_shape),
             .biome_decorator = BiomeDecorator.init(seed, decoration_provider),
             .basic_chunks_only = params.basic_chunks_only,
@@ -133,6 +138,9 @@ pub const OverworldGenerator = struct {
     }
 
     pub fn maybeRecenterCache(self: *OverworldGenerator, player_x: i32, player_z: i32) bool {
+        self.cache_mutex.lock();
+        defer self.cache_mutex.unlock();
+
         const dx = player_x - self.cache_center_x;
         const dz = player_z - self.cache_center_z;
         if (dx * dx + dz * dz > CACHE_RECENTER_THRESHOLD * CACHE_RECENTER_THRESHOLD) {
@@ -148,12 +156,18 @@ pub const OverworldGenerator = struct {
         chunk.generated = false;
         const world_x = chunk.getWorldX();
         const world_z = chunk.getWorldZ();
+        const cache_center = blk: {
+            self.cache_mutex.lock();
+            defer self.cache_mutex.unlock();
 
-        if (!self.classification_cache.contains(world_x, world_z)) {
-            self.classification_cache.recenter(world_x, world_z);
-            self.cache_center_x = world_x;
-            self.cache_center_z = world_z;
-        }
+            if (!self.classification_cache.contains(world_x, world_z)) {
+                self.classification_cache.recenter(world_x, world_z);
+                self.cache_center_x = world_x;
+                self.cache_center_z = world_z;
+            }
+
+            break :blk .{ .x = self.cache_center_x, .z = self.cache_center_z };
+        };
 
         const phase_data = self.allocator.create(terrain_shape_mod.ChunkPhaseData) catch return;
         defer self.allocator.destroy(phase_data);
@@ -161,11 +175,12 @@ pub const OverworldGenerator = struct {
             phase_data,
             world_x,
             world_z,
-            self.cache_center_x,
-            self.cache_center_z,
+            cache_center.x,
+            cache_center.z,
             stop_flag,
         )) return;
 
+        self.cache_mutex.lock();
         self.populateClassificationCache(
             world_x,
             world_z,
@@ -175,6 +190,7 @@ pub const OverworldGenerator = struct {
             &phase_data.is_ocean_water_flags,
             &phase_data.coastal_types,
         );
+        self.cache_mutex.unlock();
 
         var worm_map_opt = if (self.terrain_shape.params.disable_caves)
             null
@@ -247,10 +263,10 @@ pub const OverworldGenerator = struct {
 
                 data.heightmap[idx] = column.terrain_height;
 
-                if (self.classification_cache.get(wx_i, wz_i)) |cached| {
+                if (self.getCachedClassification(wx_i, wz_i)) |cached| {
                     data.biomes[idx] = cached.biome_id;
                     data.top_blocks[idx] = self.surfaceTypeToBlock(cached.surface_type);
-                    data.colors[idx] = biome_mod.getBiomeColor(cached.biome_id);
+                    data.colors[idx] = packBlockColor(data.top_blocks[idx]);
                     continue;
                 }
 
@@ -274,9 +290,17 @@ pub const OverworldGenerator = struct {
                 const biome_id = biome_mod.selectBiomeWithConstraintsAndRiver(climate, structural, column.river_mask);
                 data.biomes[idx] = biome_id;
                 data.top_blocks[idx] = self.getSurfaceBlock(biome_id, column.is_ocean);
-                data.colors[idx] = biome_mod.getBiomeColor(biome_id);
+                data.colors[idx] = packBlockColor(data.top_blocks[idx]);
             }
         }
+    }
+
+    fn packBlockColor(block_type: BlockType) u32 {
+        const color = block_registry.getBlockDefinition(block_type).default_color;
+        const r: u32 = @intFromFloat(@round(std.math.clamp(color[0], 0.0, 1.0) * 255.0));
+        const g: u32 = @intFromFloat(@round(std.math.clamp(color[1], 0.0, 1.0) * 255.0));
+        const b: u32 = @intFromFloat(@round(std.math.clamp(color[2], 0.0, 1.0) * 255.0));
+        return (r << 16) | (g << 8) | b;
     }
 
     fn surfaceTypeToBlock(_: *const OverworldGenerator, surface_type: SurfaceType) BlockType {
@@ -353,6 +377,13 @@ pub const OverworldGenerator = struct {
                 });
             }
         }
+    }
+
+    fn getCachedClassification(self: *const OverworldGenerator, world_x: i32, world_z: i32) ?gen_region.ClassCell {
+        const mutable_self: *OverworldGenerator = @constCast(self);
+        mutable_self.cache_mutex.lock();
+        defer mutable_self.cache_mutex.unlock();
+        return mutable_self.classification_cache.get(world_x, world_z);
     }
 
     fn deriveSurfaceTypeInternal(

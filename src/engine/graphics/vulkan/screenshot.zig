@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const log = @import("../../core/log.zig");
 const Utils = @import("utils.zig");
@@ -180,7 +181,7 @@ fn writePPM(data: [*]const u8, width: u32, height: u32, path: []const u8, format
         return;
     }
 
-    const file = std.fs.cwd().createFile(path, .{}) catch {
+    const file = fs.cwd().createFile(path, .{}) catch {
         log.log.err("screenshot: failed to create file '{s}'", .{path});
         return;
     };

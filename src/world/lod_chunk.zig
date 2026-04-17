@@ -423,7 +423,7 @@ pub const LODConfig = struct {
     }
     fn calculateMaskRadiusWrapper(ptr: *anyopaque) f32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
-        return @as(f32, @floatFromInt(self.radii[0] - 1)) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
+        return @as(f32, @floatFromInt(self.radii[0])) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
     }
     fn getQEMTargetWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -475,8 +475,8 @@ test "ILODConfig.calculateMaskRadius" {
         .radii = .{ 16, 40, 80, 160 },
     };
     const interface = config.interface();
-    try std.testing.expectEqual(@as(f32, 240.0), interface.calculateMaskRadius());
+    try std.testing.expectEqual(@as(f32, 256.0), interface.calculateMaskRadius());
 
     config.radii[0] = 32;
-    try std.testing.expectEqual(@as(f32, 496.0), interface.calculateMaskRadius());
+    try std.testing.expectEqual(@as(f32, 512.0), interface.calculateMaskRadius());
 }

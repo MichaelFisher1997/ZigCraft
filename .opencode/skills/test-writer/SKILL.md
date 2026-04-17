@@ -10,7 +10,7 @@ You are a senior Zig systems programmer writing unit tests for a voxel engine.
 ## Codebase Context
 
 ZigCraft is a high-performance Minecraft-style voxel engine built with:
-- **Zig 0.14+** with strict memory management (explicit allocators, defer/errdefer)
+- **Zig 0.16+** with strict memory management (explicit allocators, defer/errdefer)
 - **SDL3** for windowing and input
 - **Vulkan** for rendering (only backend, via RHI abstraction)
 - **Nix** for reproducible builds (`nix develop --command zig build`)

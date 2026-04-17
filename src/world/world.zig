@@ -18,6 +18,10 @@ const registry = @import("worldgen/registry.zig");
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RHI = rhi_mod.RHI;
 const WorldLOD = @import("world_lod.zig").WorldLOD(RHI);
+
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    return runtime_env.getenv(name);
+}
 const LODManager = @import("lod_manager.zig").LODManager;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
@@ -37,6 +41,7 @@ const WorkerPool = @import("../engine/core/job_system.zig").WorkerPool;
 const Job = @import("../engine/core/job_system.zig").Job;
 const RingBuffer = @import("../engine/core/ring_buffer.zig").RingBuffer;
 const log = @import("../engine/core/log.zig");
+const runtime_env = @import("../engine/core/runtime_env.zig");
 
 const LODConfig = @import("lod_chunk.zig").LODConfig;
 const ILODConfig = @import("lod_chunk.zig").ILODConfig;
@@ -148,18 +153,17 @@ pub const World = struct {
         const world = try allocator.create(World);
 
         const storage = ChunkStorage.init(allocator);
-        const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
-        const safe_mode = if (safe_mode_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        const safe_mode = runtime_env.safeModeEnabled();
+        const strict_safe_mode = runtime_env.strictSafeModeEnabled();
+        const safe_render_distance: i32 = render_distance;
+        const max_uploads: usize = if (strict_safe_mode)
+            @as(usize, 4)
+        else if (safe_mode)
+            @as(usize, 8)
         else
-            false;
-        const safe_render_distance: i32 = if (safe_mode) @min(render_distance, 8) else render_distance;
-        const max_uploads: usize = if (safe_mode) @as(usize, 4) else @as(usize, 32);
+            @as(usize, 32);
         if (safe_mode) {
             log.log.warn("ZIGCRAFT_SAFE_MODE enabled: limiting uploads to {} per frame", .{max_uploads});
-            if (safe_render_distance != render_distance) {
-                log.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance to {}", .{safe_render_distance});
-            }
         }
 
         world.* = .{
@@ -415,17 +419,20 @@ pub const World = struct {
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod, .all);
+        const allow_lod = self.lod_enabled and render_lod and !self.streamer.isStartupBusy(self.render_distance);
+        self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .all);
     }
 
     pub fn renderOpaque(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod, .terrain);
+        const allow_lod = self.lod_enabled and render_lod and !self.streamer.isStartupBusy(self.render_distance);
+        self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .terrain);
     }
 
     pub fn renderFluid(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        self.renderer.render(view_proj, camera_pos, self.render_distance, lod_mgr, self.lod_enabled and render_lod, .fluid);
+        const allow_lod = self.lod_enabled and render_lod and !self.streamer.isStartupBusy(self.render_distance);
+        self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .fluid);
     }
 
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
@@ -486,16 +493,22 @@ pub const World = struct {
     }
 
     pub fn getStats(self: *World) WorldStatsData {
-        const total_verts = self.storage.totalVertexCount();
         const streamer_stats = self.streamer.getStats();
 
         return .{
             .chunks_loaded = self.storage.count(),
-            .total_vertices = total_verts,
+            // Runtime callers only need queue and chunk counts here. Recomputing the
+            // full loaded-vertex sum every frame walks every chunk mesh under lock and
+            // can stall the main thread while the world is streaming.
+            .total_vertices = self.renderer.last_render_stats.vertices_rendered,
             .gen_queue = streamer_stats.gen_queue,
             .mesh_queue = streamer_stats.mesh_queue,
             .upload_queue = streamer_stats.upload_queue,
         };
+    }
+
+    pub fn isStartupBusy(self: *World) bool {
+        return self.streamer.isStartupBusy(self.render_distance);
     }
 
     pub fn getWorldStateData(self: *World) WorldStateData {

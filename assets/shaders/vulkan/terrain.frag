@@ -481,7 +481,7 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
 
 void main() {
     vec3 color;
-    const float LOD_TRANSITION_WIDTH = 24.0;
+    const float LOD_TRANSITION_WIDTH = 8.0;
     const float AO_FADE_DISTANCE = 128.0;
     float viewDistance = length(vFragPosWorld);
 

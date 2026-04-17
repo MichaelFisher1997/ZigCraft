@@ -15,7 +15,7 @@
 
   # ⚡ ZigCraft ⚡
 
-  [![Zig](https://img.shields.io/badge/Zig-0.14.0--dev-orange.svg?logo=zig)](https://ziglang.org/)
+  [![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg?logo=zig)](https://ziglang.org/)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![Build Status](https://github.com/OpenStaticFish/ZigCraft/actions/workflows/build.yml/badge.svg)](https://github.com/OpenStaticFish/ZigCraft/actions)
 

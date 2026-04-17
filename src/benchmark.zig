@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 
 const Player = @import("game/player.zig").Player;
 const Vec3 = @import("engine/math/vec3.zig").Vec3;
@@ -130,11 +131,11 @@ pub const BenchmarkRunner = struct {
         const json = try results_json(results, self.allocator);
         defer self.allocator.free(json);
 
-        if (std.fs.path.dirname(self.output_path)) |dir| {
-            try std.fs.cwd().makePath(dir);
+        if (fs.path.dirname(self.output_path)) |dir| {
+            try fs.cwd().makePath(dir);
         }
 
-        var file = try std.fs.cwd().createFile(self.output_path, .{ .truncate = true });
+        var file = try fs.cwd().createFile(self.output_path, .{ .truncate = true });
         defer file.close();
         try file.writeAll(json);
     }

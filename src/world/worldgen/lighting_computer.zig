@@ -38,7 +38,7 @@ pub const LightingComputer = struct {
     }
 
     pub fn computeBlockLight(chunk: *Chunk, allocator: std.mem.Allocator) !void {
-        var queue = std.ArrayListUnmanaged(LightNode){};
+        var queue = std.ArrayListUnmanaged(LightNode).empty;
         defer queue.deinit(allocator);
         var local_z: u32 = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {

@@ -4,11 +4,17 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const fs = @import("fs");
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
 const GameAction = input_mapper_pkg.GameAction;
 const ActionBinding = input_mapper_pkg.ActionBinding;
 const log = @import("../engine/core/log.zig");
+
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return std.mem.span(value);
+}
 
 pub const InputSettings = struct {
     allocator: std.mem.Allocator,
@@ -56,7 +62,7 @@ pub const InputSettings = struct {
         };
         defer allocator.free(path);
 
-        const data = std.fs.cwd().readFileAlloc(path, allocator, .limited(MAX_SETTINGS_SIZE)) catch |err| {
+        const data = fs.cwd().readFileAlloc(path, allocator, MAX_SETTINGS_SIZE) catch |err| {
             if (err != error.FileNotFound) {
                 log.log.warn("Failed to read settings file at {s}: {}. Using default bindings.", .{ path, err });
             }
@@ -119,8 +125,8 @@ pub const InputSettings = struct {
         defer self.allocator.free(path);
 
         // Ensure directory exists
-        if (std.fs.path.dirname(path)) |dir_path| {
-            std.fs.makeDirAbsolute(dir_path) catch |err| switch (err) {
+        if (fs.path.dirname(path)) |dir_path| {
+            fs.createDirAbsolute(dir_path, fs.Permissions.default_dir) catch |err| switch (err) {
                 error.PathAlreadyExists => {},
                 else => return err,
             };
@@ -131,7 +137,7 @@ pub const InputSettings = struct {
         defer self.allocator.free(json);
 
         // Write to file
-        const file = try std.fs.createFileAbsolute(path, .{});
+        const file = try fs.createFileAbsolute(path, .{});
         defer file.close();
 
         try file.writeAll(json);
@@ -154,8 +160,8 @@ pub const InputSettings = struct {
     /// Get the platform-specific settings file path
     fn getSettingsPath(allocator: std.mem.Allocator) ![]u8 {
         if (builtin.os.tag == .linux or builtin.os.tag == .freebsd or builtin.os.tag == .openbsd) {
-            const home = std.posix.getenv("HOME") orelse return error.NoHomeDir;
-            const xdg_data = std.posix.getenv("XDG_DATA_HOME");
+            const home = getenv("HOME") orelse return error.NoHomeDir;
+            const xdg_data = getenv("XDG_DATA_HOME");
 
             if (xdg_data) |data_dir| {
                 return std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ data_dir, APP_NAME, SETTINGS_FILENAME });
@@ -163,10 +169,10 @@ pub const InputSettings = struct {
                 return std.fmt.allocPrint(allocator, "{s}/.local/share/{s}/{s}", .{ home, APP_NAME, SETTINGS_FILENAME });
             }
         } else if (builtin.os.tag == .macos) {
-            const home = std.posix.getenv("HOME") orelse return error.NoHomeDir;
+            const home = getenv("HOME") orelse return error.NoHomeDir;
             return std.fmt.allocPrint(allocator, "{s}/Library/Application Support/{s}/{s}", .{ home, APP_NAME, SETTINGS_FILENAME });
         } else if (builtin.os.tag == .windows) {
-            const appdata = std.posix.getenv("APPDATA") orelse return error.NoAppDataDir;
+            const appdata = getenv("APPDATA") orelse return error.NoAppDataDir;
             return std.fmt.allocPrint(allocator, "{s}\\{s}\\{s}", .{ appdata, APP_NAME, SETTINGS_FILENAME });
         } else {
             // Fallback for other platforms (e.g. Android)

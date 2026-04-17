@@ -19,6 +19,7 @@ const DebugFrustumOverlay = DebugFrustum.DebugFrustum;
 const FRUSTUM_VERTEX_COUNT = DebugFrustum.FRUSTUM_VERTEX_COUNT;
 const ChunkInspectorOverlay = @import("../../engine/ui/chunk_inspector_overlay.zig").ChunkInspectorOverlay;
 const Font = @import("../../engine/ui/font.zig");
+const Color = @import("../../engine/ui/ui_system.zig").Color;
 const WorldStats = @import("../../engine/ui/timing_overlay.zig").WorldStats;
 const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDisplay;
 const log = @import("../../engine/core/log.zig");
@@ -282,20 +283,23 @@ pub const WorldScreen = struct {
         };
 
         const safe_mode = render_system.getSafeMode();
-        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode;
-        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.getDisableClouds() and !safe_mode;
+        const startup_busy = self.session.world.isStartupBusy();
+        const startup_loading = build_options.auto_world.len > 0 and startup_busy;
+        const startup_light_render = startup_busy and !safe_mode;
+        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode and !startup_light_render;
+        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and !render_system.getDisableClouds() and !safe_mode and !startup_light_render;
 
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
-            ctx.settings.lpv_enabled and !safe_mode,
+            ctx.settings.lpv_enabled and !safe_mode and !startup_light_render,
             ctx.settings.lpv_intensity,
             ctx.settings.lpv_cell_size,
             lpv_quality.propagation_iterations,
             lpv_quality.grid_size,
             lpv_quality.update_interval_frames,
         );
-        if (!safe_mode) {
+        if (!safe_mode and !startup_light_render) {
             rhi.timing().beginPassTiming("LPVPass");
             try lpv_system.update(self.session.world, camera.position, ctx.settings.debug_lpv_overlay_active);
             rhi.timing().endPassTiming("LPVPass");
@@ -330,12 +334,12 @@ pub const WorldScreen = struct {
                 .pbr_quality = ctx.settings.pbr_quality,
                 .exposure = ctx.settings.exposure,
                 .saturation = ctx.settings.saturation,
-                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode,
+                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render,
                 .volumetric_density = ctx.settings.volumetric_density,
                 .volumetric_steps = ctx.settings.volumetric_steps,
                 .volumetric_scattering = ctx.settings.volumetric_scattering,
                 .ssao_enabled = ssao_enabled,
-                .lpv_enabled = ctx.settings.lpv_enabled,
+                .lpv_enabled = ctx.settings.lpv_enabled and !startup_light_render,
                 .lpv_intensity = ctx.settings.lpv_intensity,
                 .lpv_cell_size = lpv_system.getCellSize(),
                 .lpv_grid_size = lpv_system.getGridSize(),
@@ -344,7 +348,14 @@ pub const WorldScreen = struct {
         };
 
         const skip_world_render = render_system.getSafeRenderMode();
-        if (!skip_world_render) {
+        if (!skip_world_render and !startup_loading) {
+            const boosted_horizon = self.session.atmosphere.horizon_color.scale(1.5);
+            const clear_color = Vec3.init(
+                std.math.clamp(boosted_horizon.x, 0.0, 1.0),
+                std.math.clamp(boosted_horizon.y, 0.0, 1.0),
+                std.math.clamp(boosted_horizon.z, 0.0, 1.0),
+            );
+            rhi.renderContext().setClearColor(clear_color);
             try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
@@ -377,12 +388,12 @@ pub const WorldScreen = struct {
                 .env_map_handle = env_map_handle,
                 .shadow = cloud_params.shadow,
                 .ssao_enabled = ssao_enabled,
-                .disable_shadow_draw = render_system.getDisableShadowDraw(),
+                .disable_shadow_draw = render_system.getDisableShadowDraw() or startup_light_render,
                 .disable_gpass_draw = render_system.getDisableGPassDraw(),
-                .disable_ssao = render_system.getDisableSSAO(),
-                .disable_clouds = false,
+                .disable_ssao = render_system.getDisableSSAO() or startup_light_render,
+                .disable_clouds = startup_light_render,
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
-                .bloom_enabled = ctx.settings.bloom_enabled,
+                .bloom_enabled = ctx.settings.bloom_enabled and !startup_light_render,
                 .resolution_scale = resolution_scale,
                 .overlay_renderer = renderOverlay,
                 .overlay_ctx = self,
@@ -395,7 +406,6 @@ pub const WorldScreen = struct {
             };
             try render_system.getRenderGraph().execute(render_ctx);
         }
-
         if (taa_enabled) {
             camera.advanceJitter();
         } else {
@@ -412,6 +422,16 @@ pub const WorldScreen = struct {
         const hud_clicked = if (self.debug_menu.enabled) false else mouse_clicked;
 
         try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
+
+        if (startup_loading) {
+            const msg = "LOADING TERRAIN...";
+            const box_w = 240.0;
+            const box_h = 34.0;
+            const box_x = screen_w * 0.5 - box_w * 0.5;
+            const box_y = screen_h * 0.5 - box_h * 0.5;
+            ui.drawRect(.{ .x = box_x, .y = box_y, .width = box_w, .height = box_h }, Color.rgba(0, 0, 0, 0.55));
+            Font.drawText(ui, msg, box_x + 18.0, box_y + 8.0, 2.0, Color.white);
+        }
 
         if (ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag) {
             const shadow_res = ctx.settings.getShadowResolution();
