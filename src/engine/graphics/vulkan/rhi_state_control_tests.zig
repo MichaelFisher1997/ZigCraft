@@ -21,6 +21,7 @@ const MockOptions = struct {
 const MockDraw = struct {
     descriptors_updated: bool = true,
     terrain_pipeline_bound: bool = true,
+    bound_texture: u32 = 0,
 };
 
 const MockFrames = struct {
@@ -28,12 +29,24 @@ const MockFrames = struct {
     frame_in_progress: bool = false,
     dry_run: bool = true,
     command_buffers: [3]c.VkCommandBuffer = .{ null, null, null },
+
+    pub fn abortFrame(_: *MockFrames) void {
+        // No-op for testing
+    }
 };
 
 const MockRuntime = struct {
     gpu_fault_detected: bool = false,
     framebuffer_resized: bool = false,
     pipeline_rebuild_needed: bool = false,
+    main_pass_active: bool = false,
+    g_pass_active: bool = false,
+    ssao_pass_active: bool = false,
+    recovering: bool = false,
+};
+
+const MockShadowSystem = struct {
+    pass_active: bool = false,
 };
 
 const MockSwapchain = struct {
@@ -70,6 +83,7 @@ const MockSimpleContext = struct {
     runtime: MockRuntime = .{},
     swapchain: MockSwapchain = .{},
     vulkan_device: MockVulkanDevice = .{},
+    shadow_system: MockShadowSystem = .{},
     mutex: sync.Mutex = .{},
     window: ?*c.SDL_Window = null,
 };
@@ -338,3 +352,13 @@ test "rhi_state_control.setVSync no-op when unchanged" {
 
 // Note: setVSync when changed cannot be tested without a real GPU
 // because it calls vkGetPhysicalDeviceSurfacePresentModesKHR
+
+// ============================================================================
+// Recovery State Machine Tests
+// ============================================================================
+// Note: recover() cannot be tested without a real GPU because it calls
+// vkDeviceWaitIdle and frame_orchestration.recreateSwapchainInternal which
+// require valid Vulkan device and swapchain objects. The mock structures
+// (MockFrames.abortFrame, MockDraw.bound_texture, MockRuntime pass flags,
+// MockShadowSystem.pass_active) are in place to support future testing
+// when a full mock context is available.
