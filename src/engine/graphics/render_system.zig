@@ -300,7 +300,6 @@ pub const RenderSystem = struct {
             } else {
                 log.log.warn("ZIGCRAFT_DISABLE_WATER enabled", .{});
             }
-            try self.render_graph.addPass(self.cloud_pass.pass());
             try self.render_graph.addPass(self.entity_pass.pass());
             try self.render_graph.addPass(self.taa_pass.pass());
             try self.render_graph.addPass(self.bloom_pass.pass());

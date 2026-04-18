@@ -374,8 +374,7 @@ pub const CloudPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
         if (ctx.disable_clouds) return;
-        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, view_proj) catch |err| {
+        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, ctx.cloud_params.view_proj) catch |err| {
             if (err != error.ResourceNotReady and
                 err != error.CloudPipelineNotReady and
                 err != error.CloudPipelineLayoutNotReady and
