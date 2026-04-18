@@ -264,7 +264,8 @@ pub const WorldStreamer = struct {
     pub fn setRenderDistance(self: *WorldStreamer, distance: i32) void {
         if (self.render_distance != distance) {
             self.render_distance = distance;
-            self.startup_stream_radius = @min(distance, STARTUP_RADIUS_INITIAL);
+            self.startup_stream_radius = if (self.lod_manager != null) distance else @min(distance, STARTUP_RADIUS_INITIAL);
+            self.effective_render_dist = if (self.lod_manager != null) distance else 0;
             self.startup_mesh_finalized = false;
             // Force chunk rescan on next update
             self.last_pc = .{ .x = 9999, .z = 9999 };
@@ -341,6 +342,10 @@ pub const WorldStreamer = struct {
 
     pub fn setLODManager(self: *WorldStreamer, lod_manager: ?*LODManager) void {
         self.lod_manager = lod_manager;
+        if (lod_manager != null) {
+            self.startup_stream_radius = self.render_distance;
+            self.effective_render_dist = self.render_distance;
+        }
     }
 
     pub fn setSaveManager(self: *WorldStreamer, sm: ?*SaveManager) void {
@@ -486,8 +491,13 @@ pub const WorldStreamer = struct {
         }
 
         const target_render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
-        self.updateStartupRadius(pc.chunk_x, pc.chunk_z, target_render_dist);
-        const render_dist = if (self.startup_stream_radius > 0) self.startup_stream_radius else target_render_dist;
+        const render_dist = if (self.lod_manager != null) blk: {
+            self.startup_stream_radius = target_render_dist;
+            break :blk target_render_dist;
+        } else blk: {
+            self.updateStartupRadius(pc.chunk_x, pc.chunk_z, target_render_dist);
+            break :blk if (self.startup_stream_radius > 0) self.startup_stream_radius else target_render_dist;
+        };
         self.effective_render_dist = render_dist;
 
         if (moved) {

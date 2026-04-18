@@ -258,14 +258,19 @@ pub const OverworldGenerator = struct {
                 const wz_i = world_z + @as(i32, @intCast(gz * block_step));
                 const wx: f32 = @floatFromInt(wx_i);
                 const wz: f32 = @floatFromInt(wz_i);
-                const reduction: u8 = @intCast(@intFromEnum(lod_level));
-                const column = self.terrain_shape.sampleColumnData(wx, wz, reduction);
-
-                data.heightmap[idx] = column.terrain_height;
+                const column = self.terrain_shape.sampleColumnData(wx, wz, 0);
+                const render_water_surface = column.terrain_height_i < sea_level and (column.is_ocean or self.isInlandWater(wx, wz, column.terrain_height_i));
+                data.heightmap[idx] = if (render_water_surface)
+                    @as(f32, @floatFromInt(sea_level))
+                else
+                    column.terrain_height;
 
                 if (self.getCachedClassification(wx_i, wz_i)) |cached| {
                     data.biomes[idx] = cached.biome_id;
-                    data.top_blocks[idx] = self.surfaceTypeToBlock(cached.surface_type);
+                    data.top_blocks[idx] = if (render_water_surface)
+                        .water
+                    else
+                        self.surfaceTypeToBlock(cached.surface_type);
                     data.colors[idx] = packBlockColor(data.top_blocks[idx]);
                     continue;
                 }
@@ -289,7 +294,7 @@ pub const OverworldGenerator = struct {
 
                 const biome_id = biome_mod.selectBiomeWithConstraintsAndRiver(climate, structural, column.river_mask);
                 data.biomes[idx] = biome_id;
-                data.top_blocks[idx] = self.getSurfaceBlock(biome_id, column.is_ocean);
+                data.top_blocks[idx] = self.getSurfaceBlock(biome_id, column.terrain_height_i, sea_level, render_water_surface);
                 data.colors[idx] = packBlockColor(data.top_blocks[idx]);
             }
         }
@@ -309,16 +314,14 @@ pub const OverworldGenerator = struct {
             .sand => .sand,
             .rock => .gravel,
             .snow => .snow_block,
-            // LOD terrain has no separate fluid pass, so cached water surfaces must
-            // resolve to the seabed material rather than an opaque water sheet.
-            .water_deep, .water_shallow => .sand,
+            .water_deep, .water_shallow => .water,
             .dirt => .dirt,
             .stone => .stone,
         };
     }
 
-    fn getSurfaceBlock(_: *const OverworldGenerator, biome_id: BiomeId, is_ocean: bool) BlockType {
-        if (is_ocean) return .sand;
+    fn getSurfaceBlock(_: *const OverworldGenerator, biome_id: BiomeId, height: i32, sea_level: i32, render_water_surface: bool) BlockType {
+        if (render_water_surface or height < sea_level) return .water;
         return switch (biome_id) {
             .desert, .badlands => .sand,
             .snow_tundra, .snowy_mountains => .snow_block,
@@ -468,6 +471,6 @@ pub const OverworldGenerator = struct {
 };
 
 test "LOD cached water surfaces resolve to seabed block" {
-    try std.testing.expectEqual(BlockType.sand, OverworldGenerator.surfaceTypeToBlock(undefined, .water_shallow));
-    try std.testing.expectEqual(BlockType.sand, OverworldGenerator.surfaceTypeToBlock(undefined, .water_deep));
+    try std.testing.expectEqual(BlockType.water, OverworldGenerator.surfaceTypeToBlock(undefined, .water_shallow));
+    try std.testing.expectEqual(BlockType.water, OverworldGenerator.surfaceTypeToBlock(undefined, .water_deep));
 }

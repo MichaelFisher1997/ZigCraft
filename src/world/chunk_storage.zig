@@ -210,7 +210,7 @@ pub const ChunkStorage = struct {
         defer self.chunks_mutex.unlockShared();
 
         if (self.chunks.get(.{ .x = cx, .z = cz })) |data| {
-            return data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null;
+            return data.chunk.state == .renderable and data.mesh.ready;
         }
         return false;
     }
