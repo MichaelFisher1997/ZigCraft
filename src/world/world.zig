@@ -419,19 +419,19 @@ pub const World = struct {
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        const allow_lod = self.lod_enabled and render_lod and !self.streamer.isStartupBusy(self.render_distance);
+        const allow_lod = self.lod_enabled and render_lod;
         self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .all);
     }
 
     pub fn renderOpaque(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        const allow_lod = self.lod_enabled and render_lod and !self.streamer.isStartupBusy(self.render_distance);
+        const allow_lod = self.lod_enabled and render_lod;
         self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .terrain);
     }
 
     pub fn renderFluid(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        const allow_lod = self.lod_enabled and render_lod and !self.streamer.isStartupBusy(self.render_distance);
+        const allow_lod = self.lod_enabled and render_lod;
         self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .fluid);
     }
 
