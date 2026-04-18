@@ -134,7 +134,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             const frustum = Frustum.fromViewProj(view_proj);
             // Keep LOD terrain slightly below full chunks so the handoff zone does not
             // z-fight when both representations overlap during the transition.
-            const lod_y_offset: f32 = -0.5;
+            const lod_y_offset: f32 = -1.0;
 
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
