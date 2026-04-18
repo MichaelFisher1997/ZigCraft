@@ -80,8 +80,8 @@ pub const ResourceManager = struct {
         };
 
         for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
-            self.buffer_deletion_queue[i] = .empty;
-            self.image_deletion_queue[i] = .empty;
+            self.buffer_deletion_queue[i] = .{};
+            self.image_deletion_queue[i] = .{};
         }
 
         self.staging_ring = try StagingRing.init(vulkan_device, transfer_queue.DEFAULT_STAGING_CAPACITY);

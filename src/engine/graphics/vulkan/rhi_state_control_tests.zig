@@ -1,5 +1,4 @@
 const std = @import("std");
-const sync = @import("sync");
 const testing = std.testing;
 const c = @import("../../../c.zig").c;
 const rhi_state_control = @import("rhi_state_control.zig");
@@ -83,8 +82,9 @@ const MockSimpleContext = struct {
     runtime: MockRuntime = .{},
     swapchain: MockSwapchain = .{},
     vulkan_device: MockVulkanDevice = .{},
+<<<<<<< HEAD
+    mutex: std.Thread.Mutex = .{},
     shadow_system: MockShadowSystem = .{},
-    mutex: sync.Mutex = .{},
     window: ?*c.SDL_Window = null,
 };
 

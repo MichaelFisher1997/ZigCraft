@@ -1,5 +1,4 @@
 const std = @import("std");
-const sync = @import("sync");
 const log = @import("../engine/core/log.zig");
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const ResourceManager = rhi_mod.ResourceManager;
@@ -28,13 +27,13 @@ pub const GlobalVertexAllocator = struct {
 
     free_blocks: std.ArrayListUnmanaged(FreeBlock),
     deferred_frees: [rhi_mod.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(VertexAllocation),
-    mutex: sync.Mutex,
+    mutex: std.Thread.Mutex,
 
     pub fn init(allocator: std.mem.Allocator, resources: ResourceManager, query: IDeviceQuery, capacity_mb: usize) !GlobalVertexAllocator {
         const capacity = capacity_mb * 1024 * 1024;
         const buffer = try resources.createBuffer(capacity, .vertex);
 
-        var free_blocks = std.ArrayListUnmanaged(FreeBlock).empty;
+        var free_blocks = std.ArrayListUnmanaged(FreeBlock){};
         try free_blocks.append(allocator, .{ .offset = 0, .size = capacity });
 
         log.log.info("Initialized GlobalVertexAllocator with {}MB, buffer handle={}", .{ capacity_mb, buffer });

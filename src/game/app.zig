@@ -1,6 +1,5 @@
 const std = @import("std");
 const build_options = @import("build_options");
-const c = @import("../c.zig").c;
 
 const log = @import("../engine/core/log.zig");
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
@@ -26,19 +25,8 @@ const EngineContext = screen_pkg.EngineContext;
 const HomeScreen = @import("screens/home.zig").HomeScreen;
 const WorldScreen = @import("screens/world.zig").WorldScreen;
 const RenderSettingsAdapter = @import("../engine/graphics/render_settings.zig").RenderSettingsAdapter;
-const runtime_env = @import("../engine/core/runtime_env.zig");
-
-fn getenv(name: [:0]const u8) ?[]const u8 {
-    const value = std.c.getenv(name) orelse return null;
-    return std.mem.span(value);
-}
 
 pub const App = struct {
-    const PendingWorldLaunch = struct {
-        seed: u64,
-        generator_index: usize,
-    };
-
     allocator: std.mem.Allocator,
     window_manager: WindowManager,
     render_system: *RenderSystem,
@@ -54,9 +42,6 @@ pub const App = struct {
     render_settings_adapter: RenderSettingsAdapter,
     resize_debounce_frames: u32 = 0,
     benchmark_runner: ?*BenchmarkRunner = null,
-    pending_world_launch: ?PendingWorldLaunch = null,
-    startup_world_delay_frames: u32 = 3,
-    direct_launch_resize_guard_frames: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -84,19 +69,19 @@ pub const App = struct {
         const render_system = try RenderSystem.init(allocator, wm.window, &settings_manager.settings);
         errdefer render_system.deinit();
 
-        const native_extent = render_system.getRHI().renderContext().getNativeSwapchainExtent();
-        if (native_extent[0] > 0 and native_extent[1] > 0) {
-            input.window_width = native_extent[0];
-            input.window_height = native_extent[1];
+        if (build_options.skip_present) {
+            const headless_extent = render_system.getRHI().renderContext().getNativeSwapchainExtent();
+            input.window_width = headless_extent[0];
+            input.window_height = headless_extent[1];
         }
 
-        const safe_render_env = getenv("ZIGCRAFT_SAFE_RENDER");
+        const safe_render_env = std.posix.getenv("ZIGCRAFT_SAFE_RENDER");
         const safe_render_mode = if (safe_render_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
 
-        const skip_world_update_env = getenv("ZIGCRAFT_SKIP_WORLD_UPDATE");
+        const skip_world_update_env = std.posix.getenv("ZIGCRAFT_SKIP_WORLD_UPDATE");
         const skip_world_update = safe_render_mode or if (skip_world_update_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
@@ -143,9 +128,6 @@ pub const App = struct {
             .render_settings_adapter = RenderSettingsAdapter.init(render_system.getRHI()),
             .resize_debounce_frames = 0,
             .benchmark_runner = benchmark_runner,
-            .pending_world_launch = null,
-            .startup_world_delay_frames = 3,
-            .direct_launch_resize_guard_frames = 0,
         };
         errdefer app.screen_manager.deinit();
 
@@ -159,17 +141,17 @@ pub const App = struct {
             const home_screen = try HomeScreen.init(allocator, engine_ctx);
             app.screen_manager.setScreen(home_screen.screen());
         } else if (build_options.benchmark) {
-            log.log.info("BENCHMARK MODE: Deferring world launch until swapchain settles", .{});
-            app.pending_world_launch = .{ .seed = 12345, .generator_index = 0 };
-            if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
+            log.log.info("BENCHMARK MODE: Loading world and collecting metrics", .{});
+            const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
+            app.screen_manager.setScreen(world_screen.screen());
         } else if (resolveAutoWorldGenerator()) |generator_index| {
-            log.log.info("AUTO WORLD MODE: Deferring '{s}' world launch until swapchain settles", .{build_options.auto_world});
-            app.pending_world_launch = .{ .seed = 12345, .generator_index = generator_index };
-            if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
+            log.log.info("AUTO WORLD MODE: Loading '{s}' generator", .{build_options.auto_world});
+            const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, generator_index);
+            app.screen_manager.setScreen(world_screen.screen());
         } else if (build_options.smoke_test) {
-            log.log.info("SMOKE TEST MODE: Deferring world launch until swapchain settles", .{});
-            app.pending_world_launch = .{ .seed = 12345, .generator_index = 0 };
-            if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
+            log.log.info("SMOKE TEST MODE: Bypassing menu and loading world", .{});
+            const world_screen = try WorldScreen.init(allocator, engine_ctx, 12345, 0);
+            app.screen_manager.setScreen(world_screen.screen());
         } else {
             const home_screen = try HomeScreen.init(allocator, engine_ctx);
             app.screen_manager.setScreen(home_screen.screen());
@@ -229,31 +211,6 @@ pub const App = struct {
         return top.getWorldStats();
     }
 
-    fn maybeLaunchPendingWorld(self: *App, swapchain_extent: [2]u32) !void {
-        const pending = self.pending_world_launch orelse return;
-        if (self.screen_manager.stack.items.len != 0) return;
-
-        const window_width = self.input.interface().getWindowWidth();
-        const window_height = self.input.interface().getWindowHeight();
-        if (window_width == 0 or window_height == 0) return;
-        if (self.resize_debounce_frames > 0) return;
-        if (swapchain_extent[0] == 0 or swapchain_extent[1] == 0) return;
-        if (window_width != swapchain_extent[0] or window_height != swapchain_extent[1]) return;
-
-        if (self.startup_world_delay_frames > 0) {
-            self.startup_world_delay_frames -= 1;
-            return;
-        }
-
-        log.log.info("PENDING WORLD LAUNCH: creating world after swapchain settled at {}x{}", .{ swapchain_extent[0], swapchain_extent[1] });
-        const world_screen = try WorldScreen.init(self.allocator, self.engineContext(), pending.seed, pending.generator_index);
-        self.screen_manager.setScreen(world_screen.screen());
-        self.pending_world_launch = null;
-        self.direct_launch_resize_guard_frames = 0;
-        self.resize_debounce_frames = 0;
-        self.render_system.getRHI().renderContext().requestSwapchainRecreate();
-    }
-
     pub fn runSingleFrame(self: *App) !void {
         self.time.update();
         if (!build_options.benchmark) {
@@ -263,16 +220,10 @@ pub const App = struct {
         self.input.beginFrame();
         self.input.pollEvents();
 
-        const swapchain_extent = self.render_system.getRHI().renderContext().getNativeSwapchainExtent();
-        if (self.direct_launch_resize_guard_frames > 0 and swapchain_extent[0] > 0 and swapchain_extent[1] > 0) {
-            self.direct_launch_resize_guard_frames -= 1;
-            self.input.window_width = swapchain_extent[0];
-            self.input.window_height = swapchain_extent[1];
-        }
-
         const window_width = self.input.interface().getWindowWidth();
         const window_height = self.input.interface().getWindowHeight();
-        if (!build_options.skip_present and self.direct_launch_resize_guard_frames == 0) {
+        const swapchain_extent = self.render_system.getRHI().renderContext().getNativeSwapchainExtent();
+        if (!build_options.skip_present) {
             if (self.resize_debounce_frames > 0) {
                 self.resize_debounce_frames -= 1;
             } else if (window_width > 0 and window_height > 0 and (window_width != swapchain_extent[0] or window_height != swapchain_extent[1])) {
@@ -282,8 +233,6 @@ pub const App = struct {
                 self.resize_debounce_frames = 0;
             }
         }
-
-        try self.maybeLaunchPendingWorld(swapchain_extent);
 
         self.ui_manager.handleTimingToggle(self.input.interface(), self.input_mapper.interface(), &self.time, self.render_system.getRHI());
 
@@ -355,7 +304,7 @@ pub const App = struct {
         if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
             var target_frames: u32 = 120;
-            if (getenv("ZIGCRAFT_SMOKE_FRAMES")) |val| {
+            if (std.posix.getenv("ZIGCRAFT_SMOKE_FRAMES")) |val| {
                 if (std.fmt.parseInt(u32, val, 10)) |parsed| {
                     target_frames = parsed;
                 } else |_| {}

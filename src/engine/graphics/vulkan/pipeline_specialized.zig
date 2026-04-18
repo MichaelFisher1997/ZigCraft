@@ -1,5 +1,4 @@
 const std = @import("std");
-const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const Utils = @import("utils.zig");
@@ -10,7 +9,7 @@ fn loadShaderModule(
     vk_device: c.VkDevice,
     path: []const u8,
 ) !c.VkShaderModule {
-    const code = try fs.cwd().readFileAlloc(path, allocator, 1024 * 1024);
+    const code = try std.fs.cwd().readFileAlloc(path, allocator, @enumFromInt(1024 * 1024));
     defer allocator.free(code);
     return try Utils.createShaderModule(vk_device, code);
 }

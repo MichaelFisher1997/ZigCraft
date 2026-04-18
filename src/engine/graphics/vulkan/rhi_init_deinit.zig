@@ -15,7 +15,6 @@ const Utils = @import("utils.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
 const setup = @import("rhi_resource_setup.zig");
 const rhi_timing = @import("rhi_timing.zig");
-const runtime_env = @import("../../core/runtime_env.zig");
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 const TOTAL_QUERY_COUNT = rhi_timing.QUERY_COUNT_PER_FRAME * MAX_FRAMES_IN_FLIGHT;
@@ -68,7 +67,11 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.options.vsync_enabled = true;
     ctx.options.present_mode = c.VK_PRESENT_MODE_FIFO_KHR;
 
-    ctx.options.safe_mode = runtime_env.safeModeEnabled();
+    const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
+    ctx.options.safe_mode = if (safe_mode_env) |val|
+        !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+    else
+        false;
     if (ctx.options.safe_mode) {
         log.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
     }

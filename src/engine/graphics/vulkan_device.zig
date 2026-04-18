@@ -17,7 +17,6 @@
 //! to the main thread by engine convention.
 
 const std = @import("std");
-const sync = @import("sync");
 const c = @import("../../c.zig").c;
 const rhi = @import("rhi.zig");
 const log = @import("../core/log.zig");
@@ -54,7 +53,7 @@ pub const VulkanDevice = struct {
     transfer_family: u32 = 0,
     has_dedicated_transfer_queue: bool = false,
     supports_device_fault: bool = false,
-    mutex: sync.Mutex = .{},
+    mutex: std.Thread.Mutex = .{},
 
     debug_messenger: c.VkDebugUtilsMessengerEXT = null,
     validation_error_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),

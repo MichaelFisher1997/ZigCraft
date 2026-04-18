@@ -14,8 +14,8 @@ pub const SoundManager = struct {
     pub fn init(allocator: std.mem.Allocator) SoundManager {
         return .{
             .allocator = allocator,
-            .sounds = .empty,
-            .sound_names = .empty,
+            .sounds = .{},
+            .sound_names = .{},
         };
     }
 

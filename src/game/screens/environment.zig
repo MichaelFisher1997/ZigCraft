@@ -1,5 +1,4 @@
 const std = @import("std");
-const fs = @import("fs");
 const UISystem = @import("../../engine/ui/ui_system.zig").UISystem;
 const Color = @import("../../engine/ui/ui_system.zig").Color;
 const Font = @import("../../engine/ui/font.zig");
@@ -101,7 +100,7 @@ pub const EnvironmentScreen = struct {
         sy += btn_height + 10.0 * ui_scale;
 
         // Scan for files
-        var dir = fs.cwd().openDir(".", .{ .iterate = true }) catch return;
+        var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch return;
         defer dir.close();
 
         var iterator = dir.iterate();

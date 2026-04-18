@@ -7,8 +7,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = @import("../../engine/core/log.zig");
-const fs = @import("fs");
-const sync = @import("sync");
 const timestampMs = @import("../../engine/core/time.zig").timestampMs;
 const Chunk = @import("../chunk.zig").Chunk;
 const ChunkKey = @import("../chunk_storage.zig").ChunkKey;
@@ -51,28 +49,28 @@ const RegionCacheEntry = struct {
 
 pub const SaveManager = struct {
     allocator: Allocator,
-    save_dir: fs.Dir,
+    save_dir: std.fs.Dir,
     save_dir_path: []const u8,
     world_name: []const u8,
 
-    queue_mutex: sync.Mutex,
+    queue_mutex: std.Thread.Mutex,
     queue: std.ArrayListUnmanaged(SaveQueueEntry),
     running: std.atomic.Value(bool),
     pending_saves: std.atomic.Value(usize),
 
-    failed_mutex: sync.Mutex,
+    failed_mutex: std.Thread.Mutex,
     failed_chunks: std.ArrayListUnmanaged(ChunkKey),
 
     thread: std.Thread,
 
-    region_cache_mutex: sync.Mutex,
+    region_cache_mutex: std.Thread.Mutex,
     region_cache: std.ArrayListUnmanaged(RegionCacheEntry),
 
     level_data: LevelData,
     last_auto_save_ms: i64,
 
     pub fn init(allocator: Allocator, save_dir_path: []const u8, world_name: []const u8, seed: u64, generator_name: []const u8) !*SaveManager {
-        var dir = try fs.cwd().makeOpenPath(save_dir_path, .{});
+        var dir = try std.fs.cwd().makeOpenPath(save_dir_path, .{});
         errdefer dir.close();
 
         const sm = try allocator.create(SaveManager);
@@ -220,7 +218,7 @@ pub const SaveManager = struct {
             self.queue_mutex.unlock();
             const saving = self.pending_saves.load(.acquire);
             if (count == 0 and saving == 0) break;
-            std.Options.debug_io.sleep(.fromNanoseconds(10 * std.time.ns_per_ms), .boot) catch {};
+            std.posix.nanosleep(0, 10 * std.time.ns_per_ms);
         }
 
         self.failed_mutex.lock();
@@ -234,7 +232,7 @@ pub const SaveManager = struct {
         log.log.debug("Save thread started", .{});
 
         while (self.running.load(.acquire)) {
-            std.Options.debug_io.sleep(.fromNanoseconds(SAVE_THREAD_INTERVAL_NS), .boot) catch {};
+            std.posix.nanosleep(0, SAVE_THREAD_INTERVAL_NS);
 
             self.processSaveQueue() catch |err| {
                 log.log.err("Save thread error: {}", .{err});
@@ -327,11 +325,11 @@ pub const SaveManager = struct {
             self.evictOldestRegion();
         }
 
-        var rel_buf: [fs.max_path_bytes]u8 = undefined;
+        var rel_buf: [std.fs.max_path_bytes]u8 = undefined;
         const region_filename = std.fmt.bufPrint(&rel_buf, "regions/r.{}.{}.mca", .{ rx, rz }) catch unreachable;
 
         const region = blk: {
-            var abs_buf: [fs.max_path_bytes]u8 = undefined;
+            var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
             if (self.save_dir.realpath(region_filename, &abs_buf)) |abs_path| {
                 break :blk try RegionFile.open(self.allocator, abs_path);
             } else |_| {
@@ -387,18 +385,16 @@ test "SaveManager init creates save directory and level.dat" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const base_path = try tmp_dir.dir.realpath(".", &path_buf);
 
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const base_path = try dir.realpath(".", &path_buf);
-
-    var save_path_buf: [fs.max_path_bytes]u8 = undefined;
+    var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/test_world", .{base_path});
 
     var sm = try SaveManager.init(testing.allocator, save_path, "test_world", 42, "overworld");
     defer sm.deinit();
 
-    const file = dir.openFile("test_world/level.dat", .{}) catch {
+    const file = tmp_dir.dir.openFile("test_world/level.dat", .{}) catch {
         try testing.expect(false);
         return;
     };
@@ -409,12 +405,10 @@ test "SaveManager enqueue and flush processes chunks" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const base_path = try tmp_dir.dir.realpath(".", &path_buf);
 
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const base_path = try dir.realpath(".", &path_buf);
-
-    var save_path_buf: [fs.max_path_bytes]u8 = undefined;
+    var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/test_flush", .{base_path});
 
     var sm = try SaveManager.init(testing.allocator, save_path, "test_flush", 99, "flat");
@@ -440,12 +434,10 @@ test "SaveManager loadChunk returns false for non-existent chunk" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const base_path = try tmp_dir.dir.realpath(".", &path_buf);
 
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const base_path = try dir.realpath(".", &path_buf);
-
-    var save_path_buf: [fs.max_path_bytes]u8 = undefined;
+    var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/test_load_miss", .{base_path});
 
     var sm = try SaveManager.init(testing.allocator, save_path, "test_load_miss", 0, "overworld");
@@ -459,12 +451,10 @@ test "SaveManager duplicate enqueue overwrites previous" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const base_path = try tmp_dir.dir.realpath(".", &path_buf);
 
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const base_path = try dir.realpath(".", &path_buf);
-
-    var save_path_buf: [fs.max_path_bytes]u8 = undefined;
+    var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/test_dup", .{base_path});
 
     var sm = try SaveManager.init(testing.allocator, save_path, "test_dup", 0, "flat");

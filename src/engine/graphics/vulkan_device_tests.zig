@@ -117,7 +117,7 @@ test "VulkanDevice extension support flags default false" {
 }
 
 test "VulkanDevice extension flags can be enabled" {
-    const device = VulkanDevice{
+    var device = VulkanDevice{
         .allocator = testing.allocator,
         .vk_device = null,
         .queue = null,
@@ -203,7 +203,7 @@ test "VulkanDevice graphics_family default and assignment" {
 // ============================================================================
 
 test "VulkanDevice null handles are safe for default initialization" {
-    const device = VulkanDevice{
+    var device = VulkanDevice{
         .allocator = testing.allocator,
         .vk_device = null,
         .queue = null,
@@ -296,7 +296,7 @@ test "VulkanDevice submitGuarded mutex is reentrant safe" {
 // ============================================================================
 
 test "VulkanDevice logDeviceFaults early exit when extension unavailable" {
-    const device = VulkanDevice{
+    var device = VulkanDevice{
         .allocator = testing.allocator,
         .vk_device = null,
         .vkGetDeviceFaultInfoEXT = null,
@@ -318,7 +318,7 @@ test "VulkanDevice logDeviceFaults early exit when extension unavailable" {
 }
 
 test "VulkanDevice logDeviceFaults with valid function pointer but null device" {
-    const device = VulkanDevice{
+    var device = VulkanDevice{
         .allocator = testing.allocator,
         .vk_device = null,
         .vkGetDeviceFaultInfoEXT = @ptrFromInt(0x1234), // Non-null but device is null

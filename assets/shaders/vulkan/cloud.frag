@@ -74,6 +74,10 @@ void main() {
     cloudColor = mix(cloudColor, uFogColor, fogFactor);
 
     float alpha = 1.0 * (1.0 - fogFactor * 0.8);
+    float altitudeDiff = uCameraPos.y - uCloudHeight;
+    if (altitudeDiff > 0.0) {
+        alpha *= 1.0 - smoothstep(10.0, 400.0, altitudeDiff);
+    }
 
     FragColor = vec4(cloudColor, alpha);
 }

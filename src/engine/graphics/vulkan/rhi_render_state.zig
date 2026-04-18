@@ -6,11 +6,6 @@ const Vec3 = @import("../../math/vec3.zig").Vec3;
 const bindings = @import("descriptor_bindings.zig");
 const pass_orchestration = @import("rhi_pass_orchestration.zig");
 
-fn getenv(name: [:0]const u8) ?[]const u8 {
-    const value = std.c.getenv(name) orelse return null;
-    return std.mem.span(value);
-}
-
 const GlobalUniforms = extern struct {
     view_proj: Mat4,
     view_proj_prev: Mat4,
@@ -59,7 +54,7 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
     };
 
     // Env var override for debug channel (ZIGCRAFT_DEBUG_SHADER=5 for tile_id, 6 for tex_color)
-    if (getenv("ZIGCRAFT_DEBUG_SHADER")) |ds| {
+    if (std.posix.getenv("ZIGCRAFT_DEBUG_SHADER")) |ds| {
         const ch: u32 = std.fmt.parseInt(u32, ds, 10) catch 0;
         if (ch > 0) {
             var gu = global_uniforms;

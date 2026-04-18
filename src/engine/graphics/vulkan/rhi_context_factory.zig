@@ -5,7 +5,6 @@ const log = @import("../../core/log.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const build_options = @import("build_options");
-const runtime_env = @import("../../core/runtime_env.zig");
 const resource_manager_pkg = @import("resource_manager.zig");
 const VulkanBuffer = resource_manager_pkg.VulkanBuffer;
 const TextureResource = resource_manager_pkg.TextureResource;
@@ -100,7 +99,11 @@ pub fn createRHI(
     ctx.options.vsync_enabled = true;
     ctx.options.present_mode = c.VK_PRESENT_MODE_FIFO_KHR;
 
-    ctx.options.safe_mode = runtime_env.safeModeEnabled();
+    const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
+    ctx.options.safe_mode = if (safe_mode_env) |val|
+        !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+    else
+        false;
     if (ctx.options.safe_mode) {
         log.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
     }

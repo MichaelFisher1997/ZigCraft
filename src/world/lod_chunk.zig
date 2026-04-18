@@ -166,7 +166,7 @@ pub const LODRegionKey = struct {
     }
 
     /// Get the chunk coordinates that this region covers
-    pub fn chunkBounds(self: LODRegionKey) ChunkBounds {
+    pub fn chunkBounds(self: LODRegionKey) struct { min_x: i32, min_z: i32, max_x: i32, max_z: i32 } {
         const scale: i32 = @intCast(self.lod.chunksPerSide());
         return .{
             .min_x = self.rx * scale,
@@ -174,30 +174,6 @@ pub const LODRegionKey = struct {
             .max_x = self.rx * scale + scale - 1,
             .max_z = self.rz * scale + scale - 1,
         };
-    }
-};
-
-pub const ChunkBounds = struct {
-    min_x: i32,
-    min_z: i32,
-    max_x: i32,
-    max_z: i32,
-
-    pub fn distanceSquaredToPoint(self: ChunkBounds, point_x: i32, point_z: i32) i64 {
-        const dx = axisDistance(point_x, self.min_x, self.max_x);
-        const dz = axisDistance(point_z, self.min_z, self.max_z);
-        return dx * dx + dz * dz;
-    }
-
-    pub fn intersectsRadius(self: ChunkBounds, center_x: i32, center_z: i32, radius_chunks: i32) bool {
-        const radius_sq: i64 = @as(i64, radius_chunks) * @as(i64, radius_chunks);
-        return self.distanceSquaredToPoint(center_x, center_z) <= radius_sq;
-    }
-
-    fn axisDistance(point: i32, min_value: i32, max_value: i32) i64 {
-        if (point < min_value) return @as(i64, min_value) - @as(i64, point);
-        if (point > max_value) return @as(i64, point) - @as(i64, max_value);
-        return 0;
     }
 };
 
@@ -301,15 +277,6 @@ pub const LODChunk = struct {
             .min_z = self.region_z * size,
             .max_x = self.region_x * size + size,
             .max_z = self.region_z * size + size,
-        };
-    }
-
-    pub fn chunkBounds(self: *const LODChunk) ChunkBounds {
-        return .{
-            .min_x = self.region_x * @as(i32, @intCast(self.lod_level.chunksPerSide())),
-            .min_z = self.region_z * @as(i32, @intCast(self.lod_level.chunksPerSide())),
-            .max_x = (self.region_x + 1) * @as(i32, @intCast(self.lod_level.chunksPerSide())) - 1,
-            .max_z = (self.region_z + 1) * @as(i32, @intCast(self.lod_level.chunksPerSide())) - 1,
         };
     }
 };
@@ -456,10 +423,7 @@ pub const LODConfig = struct {
     }
     fn calculateMaskRadiusWrapper(ptr: *anyopaque) f32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
-        // Keep a small overlap so the chunk ring and LOD ring blend instead of
-        // leaving a camera-centered dead zone between them.
-        const overlap_chunks = @max(self.radii[0] - 1, 0);
-        return @as(f32, @floatFromInt(overlap_chunks)) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
+        return @as(f32, @floatFromInt(self.radii[0] - 1)) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
     }
     fn getQEMTargetWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -504,15 +468,6 @@ test "LODConfig distance calculation" {
     try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(20));
     try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(50));
     try std.testing.expectEqual(LODLevel.lod3, config.getLODForDistance(100));
-}
-
-test "ChunkBounds intersects radius radially" {
-    const axis_region = ChunkBounds{ .min_x = 16, .min_z = 0, .max_x = 31, .max_z = 15 };
-    try std.testing.expect(axis_region.intersectsRadius(0, 0, 16));
-
-    const diagonal_region = ChunkBounds{ .min_x = 16, .min_z = 16, .max_x = 31, .max_z = 31 };
-    try std.testing.expect(!diagonal_region.intersectsRadius(0, 0, 16));
-    try std.testing.expectEqual(@as(i64, 16 * 16 + 16 * 16), diagonal_region.distanceSquaredToPoint(0, 0));
 }
 
 test "ILODConfig.calculateMaskRadius" {

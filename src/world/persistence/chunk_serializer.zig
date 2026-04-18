@@ -28,7 +28,6 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const fs = @import("fs");
 
 const Chunk = @import("../chunk.zig").Chunk;
 const BlockType = @import("../block.zig").BlockType;
@@ -188,7 +187,7 @@ pub fn deserializeChunk(data: []const u8, chunk: *Chunk) !void {
         const biome_slice = data[off..][0..BiomeDataSize];
         for (biome_slice, 0..) |byte, i| {
             if (!isValidBiome(byte)) return SerializeError.InvalidBiomeData;
-            chunk.biomes[i] = std.enums.fromInt(BiomeId, byte) orelse
+            chunk.biomes[i] = std.meta.intToEnum(BiomeId, byte) catch
                 return SerializeError.InvalidBiomeData;
         }
         off += BiomeDataSize;
@@ -476,14 +475,12 @@ test "integration: serialize to region file and back" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
-
     const path = "test_chunk_serdes.mca";
-    const file = try dir.createFile(path, .{ .read = true, .truncate = true });
+    const file = try tmp_dir.dir.createFile(path, .{ .read = true, .truncate = true });
     file.close();
 
-    var full_path_buf: [fs.max_path_bytes]u8 = undefined;
-    const full_path = try dir.realpath(path, &full_path_buf);
+    var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const full_path = try tmp_dir.dir.realpath(path, &full_path_buf);
 
     var chunk = Chunk.init(0, 0);
     chunk.setBlock(8, 64, 8, .stone);

@@ -6,7 +6,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const log = @import("../../engine/core/log.zig");
-const fs = @import("fs");
 const timestampMs = @import("../../engine/core/time.zig").timestampMs;
 
 pub const LevelData = struct {
@@ -35,7 +34,7 @@ pub const LevelData = struct {
         }
     }
 
-    pub fn saveToFile(self: *const LevelData, allocator: Allocator, dir: fs.Dir) !void {
+    pub fn saveToFile(self: *const LevelData, allocator: Allocator, dir: std.fs.Dir) !void {
         var aw: std.Io.Writer.Allocating = try .initCapacity(allocator, 256);
         defer aw.deinit();
 
@@ -54,7 +53,7 @@ pub const LevelData = struct {
         try file.writeAll(aw.written());
     }
 
-    pub fn loadFromFile(allocator: Allocator, dir: fs.Dir) !LevelData {
+    pub fn loadFromFile(allocator: Allocator, dir: std.fs.Dir) !LevelData {
         const file = try dir.openFile("level.dat", .{});
         defer file.close();
 
@@ -114,10 +113,9 @@ test "LevelData save and load round-trip" {
     defer tmp_dir.cleanup();
 
     const original = LevelData.init(12345, "overworld");
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
-    try original.saveToFile(testing.allocator, dir);
+    try original.saveToFile(testing.allocator, tmp_dir.dir);
 
-    var loaded = try LevelData.loadFromFile(testing.allocator, dir);
+    var loaded = try LevelData.loadFromFile(testing.allocator, tmp_dir.dir);
     defer loaded.deinit(testing.allocator);
 
     try testing.expectEqual(@as(u64, 12345), loaded.seed);
@@ -129,7 +127,7 @@ test "LevelData save and load round-trip" {
 test "LevelData touchLastPlayed updates timestamp" {
     var data = LevelData.init(99999, "flat");
     const old_ts = data.last_played_timestamp;
-    std.Options.debug_io.sleep(.fromNanoseconds(1_000_000), .boot) catch {};
+    std.posix.nanosleep(0, 1_000_000);
     data.touchLastPlayed();
     try testing.expect(data.last_played_timestamp >= old_ts);
 }

@@ -1,5 +1,4 @@
 const std = @import("std");
-const fs = @import("fs");
 const c = @import("../../c.zig").c;
 const rhi_pkg = @import("rhi.zig");
 const log = @import("../core/log.zig");
@@ -267,7 +266,7 @@ pub const LPVSystem = struct {
 
     pub fn update(self: *LPVSystem, world: *World, camera_pos: Vec3, debug_overlay_enabled: bool) !void {
         self.current_frame +%= 1;
-        const timer_start = std.Io.Clock.awake.now(std.Options.debug_io);
+        var timer = std.time.Timer.start() catch unreachable;
         self.stats.updated_this_frame = false;
         self.stats.grid_size = self.grid_size;
         self.stats.propagation_iterations = self.propagation_iterations;
@@ -318,7 +317,7 @@ pub const LPVSystem = struct {
 
         // Build occlusion grid for opaque block awareness during propagation
         if (!self.buildOcclusionGrid(world)) {
-            const elapsed_ns = timer_start.durationTo(std.Io.Clock.awake.now(std.Options.debug_io)).toNanoseconds();
+            const elapsed_ns = timer.read();
             const delta_ms: f32 = @floatCast(@as(f64, @floatFromInt(elapsed_ns)) / @as(f64, std.time.ns_per_ms));
             self.stats.light_count = @intCast(light_count);
             self.stats.cpu_update_ms = delta_ms;
@@ -333,7 +332,7 @@ pub const LPVSystem = struct {
 
         try self.dispatchCompute(light_count);
 
-        const elapsed_ns = timer_start.durationTo(std.Io.Clock.awake.now(std.Options.debug_io)).toNanoseconds();
+        const elapsed_ns = timer.read();
         const delta_ms: f32 = @floatCast(@as(f64, @floatFromInt(elapsed_ns)) / @as(f64, std.time.ns_per_ms));
         self.stats.updated_this_frame = true;
         self.stats.light_count = @intCast(light_count);
@@ -1105,7 +1104,7 @@ fn toneMap(v: f32) f32 {
 }
 
 fn createShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Allocator) !c.VkShaderModule {
-    const bytes = try fs.cwd().readFileAlloc(path, allocator, 16 * 1024 * 1024);
+    const bytes = try std.fs.cwd().readFileAlloc(path, allocator, @enumFromInt(16 * 1024 * 1024));
     defer allocator.free(bytes);
     if (bytes.len % 4 != 0) return error.InvalidState;
 
@@ -1120,7 +1119,7 @@ fn createShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Alloc
 }
 
 fn ensureShaderFileExists(path: []const u8) !void {
-    fs.cwd().access(path, .{}) catch |err| {
+    std.fs.cwd().access(path, .{}) catch |err| {
         log.log.errWithTrace("LPV shader artifact missing: {s} ({})", .{ path, err });
         log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
         return err;

@@ -13,7 +13,7 @@ pub const AtmosphereSystem = struct {
 
     cloud_vbo: rhi.BufferHandle = 0,
     cloud_ebo: rhi.BufferHandle = 0,
-    cloud_mesh_size: f32 = 10000.0,
+    cloud_mesh_size: f32 = 2000.0,
 
     pub fn init(allocator: std.mem.Allocator, resources: ResourceManager) !*AtmosphereSystem {
         const self = try allocator.create(AtmosphereSystem);
@@ -108,12 +108,11 @@ pub const AtmosphereSystem = struct {
             .fog_params = .{ params.fog_color.x, params.fog_color.y, params.fog_color.z, params.fog_density },
         };
 
-        ctx.setTerrainPipelineBound(false);
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
         c.vkCmdPushConstants(cmd, layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(rhi.CloudPushConstants), &pc);
 
         ctx.bindBuffer(self.cloud_vbo, .vertex);
         ctx.bindBuffer(self.cloud_ebo, .index);
-        c.vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+        ctx.drawIndexed(self.cloud_vbo, self.cloud_ebo, 6);
     }
 };

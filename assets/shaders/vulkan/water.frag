@@ -49,72 +49,6 @@ const float WAVE_AMPLITUDE = 0.5;
 const float WAVE_FREQUENCY = 1.5;
 const float WAVE_SPEED = 0.8;
 
-float cloudHash(vec2 p) {
-    p = fract(p * vec2(234.34, 435.345));
-    p += dot(p, p + 34.23);
-    return fract(p.x * p.y);
-}
-
-float cloudNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = cloudHash(i);
-    float b = cloudHash(i + vec2(1.0, 0.0));
-    float c = cloudHash(i + vec2(0.0, 1.0));
-    float d = cloudHash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float cloudFbm(vec2 p, int octaves) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < octaves; i++) {
-        value += amplitude * cloudNoise(p * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    return value;
-}
-
-vec4 sampleCloudOverlay(vec3 fragPosWorld) {
-    if (global.cloud_wind_offset.w <= 0.01) return vec4(0.0);
-
-    float cloudPlaneY = global.cloud_params.x - global.cam_pos.y;
-    if (cloudPlaneY >= -0.5) return vec4(0.0);
-    if (fragPosWorld.y >= cloudPlaneY - 0.001) return vec4(0.0);
-
-    float rayY = fragPosWorld.y;
-    if (rayY >= -0.001) return vec4(0.0);
-
-    float t = cloudPlaneY / rayY;
-    if (t <= 0.0 || t >= 1.0) return vec4(0.0);
-
-    const float cloudBlockSize = 12.0;
-    vec3 cloudPos = fragPosWorld * t;
-    vec2 worldXZ = cloudPos.xz + global.cam_pos.xz + global.cloud_wind_offset.xy;
-    vec2 pixelPos = floor(worldXZ / cloudBlockSize) * cloudBlockSize;
-    vec2 samplePos = pixelPos * global.cloud_wind_offset.z;
-    float cloudValue = cloudFbm(samplePos, 3);
-    float threshold = 1.0 - global.cloud_wind_offset.w;
-    float cloudMask = smoothstep(threshold - 0.08, threshold + 0.08, cloudValue);
-    if (cloudMask <= 0.001) return vec4(0.0);
-
-    vec3 nightTint = pow(vec3(0.10, 0.12, 0.20), vec3(2.2));
-    vec3 dayColor = vec3(0.92, 0.95, 0.98);
-    vec3 cloudColor = mix(nightTint, dayColor, global.params.w);
-    float lightFactor = clamp(global.sun_dir.y, 0.0, 1.0);
-    cloudColor *= (0.8 + 0.25 * lightFactor);
-
-    float cloudDistance = length(cloudPos);
-    float fogFactor = 1.0 - exp(-cloudDistance * global.params.y * 0.35);
-    cloudColor = mix(cloudColor, global.fog_color.xyz, fogFactor);
-
-    float alpha = cloudMask * (1.0 - fogFactor * 0.6);
-    return vec4(cloudColor, alpha);
-}
-
 vec2 SampleSphericalMap(vec3 v) {
     vec3 n = normalize(v);
     float phi = atan(n.z, n.x);
@@ -228,9 +162,6 @@ void main() {
     if (global.params.z > 0.5) {
         waterColor = mix(waterColor, global.fog_color.rgb, clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0));
     }
-
-    vec4 cloudOverlay = sampleCloudOverlay(vFragPosWorld);
-    waterColor = mix(waterColor, cloudOverlay.rgb, cloudOverlay.a);
     
     float alpha = mix(0.8, 0.98, depth_factor);
     alpha = mix(alpha, 1.0, fresnel * 0.35);

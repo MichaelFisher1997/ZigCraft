@@ -55,7 +55,7 @@ pub const Logger = struct {
     pub fn errWithTrace(self: *const Logger, comptime fmt: []const u8, args: anytype) void {
         self.log(.err, fmt, args);
         if (@errorReturnTrace()) |ret_trace| {
-            std.debug.dumpErrorReturnTrace(ret_trace);
+            std.debug.dumpStackTrace(ret_trace);
         }
     }
 

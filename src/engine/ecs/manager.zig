@@ -74,11 +74,26 @@ pub const Registry = struct {
             };
 
             const ComponentsTuple = blk: {
-                var tuple_types: [component_types.len]type = undefined;
+                var fields: [component_types.len]std.builtin.Type.StructField = undefined;
                 for (component_types, 0..) |T, i| {
-                    tuple_types[i] = *T;
+                    const field_name = std.fmt.comptimePrint("{}", .{i});
+                    fields[i] = .{
+                        .name = (field_name ++ "\x00")[0..field_name.len :0],
+                        .type = *T,
+                        .default_value_ptr = null,
+                        .is_comptime = false,
+                        .alignment = @alignOf(*T),
+                    };
                 }
-                break :blk std.meta.Tuple(&tuple_types);
+                break :blk @Type(.{
+                    .@"struct" = .{
+                        .layout = .auto,
+                        .backing_integer = null,
+                        .fields = &fields,
+                        .decls = &.{},
+                        .is_tuple = true,
+                    },
+                });
             };
 
             pub fn next(self: *Self) ?Row {

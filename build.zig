@@ -53,18 +53,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const fs_module = b.createModule(.{
-        .root_source_file = b.path("src/engine/core/fs.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const sync_module = b.createModule(.{
-        .root_source_file = b.path("src/engine/core/sync.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -72,8 +60,6 @@ pub fn build(b: *std.Build) void {
     });
     root_module.addImport("zig-math", zig_math);
     root_module.addImport("zig-noise", zig_noise);
-    root_module.addImport("fs", fs_module);
-    root_module.addImport("sync", sync_module);
     root_module.addOptions("build_options", options);
     root_module.addIncludePath(b.path("libs/stb"));
 
@@ -82,14 +68,14 @@ pub fn build(b: *std.Build) void {
         .root_module = root_module,
     });
 
-    exe.root_module.link_libc = true;
-    exe.root_module.addCSourceFile(.{
+    exe.linkLibC();
+    exe.addCSourceFile(.{
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
 
-    exe.root_module.linkSystemLibrary("sdl3", .{});
-    exe.root_module.linkSystemLibrary("vulkan", .{});
+    exe.linkSystemLibrary("sdl3");
+    exe.linkSystemLibrary("vulkan");
 
     b.installArtifact(exe);
 
@@ -128,8 +114,6 @@ pub fn build(b: *std.Build) void {
     });
     benchmark_root_module.addImport("zig-math", zig_math);
     benchmark_root_module.addImport("zig-noise", zig_noise);
-    benchmark_root_module.addImport("fs", fs_module);
-    benchmark_root_module.addImport("sync", sync_module);
     benchmark_root_module.addOptions("build_options", benchmark_options);
     benchmark_root_module.addIncludePath(b.path("libs/stb"));
 
@@ -138,14 +122,14 @@ pub fn build(b: *std.Build) void {
         .root_module = benchmark_root_module,
     });
 
-    benchmark_exe.root_module.link_libc = true;
-    benchmark_exe.root_module.addCSourceFile(.{
+    benchmark_exe.linkLibC();
+    benchmark_exe.addCSourceFile(.{
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
 
-    benchmark_exe.root_module.linkSystemLibrary("sdl3", .{});
-    benchmark_exe.root_module.linkSystemLibrary("vulkan", .{});
+    benchmark_exe.linkSystemLibrary("sdl3");
+    benchmark_exe.linkSystemLibrary("vulkan");
 
     b.installArtifact(benchmark_exe);
 
@@ -164,17 +148,15 @@ pub fn build(b: *std.Build) void {
     });
     test_root_module.addImport("zig-math", zig_math);
     test_root_module.addImport("zig-noise", zig_noise);
-    test_root_module.addImport("fs", fs_module);
-    test_root_module.addImport("sync", sync_module);
     test_root_module.addOptions("build_options", options);
 
     const exe_tests = b.addTest(.{
         .root_module = test_root_module,
     });
-    exe_tests.root_module.link_libc = true;
-    exe_tests.root_module.linkSystemLibrary("sdl3", .{});
-    exe_tests.root_module.linkSystemLibrary("vulkan", .{});
-    exe_tests.root_module.addIncludePath(b.path("libs/stb"));
+    exe_tests.linkLibC();
+    exe_tests.linkSystemLibrary("sdl3");
+    exe_tests.linkSystemLibrary("vulkan");
+    exe_tests.addIncludePath(b.path("libs/stb"));
 
     const test_step = b.step("test", "Run unit tests");
     const run_exe_tests = b.addRunArtifact(exe_tests);
@@ -188,21 +170,19 @@ pub fn build(b: *std.Build) void {
     });
     integration_root_module.addImport("zig-math", zig_math);
     integration_root_module.addImport("zig-noise", zig_noise);
-    integration_root_module.addImport("fs", fs_module);
-    integration_root_module.addImport("sync", sync_module);
     integration_root_module.addOptions("build_options", options);
     integration_root_module.addIncludePath(b.path("libs/stb"));
 
     const exe_integration_tests = b.addTest(.{
         .root_module = integration_root_module,
     });
-    exe_integration_tests.root_module.link_libc = true;
-    exe_integration_tests.root_module.addCSourceFile(.{
+    exe_integration_tests.linkLibC();
+    exe_integration_tests.addCSourceFile(.{
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
-    exe_integration_tests.root_module.linkSystemLibrary("sdl3", .{});
-    exe_integration_tests.root_module.linkSystemLibrary("vulkan", .{});
+    exe_integration_tests.linkSystemLibrary("sdl3");
+    exe_integration_tests.linkSystemLibrary("vulkan");
 
     const test_integration_step = b.step("test-integration", "Run integration smoke test");
     const run_integration_tests = b.addRunArtifact(exe_integration_tests);
@@ -220,13 +200,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
     robust_demo.root_module.addOptions("build_options", options);
-    robust_demo.root_module.addImport("fs", fs_module);
-    robust_demo.root_module.addImport("sync", sync_module);
 
-    robust_demo.root_module.link_libc = true;
-    robust_demo.root_module.linkSystemLibrary("sdl3", .{});
-    robust_demo.root_module.linkSystemLibrary("vulkan", .{});
-    robust_demo.root_module.addIncludePath(b.path("libs/stb"));
+    robust_demo.linkLibC();
+    robust_demo.linkSystemLibrary("sdl3");
+    robust_demo.linkSystemLibrary("vulkan");
+    robust_demo.addIncludePath(b.path("libs/stb"));
 
     b.installArtifact(robust_demo);
 
@@ -239,10 +217,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     integration_robustness.root_module.addOptions("build_options", options);
-    integration_robustness.root_module.addImport("fs", fs_module);
-    integration_robustness.root_module.addImport("sync", sync_module);
-    integration_robustness.root_module.link_libc = true;
-    integration_robustness.root_module.linkSystemLibrary("sdl3", .{}); // Needed for C imports if any
+    integration_robustness.linkLibC();
+    integration_robustness.linkSystemLibrary("sdl3"); // Needed for C imports if any
 
     const test_robustness_run = b.addRunArtifact(integration_robustness);
     // Ensure robust-demo is built first

@@ -122,7 +122,7 @@ jobs:
             ZigCraft is a high-performance Minecraft-style voxel engine built with Zig, SDL3, and Vulkan. It uses Nix for dependency management, a custom RHI (Render Hardware Interface) abstraction layer, and a multithreaded job system for world generation and meshing.
 
             **Tech Stack:**
-            - Zig 0.16+ with strict memory management (explicit allocators, defer/errdefer)
+            - Zig 0.14+ with strict memory management (explicit allocators, defer/errdefer)
             - SDL3 for windowing and input
             - Vulkan for rendering (only backend, via RHI abstraction)
             - Nix for reproducible builds (`nix develop --command zig build`)

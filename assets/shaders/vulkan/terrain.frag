@@ -105,43 +105,6 @@ float getCloudShadow(vec3 worldPos, vec3 sunDir) {
     return cloudMask * global.lighting.w;
 }
 
-vec4 sampleCloudOverlay(vec3 fragPosWorld) {
-    if (global.cloud_wind_offset.w <= 0.01) return vec4(0.0);
-
-    float cloudPlaneY = global.cloud_params.x - global.cam_pos.y;
-    if (cloudPlaneY >= -0.5) return vec4(0.0);
-    if (fragPosWorld.y >= cloudPlaneY - 0.001) return vec4(0.0);
-
-    float rayY = fragPosWorld.y;
-    if (rayY >= -0.001) return vec4(0.0);
-
-    float t = cloudPlaneY / rayY;
-    if (t <= 0.0 || t >= 1.0) return vec4(0.0);
-
-    const float cloudBlockSize = 12.0;
-    vec3 cloudPos = fragPosWorld * t;
-    vec2 worldXZ = cloudPos.xz + global.cam_pos.xz + global.cloud_wind_offset.xy;
-    vec2 pixelPos = floor(worldXZ / cloudBlockSize) * cloudBlockSize;
-    vec2 samplePos = pixelPos * global.cloud_wind_offset.z;
-    float cloudValue = cloudFbm(samplePos, 3);
-    float threshold = 1.0 - global.cloud_wind_offset.w;
-    float cloudMask = smoothstep(threshold - 0.08, threshold + 0.08, cloudValue);
-    if (cloudMask <= 0.001) return vec4(0.0);
-
-    vec3 nightTint = pow(vec3(0.10, 0.12, 0.20), vec3(2.2));
-    vec3 dayColor = vec3(0.92, 0.95, 0.98);
-    vec3 cloudColor = mix(nightTint, dayColor, global.params.w);
-    float lightFactor = clamp(global.sun_dir.y, 0.0, 1.0);
-    cloudColor *= (0.8 + 0.25 * lightFactor);
-
-    float cloudDistance = length(cloudPos);
-    float fogFactor = 1.0 - exp(-cloudDistance * global.params.y * 0.35);
-    cloudColor = mix(cloudColor, global.fog_color.xyz, fogFactor);
-
-    float alpha = cloudMask * (1.0 - fogFactor * 0.6);
-    return vec4(cloudColor, alpha);
-}
-
 layout(set = 0, binding = 1) uniform sampler2D uTexture;         // Diffuse/albedo
 layout(set = 0, binding = 6) uniform sampler2D uNormalMap;       // Normal map (OpenGL format)
 layout(set = 0, binding = 7) uniform sampler2D uRoughnessMap;    // Roughness map
@@ -518,7 +481,7 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
 
 void main() {
     vec3 color;
-    const float LOD_TRANSITION_WIDTH = 8.0;
+    const float LOD_TRANSITION_WIDTH = 24.0;
     const float AO_FADE_DISTANCE = 128.0;
     float viewDistance = length(vFragPosWorld);
 
@@ -595,9 +558,6 @@ void main() {
     if (global.params.z > 0.5) {
         color = mix(color, global.fog_color.rgb, clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0));
     }
-
-    vec4 cloudOverlay = sampleCloudOverlay(vFragPosWorld);
-    color = mix(color, cloudOverlay.rgb, cloudOverlay.a);
 
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {

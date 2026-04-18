@@ -22,13 +22,8 @@ const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtla
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 const build_options = @import("build_options");
-const runtime_env = @import("../engine/core/runtime_env.zig");
 
 const MAX_MDI_CHUNKS: usize = 16384;
-
-fn getenv(name: [:0]const u8) ?[]const u8 {
-    return runtime_env.getenv(name);
-}
 
 pub const RenderStats = struct {
     chunks_total: u32 = 0,
@@ -67,7 +62,6 @@ pub const WorldRenderer = struct {
     draw_commands: std.ArrayListUnmanaged(rhi_mod.DrawIndirectCommand),
     instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
     indirect_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle,
-    force_mdi_fallback: bool,
 
     // GPU Culling
     culling_system: ?*CullingSystem,
@@ -88,23 +82,26 @@ pub const WorldRenderer = struct {
     pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
-        const safe_mode = runtime_env.safeModeEnabled();
-        const strict_safe_mode = runtime_env.strictSafeModeEnabled();
+        const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
+        const safe_mode = if (safe_mode_env) |val|
+            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+        else
+            false;
 
         const vram_bytes = query.getDeviceLocalVramBytes();
         const vram_mb = vram_bytes / (1024 * 1024);
         const MB: usize = 1024 * 1024;
 
-        const vertex_capacity_mb: usize = if (strict_safe_mode)
-            @min(@as(usize, 256), @max(@as(usize, 128), @divFloor(vram_mb, 8)))
+        const vertex_capacity_mb: usize = if (safe_mode)
+            @min(512, @divFloor(vram_mb, 4))
         else blk: {
-            const budget_mb = if (vram_mb >= 8192) @as(usize, 512) else if (vram_mb >= 6144) @as(usize, 384) else if (vram_mb >= 4096) @as(usize, 256) else @as(usize, 128);
+            const budget_mb = if (vram_mb >= 8192) @as(usize, 2048) else if (vram_mb >= 6144) @as(usize, 1024) else if (vram_mb >= 4096) @as(usize, 512) else @as(usize, 256);
             break :blk budget_mb;
         };
 
         const gpu_block_capacity: usize = blk: {
             const slot_size = 16 * 16 * 256;
-            const block_budget_mb = if (vram_mb >= 8192) @as(usize, 512) else if (vram_mb >= 6144) @as(usize, 384) else if (vram_mb >= 4096) @as(usize, 256) else @as(usize, 128);
+            const block_budget_mb = if (vram_mb >= 8192) @as(usize, 16384) else if (vram_mb >= 6144) @as(usize, 8192) else if (vram_mb >= 4096) @as(usize, 4096) else @as(usize, 2048);
             const budget_bytes = block_budget_mb * MB;
             const max_by_budget = budget_bytes / slot_size;
             break :blk @min(MAX_MDI_CHUNKS, max_by_budget);
@@ -112,10 +109,8 @@ pub const WorldRenderer = struct {
 
         log.log.info("VRAM budget: {}MB | vertex_allocator: {}MB | gpu_block_buffer: {} slots", .{ vram_mb, vertex_capacity_mb, gpu_block_capacity });
 
-        if (strict_safe_mode) {
+        if (safe_mode) {
             log.log.warn("ZIGCRAFT_SAFE_MODE enabled: reduced GPU buffer sizes", .{});
-        } else if (safe_mode) {
-            log.log.warn("Wayland stability profile active: keeping normal GPU buffer budgets while using CPU chunk path", .{});
         }
 
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
@@ -124,7 +119,7 @@ pub const WorldRenderer = struct {
         const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
 
         const safe_mode_enabled = vk_ctx.options.safe_mode;
-        const gpu_meshing_env = getenv("ZIGCRAFT_ENABLE_GPU_MESHING");
+        const gpu_meshing_env = std.posix.getenv("ZIGCRAFT_ENABLE_GPU_MESHING");
         const gpu_meshing_enabled = if (gpu_meshing_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
@@ -173,17 +168,6 @@ pub const WorldRenderer = struct {
             log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }
 
-        const force_mdi_fallback = blk: {
-            const env_val = getenv("ZIGCRAFT_FORCE_MDI_FALLBACK");
-            break :blk if (env_val) |val|
-                !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-            else
-                true;
-        };
-        if (force_mdi_fallback) {
-            log.log.warn("MDI chunk rendering disabled by default due missing-near-chunk artifacts; set ZIGCRAFT_FORCE_MDI_FALLBACK=0 to test indirect draws", .{});
-        }
-
         renderer.* = .{
             .allocator = allocator,
             .storage = storage,
@@ -199,7 +183,6 @@ pub const WorldRenderer = struct {
             .draw_commands = .empty,
             .instance_buffers = instance_buffers,
             .indirect_buffers = indirect_buffers,
-            .force_mdi_fallback = force_mdi_fallback,
             .culling_system = culling_system,
             .aabb_data = .empty,
             .chunk_lookup = undefined,
@@ -267,6 +250,9 @@ pub const WorldRenderer = struct {
     pub fn render(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, render_distance: i32, lod_manager: ?*LODManager, render_lod: bool, layer: RenderLayer) void {
         self.last_render_stats = .{ .gpu_culling = self.use_gpu_culling };
 
+        self.storage.chunks_mutex.lockShared();
+        defer self.storage.chunks_mutex.unlockShared();
+
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
                 lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null);
@@ -275,9 +261,6 @@ pub const WorldRenderer = struct {
 
         // LOD rendering uses a separate descriptor set path; switch back before drawing full chunks.
         self.render_ctx.setInstanceBuffer(0);
-
-        self.storage.chunks_mutex.lockShared();
-        defer self.storage.chunks_mutex.unlockShared();
 
         self.visible_chunks.clearRetainingCapacity();
         self.instance_data.clearRetainingCapacity();
@@ -303,7 +286,14 @@ pub const WorldRenderer = struct {
         const vertex_size = @sizeOf(rhi_mod.Vertex);
         const supports_indirect_first_instance = self.query.supportsIndirectFirstInstance();
 
-        const force_mdi_fallback = self.force_mdi_fallback;
+        // Environment override to force MDI fallback for debugging
+        const force_mdi_fallback = blk: {
+            const env_val = std.posix.getenv("ZIGCRAFT_FORCE_MDI_FALLBACK");
+            break :blk if (env_val) |val|
+                !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
+            else
+                false;
+        };
         var total_vertices: u64 = 0;
 
         for (self.visible_chunks.items) |data| {
@@ -419,39 +409,6 @@ pub const WorldRenderer = struct {
                 @sizeOf(rhi_mod.DrawIndirectCommand),
             );
         }
-
-        self.drawGuaranteedNearChunks(@intCast(pc_x), @intCast(pc_z), camera_pos, layer);
-    }
-
-    fn drawGuaranteedNearChunks(self: *WorldRenderer, pc_x: i32, pc_z: i32, camera_pos: Vec3, layer: RenderLayer) void {
-        var dz: i32 = -1;
-        while (dz <= 1) : (dz += 1) {
-            var dx: i32 = -1;
-            while (dx <= 1) : (dx += 1) {
-                const cx = pc_x + dx;
-                const cz = pc_z + dz;
-                const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse continue;
-
-                const chunk_world_x: f32 = @floatFromInt(cx * CHUNK_SIZE_X);
-                const chunk_world_z: f32 = @floatFromInt(cz * CHUNK_SIZE_Z);
-                const model = Mat4.translate(Vec3.init(chunk_world_x - camera_pos.x, -camera_pos.y, chunk_world_z - camera_pos.z));
-                self.render_ctx.setModelMatrix(model, Vec3.one, 0);
-
-                if (layer != .fluid) {
-                    if (data.mesh.solid_allocation) |alloc| {
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                    if (data.mesh.cutout_allocation) |alloc| {
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                }
-                if (layer != .terrain) {
-                    if (data.mesh.fluid_allocation) |alloc| {
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                }
-            }
-        }
     }
 
     fn renderCpuCull(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64) void {
@@ -478,7 +435,7 @@ pub const WorldRenderer = struct {
         var diag_max_x: i32 = 0;
         var diag_max_z: i32 = 0;
         var diag_region_enabled = false;
-        if (getenv("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
+        if (std.posix.getenv("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
             var parts = std.mem.splitScalar(u8, region_str, ',');
             if (parts.next()) |x1| diag_min_x = std.fmt.parseInt(i32, x1, 10) catch 0;
             if (parts.next()) |z1| diag_min_z = std.fmt.parseInt(i32, z1, 10) catch 0;
@@ -496,8 +453,7 @@ pub const WorldRenderer = struct {
                 const dist_sq = dx * dx + dz * dz;
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
-                        const is_camera_neighborhood = @abs(cx - pc_x) <= 1 and @abs(cz - pc_z) <= 1;
-                        if (!is_camera_neighborhood and !frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
+                        if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
                             frustum_culled += 1;
                             self.last_render_stats.chunks_culled += 1;
                             continue;
@@ -563,7 +519,7 @@ pub const WorldRenderer = struct {
             }
         }
 
-        if (build_options.startup_diagnostic_seconds == 0 and missing_in_circle > 0 and self.render_frame_count % 60 == 0) {
+        if (build_options.startup_diagnostic_seconds == 0 and missing_in_circle > 0) {
             if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| {
                 log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} has_alloc={} pc=({},{}) rd={}", .{
                     missing_in_circle,           missing_cx,                                                                                             missing_cz,

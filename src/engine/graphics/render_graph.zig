@@ -38,7 +38,6 @@
 
 const std = @import("std");
 const c = @import("../../c.zig").c;
-const build_options = @import("build_options");
 const Camera = @import("camera.zig").Camera;
 const IWorld = @import("../../world/world.zig").IWorld;
 const shadow_scene = @import("shadow_scene.zig");
@@ -121,7 +120,7 @@ pub const RenderGraph = struct {
 
     pub fn init(allocator: std.mem.Allocator) RenderGraph {
         return .{
-            .passes = .empty,
+            .passes = .{},
             .allocator = allocator,
         };
     }
@@ -374,7 +373,8 @@ pub const CloudPass = struct {
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         _ = ptr;
         if (ctx.disable_clouds) return;
-        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, ctx.cloud_params.view_proj) catch |err| {
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
+        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, view_proj) catch |err| {
             if (err != error.ResourceNotReady and
                 err != error.CloudPipelineNotReady and
                 err != error.CloudPipelineLayoutNotReady and

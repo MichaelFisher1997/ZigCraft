@@ -18,8 +18,8 @@ pub fn ComponentStorage(comptime T: type) type {
         pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .allocator = allocator,
-                .components = .empty,
-                .entities = .empty,
+                .components = .{},
+                .entities = .{},
                 .map = std.AutoHashMap(EntityId, usize).init(allocator),
             };
         }

@@ -14,7 +14,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const flate = std.compress.flate;
-const fs = @import("fs");
 
 const SECTOR_SIZE: u32 = 4096;
 const HEADER_ENTRIES: u32 = 1024;
@@ -37,13 +36,13 @@ pub const RegionError = error{
 };
 
 pub const RegionFile = struct {
-    file: fs.File,
+    file: std.fs.File,
     closed: bool = false,
     header: [HEADER_ENTRIES]LocationEntry,
     allocator: Allocator,
 
     pub fn open(allocator: Allocator, path: []const u8) !RegionFile {
-        const file = try fs.cwd().openFile(path, .{ .mode = .read_write });
+        const file = try std.fs.cwd().openFile(path, .{ .mode = .read_write });
         errdefer file.close();
 
         var region = RegionFile{
@@ -57,7 +56,7 @@ pub const RegionFile = struct {
     }
 
     pub fn create(allocator: Allocator, path: []const u8) !RegionFile {
-        const file = try fs.cwd().createFile(path, .{ .read = true, .truncate = true });
+        const file = try std.fs.cwd().createFile(path, .{ .read = true, .truncate = true });
         errdefer file.close();
 
         const region = RegionFile{
@@ -145,8 +144,8 @@ pub const RegionFile = struct {
 
         const sector_bytes = @as(u64, sectors_needed) * SECTOR_SIZE;
 
-        try self.file.writePositionalAll(&chunk_header, byte_offset);
-        try self.file.writePositionalAll(compressed, byte_offset + 5);
+        _ = try self.file.pwriteAll(&chunk_header, byte_offset);
+        _ = try self.file.pwriteAll(compressed, byte_offset + 5);
 
         const padding_len = sector_bytes - 4 - total_len;
         if (padding_len > 0) {
@@ -155,7 +154,7 @@ pub const RegionFile = struct {
             var pad_offset: u64 = byte_offset + 5 + compressed.len;
             while (remaining > 0) {
                 const to_write = @min(remaining, zeroes.len);
-                try self.file.writePositionalAll(zeroes[0..@intCast(to_write)], pad_offset);
+                _ = try self.file.pwriteAll(zeroes[0..@intCast(to_write)], pad_offset);
                 remaining -= to_write;
                 pad_offset += to_write;
             }
@@ -196,7 +195,7 @@ pub const RegionFile = struct {
             const raw: u32 = @bitCast(entry);
             std.mem.writeInt(u32, buf[i * 4 ..][0..4], raw, .big);
         }
-        try self.file.writePositionalAll(&buf, 0);
+        try self.file.pwriteAll(&buf, 0);
     }
 
     fn findEndSector(self: *RegionFile) u32 {
@@ -225,7 +224,7 @@ fn compressZlib(allocator: Allocator, data: []const u8) ![]u8 {
     ) catch return RegionError.CompressionError;
 
     comp.writer.writeAll(data) catch return RegionError.CompressionError;
-    comp.finish() catch return RegionError.CompressionError;
+    comp.writer.flush() catch return RegionError.CompressionError;
 
     return aw.toOwnedSlice() catch return RegionError.CompressionError;
 }
@@ -250,18 +249,17 @@ const testing = std.testing;
 fn withTempDir(comptime func: anytype) !void {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
-    const dir = fs.Dir{ .inner = tmp_dir.dir };
-    try func(dir);
+    try func(&tmp_dir.dir);
 }
 
 test "RegionFile round-trip write and read" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_roundtrip.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -285,12 +283,12 @@ test "RegionFile round-trip write and read" {
 
 test "RegionFile multiple chunks in one region" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_multi.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -320,12 +318,12 @@ test "RegionFile multiple chunks in one region" {
 
 test "RegionFile overwrite replaces data" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_overwrite.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -344,12 +342,12 @@ test "RegionFile overwrite replaces data" {
 
 test "RegionFile empty region creates valid file" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_empty.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -371,12 +369,12 @@ test "RegionFile empty region creates valid file" {
 
 test "RegionFile hasChunk reports correctly" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_haschunk.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -397,12 +395,12 @@ test "RegionFile hasChunk reports correctly" {
 
 test "RegionFile deleteChunk removes chunk" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_delete.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -422,12 +420,12 @@ test "RegionFile deleteChunk removes chunk" {
 
 test "RegionFile readChunk not found returns error" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_notfound.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -441,12 +439,12 @@ test "RegionFile readChunk not found returns error" {
 
 test "RegionFile binary chunk data round-trip" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_binary.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
             var region = try RegionFile.create(testing.allocator, full_path);
@@ -469,16 +467,16 @@ test "RegionFile binary chunk data round-trip" {
 
 test "RegionFile corrupt header handling" {
     try withTempDir(struct {
-        fn run(base: fs.Dir) !void {
+        fn run(base: *std.fs.Dir) !void {
             const path = "test_corrupt.mca";
             const file = try base.createFile(path, .{ .read = true, .truncate = true });
             file.close();
 
-            var full_path_buf: [fs.max_path_bytes]u8 = undefined;
+            var full_path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = try base.realpath(path, &full_path_buf);
 
-            const file2 = try fs.cwd().openFile(full_path, .{ .mode = .read_write });
-            try file2.setLength(100);
+            const file2 = try std.fs.cwd().openFile(full_path, .{ .mode = .read_write });
+            try file2.setEndPos(100);
             file2.close();
 
             const result = RegionFile.open(testing.allocator, full_path);

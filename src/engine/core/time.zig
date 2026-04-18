@@ -5,7 +5,12 @@ const std = @import("std");
 const c = @import("../../c.zig").c;
 
 pub fn timestampMs() i64 {
-    return std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
+    const inst = std.time.Instant.now() catch return 0;
+    const sec: i64 = inst.timestamp.sec;
+    const nsec: i64 = inst.timestamp.nsec;
+    const ms_from_sec = std.math.mul(i64, sec, std.time.ms_per_s) catch return std.math.maxInt(i64);
+    const ms_from_nsec = @divTrunc(nsec, std.time.ns_per_ms);
+    return std.math.add(i64, ms_from_sec, ms_from_nsec) catch return std.math.maxInt(i64);
 }
 
 pub const Time = struct {

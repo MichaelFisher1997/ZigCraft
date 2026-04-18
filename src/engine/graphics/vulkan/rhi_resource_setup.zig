@@ -1,5 +1,4 @@
 const std = @import("std");
-const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const log = @import("../../core/log.zig");
@@ -127,9 +126,9 @@ pub fn createShadowResources(ctx: anytype) !void {
         ctx.shadow_system.shadow_image_layouts[si] = c.VK_IMAGE_LAYOUT_UNDEFINED;
     }
 
-    const shadow_vert = try fs.cwd().readFileAlloc(shader_registry.SHADOW_VERT, ctx.allocator, 1024 * 1024);
+    const shadow_vert = try std.fs.cwd().readFileAlloc(shader_registry.SHADOW_VERT, ctx.allocator, @enumFromInt(1024 * 1024));
     defer ctx.allocator.free(shadow_vert);
-    const shadow_frag = try fs.cwd().readFileAlloc(shader_registry.SHADOW_FRAG, ctx.allocator, 1024 * 1024);
+    const shadow_frag = try std.fs.cwd().readFileAlloc(shader_registry.SHADOW_FRAG, ctx.allocator, @enumFromInt(1024 * 1024));
     defer ctx.allocator.free(shadow_frag);
 
     const shadow_vert_module = try Utils.createShaderModule(vk, shadow_vert);
