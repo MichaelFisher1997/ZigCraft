@@ -83,6 +83,7 @@ test {
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/graphics/shadow_tests.zig");
+    _ = @import("engine/graphics/shadow_system_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
     _ = @import("engine/math/frustum_tests.zig");
     _ = @import("engine/math/mat4_tests.zig");
