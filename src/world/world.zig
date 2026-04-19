@@ -15,6 +15,7 @@ const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const gen_interface = @import("worldgen/generator_interface.zig");
 const Generator = gen_interface.Generator;
 const registry = @import("worldgen/registry.zig");
+const LightingComputer = @import("worldgen/lighting_computer.zig").LightingComputer;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RHI = rhi_mod.RHI;
 const WorldLOD = @import("world_lod.zig").WorldLOD(RHI);
@@ -378,7 +379,7 @@ pub const World = struct {
             }
         }
 
-        data.chunk.updateSkylightColumn(local.x, local.z);
+        try LightingComputer.computeSkylight(&data.chunk, self.allocator);
 
         // Mark neighbor chunks dirty if block is on chunk boundary
         // This ensures their meshes update to show/hide faces correctly

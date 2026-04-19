@@ -21,21 +21,19 @@ pub const SkyColorPalette = struct {
 
     pub fn init() SkyColorPalette {
         return .{
-            .day_sky = Vec3.init(0.4, 0.65, 1.0).toLinear(),
-            .day_horizon = Vec3.init(0.7, 0.8, 0.95).toLinear(),
-            .night_sky = Vec3.init(0.02, 0.02, 0.08).toLinear(),
-            .night_horizon = Vec3.init(0.05, 0.05, 0.12).toLinear(),
-            .dawn_sky = Vec3.init(0.25, 0.3, 0.5).toLinear(),
-            .dawn_horizon = Vec3.init(0.95, 0.55, 0.2).toLinear(),
-            // Dawn and dusk colors are currently symmetric (identical)
-            // This is intentional for now but can be split later if needed
-            .dusk_sky = Vec3.init(0.25, 0.3, 0.5).toLinear(),
-            .dusk_horizon = Vec3.init(0.95, 0.55, 0.2).toLinear(),
+            .day_sky = Vec3.init(0.34, 0.56, 0.94).toLinear(),
+            .day_horizon = Vec3.init(0.78, 0.86, 0.98).toLinear(),
+            .night_sky = Vec3.init(0.01, 0.015, 0.06).toLinear(),
+            .night_horizon = Vec3.init(0.03, 0.04, 0.12).toLinear(),
+            .dawn_sky = Vec3.init(0.18, 0.24, 0.44).toLinear(),
+            .dawn_horizon = Vec3.init(1.0, 0.62, 0.28).toLinear(),
+            .dusk_sky = Vec3.init(0.22, 0.18, 0.32).toLinear(),
+            .dusk_horizon = Vec3.init(0.98, 0.52, 0.22).toLinear(),
 
-            .day_sun = Vec3.init(1.0, 0.95, 0.9).toLinear(),
-            .dawn_sun = Vec3.init(1.0, 0.85, 0.6).toLinear(),
-            .dusk_sun = Vec3.init(1.0, 0.85, 0.6).toLinear(),
-            .night_sun = Vec3.init(0.04, 0.04, 0.1).toLinear(),
+            .day_sun = Vec3.init(1.0, 0.97, 0.92).toLinear(),
+            .dawn_sun = Vec3.init(1.0, 0.86, 0.62).toLinear(),
+            .dusk_sun = Vec3.init(1.0, 0.78, 0.52).toLinear(),
+            .night_sun = Vec3.init(0.08, 0.10, 0.18).toLinear(),
         };
     }
 

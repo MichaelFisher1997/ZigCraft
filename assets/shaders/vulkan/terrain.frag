@@ -32,7 +32,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
-    vec4 viewport_size; // xy = width/height, z = shadow debug active, w = shadow debug channel (0=off, 1=shadow_factor, 2=cascade_index, 3=caster_coverage, 4=seam_diag)
+    vec4 viewport_size; // xy = width/height, z = terrain debug active, w = terrain debug channel
     vec4 lpv_params; // x = enabled, y = intensity, z = cell_size, w = grid_size
     vec4 lpv_origin; // xyz = world origin
 } global;
@@ -47,6 +47,10 @@ const int DEBUG_CASTER_COVERAGE = 3;
 const int DEBUG_SEAM_DIAG = 4;
 const int DEBUG_TILE_ID = 5;
 const int DEBUG_TEX_COLOR = 6;
+const int DEBUG_DIRECT_KEY = 7;
+const int DEBUG_SKY_FILL = 8;
+const int DEBUG_BLOCK_LIGHT = 9;
+const int DEBUG_OUTDOOR_FACTOR = 10;
 
 // Cloud shadow noise functions
 float cloudHash(vec2 p) {
@@ -432,21 +436,65 @@ vec3 computeBRDF(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness) {
 }
 
 float baselineOutdoorFactor(float skyLight) {
-    return smoothstep(0.0, 0.03, clamp(skyLight, 0.0, 1.0));
+    return smoothstep(0.0, 0.05, clamp(skyLight, 0.0, 1.0));
 }
 
-vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, vec3 blockLightIn, float ao) {
+float debugOutdoorFactor(float skyLight) {
+    return smoothstep(0.0, 0.45, clamp(skyLight, 0.0, 1.0));
+}
+
+vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, vec3 blockLightIn, float ao, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
     float outdoor = baselineOutdoorFactor(skyLightIn);
     float diagonalDelta = abs(abs(N.x) - abs(N.z));
     float isBillboard = (abs(N.y) < 0.01 && diagonalDelta < 0.05) ? 1.0 : 0.0;
-    float sunFacing = mix(dot(N, L), abs(dot(N, L)), isBillboard);
-    float wrappedDiffuse = clamp((sunFacing + 0.08 * outdoor) / (1.0 + 0.08 * outdoor), 0.0, 1.0);
-    float directLight = wrappedDiffuse * global.params.w * outdoor * 0.9;
-    float skyAmbient = global.lighting.x * (0.01 + skyLightIn * 0.20 + 0.10 * outdoor);
-    float blockLight = max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b));
-    float lightLevel = skyAmbient + blockLight + directLight;
-    float aoFactor = mix(1.0, ao, 0.25);
-    return albedo * clamp(lightLevel * aoFactor, 0.0, 1.0);
+    float baseSunFacing = dot(N, L);
+    float baseMoonFacing = dot(N, -L);
+    float billboardSunFacing = max(baseSunFacing, 0.0) * 0.42 + abs(baseSunFacing) * 0.10;
+    float billboardMoonFacing = max(baseMoonFacing, 0.0) * 0.40 + abs(baseMoonFacing) * 0.08;
+    float sunFacing = mix(baseSunFacing, billboardSunFacing, isBillboard);
+    float moonFacing = mix(baseMoonFacing, billboardMoonFacing, isBillboard);
+
+    float sunWrap = mix(0.0, 0.10 + 0.06 * outdoor, isBillboard);
+    float moonWrap = 0.18;
+    float sunDiffuse = clamp((sunFacing + sunWrap) / (1.0 + sunWrap), 0.0, 1.0);
+    float moonDiffuse = clamp((moonFacing + moonWrap) / (1.0 + moonWrap), 0.0, 1.0);
+
+    float sunAmount = clamp(global.params.w, 0.0, 1.0);
+    float moonAmount = (1.0 - sunAmount) * 0.12;
+
+    vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.88, 0.70), 0.20);
+    vec3 moonKeyTint = vec3(0.16, 0.20, 0.30);
+    float hemi = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    float sideFactor = 1.0 - abs(N.y);
+    float twilight = (1.0 - smoothstep(0.10, 0.38, abs(L.y))) * outdoor;
+    vec3 zenithTint = mix(vec3(0.05, 0.06, 0.08), global.fog_color.rgb, 0.60);
+    vec3 horizonTint = mix(vec3(0.08, 0.06, 0.05), global.fog_color.rgb, 0.35);
+    vec3 skyFillTint = mix(horizonTint, zenithTint, pow(hemi, 0.7));
+    vec3 twilightTint = mix(horizonTint, sunKeyTint, 0.35);
+
+    vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * (0.55 + 0.45 * outdoor) * 1.05;
+    keyLight += moonKeyTint * moonDiffuse * moonAmount * outdoor;
+
+    float sideFill = 0.14 * outdoor * sideFactor * mix(1.0, 0.10, isBillboard);
+    float twilightLift = twilight * (0.07 + 0.11 * sideFactor * mix(1.0, 0.10, isBillboard));
+    float fillStrength = 0.032 + skyLightIn * mix(0.20, 0.28, hemi) + 0.07 * outdoor + sideFill + twilightLift;
+    vec3 skyFill = skyFillTint * global.lighting.x * fillStrength;
+    vec3 twilightBounce = twilightTint * twilight * (0.08 + 0.15 * sideFactor) * mix(1.0, 0.16, isBillboard);
+    vec3 blockFill = blockLightIn;
+    float billboardKeyScale = mix(0.88, 0.68, 1.0 - sunAmount);
+    float billboardFillScale = mix(0.78, 0.50, 1.0 - sunAmount);
+    keyLight *= mix(1.0, billboardKeyScale, isBillboard);
+    skyFill *= mix(1.15, billboardFillScale, isBillboard);
+    skyFill += twilightBounce;
+    vec3 lightColor = keyLight + skyFill + blockFill;
+
+    directKeyOut = clamp(max(max(keyLight.r, keyLight.g), keyLight.b), 0.0, 1.0);
+    skyFillOut = clamp(max(max(skyFill.r, skyFill.g), skyFill.b), 0.0, 1.0);
+    blockLightOut = clamp(max(blockFill.r, max(blockFill.g, blockFill.b)), 0.0, 1.0);
+    outdoorOut = debugOutdoorFactor(skyLightIn);
+
+    float aoFactor = mix(1.0, ao, 0.14);
+    return albedo * clamp(lightColor * aoFactor, 0.0, 1.0);
 }
 
 vec3 computeLegacyDirect(vec3 albedo, float nDotL, float totalShadow, float skyLightIn, vec3 blockLightIn, float intensityFactor) {
@@ -547,6 +595,10 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
 void main() {
     vec3 color;
     float outputAlpha = 1.0;
+    float debugDirectKey = 0.0;
+    float debugSkyFill = 0.0;
+    float debugBlockLight = clamp(max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)), 0.0, 1.0);
+    float debugOutdoor = baselineOutdoorFactor(vSkyLight);
     const float LOD_TRANSITION_WIDTH = 24.0;
     const float AO_FADE_DISTANCE = 128.0;
     float viewDistance = length(vFragPosWorld);
@@ -610,7 +662,7 @@ void main() {
             vec3 tint = mix(vec3(1.0), normalizedTint, tintStrength);
             albedo = texColor.rgb * tint;
         }
-        color = computeSimpleLighting(albedo, N, L, vSkyLight, vBlockLight, ao);
+        color = computeSimpleLighting(albedo, N, L, vSkyLight, vBlockLight, ao, debugDirectKey, debugSkyFill, debugBlockLight, debugOutdoor);
     } else if (global.lighting.y > 0.5 && vTileID >= 0) {
         vec4 texColor = texture(uTexture, uv);
         if (texColor.a < 0.1) discard;
@@ -686,6 +738,14 @@ void main() {
         } else if (debugChannel < DEBUG_TEX_COLOR + 0.5) {
             vec4 texColor = texture(uTexture, uv);
             color = texColor.rgb;
+        } else if (debugChannel < DEBUG_DIRECT_KEY + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 0.80, 0.28), debugDirectKey);
+        } else if (debugChannel < DEBUG_SKY_FILL + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(0.30, 0.70, 1.0), debugSkyFill);
+        } else if (debugChannel < DEBUG_BLOCK_LIGHT + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 0.45, 0.12), debugBlockLight);
+        } else if (debugChannel < DEBUG_OUTDOOR_FACTOR + 0.5) {
+            color = vec3(debugOutdoor);
         }
     }
 

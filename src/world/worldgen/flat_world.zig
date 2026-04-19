@@ -10,6 +10,7 @@ const CHUNK_SIZE_Y = @import("../chunk.zig").CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = @import("../chunk.zig").CHUNK_SIZE_Z;
 const BlockType = @import("../block.zig").BlockType;
 const BiomeId = @import("biome.zig").BiomeId;
+const LightingComputer = @import("lighting_computer.zig").LightingComputer;
 const lod_chunk = @import("../lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
@@ -37,7 +38,6 @@ pub const FlatWorldGenerator = struct {
     }
 
     pub fn generate(self: *FlatWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
-        _ = self;
         chunk.generated = false;
 
         var local_z: u32 = 0;
@@ -67,15 +67,7 @@ pub const FlatWorldGenerator = struct {
             }
         }
 
-        // Basic skylight
-        var lz: u32 = 0;
-        while (lz < CHUNK_SIZE_Z) : (lz += 1) {
-            if (stop_flag) |sf| if (sf.*) return;
-            var lx: u32 = 0;
-            while (lx < CHUNK_SIZE_X) : (lx += 1) {
-                chunk.updateSkylightColumn(lx, lz);
-            }
-        }
+        LightingComputer.computeSkylight(chunk, self.allocator) catch unreachable;
 
         chunk.generated = true;
         chunk.dirty = true;

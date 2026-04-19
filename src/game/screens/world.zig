@@ -25,6 +25,7 @@ const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDi
 const log = @import("../../engine/core/log.zig");
 const CSM = @import("../../engine/graphics/csm.zig");
 const WorldRenderer = @import("../../world/world_renderer.zig").WorldRenderer;
+const settings_data = @import("../settings/data.zig");
 const build_options = @import("build_options");
 
 pub const WorldScreen = struct {
@@ -123,13 +124,10 @@ pub const WorldScreen = struct {
             }
             if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_shadow_debug_vis)) {
                 log.log.info("Toggling shadow debug visualization (G pressed)", .{});
-                ctx.settings.debug_shadows_active = !ctx.settings.debug_shadows_active;
-                if (ctx.settings.debug_shadows_active) {
-                    ctx.settings.debug_shadow_cascade_index = false;
-                    ctx.settings.debug_shadow_caster_coverage = false;
-                    ctx.settings.debug_shadow_seam_diag = false;
-                }
-                rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
+                const enable = !ctx.settings.debug_shadows_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_shadows_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
                 self.last_debug_toggle_time = now;
             }
@@ -436,7 +434,7 @@ pub const WorldScreen = struct {
             Font.drawText(ui, msg, box_x + 18.0, box_y + 8.0, 2.0, Color.white);
         }
 
-        if (!render_system.getDisableShadowDraw() and (ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag)) {
+        if (!render_system.getDisableShadowDraw() and settings_data.anyShadowMapDebugActive(ctx.settings)) {
             const shadow_res = ctx.settings.getShadowResolution();
             const shadow_dist = ctx.settings.shadow_distance;
             const debug_cascades = CSM.computeCascades(
@@ -576,6 +574,10 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.shadow_cascade_index)] = ctx.settings.debug_shadow_cascade_index;
         states[@intFromEnum(DebugFeature.shadow_caster_coverage)] = ctx.settings.debug_shadow_caster_coverage;
         states[@intFromEnum(DebugFeature.shadow_seam_diag)] = ctx.settings.debug_shadow_seam_diag;
+        states[@intFromEnum(DebugFeature.direct_key_debug)] = ctx.settings.debug_direct_key_active;
+        states[@intFromEnum(DebugFeature.sky_fill_debug)] = ctx.settings.debug_sky_fill_active;
+        states[@intFromEnum(DebugFeature.block_light_debug)] = ctx.settings.debug_block_light_active;
+        states[@intFromEnum(DebugFeature.outdoor_factor_debug)] = ctx.settings.debug_outdoor_factor_active;
         states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
         states[@intFromEnum(DebugFeature.lod_render)] = self.session.world.lod_enabled;
         states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
@@ -613,46 +615,59 @@ pub const WorldScreen = struct {
                 self.session.debug_show_block_info = !self.session.debug_show_block_info;
             },
             .shadow_debug => {
-                ctx.settings.debug_shadows_active = !ctx.settings.debug_shadows_active;
-                if (ctx.settings.debug_shadows_active) {
-                    ctx.settings.debug_shadow_cascade_index = false;
-                    ctx.settings.debug_shadow_caster_coverage = false;
-                    ctx.settings.debug_shadow_seam_diag = false;
-                }
-                rhi.setDebugShadowView(ctx.settings.debug_shadows_active);
+                const enable = !ctx.settings.debug_shadows_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_shadows_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .shadow_cascade_index => {
-                ctx.settings.debug_shadow_cascade_index = !ctx.settings.debug_shadow_cascade_index;
-                if (ctx.settings.debug_shadow_cascade_index) {
-                    ctx.settings.debug_shadows_active = false;
-                    ctx.settings.debug_shadow_caster_coverage = false;
-                    ctx.settings.debug_shadow_seam_diag = false;
-                }
-                const any_active = ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag;
-                rhi.setDebugShadowView(any_active);
+                const enable = !ctx.settings.debug_shadow_cascade_index;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_shadow_cascade_index = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .shadow_caster_coverage => {
-                ctx.settings.debug_shadow_caster_coverage = !ctx.settings.debug_shadow_caster_coverage;
-                if (ctx.settings.debug_shadow_caster_coverage) {
-                    ctx.settings.debug_shadows_active = false;
-                    ctx.settings.debug_shadow_cascade_index = false;
-                    ctx.settings.debug_shadow_seam_diag = false;
-                }
-                const any_active = ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag;
-                rhi.setDebugShadowView(any_active);
+                const enable = !ctx.settings.debug_shadow_caster_coverage;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_shadow_caster_coverage = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .shadow_seam_diag => {
-                ctx.settings.debug_shadow_seam_diag = !ctx.settings.debug_shadow_seam_diag;
-                if (ctx.settings.debug_shadow_seam_diag) {
-                    ctx.settings.debug_shadows_active = false;
-                    ctx.settings.debug_shadow_cascade_index = false;
-                    ctx.settings.debug_shadow_caster_coverage = false;
-                }
-                const any_active = ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag;
-                rhi.setDebugShadowView(any_active);
+                const enable = !ctx.settings.debug_shadow_seam_diag;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_shadow_seam_diag = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .direct_key_debug => {
+                const enable = !ctx.settings.debug_direct_key_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_direct_key_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .sky_fill_debug => {
+                const enable = !ctx.settings.debug_sky_fill_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_sky_fill_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .block_light_debug => {
+                const enable = !ctx.settings.debug_block_light_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_block_light_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .outdoor_factor_debug => {
+                const enable = !ctx.settings.debug_outdoor_factor_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_outdoor_factor_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .timing_overlay => {

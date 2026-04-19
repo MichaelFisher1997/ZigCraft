@@ -1,4 +1,5 @@
 const Settings = @import("data.zig").Settings;
+const anyTerrainDebugActive = @import("data.zig").anyTerrainDebugActive;
 const resolveShadowDebugChannel = @import("data.zig").resolveShadowDebugChannel;
 const RHI = @import("../../engine/graphics/rhi.zig").RHI;
 const IRenderSettings = @import("../../engine/core/interfaces.zig").IRenderSettings;
@@ -39,7 +40,7 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setVSync(settings.vsync);
     rhi.setWireframe(settings.wireframe_enabled);
     rhi.setTexturesEnabled(settings.textures_enabled);
-    rhi.setDebugShadowView(settings.debug_shadows_active);
+    rhi.setDebugShadowView(anyTerrainDebugActive(settings));
     rhi.setShadowDebugChannel(@intFromEnum(resolveShadowDebugChannel(settings)));
     rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
     rhi.setMSAA(settings.msaa_samples);
@@ -52,7 +53,7 @@ pub fn applyToRenderSettings(settings: *const Settings, rs: IRenderSettings) voi
     rs.setVSync(settings.vsync);
     rs.setWireframe(settings.wireframe_enabled);
     rs.setTexturesEnabled(settings.textures_enabled);
-    rs.setDebugShadowView(settings.debug_shadows_active);
+    rs.setDebugShadowView(anyTerrainDebugActive(settings));
     rs.setAnisotropicFiltering(settings.anisotropic_filtering);
     rs.setMSAA(settings.msaa_samples);
     rs.setTAABlendFactor(settings.taa_blend_factor);

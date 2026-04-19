@@ -9,14 +9,41 @@ pub const ShadowDebugChannel = enum(u32) {
     seam_diagnostics = 4,
     tile_id = 5,
     tex_color = 6,
+    direct_key = 7,
+    sky_fill = 8,
+    block_light = 9,
+    outdoor_factor = 10,
 };
 
 pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {
+    if (settings.debug_direct_key_active) return .direct_key;
+    if (settings.debug_sky_fill_active) return .sky_fill;
+    if (settings.debug_block_light_active) return .block_light;
+    if (settings.debug_outdoor_factor_active) return .outdoor_factor;
     if (settings.debug_shadow_seam_diag) return .seam_diagnostics;
     if (settings.debug_shadow_caster_coverage) return .caster_coverage;
     if (settings.debug_shadow_cascade_index) return .cascade_index;
     if (settings.debug_shadows_active) return .shadow_factor;
     return .off;
+}
+
+pub fn anyShadowMapDebugActive(settings: *const @This().Settings) bool {
+    return settings.debug_shadows_active or settings.debug_shadow_cascade_index or settings.debug_shadow_caster_coverage or settings.debug_shadow_seam_diag;
+}
+
+pub fn anyTerrainDebugActive(settings: *const @This().Settings) bool {
+    return resolveShadowDebugChannel(settings) != .off;
+}
+
+pub fn clearTerrainDebugViews(settings: *@This().Settings) void {
+    settings.debug_shadows_active = false;
+    settings.debug_shadow_cascade_index = false;
+    settings.debug_shadow_caster_coverage = false;
+    settings.debug_shadow_seam_diag = false;
+    settings.debug_direct_key_active = false;
+    settings.debug_sky_fill_active = false;
+    settings.debug_block_light_active = false;
+    settings.debug_outdoor_factor_active = false;
 }
 
 pub const ShadowQuality = struct {
@@ -58,6 +85,10 @@ pub const Settings = struct {
     debug_shadow_cascade_index: bool = false,
     debug_shadow_caster_coverage: bool = false,
     debug_shadow_seam_diag: bool = false,
+    debug_direct_key_active: bool = false,
+    debug_sky_fill_active: bool = false,
+    debug_block_light_active: bool = false,
+    debug_outdoor_factor_active: bool = false,
     debug_lpv_overlay_active: bool = false,
     debug_frustum_active: bool = false,
     debug_occlusion_active: bool = false,

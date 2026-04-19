@@ -211,7 +211,10 @@ pub const OverworldGenerator = struct {
             self.biome_decorator.generateFeatures(chunk, self.terrain_shape.getNoiseSampler());
             if (stop_flag) |sf| if (sf.*) return;
         }
-        LightingComputer.computeSkylight(chunk);
+        LightingComputer.computeSkylight(chunk, self.allocator) catch |err| {
+            log.log.errWithTrace("Failed to compute skylight for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
+            return;
+        };
         if (stop_flag) |sf| if (sf.*) return;
         if (!self.basic_chunks_only) {
             LightingComputer.computeBlockLight(chunk, self.allocator) catch |err| {

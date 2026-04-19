@@ -16,7 +16,21 @@ pub const LightingComputer = struct {
         b: u4,
     };
 
-    pub fn computeSkylight(chunk: *Chunk) void {
+    const SkyNode = struct {
+        x: u8,
+        y: u16,
+        z: u8,
+        light: u4,
+    };
+
+    pub fn computeSkylight(chunk: *Chunk, allocator: std.mem.Allocator) !void {
+        for (&chunk.light) |*light| {
+            light.setSkyLight(0);
+        }
+
+        var queue = std.ArrayListUnmanaged(SkyNode).empty;
+        defer queue.deinit(allocator);
+
         var local_z: u32 = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
             var local_x: u32 = 0;
@@ -26,13 +40,66 @@ pub const LightingComputer = struct {
                 while (y >= 0) : (y -= 1) {
                     const uy: u32 = @intCast(y);
                     const block = chunk.getBlock(local_x, uy, local_z);
-                    chunk.setSkyLight(local_x, uy, local_z, sky_light);
                     if (block_registry.getBlockDefinition(block).isOpaque()) {
+                        chunk.setSkyLight(local_x, uy, local_z, 0);
                         sky_light = 0;
-                    } else if (block == .water and sky_light > 0) {
+                        continue;
+                    }
+
+                    chunk.setSkyLight(local_x, uy, local_z, sky_light);
+                    if (sky_light > 0) {
+                        try queue.append(allocator, .{
+                            .x = @intCast(local_x),
+                            .y = @intCast(uy),
+                            .z = @intCast(local_z),
+                            .light = sky_light,
+                        });
+                    }
+
+                    if (block == .water and sky_light > 0) {
                         sky_light -= 1;
                     }
                 }
+            }
+        }
+
+        const propagation_neighbors = [5][3]i32{
+            .{ 1, 0, 0 },
+            .{ -1, 0, 0 },
+            .{ 0, 0, 1 },
+            .{ 0, 0, -1 },
+            .{ 0, -1, 0 },
+        };
+
+        var head: usize = 0;
+        while (head < queue.items.len) : (head += 1) {
+            const node = queue.items[head];
+            if (node.light <= 1) continue;
+
+            for (propagation_neighbors) |offset| {
+                const nx = @as(i32, node.x) + offset[0];
+                const ny = @as(i32, node.y) + offset[1];
+                const nz = @as(i32, node.z) + offset[2];
+
+                if (nx < 0 or nx >= CHUNK_SIZE_X or ny < 0 or ny >= CHUNK_SIZE_Y or nz < 0 or nz >= CHUNK_SIZE_Z) continue;
+
+                const ux: u32 = @intCast(nx);
+                const uy: u32 = @intCast(ny);
+                const uz: u32 = @intCast(nz);
+                const block = chunk.getBlock(ux, uy, uz);
+                if (block_registry.getBlockDefinition(block).isOpaque()) continue;
+
+                const attenuation: u4 = if (block == .water) 2 else 1;
+                const next_light: u4 = if (node.light > attenuation) node.light - attenuation else 0;
+                if (next_light <= chunk.getSkyLight(ux, uy, uz)) continue;
+
+                chunk.setSkyLight(ux, uy, uz, next_light);
+                try queue.append(allocator, .{
+                    .x = @intCast(ux),
+                    .y = @intCast(uy),
+                    .z = @intCast(uz),
+                    .light = next_light,
+                });
             }
         }
     }
@@ -105,3 +172,27 @@ pub const LightingComputer = struct {
         }
     }
 };
+
+test "computeSkylight preserves full light in open columns" {
+    var chunk = Chunk.init(0, 0);
+    try LightingComputer.computeSkylight(&chunk, std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u4, MAX_LIGHT), chunk.getSkyLight(8, 255, 8));
+    try std.testing.expectEqual(@as(u4, MAX_LIGHT), chunk.getSkyLight(8, 64, 8));
+}
+
+test "computeSkylight propagates sideways from an open shaft" {
+    var chunk = Chunk.init(0, 0);
+
+    for (0..CHUNK_SIZE_Z) |z| {
+        for (0..CHUNK_SIZE_X) |x| {
+            chunk.setBlock(@intCast(x), 4, @intCast(z), .stone);
+        }
+    }
+    chunk.setBlock(8, 4, 8, .air);
+
+    try LightingComputer.computeSkylight(&chunk, std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u4, MAX_LIGHT), chunk.getSkyLight(8, 3, 8));
+    try std.testing.expect(chunk.getSkyLight(9, 3, 8) > 0);
+}
