@@ -86,11 +86,11 @@ pub fn meshSlice(
             const b2_cross = b2_def.render_shape == .cross;
 
             if (boundary.isEmittingSubchunk(axis, s - 1, u, v, y_min, y_max) and b1_emits and !b1_cross and !b2_def.occludes(b1_def, axis)) {
-                const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si);
+                const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s - 1, u, v, b1);
                 mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .color = color };
             } else if (boundary.isEmittingSubchunk(axis, s, u, v, y_min, y_max) and b2_emits and !b2_cross and !b1_def.occludes(b2_def, axis)) {
-                const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si);
+                const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s, u, v, b2);
                 mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .color = color };
             }

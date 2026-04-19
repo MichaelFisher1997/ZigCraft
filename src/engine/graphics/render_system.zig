@@ -77,7 +77,8 @@ pub const RenderSystem = struct {
         const safe_mode = runtime_env.safeModeEnabled();
 
         const disable_shadow_env = getenv("ZIGCRAFT_DISABLE_SHADOWS");
-        const disable_shadow_draw = if (disable_shadow_env) |val|
+        const temporary_disable_shadows = true;
+        const disable_shadow_draw = temporary_disable_shadows or if (disable_shadow_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
@@ -280,10 +281,14 @@ pub const RenderSystem = struct {
         settings_pkg.apply_logic.applyToRHI(settings, &self.rhi);
 
         if (!safe_render_mode) {
-            try self.render_graph.addPass(self.shadow_passes[0].pass());
-            try self.render_graph.addPass(self.shadow_passes[1].pass());
-            try self.render_graph.addPass(self.shadow_passes[2].pass());
-            try self.render_graph.addPass(self.shadow_passes[3].pass());
+            if (!disable_shadow_draw) {
+                try self.render_graph.addPass(self.shadow_passes[0].pass());
+                try self.render_graph.addPass(self.shadow_passes[1].pass());
+                try self.render_graph.addPass(self.shadow_passes[2].pass());
+                try self.render_graph.addPass(self.shadow_passes[3].pass());
+            } else {
+                log.log.warn("Shadows temporarily disabled; skipping shadow passes", .{});
+            }
             try self.render_graph.addPass(self.mesh_build_pass.pass());
             try self.render_graph.addPass(self.g_pass.pass());
             try self.render_graph.addPass(self.ssao_pass.pass());

@@ -1,7 +1,8 @@
 //! Cross/billboard meshing for vegetation blocks.
 //!
 //! Emits 2 diagonal quads (X-shaped billboard) per cross block instead of
-//! the standard 6-face cube. Each quad is double-sided (front + back faces).
+//! the standard 6-face cube. The terrain pipeline already renders with
+//! cull-none, so we emit each plane once to avoid coplanar double-draw shimmer.
 
 const std = @import("std");
 
@@ -90,7 +91,6 @@ fn emitCrossQuad(
     const dz = p1[2] - p0[2];
     const len = @sqrt(dx * dx + dz * dz);
     const nf_front = [3]f32{ -dz / len, 0, dx / len };
-    const nf_back = [3]f32{ dz / len, 0, -dx / len };
 
     const ao: f32 = 1.0;
 
@@ -105,9 +105,4 @@ fn emitCrossQuad(
         try verts.append(allocator, Vertex.init(v[i], col, n_front[i], u[i], tile_id, light.skylight, light.blocklight, ao));
     }
 
-    const n_back = [6][3]f32{ nf_back, nf_back, nf_back, nf_back, nf_back, nf_back };
-    const back_order = [6]usize{ 1, 0, 3, 1, 3, 2 };
-    for (0..6) |i| {
-        try verts.append(allocator, Vertex.init(positions[back_order[i]], col, n_back[i], uv[back_order[i]], tile_id, light.skylight, light.blocklight, ao));
-    }
 }

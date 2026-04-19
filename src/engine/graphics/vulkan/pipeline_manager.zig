@@ -295,6 +295,9 @@ pub const PipelineManager = struct {
         multisampling.sType = c.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         multisampling.rasterizationSamples = sample_count;
 
+        var terrain_multisampling = multisampling;
+        terrain_multisampling.alphaToCoverageEnable = if (sample_count != c.VK_SAMPLE_COUNT_1_BIT) c.VK_TRUE else c.VK_FALSE;
+
         var depth_stencil = std.mem.zeroes(c.VkPipelineDepthStencilStateCreateInfo);
         depth_stencil.sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
         depth_stencil.depthTestEnable = c.VK_TRUE;
@@ -324,7 +327,7 @@ pub const PipelineManager = struct {
         terrain_color_blending.pAttachments = &color_blend_attachment;
 
         // Terrain Pipeline
-        try self.createTerrainPipeline(allocator, vk_device, hdr_render_pass, &viewport_state, &dynamic_state, &input_assembly, &rasterizer, &multisampling, &depth_stencil, &terrain_color_blending, sample_count, g_render_pass);
+        try self.createTerrainPipeline(allocator, vk_device, hdr_render_pass, &viewport_state, &dynamic_state, &input_assembly, &rasterizer, &terrain_multisampling, &depth_stencil, &terrain_color_blending, sample_count, g_render_pass);
 
         // Sky Pipeline
         try self.createSkyPipeline(allocator, vk_device, hdr_render_pass, &viewport_state, &dynamic_state, &input_assembly, &rasterizer, &multisampling, &depth_stencil, &terrain_color_blending);

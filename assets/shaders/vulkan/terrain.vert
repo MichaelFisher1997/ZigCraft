@@ -129,7 +129,8 @@ void main() {
     vBlockLight = blocklight;
 
     vFragPosWorld = worldPos.xyz;
-    vViewDepth = -clipPos.w;
+    // clipPos.w is the positive forward view distance with our reverse-Z projection.
+    vViewDepth = clipPos.w;
     vAO = ao;
     vMaskRadius = mask_radius;
 

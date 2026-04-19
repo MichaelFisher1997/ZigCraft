@@ -31,7 +31,7 @@ pub fn createShadowResources(ctx: anytype) !void {
     shadow_depth_desc.loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
     shadow_depth_desc.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
     shadow_depth_desc.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
-    shadow_depth_desc.finalLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    shadow_depth_desc.finalLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     var shadow_depth_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
     var shadow_subpass = std.mem.zeroes(c.VkSubpassDescription);
     shadow_subpass.pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -143,15 +143,17 @@ pub fn createShadowResources(ctx: anytype) !void {
     };
 
     const shadow_binding = c.VkVertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(rhi.Vertex), .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX };
-    var shadow_attrs: [2]c.VkVertexInputAttributeDescription = undefined;
+    var shadow_attrs: [4]c.VkVertexInputAttributeDescription = undefined;
     shadow_attrs[0] = .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 };
     shadow_attrs[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32_UINT, .offset = 16 };
+    shadow_attrs[2] = .{ .binding = 0, .location = 2, .format = c.VK_FORMAT_R16G16_SFLOAT, .offset = 20 };
+    shadow_attrs[3] = .{ .binding = 0, .location = 3, .format = c.VK_FORMAT_R32_UINT, .offset = 24 };
 
     var shadow_vertex_input = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
     shadow_vertex_input.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     shadow_vertex_input.vertexBindingDescriptionCount = 1;
     shadow_vertex_input.pVertexBindingDescriptions = &shadow_binding;
-    shadow_vertex_input.vertexAttributeDescriptionCount = 2;
+    shadow_vertex_input.vertexAttributeDescriptionCount = 4;
     shadow_vertex_input.pVertexAttributeDescriptions = &shadow_attrs[0];
 
     var shadow_input_assembly = std.mem.zeroes(c.VkPipelineInputAssemblyStateCreateInfo);

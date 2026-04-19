@@ -115,7 +115,7 @@ pub const ShadowSystem = struct {
         // because each texel covers a larger world-space area.
         const REFERENCE_SHADOW_RESOLUTION: f32 = 4096.0;
         const bias_scale = REFERENCE_SHADOW_RESOLUTION / @as(f32, @floatFromInt(self.shadow_extent.width));
-        c.vkCmdSetDepthBias(command_buffer, -2.5 * bias_scale, 0.0, -5.0 * bias_scale);
+        c.vkCmdSetDepthBias(command_buffer, -0.75 * bias_scale, 0.0, -1.5 * bias_scale);
 
         var viewport: c.VkViewport = undefined;
         @memset(std.mem.asBytes(&viewport), 0);
@@ -142,7 +142,7 @@ pub const ShadowSystem = struct {
         self.pass_active = false;
 
         // Render pass handles transition to SHADER_READ_ONLY_OPTIMAL
-        self.shadow_image_layouts[cascade_index] = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        self.shadow_image_layouts[cascade_index] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     }
 };
 

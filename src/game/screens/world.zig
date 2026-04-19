@@ -287,13 +287,15 @@ pub const WorldScreen = struct {
         const startup_loading = build_options.auto_world.len > 0 and startup_busy;
         const startup_light_render = startup_busy and !safe_mode;
         const clouds_enabled = !render_system.getDisableClouds();
-        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode and !startup_light_render;
-        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and clouds_enabled and !safe_mode and !startup_light_render;
+        const shadows_disabled = render_system.getDisableShadowDraw();
+        const simple_lighting_mode = shadows_disabled;
+        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode and !startup_light_render and !simple_lighting_mode;
+        const cloud_shadows_enabled = ctx.settings.cloud_shadows_enabled and clouds_enabled and !safe_mode and !startup_light_render and !shadows_disabled;
 
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
-            ctx.settings.lpv_enabled and !safe_mode and !startup_light_render,
+            ctx.settings.lpv_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
             ctx.settings.lpv_intensity,
             ctx.settings.lpv_cell_size,
             lpv_quality.propagation_iterations,
@@ -322,25 +324,25 @@ pub const WorldScreen = struct {
                 .cloud_coverage = if (clouds_enabled) p.cloud_coverage else 0.0,
                 .cloud_height = p.cloud_height,
                 .base_color = self.session.clouds.base_color,
-                .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr and !safe_mode,
+                .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr and !safe_mode and !simple_lighting_mode,
                 .shadow = .{
                     .distance = ctx.settings.shadow_distance,
                     .resolution = ctx.settings.getShadowResolution(),
                     .pcf_samples = ctx.settings.shadow_pcf_samples,
                     .cascade_blend = ctx.settings.shadow_cascade_blend,
                     .caster_distance = ctx.settings.shadow_caster_distance,
-                    .strength = if (safe_mode) 0.0 else 0.35,
+                    .strength = if (safe_mode or shadows_disabled) 0.0 else 0.35,
                 },
                 .cloud_shadows = cloud_shadows_enabled,
                 .pbr_quality = ctx.settings.pbr_quality,
                 .exposure = ctx.settings.exposure,
                 .saturation = ctx.settings.saturation,
-                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render,
+                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
                 .volumetric_density = ctx.settings.volumetric_density,
                 .volumetric_steps = ctx.settings.volumetric_steps,
                 .volumetric_scattering = ctx.settings.volumetric_scattering,
                 .ssao_enabled = ssao_enabled,
-                .lpv_enabled = ctx.settings.lpv_enabled and !startup_light_render,
+                .lpv_enabled = ctx.settings.lpv_enabled and !startup_light_render and !simple_lighting_mode,
                 .lpv_intensity = ctx.settings.lpv_intensity,
                 .lpv_cell_size = lpv_system.getCellSize(),
                 .lpv_grid_size = lpv_system.getGridSize(),
@@ -357,7 +359,7 @@ pub const WorldScreen = struct {
                 std.math.clamp(boosted_horizon.z, 0.0, 1.0),
             );
             rhi.renderContext().setClearColor(clear_color);
-            try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
+            try rhi.updateGlobalUniforms(view_proj_render, camera.position, self.session.atmosphere.celestial.sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode and !simple_lighting_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;
@@ -434,7 +436,7 @@ pub const WorldScreen = struct {
             Font.drawText(ui, msg, box_x + 18.0, box_y + 8.0, 2.0, Color.white);
         }
 
-        if (ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag) {
+        if (!render_system.getDisableShadowDraw() and (ctx.settings.debug_shadows_active or ctx.settings.debug_shadow_cascade_index or ctx.settings.debug_shadow_caster_coverage or ctx.settings.debug_shadow_seam_diag)) {
             const shadow_res = ctx.settings.getShadowResolution();
             const shadow_dist = ctx.settings.shadow_distance;
             const debug_cascades = CSM.computeCascades(

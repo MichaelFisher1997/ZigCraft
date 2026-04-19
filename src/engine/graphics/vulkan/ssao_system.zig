@@ -474,7 +474,7 @@ pub const SSAOSystem = struct {
             ds_alloc.pSetLayouts = &self.blur_descriptor_set_layout;
             try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &ds_alloc, &self.blur_descriptor_sets[i]));
 
-            var depth_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .imageView = g_depth_view, .sampler = self.sampler };
+            var depth_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, .imageView = g_depth_view, .sampler = self.sampler };
             var norm_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .imageView = g_normal_view, .sampler = self.sampler };
             var noise_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .imageView = self.noise_view, .sampler = self.sampler };
             var buffer_info_ds = c.VkDescriptorBufferInfo{ .buffer = self.kernel_ubo.buffer, .offset = 0, .range = @sizeOf(SSAOParams) };

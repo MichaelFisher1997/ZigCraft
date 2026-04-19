@@ -112,15 +112,16 @@ float henyeyGreenstein(float g, float cosTheta) {
 
 // Simple shadow sampler for volumetric points, optimized
 float getVolShadow(vec3 p, float viewDepth) {
-    int layer = 2; // Sky is far, but raymarched points can be near
+    int layer = 3; // Sky is far, but raymarched points can be near
     if (viewDepth < shadows.cascade_splits[0]) layer = 0;
     else if (viewDepth < shadows.cascade_splits[1]) layer = 1;
+    else if (viewDepth < shadows.cascade_splits[2]) layer = 2;
 
     vec4 lightSpacePos = shadows.light_space_matrices[layer] * vec4(p, 1.0);
     vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
     proj.xy = proj.xy * 0.5 + 0.5;
     
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0) return 1.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z < 0.0 || proj.z > 1.0) return 1.0;
     
     return texture(uShadowMaps, vec4(proj.xy, float(layer), proj.z + 0.002));
 }
@@ -220,15 +221,15 @@ void main() {
 
     float horizon = 1.0 - abs(dir.y);
     horizon = pow(horizon, 1.5);
-    vec3 sky = mix(pc.sky_color.xyz, pc.horizon_color.xyz, horizon) * 4.0; // Boost sky radiance to match terrain boost
+    vec3 sky = mix(pc.sky_color.xyz, pc.horizon_color.xyz, horizon) * 3.4;
 
     float sunDot = dot(dir, normalize(pc.sun_dir.xyz));
-    float sunDisc = smoothstep(0.9995, 0.9999, sunDot);
-    // Use uniform sun color instead of hardcoded value
+    float sunDisc = smoothstep(0.9989, 0.99985, sunDot);
     vec3 sunColor = global.sun_color.rgb;
 
-    float sunGlow = pow(max(sunDot, 0.0), 8.0) * 0.5;
-    sunGlow += pow(max(sunDot, 0.0), 64.0) * 0.3;
+    float sunGlow = pow(max(sunDot, 0.0), 5.0) * 0.30;
+    sunGlow += pow(max(sunDot, 0.0), 24.0) * 0.45;
+    sunGlow += pow(max(sunDot, 0.0), 96.0) * 0.25;
 
     float moonDot = dot(dir, -normalize(pc.sun_dir.xyz));
     float moonDisc = smoothstep(0.9990, 0.9995, moonDot);
@@ -245,8 +246,8 @@ void main() {
     vec4 skyClouds = sampleSkyClouds(dir);
     finalColor = mix(finalColor, skyClouds.rgb, skyClouds.a);
 
-    finalColor += sunGlow * pc.params.z * pow(vec3(1.0, 0.8, 0.4), vec3(2.2));
-    finalColor += sunDisc * sunColor * pc.params.z;
+    finalColor += sunGlow * sunColor * pc.params.z * 1.6;
+    finalColor += sunDisc * sunColor * pc.params.z * 8.0;
     finalColor += moonDisc * moonColor * pc.params.w * 3.0;
     finalColor += vec3(starIntensity);
 

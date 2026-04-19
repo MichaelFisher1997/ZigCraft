@@ -312,7 +312,7 @@ pub const RenderPassManager = struct {
         attachments[2].stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[2].stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[2].initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[2].finalLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        attachments[2].finalLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         var color_refs = [_]c.VkAttachmentReference{
             c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },

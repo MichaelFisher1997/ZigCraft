@@ -705,7 +705,7 @@ pub const WorldRenderer = struct {
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
-        const frustum = Frustum.fromViewProj(light_space_matrix);
+        _ = light_space_matrix;
 
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
@@ -726,11 +726,6 @@ pub const WorldRenderer = struct {
                     if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
                         const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
-
-                        if (!frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.last_shadow_stats.chunks_culled += 1;
-                            continue;
-                        }
 
                         self.last_shadow_stats.chunks_rendered += 1;
 

@@ -160,7 +160,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     if (ctx.shadow_system.shadow_image != null) {
         try lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true);
         for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
-            ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         }
     }
 

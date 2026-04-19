@@ -78,17 +78,21 @@ float cloudFbm(vec2 p, int octaves) {
     return value;
 }
 
-// 4x4 Bayer matrix for dithered LOD transitions
-float bayerDither4x4(vec2 position) {
-    const float bayerMatrix[16] = float[](
-        0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
-        12.0/16.0, 4.0/16.0, 14.0/16.0,  6.0/16.0,
-        3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
-        15.0/16.0, 7.0/16.0, 13.0/16.0,  5.0/16.0
-    );
-    int x = int(mod(position.x, 4.0));
-    int y = int(mod(position.y, 4.0));
-    return bayerMatrix[x + y * 4];
+// World-space hash for LOD transition masking.
+// Using world-space noise avoids a fixed screen-space dot pattern.
+float lodTransitionNoise(vec2 worldXZ) {
+    vec2 p = floor(worldXZ * 0.25);
+    p = fract(p * vec2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return fract((p.x + p.y) * p.x);
+}
+
+float skyVisibilityFactor(float skyLight) {
+    return smoothstep(0.05, 0.25, clamp(skyLight, 0.0, 1.0));
+}
+
+vec3 absoluteWorldPos(vec3 cameraRelativePos) {
+    return cameraRelativePos + global.cam_pos.xyz;
 }
 
 float getCloudShadow(vec3 worldPos, vec3 sunDir) {
@@ -305,7 +309,7 @@ float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, 
     
     // Cascade blending transition (only when enabled).
     // shadow_params.y is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
-    if (global.shadow_params.y > 0.0 && layer < 2) {
+    if (global.shadow_params.y > 0.0 && layer < 3) {
         float nextSplit = shadows.cascade_splits[layer];
         float blendThreshold = nextSplit * 0.8;
         if (viewDepth > blendThreshold) {
@@ -314,7 +318,7 @@ float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, 
             shadow = mix(shadow, nextShadow, clamp(blend, 0.0, 1.0));
         }
     }
-    return shadow * clamp(global.shadow_params.z, 0.0, 1.0);
+    return shadow;
 }
 
 // PBR functions
@@ -427,42 +431,64 @@ vec3 computeBRDF(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness) {
     return (kD * albedo / PI + specular);
 }
 
-vec3 computeLegacyDirect(vec3 albedo, float nDotL, float totalShadow, float skyLightIn, vec3 blockLightIn, float intensityFactor) {
-    float directLight = nDotL * global.params.w * (1.0 - totalShadow) * intensityFactor;
-    float skyLight = skyLightIn * (global.lighting.x + directLight * 1.0);
-    float lightLevel = max(skyLight, max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b)));
-    lightLevel = max(lightLevel, global.lighting.x * 0.8);
-    float shadowFactor = mix(1.0, 0.8, totalShadow);
-    lightLevel = clamp(lightLevel * shadowFactor, 0.0, 1.0);
-    return albedo * lightLevel;
+float baselineOutdoorFactor(float skyLight) {
+    return smoothstep(0.0, 0.03, clamp(skyLight, 0.0, 1.0));
 }
 
-vec3 computePBR(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness, float totalShadow, float skyLight, vec3 blockLight, float ao, float ssao) {
+vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, vec3 blockLightIn, float ao) {
+    float outdoor = baselineOutdoorFactor(skyLightIn);
+    float diagonalDelta = abs(abs(N.x) - abs(N.z));
+    float isBillboard = (abs(N.y) < 0.01 && diagonalDelta < 0.05) ? 1.0 : 0.0;
+    float sunFacing = mix(dot(N, L), abs(dot(N, L)), isBillboard);
+    float wrappedDiffuse = clamp((sunFacing + 0.08 * outdoor) / (1.0 + 0.08 * outdoor), 0.0, 1.0);
+    float directLight = wrappedDiffuse * global.params.w * outdoor * 0.9;
+    float skyAmbient = global.lighting.x * (0.01 + skyLightIn * 0.20 + 0.10 * outdoor);
+    float blockLight = max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b));
+    float lightLevel = skyAmbient + blockLight + directLight;
+    float aoFactor = mix(1.0, ao, 0.25);
+    return albedo * clamp(lightLevel * aoFactor, 0.0, 1.0);
+}
+
+vec3 computeLegacyDirect(vec3 albedo, float nDotL, float totalShadow, float skyLightIn, vec3 blockLightIn, float intensityFactor) {
+    float directLight = nDotL * global.params.w * (1.0 - totalShadow) * intensityFactor;
+    float skyAmbient = max(skyLightIn * global.lighting.x, global.lighting.x * 0.08);
+    float blockLight = max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b));
+    float ambientShadowFactor = mix(1.0, 0.5, totalShadow);
+    float lightLevel = skyAmbient * ambientShadowFactor + blockLight + directLight;
+    return albedo * clamp(lightLevel, 0.0, 1.0);
+}
+
+vec3 computePBR(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness, float totalShadow, float skyLight, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+    float atmosphere = skyVisibilityFactor(skyVisibility);
     vec3 brdf = computeBRDF(albedo, N, V, L, roughness);
     float NdotL_final = max(dot(N, L), 0.0);
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_RADIANCE_TO_IRRADIANCE / PI;
     vec3 Lo = brdf * sunColor * NdotL_final * (1.0 - totalShadow);
     vec3 envColor = computeIBLAmbient(N, roughness);
-    float shadowAmbientFactor = mix(1.0, 0.65, totalShadow);
-    vec3 indirect = sampleLPVAtlas(vFragPosWorld, N);
-    vec3 ambientColor = albedo * (max(min(envColor, IBL_CLAMP) * skyLight * 0.8, vec3(global.lighting.x * 0.8)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
+    float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), N);
+    vec3 skyAmbient = max(min(envColor, IBL_CLAMP) * skyLight * 0.8 * atmosphere, vec3(global.lighting.x * 0.08));
+    vec3 ambientColor = albedo * (skyAmbient + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     return ambientColor + Lo;
 }
 
-vec3 computeNonPBR(vec3 albedo, vec3 N, float nDotL, float totalShadow, float skyLight, vec3 blockLight, float ao, float ssao) {
+vec3 computeNonPBR(vec3 albedo, vec3 N, float nDotL, float totalShadow, float skyLight, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+    float atmosphere = skyVisibilityFactor(skyVisibility);
     vec3 envColor = computeIBLAmbient(N, NON_PBR_ROUGHNESS);
-    float shadowAmbientFactor = mix(1.0, 0.65, totalShadow);
-    vec3 indirect = sampleLPVAtlas(vFragPosWorld, N);
-    vec3 ambientColor = albedo * (max(min(envColor, IBL_CLAMP) * skyLight * 0.8, vec3(global.lighting.x * 0.8)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
+    float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), N);
+    vec3 skyAmbient = max(min(envColor, IBL_CLAMP) * skyLight * 0.8 * atmosphere, vec3(global.lighting.x * 0.08));
+    vec3 ambientColor = albedo * (skyAmbient + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_RADIANCE_TO_IRRADIANCE / PI;
     vec3 directColor = albedo * sunColor * nDotL * (1.0 - totalShadow);
     return ambientColor + directColor;
 }
 
-vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, vec3 blockLight, float ao, float ssao) {
-    float shadowAmbientFactor = mix(1.0, 0.65, totalShadow);
-    vec3 indirect = sampleLPVAtlas(vFragPosWorld, vec3(0.0, 1.0, 0.0)); // LOD uses up-facing normal
-    vec3 ambientColor = albedo * (max(vec3(skyLightVal * 0.8), vec3(global.lighting.x * 0.4)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
+vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+    float atmosphere = skyVisibilityFactor(skyVisibility);
+    float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), vec3(0.0, 1.0, 0.0)); // LOD uses up-facing normal
+    vec3 ambientColor = albedo * (max(vec3(skyLightVal * 0.8 * atmosphere), vec3(global.lighting.x * 0.08)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_VOLUMETRIC_INTENSITY / PI;
     vec3 directColor = albedo * sunColor * nDotL * (1.0 - totalShadow);
     return ambientColor + directColor;
@@ -470,13 +496,14 @@ vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, 
 
 // Simple shadow sampler for volumetric points, optimized
 float getVolShadow(vec3 p, float viewDepth) {
-    int layer = 2;
+    int layer = 3;
     if (viewDepth < shadows.cascade_splits[0]) layer = 0;
     else if (viewDepth < shadows.cascade_splits[1]) layer = 1;
+    else if (viewDepth < shadows.cascade_splits[2]) layer = 2;
     vec4 lightSpacePos = shadows.light_space_matrices[layer] * vec4(p, 1.0);
     vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
     proj.xy = proj.xy * 0.5 + 0.5;
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0) return 1.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z < 0.0 || proj.z > 1.0) return 1.0;
     return texture(uShadowMaps, vec4(proj.xy, float(layer), proj.z + 0.002));
 }
 
@@ -503,7 +530,8 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
     for (int i = 0; i < steps; i++) {
         float d = (float(i) + dither) * stepSize;
         vec3 p = rayStart + rayDir * d;
-        float heightFactor = exp(-max(p.y, 0.0) * 0.05);
+        float worldY = p.y + global.cam_pos.y;
+        float heightFactor = exp(-max(worldY, 0.0) * 0.05);
         float stepDensity = density * heightFactor;
         if (stepDensity > 0.0001) {
             float shadow = getVolShadow(p, d);
@@ -518,14 +546,16 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
 
 void main() {
     vec3 color;
-    const float LOD_TRANSITION_WIDTH = 8.0;
+    float outputAlpha = 1.0;
+    const float LOD_TRANSITION_WIDTH = 24.0;
     const float AO_FADE_DISTANCE = 128.0;
     float viewDistance = length(vFragPosWorld);
 
     if (vMaskRadius > 0.0) {
         float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
         float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
-        float ditherThreshold = bayerDither4x4(gl_FragCoord.xy);
+        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
+        float ditherThreshold = lodTransitionNoise(worldXZ);
         if (fade < ditherThreshold) discard;
     }
     
@@ -546,11 +576,16 @@ void main() {
 
     vec3 L = normalize(global.sun_dir.xyz);
     float nDotL = max(dot(N, L), 0.0);
+    float skyVisibility = clamp(vSkyLight, 0.0, 1.0);
+    float atmosphericVisibility = skyVisibilityFactor(skyVisibility);
     int layer = vViewDepth < shadows.cascade_splits[0] ? 0
-              : (vViewDepth < shadows.cascade_splits[1] ? 1 : 2);
+              : (vViewDepth < shadows.cascade_splits[1] ? 1
+              : (vViewDepth < shadows.cascade_splits[2] ? 2 : 3));
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, vViewDepth, layer);
     
-    float cloudShadow = (global.cloud_params.y > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05) ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) : 0.0;
+    float cloudShadow = (atmosphericVisibility > 0.01 && global.cloud_params.y > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05)
+        ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) * atmosphericVisibility
+        : 0.0;
     float totalShadow = min(shadowFactor + cloudShadow, 1.0);
 
     float ssao = mix(1.0, texture(uSSAOMap, gl_FragCoord.xy / global.viewport_size.xy).r, global.pbr_params.w);
@@ -558,53 +593,66 @@ void main() {
         ssao = 1.0;
     }
     float ao = mix(1.0, vAO, mix(0.4, 0.05, clamp(viewDistance / AO_FADE_DISTANCE, 0.0, 1.0)));
-    
-    if (global.lighting.y > 0.5 && vTileID >= 0) {
-        if (global.cloud_params.z <= 0.5) {
-            vec4 texColor = texture(uTexture, uv);
-            if (texColor.a < 0.1) discard;
-            color = texColor.rgb * vColor;
-        } else {
-            vec4 texColor = texture(uTexture, uv);
-            if (texColor.a < 0.1) discard;
-            vec3 albedo = texColor.rgb * vColor;
 
-            if (global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
+    if (global.shadow_params.z <= 0.0) {
+        vec3 albedo = vColor;
+        if (global.lighting.y > 0.5 && vTileID >= 0) {
+            vec4 texColor = texture(uTexture, uv);
+            if (texColor.a < 0.1) discard;
+            outputAlpha = texColor.a;
+            // In simple-lighting mode, ignore the baked per-face shade encoded in vColor.
+            // That face tint is useful in the legacy path, but it double-darkens side faces here.
+            albedo = texColor.rgb;
+        }
+        color = computeSimpleLighting(albedo, N, L, vSkyLight, vBlockLight, ao);
+    } else if (global.lighting.y > 0.5 && vTileID >= 0) {
+        vec4 texColor = texture(uTexture, uv);
+        if (texColor.a < 0.1) discard;
+        outputAlpha = texColor.a;
+        vec3 albedo = texColor.rgb * vColor;
+
+        if (global.cloud_params.z > 0.5 && global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
             float roughness = texture(uRoughnessMap, uv).r;
             if (normalMapSample.a > 0.5 || roughness < 0.99) {
                 vec3 V = normalize(global.cam_pos.xyz - vFragPosWorld);
-                color = computePBR(albedo, N, V, L, clamp(roughness, 0.05, 1.0), totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+                color = computePBR(albedo, N, V, L, clamp(roughness, 0.05, 1.0), totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
             } else {
-                color = computeNonPBR(albedo, N, nDotL, totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+                color = computeNonPBR(albedo, N, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
             }
-            } else {
-                color = albedo;
-            }
+        } else {
+            color = computeLegacyDirect(albedo, nDotL, totalShadow, vSkyLight, vBlockLight, LEGACY_LIGHTING_INTENSITY) * ao * ssao;
         }
     } else if (vTileID < 0) {
-        color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+        color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
     } else {
-        color = vColor;
+        color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
     }
 
-    if (global.volumetric_params.x > 0.5) {
+    if (global.volumetric_params.x > 0.5 && atmosphericVisibility > 0.01) {
         vec4 volumetric = computeVolumetric(vec3(0.0), vFragPosWorld, cloudHash(gl_FragCoord.xy + vec2(global.params.x)));
+        volumetric.rgb *= atmosphericVisibility;
         color = color * volumetric.a + volumetric.rgb;
     }
 
     if (global.params.z > 0.5) {
-        color = mix(color, global.fog_color.rgb, clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0));
+        float fogFactor = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0) * atmosphericVisibility;
+        color = mix(color, global.fog_color.rgb, fogFactor);
     }
 
-    vec4 cloudOverlay = sampleCloudOverlay(vFragPosWorld);
+    vec4 cloudOverlay = (global.shadow_params.z > 0.0) ? sampleCloudOverlay(vFragPosWorld) : vec4(0.0);
+    cloudOverlay.a *= atmosphericVisibility;
     color = mix(color, cloudOverlay.rgb, cloudOverlay.a);
 
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
         if (debugChannel < DEBUG_SHADOW_FACTOR + 0.5) {
-            color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), totalShadow);
+            vec3 debugShadow = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), shadowFactor);
+            color = mix(vec3(0.02, 0.02, 0.02), debugShadow, atmosphericVisibility);
         } else if (debugChannel < DEBUG_CASCADE_INDEX + 0.5) {
-            color = (layer == 0) ? vec3(1.0, 0.2, 0.2) : (layer == 1) ? vec3(0.2, 1.0, 0.2) : vec3(0.2, 0.4, 1.0);
+            color = (layer == 0) ? vec3(1.0, 0.2, 0.2)
+                  : (layer == 1) ? vec3(0.2, 1.0, 0.2)
+                  : (layer == 2) ? vec3(0.2, 0.4, 1.0)
+                  : vec3(0.8, 0.3, 1.0);
         } else if (debugChannel < DEBUG_CASTER_COVERAGE + 0.5) {
             vec4 shadowCoord = shadows.light_space_matrices[layer] * vec4(vFragPosWorld, 1.0);
             vec3 projCoords = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
@@ -617,7 +665,7 @@ void main() {
             float nextSplit = shadows.cascade_splits[layer];
             float blendStart = nextSplit * 0.8;
             float distToSplit = abs(vViewDepth - nextSplit) / max(nextSplit, 0.01);
-            float inBlend = (vViewDepth > blendStart && layer < 2) ? (vViewDepth - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
+            float inBlend = (vViewDepth > blendStart && layer < 3) ? (vViewDepth - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
             float splitLine = 1.0 - smoothstep(0.0, 0.05, distToSplit);
             color = vec3(splitLine, distToSplit * 2.0, clamp(inBlend, 0.0, 1.0));
         } else if (debugChannel < DEBUG_TILE_ID + 0.5) {
@@ -635,5 +683,5 @@ void main() {
         }
     }
 
-    FragColor = vec4(color, 1.0);
+    FragColor = vec4(color, outputAlpha);
 }
