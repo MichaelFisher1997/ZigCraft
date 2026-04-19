@@ -601,8 +601,14 @@ void main() {
             if (texColor.a < 0.1) discard;
             outputAlpha = texColor.a;
             // In simple-lighting mode, ignore the baked per-face shade encoded in vColor.
-            // That face tint is useful in the legacy path, but it double-darkens side faces here.
-            albedo = texColor.rgb;
+            // Preserve biome hue from vColor for tintable textures like grass/leaves,
+            // but normalize away the per-face darkening baked into the mesh color.
+            float maxChannel = max(max(vColor.r, vColor.g), max(vColor.b, 1e-4));
+            vec3 normalizedTint = clamp(vColor / maxChannel, 0.0, 1.0);
+            float chroma = max(max(normalizedTint.r, normalizedTint.g), normalizedTint.b) - min(min(normalizedTint.r, normalizedTint.g), normalizedTint.b);
+            float tintStrength = smoothstep(0.05, 0.2, chroma);
+            vec3 tint = mix(vec3(1.0), normalizedTint, tintStrength);
+            albedo = texColor.rgb * tint;
         }
         color = computeSimpleLighting(albedo, N, L, vSkyLight, vBlockLight, ao);
     } else if (global.lighting.y > 0.5 && vTileID >= 0) {
