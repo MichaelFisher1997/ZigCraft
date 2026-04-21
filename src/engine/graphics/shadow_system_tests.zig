@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const c = @import("../../c.zig").c;
 const rhi = @import("rhi.zig");
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -73,11 +74,11 @@ test "ShadowSystem beginPass updates image layout to depth stencil" {
     sys.shadow_framebuffers[2] = @ptrFromInt(3);
     sys.shadow_framebuffers[3] = @ptrFromInt(4);
 
-    try testing.expectEqual(@as(u32, 0x10000000), sys.shadow_image_layouts[0]);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_UNDEFINED), sys.shadow_image_layouts[0]);
 
     sys.beginPass(null, 1, Mat4.identity);
 
-    try testing.expectEqual(@as(u32, 0x104), sys.shadow_image_layouts[1]);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL), sys.shadow_image_layouts[1]);
 }
 
 test "ShadowConfig default field values" {
@@ -415,10 +416,10 @@ test "ShadowSystem endPass updates image layout to shader read only optimal" {
     sys.shadow_framebuffers[3] = @ptrFromInt(4);
 
     sys.beginPass(null, 3, Mat4.identity);
-    try testing.expectEqual(@as(u32, 0x104), sys.shadow_image_layouts[3]);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL), sys.shadow_image_layouts[3]);
 
     sys.endPass(null);
-    try testing.expectEqual(@as(u32, 0x10000000 | 0x12), sys.shadow_image_layouts[3]);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL), sys.shadow_image_layouts[3]);
 }
 
 test "ShadowSystem endPass with inactive pass is no-op" {
@@ -458,14 +459,14 @@ test "computeCascades respects aspect ratio" {
     try testing.expect(cascades1.isValid());
     try testing.expect(cascades2.isValid());
 
-    var all_same = true;
+    var texel_sizes_same = true;
     for (0..CASCADE_COUNT) |i| {
-        if (cascades1.cascade_splits[i] != cascades2.cascade_splits[i]) {
-            all_same = false;
+        if (cascades1.texel_sizes[i] != cascades2.texel_sizes[i]) {
+            texel_sizes_same = false;
             break;
         }
     }
-    try testing.expect(!all_same);
+    try testing.expect(!texel_sizes_same);
 }
 
 test "computeCascades returns valid cascades with far much larger than near" {
