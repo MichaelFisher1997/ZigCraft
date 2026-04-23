@@ -71,10 +71,14 @@ test {
     _ = @import("engine/graphics/vulkan/rhi_state_control_tests.zig");
     _ = @import("engine/graphics/vulkan/ssao_system_tests.zig");
     _ = @import("engine/graphics/vulkan/pipeline_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/pipeline_manager_edge_tests.zig");
     _ = @import("engine/graphics/vulkan/pipeline_specialized_tests.zig");
+    _ = @import("engine/graphics/vulkan/pipeline_specialized_edge_tests.zig");
     _ = @import("engine/graphics/vulkan/descriptor_bindings_tests.zig");
-    _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
+    _ = @import("engine/graphics/vulkan/descriptor_bindings_edge_tests.zig");
     _ = @import("engine/graphics/vulkan/descriptor_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/descriptor_manager_error_tests.zig");
+    _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
     _ = @import("engine/graphics/vulkan/frame_manager_tests.zig");
     _ = @import("engine/graphics/vulkan/render_pass_manager_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_frame_orchestration_tests.zig");
