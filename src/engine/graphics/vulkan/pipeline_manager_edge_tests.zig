@@ -37,12 +37,15 @@ test "PipelineManager water_pipeline field exists and is nullable" {
     try testing.expectEqual(@as(c.VkPipeline, null), manager.water_pipeline);
 }
 
-test "PipelineManager init returns error on invalid device" {
-    // Test that init validates its inputs
-    // Without a real device, we can't call init, but we can verify
-    // the function signature requires valid parameters
-    const manager: PipelineManager = .{};
-    _ = manager;
+test "PipelineManager field layout matches expected VkPipeline nullable types" {
+    var manager: PipelineManager = .{};
+
+    try testing.expect(@TypeOf(manager.water_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.ui_swapchain_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.ui_swapchain_tex_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.terrain_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.sky_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.debug_shadow_pipeline) == ?c.VkPipeline);
 }
 
 test "getMSAASampleCountFlag edge case: maximum valid value" {

@@ -94,12 +94,7 @@ test "updateShadowUniforms returns error.UnmappedBuffer for invalid frame" {
     try testing.expectError(error.UnmappedBuffer, result);
 }
 
-test "DescriptorManager init uses errdefer for cleanup on partial failure" {
-    // Document the expected behavior:
-    // If global_ubos[0] creation succeeds but global_ubos[1] fails,
-    // init should call deinit() to clean up global_ubos[0]
-    // This is tested by verifying deinit exists and can be called safely
-}
+
 
 test "GlobalUniforms extern struct has correct std140 alignment" {
     const GlobalUniforms = extern struct {
