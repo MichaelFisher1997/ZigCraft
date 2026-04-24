@@ -191,6 +191,10 @@ pub fn prepareFrameState(ctx: anytype) void {
         ctx.debug_shadow.descriptor_next[ctx.frames.current_frame] = 0;
     }
 
+    refreshTextureDescriptors(ctx);
+}
+
+pub fn refreshTextureDescriptors(ctx: anytype) void {
     const cur_tex = ctx.draw.current_texture;
     const cur_nor = ctx.draw.current_normal_texture;
     const cur_rou = ctx.draw.current_roughness_texture;

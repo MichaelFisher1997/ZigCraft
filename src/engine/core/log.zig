@@ -11,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
+const runtime_env = @import("runtime_env.zig");
 
 pub const LogLevel = enum {
     trace,
@@ -60,7 +61,8 @@ pub const Logger = struct {
     }
 
     fn log(self: *const Logger, level: LogLevel, comptime fmt: []const u8, args: anytype) void {
-        if (@intFromEnum(level) < @intFromEnum(self.min_level)) return;
+        const min_level = resolveRuntimeLogLevel(self.min_level);
+        if (@intFromEnum(level) < @intFromEnum(min_level)) return;
 
         const level_str = switch (level) {
             .trace => "[TRACE]",
@@ -75,9 +77,27 @@ pub const Logger = struct {
     }
 };
 
-pub var log = Logger.init(if (builtin.is_test)
-    .err
-else if (build_options.startup_diagnostic_seconds > 0)
-    .info
-else
-    .debug);
+fn parseLogLevel(value: []const u8) ?LogLevel {
+    if (std.ascii.eqlIgnoreCase(value, "trace")) return .trace;
+    if (std.ascii.eqlIgnoreCase(value, "debug")) return .debug;
+    if (std.ascii.eqlIgnoreCase(value, "info")) return .info;
+    if (std.ascii.eqlIgnoreCase(value, "warn")) return .warn;
+    if (std.ascii.eqlIgnoreCase(value, "error") or std.ascii.eqlIgnoreCase(value, "err")) return .err;
+    if (std.ascii.eqlIgnoreCase(value, "fatal")) return .fatal;
+    return null;
+}
+
+fn resolveStaticDefaultLogLevel() LogLevel {
+    if (builtin.is_test) return .err;
+    if (build_options.startup_diagnostic_seconds > 0) return .info;
+    return .warn;
+}
+
+fn resolveRuntimeLogLevel(default_level: LogLevel) LogLevel {
+    if (runtime_env.getenv("ZIGCRAFT_LOG_LEVEL")) |value| {
+        return parseLogLevel(value) orelse default_level;
+    }
+    return default_level;
+}
+
+pub var log = Logger.init(resolveStaticDefaultLogLevel());

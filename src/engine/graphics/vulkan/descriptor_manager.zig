@@ -32,7 +32,7 @@ pub const ShadowUniforms = extern struct {
     light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
     cascade_splits: [4]f32,
     shadow_texel_sizes: [4]f32,
-    shadow_params: [4]f32, // x = light_size (PCSS), y/z/w reserved
+    shadow_params: [4]f32, // x = light_size (PCSS), y = 1 / shadow resolution
 };
 
 pub const DescriptorManager = struct {

@@ -2456,7 +2456,8 @@ test "computeCascades stable at large world coordinates" {
 }
 
 test "computeCascades uses fixed splits for large distances" {
-    // Shadow distance > 500 triggers fixed split ratios (8%, 25%, 60%, 100%)
+    // Fixed split ratios (25%, 50%, 75%, 100%) keep practical voxel shadow
+    // resolution across common near/medium distances.
     const cascades = CSM.computeCascades(
         2048,
         std.math.degreesToRadians(60.0),
@@ -2468,9 +2469,9 @@ test "computeCascades uses fixed splits for large distances" {
         true,
     );
 
-    try testing.expectApproxEqAbs(@as(f32, 80.0), cascades.cascade_splits[0], 0.1); // 8%
-    try testing.expectApproxEqAbs(@as(f32, 250.0), cascades.cascade_splits[1], 0.1); // 25%
-    try testing.expectApproxEqAbs(@as(f32, 600.0), cascades.cascade_splits[2], 0.1); // 60%
+    try testing.expectApproxEqAbs(@as(f32, 250.0), cascades.cascade_splits[0], 0.1); // 25%
+    try testing.expectApproxEqAbs(@as(f32, 500.0), cascades.cascade_splits[1], 0.1); // 50%
+    try testing.expectApproxEqAbs(@as(f32, 750.0), cascades.cascade_splits[2], 0.1); // 75%
     try testing.expectApproxEqAbs(@as(f32, 1000.0), cascades.cascade_splits[3], 0.1); // 100%
 }
 

@@ -8,11 +8,11 @@ layout(set = 0, binding = 1) uniform sampler2D uTexture;
 
 void main() {
     if (vSkipShadow != 0) discard;
-    if (vTileID < 0) return;
 
-    vec2 tiledUV = fract(vTexCoord);
-    tiledUV = clamp(tiledUV, 0.001, 0.999);
-    vec2 uv = (vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) + tiledUV) * (1.0 / 16.0);
-
-    if (texture(uTexture, uv).a < 0.1) discard;
+    if (vTileID >= 0) {
+        vec2 tiledUV = fract(vTexCoord);
+        tiledUV = clamp(tiledUV, 0.001, 0.999);
+        vec2 uv = (vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) + tiledUV) * (1.0 / 16.0);
+        if (texture(uTexture, uv).a < 0.1) discard;
+    }
 }

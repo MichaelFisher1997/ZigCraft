@@ -28,7 +28,7 @@ vec3 decodeNormal(uint packed) {
 }
 
 void main() {
-    vec3 worldNormal = decodeNormal(aNormal); 
+    vec3 worldNormal = decodeNormal(aNormal);
     float normalBias = pc.bias_params.x * pc.bias_params.w;
     vec3 biasedPos = aPos + worldNormal * normalBias;
     uint tile_id_u16 = aPackedMeta & 0xFFFFu;

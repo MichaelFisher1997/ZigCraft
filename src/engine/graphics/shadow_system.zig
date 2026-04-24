@@ -108,14 +108,10 @@ pub const ShadowSystem = struct {
 
         c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
 
-        // Set depth bias for shadow mapping to prevent shadow acne.
-        // We use NEGATIVE bias with Reverse-Z to push rendered depth slightly lower (further from light),
-        // so fragments on the surface pass the GREATER_OR_EQUAL test and appear lit.
-        // Scale bias relative to reference resolution: coarser resolutions need larger bias
-        // because each texel covers a larger world-space area.
-        const REFERENCE_SHADOW_RESOLUTION: f32 = 4096.0;
-        const bias_scale = REFERENCE_SHADOW_RESOLUTION / @as(f32, @floatFromInt(self.shadow_extent.width));
-        c.vkCmdSetDepthBias(command_buffer, -0.75 * bias_scale, 0.0, -1.5 * bias_scale);
+        // Keep caster depth bias disabled while stabilizing contact shadows.
+        // Reverse-Z negative caster bias shrinks the caster footprint and visibly
+        // detaches shadows from vertical voxel faces.
+        c.vkCmdSetDepthBias(command_buffer, 0.0, 0.0, 0.0);
 
         var viewport: c.VkViewport = undefined;
         @memset(std.mem.asBytes(&viewport), 0);

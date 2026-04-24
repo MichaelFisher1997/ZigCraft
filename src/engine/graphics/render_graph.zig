@@ -200,7 +200,7 @@ pub const ShadowPass = struct {
         // Compute cascades once per frame and cache via shared pointer so all
         // cascade passes within the same frame use identical matrices.
         const cascades = if (ctx.cached_cascades.*) |cached| cached else blk: {
-            const computed = CSM.computeCascades(
+            const computed = CSM.computeCascadesWithCamera(
                 ctx.shadow.resolution,
                 ctx.camera.fov,
                 ctx.aspect,
@@ -208,6 +208,7 @@ pub const ShadowPass = struct {
                 ctx.shadow.distance,
                 ctx.sky_params.sun_dir,
                 ctx.camera.getViewMatrixOriginCentered(),
+                ctx.camera.position,
                 true,
             );
             // Validate cascade data before using
@@ -227,10 +228,15 @@ pub const ShadowPass = struct {
                 .light_space_matrices = cascades.light_space_matrices,
                 .cascade_splits = cascades.cascade_splits,
                 .shadow_texel_sizes = cascades.texel_sizes,
+                .resolution = ctx.shadow.resolution,
             });
         }
 
         if (ctx.disable_shadow_draw) return;
+
+        // Keep cutout casters sampling the terrain atlas during the shadow pass.
+        // Without this, shadow.frag can alpha-clip against whatever texture was last bound.
+        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
 
         ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
         errdefer ctx.shadow_ctx.endPass();

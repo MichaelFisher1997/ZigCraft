@@ -207,13 +207,13 @@ test "computeCascades uses fixed splits for large shadow distance" {
         true,
     );
 
-    const expected_splits = [4]f32{ 80.0, 250.0, 600.0, 1000.0 };
+    const expected_splits = [4]f32{ 250.0, 500.0, 750.0, 1000.0 };
     for (0..CASCADE_COUNT) |i| {
         try testing.expectApproxEqAbs(expected_splits[i], cascades.cascade_splits[i], 0.001);
     }
 }
 
-test "computeCascades uses logarithmic splits for small shadow distance" {
+test "computeCascades uses fixed splits for small shadow distance" {
     const cascades = computeCascades(
         1024,
         std.math.degreesToRadians(60.0),
@@ -225,8 +225,10 @@ test "computeCascades uses logarithmic splits for small shadow distance" {
         true,
     );
 
-    try testing.expect(cascades.cascade_splits[0] < 200.0);
-    try testing.expect(cascades.cascade_splits[3] == 200.0);
+    const expected_splits = [4]f32{ 50.0, 100.0, 150.0, 200.0 };
+    for (0..CASCADE_COUNT) |i| {
+        try testing.expectApproxEqAbs(expected_splits[i], cascades.cascade_splits[i], 0.001);
+    }
 }
 
 test "computeCascades with reverse-Z produces valid matrices" {

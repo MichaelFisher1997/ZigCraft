@@ -534,6 +534,10 @@ fn bindTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         13 => ctx.draw.current_lpv_texture_b = resolved,
         else => {},
     }
+
+    if (ctx.frames.frame_in_progress) {
+        frame_orchestration.refreshTextureDescriptors(ctx);
+    }
 }
 
 fn updateTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, data: []const u8) rhi.RhiError!void {

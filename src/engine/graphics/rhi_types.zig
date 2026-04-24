@@ -265,6 +265,7 @@ pub const ShadowParams = struct {
     cascade_splits: [SHADOW_CASCADE_COUNT]f32,
     shadow_texel_sizes: [SHADOW_CASCADE_COUNT]f32,
     light_size: f32 = 3.0, // PCSS light source size for penumbra estimation
+    resolution: u32 = 4096,
 };
 
 pub const CloudParams = struct {
@@ -281,6 +282,8 @@ pub const CloudParams = struct {
     wind_offset_z: f32 = 0.0,
     base_color: Vec3 = Vec3.init(1.0, 1.0, 1.0),
     pbr_enabled: bool = true,
+    simple_lighting_enabled: bool = false,
+    shadow_apply_to_beauty: bool = false,
     shadow: ShadowConfig = .{},
     cloud_shadows: bool = true,
     pbr_quality: u8 = 2,
