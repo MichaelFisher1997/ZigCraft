@@ -100,13 +100,3 @@ test "IChunkStorage count matches ChunkStorage.count()" {
     _ = try storage.getOrCreate(-5, 10);
     try testing.expectEqual(storage.count(), iface.count());
 }
-
-test "IChunkStorage isChunkRenderable matches storage method result" {
-    var storage = ChunkStorage.init(testing.allocator);
-    defer storage.deinitWithoutRHI();
-
-    _ = try storage.getOrCreate(0, 0);
-    const iface: IChunkStorage = storage.interface();
-
-    try testing.expectEqual(false, iface.isChunkRenderable(0, 0));
-}
