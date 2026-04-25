@@ -129,6 +129,9 @@ test {
     _ = @import("world/biome_and_block_tests.zig");
     _ = @import("world/packed_light_tests.zig");
     _ = @import("world/meshing/boundary_tests.zig");
+    _ = @import("world/world_coord_tests.zig");
+    _ = @import("world/world_block_fill_tests.zig");
+    _ = @import("world/world_interface_vtable_tests.zig");
 }
 
 test "Vec3 addition" {

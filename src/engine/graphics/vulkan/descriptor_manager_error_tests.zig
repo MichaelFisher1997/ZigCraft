@@ -94,8 +94,6 @@ test "updateShadowUniforms returns error.UnmappedBuffer for invalid frame" {
     try testing.expectError(error.UnmappedBuffer, result);
 }
 
-
-
 test "GlobalUniforms extern struct has correct std140 alignment" {
     const GlobalUniforms = extern struct {
         view_proj: Mat4,
