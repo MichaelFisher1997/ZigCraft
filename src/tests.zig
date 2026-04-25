@@ -85,6 +85,7 @@ test {
     _ = @import("engine/graphics/vulkan/rhi_frame_orchestration_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_pass_orchestration_tests.zig");
     _ = @import("engine/graphics/vulkan/vulkan_frame_tests.zig");
+    _ = @import("engine/graphics/vulkan/utils_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/graphics/shadow_tests.zig");
