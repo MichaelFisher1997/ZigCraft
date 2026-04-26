@@ -50,7 +50,7 @@ const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("../math/vec3.zig").Vec3;
 const log = @import("../core/log.zig");
 const CSM = @import("csm.zig");
-const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
+pub const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
 pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
 const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
@@ -136,11 +136,15 @@ pub const IRenderPass = struct {
 
 pub const RenderGraph = struct {
     passes: std.ArrayListUnmanaged(IRenderPass),
+    atmosphere_system: *AtmosphereSystem,
     allocator: std.mem.Allocator,
     lpv_system: *LPVSystem,
     material_system: ?*MaterialSystem,
 
     pub fn init(allocator: std.mem.Allocator, rhi: rhi_pkg.RHI, lpv_config: LPVConfig) !RenderGraph {
+        const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
+        errdefer atmosphere_system.deinit();
+
         const lpv_system = try LPVSystem.init(
             allocator,
             rhi,
@@ -150,9 +154,11 @@ pub const RenderGraph = struct {
             lpv_config.propagation_iterations,
             lpv_config.enabled,
         );
+        errdefer lpv_system.deinit();
 
         return .{
             .passes = .empty,
+            .atmosphere_system = atmosphere_system,
             .allocator = allocator,
             .lpv_system = lpv_system,
             .material_system = null,
@@ -161,6 +167,7 @@ pub const RenderGraph = struct {
 
     pub fn deinit(self: *RenderGraph) void {
         self.passes.deinit(self.allocator);
+        self.atmosphere_system.deinit();
         self.lpv_system.deinit();
         if (self.material_system) |material_system| material_system.deinit();
     }
@@ -175,6 +182,10 @@ pub const RenderGraph = struct {
 
     pub fn materials(self: *RenderGraph) *MaterialSystem {
         return self.material_system.?;
+    }
+
+    pub fn getAtmosphereSystem(self: *RenderGraph) *AtmosphereSystem {
+        return self.atmosphere_system;
     }
 
     pub fn addPass(self: *RenderGraph, pass: IRenderPass) !void {
