@@ -27,10 +27,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset; // xy = offset, z = scale, w = coverage
+    vec4 reserved0;
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
-    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
-    vec4 cloud_params; // x = cloud_height, y = cloud_shadows_enabled, z/w reserved
+    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = reserved
+    vec4 render_flags; // z = pbr_enabled, w = simple_lighting_enabled
     vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
@@ -41,6 +41,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 
 // Constants
 const float PI = 3.14159265359;
+
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
+}
 
 const int DEBUG_OFF = 0;
 const int DEBUG_SHADOW_FACTOR = 1;
@@ -53,36 +57,6 @@ const int DEBUG_DIRECT_KEY = 7;
 const int DEBUG_SKY_FILL = 8;
 const int DEBUG_BLOCK_LIGHT = 9;
 const int DEBUG_OUTDOOR_FACTOR = 10;
-
-// Cloud shadow noise functions
-float cloudHash(vec2 p) {
-    p = fract(p * vec2(234.34, 435.345));
-    p += dot(p, p + 34.23);
-    return fract(p.x * p.y);
-}
-
-float cloudNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = cloudHash(i);
-    float b = cloudHash(i + vec2(1.0, 0.0));
-    float c = cloudHash(i + vec2(0.0, 1.0));
-    float d = cloudHash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float cloudFbm(vec2 p, int octaves) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < octaves; i++) {
-        value += amplitude * cloudNoise(p * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    return value;
-}
 
 // World-space hash for LOD transition masking.
 // Using world-space noise avoids a fixed screen-space dot pattern.
@@ -99,57 +73,6 @@ float skyVisibilityFactor(float skyLight) {
 
 vec3 absoluteWorldPos(vec3 cameraRelativePos) {
     return cameraRelativePos + global.cam_pos.xyz;
-}
-
-float getCloudShadow(vec3 worldPos, vec3 sunDir) {
-    const float cloudBlockSize = 12.0;
-    vec3 actualWorldPos = worldPos + global.cam_pos.xyz;
-    vec2 shadowOffset = sunDir.xz * (global.cloud_params.x - actualWorldPos.y) / max(sunDir.y, 0.1);
-    vec2 worldXZ = actualWorldPos.xz + shadowOffset + global.cloud_wind_offset.xy;
-    // Apply block quantization to match cloud rendering
-    vec2 pixelPos = floor(worldXZ / cloudBlockSize) * cloudBlockSize;
-    vec2 samplePos = pixelPos * global.cloud_wind_offset.z;
-    float cloudValue = cloudFbm(samplePos, 3);
-    float threshold = 1.0 - global.cloud_wind_offset.w;
-    float cloudMask = smoothstep(threshold - 0.1, threshold + 0.1, cloudValue);
-    return cloudMask * global.lighting.w;
-}
-
-vec4 sampleCloudOverlay(vec3 fragPosWorld) {
-    if (global.cloud_wind_offset.w <= 0.01) return vec4(0.0);
-
-    float cloudPlaneY = global.cloud_params.x - global.cam_pos.y;
-    if (cloudPlaneY >= -0.5) return vec4(0.0);
-    if (fragPosWorld.y >= cloudPlaneY - 0.001) return vec4(0.0);
-
-    float rayY = fragPosWorld.y;
-    if (rayY >= -0.001) return vec4(0.0);
-
-    float t = cloudPlaneY / rayY;
-    if (t <= 0.0 || t >= 1.0) return vec4(0.0);
-
-    const float cloudBlockSize = 12.0;
-    vec3 cloudPos = fragPosWorld * t;
-    vec2 worldXZ = cloudPos.xz + global.cam_pos.xz + global.cloud_wind_offset.xy;
-    vec2 pixelPos = floor(worldXZ / cloudBlockSize) * cloudBlockSize;
-    vec2 samplePos = pixelPos * global.cloud_wind_offset.z;
-    float cloudValue = cloudFbm(samplePos, 3);
-    float threshold = 1.0 - global.cloud_wind_offset.w;
-    float cloudMask = smoothstep(threshold - 0.08, threshold + 0.08, cloudValue);
-    if (cloudMask <= 0.001) return vec4(0.0);
-
-    vec3 nightTint = pow(vec3(0.10, 0.12, 0.20), vec3(2.2));
-    vec3 dayColor = vec3(0.92, 0.95, 0.98);
-    vec3 cloudColor = mix(nightTint, dayColor, global.params.w);
-    float lightFactor = clamp(global.sun_dir.y, 0.0, 1.0);
-    cloudColor *= (0.8 + 0.25 * lightFactor);
-
-    float cloudDistance = length(cloudPos);
-    float fogFactor = 1.0 - exp(-cloudDistance * global.params.y * 0.35);
-    cloudColor = mix(cloudColor, global.fog_color.xyz, fogFactor);
-
-    float alpha = cloudMask * (1.0 - fogFactor * 0.6);
-    return vec4(cloudColor, alpha);
 }
 
 layout(set = 0, binding = 1) uniform sampler2D uTexture;         // Diffuse/albedo
@@ -800,10 +723,7 @@ void main() {
     int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
     
-    float cloudShadow = (atmosphericVisibility > 0.01 && global.cloud_params.y > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05)
-        ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) * atmosphericVisibility
-        : 0.0;
-    float totalShadow = min(shadowFactor + cloudShadow, 1.0);
+    float totalShadow = shadowFactor;
 
     float ssao = mix(1.0, texture(uSSAOMap, gl_FragCoord.xy / global.viewport_size.xy).r, global.pbr_params.w);
     if (vTileID < 0) {
@@ -811,7 +731,7 @@ void main() {
     }
     float ao = mix(1.0, vAO, mix(0.4, 0.05, clamp(viewDistance / AO_FADE_DISTANCE, 0.0, 1.0)));
 
-    if (global.cloud_params.w > 0.5) {
+    if (global.render_flags.w > 0.5) {
         vec3 albedo = vColor;
         if (global.lighting.y > 0.5 && vTileID >= 0) {
             vec4 texColor = texture(uTexture, uv);
@@ -835,7 +755,7 @@ void main() {
         outputAlpha = texColor.a;
         vec3 albedo = texColor.rgb * vColor;
 
-        if (global.cloud_params.z > 0.5 && global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
+        if (global.render_flags.z > 0.5 && global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
             float roughness = texture(uRoughnessMap, uv).r;
             if (normalMapSample.a > 0.5 || roughness < 0.99) {
                 vec3 V = normalize(global.cam_pos.xyz - vFragPosWorld);
@@ -852,8 +772,8 @@ void main() {
         color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
     }
 
-    if (global.volumetric_params.x > 0.5 && global.cloud_params.w <= 0.5) {
-        float shaftDither = cloudHash(gl_FragCoord.xy + vec2(global.params.x));
+    if (global.volumetric_params.x > 0.5 && global.render_flags.w <= 0.5) {
+        float shaftDither = lodTransitionNoise(gl_FragCoord.xy + vec2(global.params.x));
         if (atmosphericVisibility > 0.01) {
             vec4 volumetric = computeVolumetric(vec3(0.0), vFragPosWorld, shaftDither);
             volumetric.rgb *= atmosphericVisibility;
@@ -865,10 +785,6 @@ void main() {
         float fogFactor = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0) * atmosphericVisibility;
         color = mix(color, global.fog_color.rgb, fogFactor);
     }
-
-    vec4 cloudOverlay = (global.cloud_params.y > 0.5 && global.cloud_params.w <= 0.5) ? sampleCloudOverlay(vFragPosWorld) : vec4(0.0);
-    cloudOverlay.a *= atmosphericVisibility;
-    color = mix(color, cloudOverlay.rgb, cloudOverlay.a);
 
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {

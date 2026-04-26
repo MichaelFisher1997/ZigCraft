@@ -45,7 +45,6 @@ pub const RenderSystem = struct {
     mesh_build_pass: render_graph_pkg.MeshBuildPass,
     sky_pass: render_graph_pkg.SkyPass,
     opaque_pass: render_graph_pkg.OpaquePass,
-    cloud_pass: render_graph_pkg.CloudPass,
     entity_pass: render_graph_pkg.EntityPass,
     taa_pass: render_graph_pkg.TAAPass,
     bloom_pass: render_graph_pkg.BloomPass,
@@ -58,7 +57,6 @@ pub const RenderSystem = struct {
     disable_shadow_draw: bool,
     disable_gpass_draw: bool,
     disable_ssao: bool,
-    disable_clouds: bool,
     disable_water: bool,
     disable_taa: bool,
     disable_fxaa: bool,
@@ -91,13 +89,6 @@ pub const RenderSystem = struct {
 
         const disable_ssao_env = getenv("ZIGCRAFT_DISABLE_SSAO");
         const disable_ssao = if (disable_ssao_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const chunk_debug_restore_clouds = chunkDebugRestoreEnabled("clouds");
-        const disable_clouds_env = getenv("ZIGCRAFT_DISABLE_CLOUDS");
-        const disable_clouds = (build_options.chunk_debug_mode and !chunk_debug_restore_clouds) or if (disable_clouds_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
         else
             false;
@@ -149,9 +140,6 @@ pub const RenderSystem = struct {
         }
         if (disable_ssao) {
             log.log.warn("ZIGCRAFT_DISABLE_SSAO enabled", .{});
-        }
-        if (disable_clouds) {
-            log.log.warn("ZIGCRAFT_DISABLE_CLOUDS enabled", .{});
         }
         if (disable_water) {
             log.log.warn("ZIGCRAFT_DISABLE_WATER enabled", .{});
@@ -239,7 +227,6 @@ pub const RenderSystem = struct {
             .mesh_build_pass = .{},
             .sky_pass = .{},
             .opaque_pass = .{},
-            .cloud_pass = .{},
             .entity_pass = .{},
             .taa_pass = .{ .enabled = !disable_taa and settings.taa_enabled },
             .bloom_pass = .{ .enabled = !disable_bloom and settings.bloom_enabled },
@@ -252,7 +239,6 @@ pub const RenderSystem = struct {
             .disable_shadow_draw = disable_shadow_draw,
             .disable_gpass_draw = disable_gpass_draw,
             .disable_ssao = disable_ssao,
-            .disable_clouds = disable_clouds,
             .disable_water = disable_water,
             .disable_taa = disable_taa,
             .disable_fxaa = disable_fxaa,
@@ -361,9 +347,9 @@ pub const RenderSystem = struct {
         sun_intensity: f32,
         ambient: f32,
         use_texture: bool,
-        cloud_params: rhi_pkg.CloudParams,
+        frame_params: rhi_pkg.FrameRenderParams,
     ) !void {
-        try self.rhi.updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, cloud_params);
+        try self.rhi.updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
     }
 
     pub fn applySettings(self: *RenderSystem, settings: *const Settings) void {
@@ -433,20 +419,12 @@ pub const RenderSystem = struct {
         return self.disable_ssao;
     }
 
-    pub fn getDisableClouds(self: *const RenderSystem) bool {
-        return self.disable_clouds;
-    }
-
     pub fn setDisableGPassDraw(self: *RenderSystem, value: bool) void {
         self.disable_gpass_draw = value;
     }
 
     pub fn setDisableSSAO(self: *RenderSystem, value: bool) void {
         self.disable_ssao = value;
-    }
-
-    pub fn setDisableClouds(self: *RenderSystem, value: bool) void {
-        self.disable_clouds = value;
     }
 };
 

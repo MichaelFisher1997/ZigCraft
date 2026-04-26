@@ -4,7 +4,6 @@ const rhi = @import("../rhi.zig");
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const Vec3 = @import("../../math/vec3.zig").Vec3;
 const bindings = @import("descriptor_bindings.zig");
-const pass_orchestration = @import("rhi_pass_orchestration.zig");
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
@@ -18,10 +17,10 @@ const GlobalUniforms = extern struct {
     sun_dir: [4]f32,
     sun_color: [4]f32,
     fog_color: [4]f32,
-    cloud_wind_offset: [4]f32,
+    reserved0: [4]f32,
     params: [4]f32,
     lighting: [4]f32,
-    cloud_params: [4]f32,
+    render_flags: [4]f32,
     shadow_params: [4]f32,
     pbr_params: [4]f32,
     volumetric_params: [4]f32,
@@ -30,15 +29,7 @@ const GlobalUniforms = extern struct {
     lpv_origin: [4]f32,
 };
 
-const CloudPushConstants = extern struct {
-    view_proj: [4][4]f32,
-    camera_pos: [4]f32,
-    cloud_params: [4]f32,
-    sun_params: [4]f32,
-    fog_params: [4]f32,
-};
-
-pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time_val: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: rhi.CloudParams) !void {
+pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time_val: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: rhi.FrameRenderParams) !void {
     const global_uniforms = GlobalUniforms{
         .view_proj = view_proj,
         .view_proj_prev = ctx.velocity.view_proj_prev,
@@ -46,16 +37,16 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
         .sun_dir = .{ sun_dir.x, sun_dir.y, sun_dir.z, 0.0 },
         .sun_color = .{ sun_color.x, sun_color.y, sun_color.z, 1.0 },
         .fog_color = .{ fog_color.x, fog_color.y, fog_color.z, 1.0 },
-        .cloud_wind_offset = .{ cloud_params.wind_offset_x, cloud_params.wind_offset_z, cloud_params.cloud_scale, cloud_params.cloud_coverage },
+        .reserved0 = .{ 0.0, 0.0, 0.0, 0.0 },
         .params = .{ time_val, fog_density, if (fog_enabled) 1.0 else 0.0, sun_intensity },
-        .lighting = .{ ambient, if (use_texture) 1.0 else 0.0, if (cloud_params.pbr_enabled) 1.0 else 0.0, cloud_params.shadow.strength },
-        .cloud_params = .{ cloud_params.cloud_height, if (cloud_params.cloud_shadows) 1.0 else 0.0, if (cloud_params.pbr_enabled) 1.0 else 0.0, if (cloud_params.simple_lighting_enabled) 1.0 else 0.0 },
-        .shadow_params = .{ @floatFromInt(cloud_params.shadow.pcf_samples), if (cloud_params.shadow.cascade_blend) 1.0 else 0.0, cloud_params.shadow.strength, if (cloud_params.shadow_apply_to_beauty) 1.0 else 0.0 },
-        .pbr_params = .{ @floatFromInt(cloud_params.pbr_quality), cloud_params.exposure, cloud_params.saturation, if (cloud_params.ssao_enabled) 1.0 else 0.0 },
-        .volumetric_params = .{ if (cloud_params.volumetric_enabled or cloud_params.sun_shafts_enabled) 1.0 else 0.0, if (cloud_params.sun_shafts_enabled) cloud_params.sun_shafts_intensity else cloud_params.volumetric_density, @floatFromInt(cloud_params.volumetric_steps), cloud_params.volumetric_scattering },
+        .lighting = .{ ambient, if (use_texture) 1.0 else 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, 0.0 },
+        .render_flags = .{ 0.0, 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, if (frame_params.simple_lighting_enabled) 1.0 else 0.0 },
+        .shadow_params = .{ @floatFromInt(frame_params.shadow.pcf_samples), if (frame_params.shadow.cascade_blend) 1.0 else 0.0, frame_params.shadow.strength, if (frame_params.shadow_apply_to_beauty) 1.0 else 0.0 },
+        .pbr_params = .{ @floatFromInt(frame_params.pbr_quality), frame_params.exposure, frame_params.saturation, if (frame_params.ssao_enabled) 1.0 else 0.0 },
+        .volumetric_params = .{ if (frame_params.volumetric_enabled or frame_params.sun_shafts_enabled) 1.0 else 0.0, if (frame_params.sun_shafts_enabled) frame_params.sun_shafts_intensity else frame_params.volumetric_density, @floatFromInt(frame_params.volumetric_steps), frame_params.volumetric_scattering },
         .viewport_size = .{ @floatFromInt(ctx.swapchain.swapchain.extent.width), @floatFromInt(ctx.swapchain.swapchain.extent.height), if (ctx.options.debug_shadows_active) 1.0 else 0.0, @floatFromInt(ctx.options.shadow_debug_channel) },
-        .lpv_params = .{ if (cloud_params.lpv_enabled) 1.0 else 0.0, cloud_params.lpv_intensity, cloud_params.lpv_cell_size, @floatFromInt(cloud_params.lpv_grid_size) },
-        .lpv_origin = .{ cloud_params.lpv_origin.x, cloud_params.lpv_origin.y, cloud_params.lpv_origin.z, 0.0 },
+        .lpv_params = .{ if (frame_params.lpv_enabled) 1.0 else 0.0, frame_params.lpv_intensity, frame_params.lpv_cell_size, @floatFromInt(frame_params.lpv_grid_size) },
+        .lpv_origin = .{ frame_params.lpv_origin.x, frame_params.lpv_origin.y, frame_params.lpv_origin.z, 0.0 },
     };
 
     // Env var override for debug channel (ZIGCRAFT_DEBUG_SHADER=5 for tile_id, 6 for tex_color)
@@ -148,28 +139,4 @@ pub fn applyPendingDescriptorUpdates(ctx: anytype, frame_index: usize) void {
             ctx.draw.bound_lod_instance_buffer[frame_index] = ctx.draw.pending_lod_instance_buffer;
         }
     }
-}
-
-pub fn beginCloudPass(ctx: anytype, params: rhi.CloudParams) void {
-    if (!ctx.frames.frame_in_progress) return;
-
-    if (!ctx.runtime.main_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
-    if (!ctx.runtime.main_pass_active) return;
-
-    if (ctx.pipeline_manager.cloud_pipeline == null) return;
-
-    const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
-
-    c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.cloud_pipeline);
-    ctx.draw.terrain_pipeline_bound = false;
-
-    const pc = CloudPushConstants{
-        .view_proj = params.view_proj.data,
-        .camera_pos = .{ params.cam_pos.x, params.cam_pos.y, params.cam_pos.z, params.cloud_height },
-        .cloud_params = .{ params.cloud_coverage, params.cloud_scale, params.wind_offset_x, params.wind_offset_z },
-        .sun_params = .{ params.sun_dir.x, params.sun_dir.y, params.sun_dir.z, params.sun_intensity },
-        .fog_params = .{ params.fog_color.x, params.fog_color.y, params.fog_color.z, params.fog_density },
-    };
-
-    c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.cloud_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(CloudPushConstants), &pc);
 }

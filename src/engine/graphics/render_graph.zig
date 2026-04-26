@@ -9,7 +9,7 @@
 //! Passes are added via `addPass()` and executed sequentially in `execute()`:
 //! ```
 //! ShadowPass0 -> ShadowPass1 -> ShadowPass2 -> ShadowPass3 ->
-//! GPass -> SSAOPass -> SkyPass -> OpaquePass -> CloudPass -> UIPass
+//! GPass -> SSAOPass -> SkyPass -> OpaquePass -> UIPass
 //! ```
 //!
 //! ## Main Pass Lifecycle
@@ -27,7 +27,6 @@
 //! - **SSAOPass**: Screen-space ambient occlusion computation
 //! - **SkyPass**: Atmospheric sky rendering, inside main pass
 //! - **OpaquePass**: Main world geometry rendering
-//! - **CloudPass**: Volumetric cloud rendering
 //! - **UIPass**: Immediate-mode UI overlay
 //!
 //! ## Scene Context
@@ -68,7 +67,6 @@ pub const SceneContext = struct {
     aspect: f32,
     sky_params: rhi_pkg.SkyParams,
     shadow_sun_dir: Vec3,
-    cloud_params: rhi_pkg.CloudParams,
     taa_enabled: bool,
     viewport_width: f32,
     viewport_height: f32,
@@ -79,7 +77,6 @@ pub const SceneContext = struct {
     disable_shadow_draw: bool,
     disable_gpass_draw: bool,
     disable_ssao: bool,
-    disable_clouds: bool,
     fxaa_enabled: bool = true,
     bloom_enabled: bool = true,
     resolution_scale: f32 = 1.0,
@@ -362,34 +359,6 @@ pub const OpaquePass = struct {
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, true);
-    }
-};
-
-pub const CloudPass = struct {
-    const VTABLE = IRenderPass.VTable{
-        .name = "CloudPass",
-        .needs_main_pass = true,
-        .execute = execute,
-    };
-    pub fn pass(self: *CloudPass) IRenderPass {
-        return .{
-            .ptr = self,
-            .vtable = &VTABLE,
-        };
-    }
-
-    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
-        if (ctx.disable_clouds) return;
-        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, ctx.cloud_params.view_proj) catch |err| {
-            if (err != error.ResourceNotReady and
-                err != error.CloudPipelineNotReady and
-                err != error.CloudPipelineLayoutNotReady and
-                err != error.CommandBufferNotReady)
-            {
-                log.log.errWithTrace("CloudPass: rendering failed: {}", .{err});
-            }
-        };
     }
 };
 

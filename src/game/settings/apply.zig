@@ -25,7 +25,6 @@ const IRenderSettings = @import("../../engine/core/interfaces.zig").IRenderSetti
 /// | `shadow_pcf_samples`        | Shadow shader uniforms               | Next frame             |
 /// | `shadow_cascade_blend`      | Shadow shader uniforms               | Next frame             |
 /// | `pbr_enabled`, `pbr_quality`| updateGlobalUniforms() in App        | Next frame             |
-/// | `cloud_shadows_enabled`     | CloudParams in updateGlobalUniforms  | Next frame             |
 /// | `volumetric_*`              | AtmosphereSystem / VolumetricPass    | Next frame             |
 /// | `ssao_enabled`              | SSAOPass                             | Next frame             |
 /// | `render_distance`           | World / ChunkManager                 | Next frame             |

@@ -32,9 +32,8 @@ Migrate `rhi_vulkan.zig` to actually **use** the PipelineManager and RenderPassM
 - Update terrain, wireframe, selection, line pipeline references
 - Remove old `createMainPipelines()` function
 
-### Commit 4: Migrate UI and Cloud Pipeline Creation
+### Commit 4: Migrate UI Pipeline Creation
 - Update UI pipeline creation to use manager
-- Update cloud pipeline creation to use manager
 - Update swapchain UI pipeline creation
 
 ### Commit 5: Cleanup Old Fields and Functions
@@ -76,7 +75,6 @@ ctx.sky_pipeline → ctx.pipeline_manager.sky_pipeline
 ctx.g_pipeline → ctx.pipeline_manager.g_pipeline
 ctx.ui_pipeline → ctx.pipeline_manager.ui_pipeline
 ctx.ui_tex_pipeline → ctx.pipeline_manager.ui_tex_pipeline
-ctx.cloud_pipeline → ctx.pipeline_manager.cloud_pipeline
 ctx.ui_swapchain_pipeline → ctx.pipeline_manager.ui_swapchain_pipeline
 ctx.ui_swapchain_tex_pipeline → ctx.pipeline_manager.ui_swapchain_tex_pipeline
 
@@ -85,7 +83,6 @@ ctx.pipeline_layout → ctx.pipeline_manager.pipeline_layout
 ctx.sky_pipeline_layout → ctx.pipeline_manager.sky_pipeline_layout
 ctx.ui_pipeline_layout → ctx.pipeline_manager.ui_pipeline_layout
 ctx.ui_tex_pipeline_layout → ctx.pipeline_manager.ui_tex_pipeline_layout
-ctx.cloud_pipeline_layout → ctx.pipeline_manager.cloud_pipeline_layout
 ```
 
 ## Testing Checklist

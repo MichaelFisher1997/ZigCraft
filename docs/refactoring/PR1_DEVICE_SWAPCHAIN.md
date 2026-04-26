@@ -35,7 +35,6 @@ Extract pipeline and render pass management from `rhi_vulkan.zig` into dedicated
   - G-Pass pipeline
   - Sky pipeline
   - UI pipelines (colored + textured)
-  - Cloud pipeline
   - Debug shadow pipeline (conditional)
   - All pipeline layouts
 
@@ -99,8 +98,6 @@ Extract pipeline and render pass management from `rhi_vulkan.zig` into dedicated
 - `ui_tex_pipeline_layout` → Use `pipeline_manager.ui_tex_pipeline_layout`
 - `ui_swapchain_pipeline` → Use `pipeline_manager.ui_swapchain_pipeline`
 - `ui_swapchain_tex_pipeline` → Use `pipeline_manager.ui_swapchain_tex_pipeline`
-- `cloud_pipeline` → Use `pipeline_manager.cloud_pipeline`
-- `cloud_pipeline_layout` → Use `pipeline_manager.cloud_pipeline_layout`
 - `g_pipeline` → Use `pipeline_manager.g_pipeline`
 - `g_pipeline_layout` → Use `pipeline_manager.pipeline_layout` (shares main layout)
 
@@ -197,4 +194,3 @@ const render_pass = ctx.render_pass_manager.hdr_render_pass;
 - Integration requires updating many references throughout rhi_vulkan.zig
 - Each field access change is mechanical but there are many of them
 - Consider using find/replace or refactoring tools for bulk changes
-

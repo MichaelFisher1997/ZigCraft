@@ -11,10 +11,10 @@ pub fn build(b: *std.Build) void {
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
     options.addOption(bool, "smoke_test", smoke_test);
 
-    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, clouds, and decorations for chunk-only debugging") orelse false;
+    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, and decorations for chunk-only debugging") orelse false;
     options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
 
-    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, clouds, decorations)") orelse "";
+    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
     options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
 
     const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly (normal, overworld, flat)") orelse "";
@@ -283,8 +283,6 @@ pub fn build(b: *std.Build) void {
     const validate_vulkan_ui_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui.frag" });
     const validate_vulkan_ui_tex_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui_tex.vert" });
     const validate_vulkan_ui_tex_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui_tex.frag" });
-    const validate_vulkan_cloud_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/cloud.vert" });
-    const validate_vulkan_cloud_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/cloud.frag" });
     const validate_vulkan_debug_shadow_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/debug_shadow.vert" });
     const validate_vulkan_debug_shadow_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/debug_shadow.frag" });
     const validate_vulkan_ssao_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ssao.vert" });
@@ -311,8 +309,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&validate_vulkan_ui_frag.step);
     test_step.dependOn(&validate_vulkan_ui_tex_vert.step);
     test_step.dependOn(&validate_vulkan_ui_tex_frag.step);
-    test_step.dependOn(&validate_vulkan_cloud_vert.step);
-    test_step.dependOn(&validate_vulkan_cloud_frag.step);
     test_step.dependOn(&validate_vulkan_debug_shadow_vert.step);
     test_step.dependOn(&validate_vulkan_debug_shadow_frag.step);
     test_step.dependOn(&validate_vulkan_ssao_vert.step);

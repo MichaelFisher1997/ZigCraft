@@ -42,7 +42,6 @@
 ### 🌍 World Generation
 - **Biomes & Climate**: Multi-noise system based on temperature and humidity (11+ biomes).
 - **Infinite Terrain**: Seed-based, deterministic generation with domain warping and 3D caves.
-- **Volumetric Clouds**: Procedural, shadowed cloud layers that integrate with the atmosphere.
 - **Level of Detail (LOD)**: Hierarchical LOD system enabling 100+ chunk render distances using simplified terrain meshes and specialized rendering.
 - **Greedy Meshing**: Optimized vertex data generation for maximum throughput.
 
@@ -123,7 +122,6 @@ To bypass in emergencies: `git push --no-verify`
 - LOD off by default
 - water generation/rendering off by default
 - caves off by default
-- clouds off by default
 - decorations/features off by default
 
 Re-enable individual systems with `-Dchunk-debug-enable=` using a comma-separated list:
@@ -132,7 +130,6 @@ Re-enable individual systems with `-Dchunk-debug-enable=` using a comma-separate
 - `watergen`
 - `waterrender`
 - `caves`
-- `clouds`
 - `decorations`
 
 Examples:

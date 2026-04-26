@@ -21,7 +21,6 @@ pub const PresetConfig = struct {
     taa_velocity_rejection: f32 = 0.02,
     anisotropic_filtering: u8,
     max_texture_resolution: u32,
-    cloud_shadows_enabled: bool,
     exposure: f32,
     saturation: f32,
     volumetric_lighting_enabled: bool,
@@ -145,7 +144,6 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.taa_velocity_rejection = config.taa_velocity_rejection;
     settings.anisotropic_filtering = config.anisotropic_filtering;
     settings.max_texture_resolution = config.max_texture_resolution;
-    settings.cloud_shadows_enabled = config.cloud_shadows_enabled;
     settings.exposure = config.exposure;
     settings.saturation = config.saturation;
     settings.volumetric_lighting_enabled = config.volumetric_lighting_enabled;
@@ -190,7 +188,6 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.taa_velocity_rejection, preset.taa_velocity_rejection, epsilon) and
         settings.anisotropic_filtering == preset.anisotropic_filtering and
         settings.max_texture_resolution == preset.max_texture_resolution and
-        settings.cloud_shadows_enabled == preset.cloud_shadows_enabled and
         std.math.approxEqAbs(f32, settings.exposure, preset.exposure, epsilon) and
         std.math.approxEqAbs(f32, settings.saturation, preset.saturation, epsilon) and
         settings.render_distance == preset.render_distance and

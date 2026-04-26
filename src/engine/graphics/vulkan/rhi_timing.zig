@@ -11,12 +11,11 @@ const GpuPass = enum {
     lpv_compute,
     sky,
     opaque_pass,
-    cloud,
     bloom,
     fxaa,
     post_process,
 
-    pub const COUNT = 12;
+    pub const COUNT = 11;
 };
 
 pub const QUERY_COUNT_PER_FRAME = GpuPass.COUNT * 2;
@@ -30,7 +29,6 @@ fn mapPassName(name: []const u8) ?GpuPass {
     if (std.mem.eql(u8, name, "LPVPass")) return .lpv_compute;
     if (std.mem.eql(u8, name, "SkyPass")) return .sky;
     if (std.mem.eql(u8, name, "OpaquePass")) return .opaque_pass;
-    if (std.mem.eql(u8, name, "CloudPass")) return .cloud;
     if (std.mem.eql(u8, name, "BloomPass")) return .bloom;
     if (std.mem.eql(u8, name, "FXAAPass")) return .fxaa;
     if (std.mem.eql(u8, name, "PostProcessPass")) return .post_process;
@@ -89,12 +87,11 @@ pub fn processTimingResults(ctx: anytype) void {
         ctx.timing.timing_results.lpv_pass_ms = @as(f32, @floatFromInt(results[11] -% results[10])) * period / 1e6;
         ctx.timing.timing_results.sky_pass_ms = @as(f32, @floatFromInt(results[13] -% results[12])) * period / 1e6;
         ctx.timing.timing_results.opaque_pass_ms = @as(f32, @floatFromInt(results[15] -% results[14])) * period / 1e6;
-        ctx.timing.timing_results.cloud_pass_ms = @as(f32, @floatFromInt(results[17] -% results[16])) * period / 1e6;
-        ctx.timing.timing_results.bloom_pass_ms = @as(f32, @floatFromInt(results[19] -% results[18])) * period / 1e6;
-        ctx.timing.timing_results.fxaa_pass_ms = @as(f32, @floatFromInt(results[21] -% results[20])) * period / 1e6;
-        ctx.timing.timing_results.post_process_pass_ms = @as(f32, @floatFromInt(results[23] -% results[22])) * period / 1e6;
+        ctx.timing.timing_results.bloom_pass_ms = @as(f32, @floatFromInt(results[17] -% results[16])) * period / 1e6;
+        ctx.timing.timing_results.fxaa_pass_ms = @as(f32, @floatFromInt(results[19] -% results[18])) * period / 1e6;
+        ctx.timing.timing_results.post_process_pass_ms = @as(f32, @floatFromInt(results[21] -% results[20])) * period / 1e6;
 
-        ctx.timing.timing_results.main_pass_ms = ctx.timing.timing_results.sky_pass_ms + ctx.timing.timing_results.opaque_pass_ms + ctx.timing.timing_results.cloud_pass_ms;
+        ctx.timing.timing_results.main_pass_ms = ctx.timing.timing_results.sky_pass_ms + ctx.timing.timing_results.opaque_pass_ms;
         ctx.timing.timing_results.validate();
 
         ctx.timing.timing_results.total_gpu_ms = 0;

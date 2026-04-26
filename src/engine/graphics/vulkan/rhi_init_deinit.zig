@@ -121,19 +121,6 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.draw.current_lpv_texture_g = ctx.draw.dummy_texture_3d;
     ctx.draw.current_lpv_texture_b = ctx.draw.dummy_texture_3d;
 
-    const cloud_vbo_handle = try ctx.resources.createBuffer(8 * @sizeOf(f32), .vertex);
-    log.log.info("Cloud VBO handle: {}, map count: {}", .{ cloud_vbo_handle, ctx.resources.buffers.count() });
-    if (cloud_vbo_handle == 0) {
-        log.log.err("Failed to create cloud VBO", .{});
-        return error.InitializationFailed;
-    }
-    const cloud_buf = ctx.resources.buffers.get(cloud_vbo_handle);
-    if (cloud_buf == null) {
-        log.log.err("Cloud VBO created but not found in map!", .{});
-        return error.InitializationFailed;
-    }
-    ctx.cloud.cloud_vbo = cloud_buf.?;
-
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         ctx.ui.ui_vbos[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, 1024 * 1024, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }

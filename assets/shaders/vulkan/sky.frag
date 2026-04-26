@@ -21,10 +21,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params;
     vec4 lighting;
-    vec4 cloud_params;
+    vec4 render_flags;
     vec4 shadow_params;
     vec4 pbr_params;
     vec4 volumetric_params;
@@ -43,65 +43,8 @@ layout(set = 0, binding = 3) uniform sampler2DArrayShadow uShadowMaps;
 
 const float PI = 3.14159265359;
 
-float cloudHash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-}
-
-float cloudNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = cloudHash(i);
-    float b = cloudHash(i + vec2(1.0, 0.0));
-    float c = cloudHash(i + vec2(0.0, 1.0));
-    float d = cloudHash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float cloudFbm(vec2 p, int octaves) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < octaves; i++) {
-        value += amplitude * cloudNoise(p * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    return value;
-}
-
-vec4 sampleSkyClouds(vec3 dir) {
-    float cloudCoverage = global.cloud_wind_offset.w;
-    if (cloudCoverage <= 0.01 || abs(dir.y) <= 0.02) return vec4(0.0);
-
-    float cloudHeight = global.cloud_params.x;
-    float t = (cloudHeight - global.cam_pos.y) / dir.y;
-    if (t <= 0.0 || t > 8000.0) return vec4(0.0);
-
-    const float cloudBlockSize = 12.0;
-    vec3 cloudPos = global.cam_pos.xyz + dir * t;
-    vec2 worldXZ = cloudPos.xz + global.cloud_wind_offset.xy;
-    vec2 pixelPos = floor(worldXZ / cloudBlockSize) * cloudBlockSize;
-    vec2 samplePos = pixelPos * global.cloud_wind_offset.z;
-    float cloudValue = cloudFbm(samplePos, 3);
-    float threshold = 1.0 - cloudCoverage;
-    float cloudMask = smoothstep(threshold - 0.08, threshold + 0.08, cloudValue);
-    if (cloudMask <= 0.001) return vec4(0.0);
-
-    vec3 nightTint = pow(vec3(0.10, 0.12, 0.20), vec3(2.2));
-    vec3 dayColor = vec3(0.92, 0.95, 0.98);
-    vec3 cloudColor = mix(nightTint, dayColor, pc.params.z);
-    float lightFactor = clamp(pc.sun_dir.y, 0.0, 1.0);
-    cloudColor *= (0.8 + 0.25 * lightFactor);
-
-    float fogFactor = 1.0 - exp(-t * global.params.y * 0.35);
-    cloudColor = mix(cloudColor, global.fog_color.xyz, fogFactor);
-
-    float alpha = cloudMask * (1.0 - fogFactor * 0.6);
-    alpha *= 1.0 - smoothstep(5000.0, 8000.0, t);
-    return vec4(cloudColor, alpha);
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
 }
 
 // Henyey-Greenstein Phase Function for Mie Scattering (Phase 4)
@@ -255,9 +198,6 @@ void main() {
 
     vec3 finalColor = sky;
 
-    vec4 skyClouds = sampleSkyClouds(dir);
-    finalColor = mix(finalColor, skyClouds.rgb, skyClouds.a);
-
     finalColor += sunGlow * sunColor * pc.params.z * 1.35;
     finalColor += sunDisc * sunColor * pc.params.z * 6.5;
     finalColor += moonGlow * moonColor * pc.params.w * 2.2;
@@ -266,7 +206,7 @@ void main() {
 
     // Volumetric Scattering (Phase 4)
     if (global.volumetric_params.x > 0.5) {
-        float dither = cloudHash(gl_FragCoord.xy + vec2(global.params.x));
+        float dither = hash21(gl_FragCoord.xy + vec2(global.params.x));
         // Use camera-relative origin (0,0,0) for raymarching start
         vec4 volumetric = calculateVolumetric(vec3(0.0), dir, dither);
         // Apply transmittance to sky color and add scattered light

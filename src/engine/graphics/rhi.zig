@@ -87,8 +87,7 @@ pub const DrawIndirectCommand = rhi_types.DrawIndirectCommand;
 pub const InstanceData = rhi_types.InstanceData;
 pub const SkyParams = rhi_types.SkyParams;
 pub const SkyPushConstants = rhi_types.SkyPushConstants;
-pub const CloudPushConstants = rhi_types.CloudPushConstants;
-pub const CloudParams = rhi_types.CloudParams;
+pub const FrameRenderParams = rhi_types.FrameRenderParams;
 pub const ShadowConfig = rhi_types.ShadowConfig;
 pub const ShadowParams = rhi_types.ShadowParams;
 pub const Color = rhi_types.Color;
@@ -290,12 +289,6 @@ pub const RenderContext = struct {
     pub fn getNativeSkyPipelineLayout(self: RenderContext) u64 {
         return self.render.vtable.getNativeSkyPipelineLayout(self.render.ptr);
     }
-    pub fn getNativeCloudPipeline(self: RenderContext) u64 {
-        return self.render.vtable.getNativeCloudPipeline(self.render.ptr);
-    }
-    pub fn getNativeCloudPipelineLayout(self: RenderContext) u64 {
-        return self.render.vtable.getNativeCloudPipelineLayout(self.render.ptr);
-    }
     pub fn getNativeWaterPipeline(self: RenderContext) u64 {
         return self.render.vtable.getNativeWaterPipeline(self.render.ptr);
     }
@@ -365,8 +358,8 @@ pub const RenderContext = struct {
     pub fn setSelectionMode(self: RenderContext, enabled: bool) void {
         self.state.setSelectionMode(enabled);
     }
-    pub fn updateGlobalUniforms(self: RenderContext, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: CloudParams) !void {
-        try self.state.updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, cloud_params);
+    pub fn updateGlobalUniforms(self: RenderContext, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: FrameRenderParams) !void {
+        try self.state.updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
     }
     pub fn setTextureUniforms(self: RenderContext, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.state.setTextureUniforms(texture_enabled, shadow_map_handles);
@@ -604,7 +597,7 @@ pub const IRenderStateContext = struct {
         setLODInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setTerrainPipelineBound: *const fn (ptr: *anyopaque, bound: bool) void,
         setSelectionMode: *const fn (ptr: *anyopaque, enabled: bool) void,
-        updateGlobalUniforms: *const fn (ptr: *anyopaque, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: CloudParams) anyerror!void,
+        updateGlobalUniforms: *const fn (ptr: *anyopaque, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: FrameRenderParams) anyerror!void,
         setTextureUniforms: *const fn (ptr: *anyopaque, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void,
     };
 
@@ -623,8 +616,8 @@ pub const IRenderStateContext = struct {
     pub fn setSelectionMode(self: IRenderStateContext, enabled: bool) void {
         self.vtable.setSelectionMode(self.ptr, enabled);
     }
-    pub fn updateGlobalUniforms(self: IRenderStateContext, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: CloudParams) !void {
-        try self.vtable.updateGlobalUniforms(self.ptr, view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, cloud_params);
+    pub fn updateGlobalUniforms(self: IRenderStateContext, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: FrameRenderParams) !void {
+        try self.vtable.updateGlobalUniforms(self.ptr, view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
     }
     pub fn setTextureUniforms(self: IRenderStateContext, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.vtable.setTextureUniforms(self.ptr, texture_enabled, shadow_map_handles);
@@ -703,10 +696,6 @@ pub const IRenderContext = struct {
         getNativeSkyPipeline: *const fn (ptr: *anyopaque) u64,
         /// Returns the native sky pipeline layout handle (VkPipelineLayout).
         getNativeSkyPipelineLayout: *const fn (ptr: *anyopaque) u64,
-        /// Returns the native cloud pipeline handle (VkPipeline).
-        getNativeCloudPipeline: *const fn (ptr: *anyopaque) u64,
-        /// Returns the native cloud pipeline layout handle (VkPipelineLayout).
-        getNativeCloudPipelineLayout: *const fn (ptr: *anyopaque) u64,
         /// Returns the native water pipeline handle (VkPipeline).
         getNativeWaterPipeline: *const fn (ptr: *anyopaque) u64,
         /// Returns the native water pipeline layout handle (VkPipelineLayout).
@@ -1065,8 +1054,8 @@ pub const RHI = struct {
     pub fn pushConstants(self: RHI, stages: ShaderStageFlags, offset: u32, size: u32, data: *const anyopaque) void {
         self.encoder().pushConstants(stages, offset, size, data);
     }
-    pub fn updateGlobalUniforms(self: RHI, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: CloudParams) !void {
-        try self.state().updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, cloud_params);
+    pub fn updateGlobalUniforms(self: RHI, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: FrameRenderParams) !void {
+        try self.state().updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
     }
 
     pub fn updateShadowUniforms(self: RHI, params: ShadowParams) !void {

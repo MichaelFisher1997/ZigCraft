@@ -50,13 +50,6 @@ const GPassResources = struct {
     g_pass_extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
 };
 
-const CloudResources = struct {
-    cloud_vbo: VulkanBuffer = .{},
-    cloud_ebo: VulkanBuffer = .{},
-    cloud_mesh_size: f32 = 0.0,
-    cloud_vao: c.VkBuffer = null,
-};
-
 const HDRResources = struct {
     hdr_image: c.VkImage = null,
     hdr_memory: c.VkDeviceMemory = null,
@@ -216,7 +209,6 @@ pub const VulkanContext = struct {
     mutex: sync.Mutex = .{},
 
     ui: UIState = .{},
-    cloud: CloudResources = .{},
     hdr: HDRResources = .{},
     post_process: PostProcessSystem = .{},
     debug_shadow: DebugShadowResources = .{},

@@ -58,7 +58,6 @@ pub const TimingOverlay = struct {
         drawGpuLine(ui, "LPV:", data.gpu.lpv_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "SKY:", data.gpu.sky_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "OPAQUE:", data.gpu.opaque_pass_ms, label_x, value_x, &y, scale, Color.gray);
-        drawGpuLine(ui, "CLOUDS:", data.gpu.cloud_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "MAIN:", data.gpu.main_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "BLOOM:", data.gpu.bloom_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "FXAA:", data.gpu.fxaa_pass_ms, label_x, value_x, &y, scale, Color.gray);

@@ -180,12 +180,6 @@ pub const WorldScreen = struct {
                 log.log.info("SSAO {s}", .{if (new_val) "disabled" else "enabled"});
                 self.last_debug_toggle_time = now;
             }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_clouds)) {
-                const new_val = !render_system.getDisableClouds();
-                render_system.setDisableClouds(new_val);
-                log.log.info("Cloud rendering {s}", .{if (new_val) "disabled" else "enabled"});
-                self.last_debug_toggle_time = now;
-            }
             if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_fog)) {
                 self.session.atmosphere.fog_enabled = !self.session.atmosphere.fog_enabled;
                 log.log.info("Fog {s}", .{if (self.session.atmosphere.fog_enabled) "enabled" else "disabled"});
@@ -297,7 +291,6 @@ pub const WorldScreen = struct {
         const startup_busy = self.session.world.isStartupBusy();
         const startup_loading = build_options.auto_world.len > 0 and startup_busy;
         const startup_light_render = startup_loading and !safe_mode;
-        const clouds_enabled = !render_system.getDisableClouds();
         const shadow_sandbox_active = ctx.settings.shadow_sandbox_enabled and !render_system.getDisableShadowDraw() and !startup_light_render;
         const shadow_beauty_active = ctx.settings.shadow_beauty_enabled and shadow_sandbox_active;
         const clean_capture = build_options.shadow_test_scene and build_options.screenshot_path.len > 0;
@@ -324,8 +317,6 @@ pub const WorldScreen = struct {
 
         const simple_lighting_mode = true;
         const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode and !startup_light_render and !simple_lighting_mode;
-        const cloud_shadows_enabled = false;
-
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
@@ -343,49 +334,39 @@ pub const WorldScreen = struct {
         }
 
         const lpv_origin = lpv_system.getOrigin();
-        const cloud_params: rhi_pkg.CloudParams = blk: {
-            const p = self.session.clouds.getShadowParams();
-            break :blk .{
-                .cam_pos = camera.position,
-                .view_proj = view_proj_render,
-                .sun_dir = render_sun_dir,
-                .sun_intensity = self.session.atmosphere.sun_intensity,
-                .fog_color = self.session.atmosphere.fog_color,
-                .fog_density = self.session.atmosphere.fog_density,
-                .wind_offset_x = p.wind_offset_x,
-                .wind_offset_z = p.wind_offset_z,
-                .cloud_scale = p.cloud_scale,
-                .cloud_coverage = if (clouds_enabled) p.cloud_coverage else 0.0,
-                .cloud_height = p.cloud_height,
-                .base_color = self.session.clouds.base_color,
-                .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr and !safe_mode and !simple_lighting_mode,
-                .simple_lighting_enabled = simple_lighting_mode,
-                .shadow_apply_to_beauty = shadow_beauty_active,
-                .shadow = .{
-                    .distance = shadow_distance_active,
-                    .resolution = ctx.settings.getShadowResolution(),
-                    .pcf_samples = if (shadow_sandbox_active) @as(u8, 1) else ctx.settings.shadow_pcf_samples,
-                    .cascade_blend = false,
-                    .caster_distance = shadow_caster_distance_active,
-                    .strength = if (safe_mode or !shadow_sandbox_active) 0.0 else 0.35,
-                },
-                .cloud_shadows = cloud_shadows_enabled,
-                .pbr_quality = ctx.settings.pbr_quality,
-                .exposure = ctx.settings.exposure,
-                .saturation = ctx.settings.saturation,
-                .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
-                .sun_shafts_enabled = ctx.settings.sun_shafts_enabled and shadow_sandbox_active and !safe_mode,
-                .sun_shafts_intensity = ctx.settings.sun_shafts_intensity,
-                .volumetric_density = ctx.settings.volumetric_density,
-                .volumetric_steps = ctx.settings.volumetric_steps,
-                .volumetric_scattering = ctx.settings.volumetric_scattering,
-                .ssao_enabled = ssao_enabled,
-                .lpv_enabled = ctx.settings.lpv_enabled and !startup_light_render and !simple_lighting_mode,
-                .lpv_intensity = ctx.settings.lpv_intensity,
-                .lpv_cell_size = lpv_system.getCellSize(),
-                .lpv_grid_size = lpv_system.getGridSize(),
-                .lpv_origin = lpv_origin,
-            };
+        const frame_params = rhi_pkg.FrameRenderParams{
+            .cam_pos = camera.position,
+            .view_proj = view_proj_render,
+            .sun_dir = render_sun_dir,
+            .sun_intensity = self.session.atmosphere.sun_intensity,
+            .fog_color = self.session.atmosphere.fog_color,
+            .fog_density = self.session.atmosphere.fog_density,
+            .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr and !safe_mode and !simple_lighting_mode,
+            .simple_lighting_enabled = simple_lighting_mode,
+            .shadow_apply_to_beauty = shadow_beauty_active,
+            .shadow = .{
+                .distance = shadow_distance_active,
+                .resolution = ctx.settings.getShadowResolution(),
+                .pcf_samples = if (shadow_sandbox_active) @as(u8, 1) else ctx.settings.shadow_pcf_samples,
+                .cascade_blend = false,
+                .caster_distance = shadow_caster_distance_active,
+                .strength = if (safe_mode or !shadow_sandbox_active) 0.0 else 0.35,
+            },
+            .pbr_quality = ctx.settings.pbr_quality,
+            .exposure = ctx.settings.exposure,
+            .saturation = ctx.settings.saturation,
+            .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
+            .sun_shafts_enabled = ctx.settings.sun_shafts_enabled and shadow_sandbox_active and !safe_mode,
+            .sun_shafts_intensity = ctx.settings.sun_shafts_intensity,
+            .volumetric_density = ctx.settings.volumetric_density,
+            .volumetric_steps = ctx.settings.volumetric_steps,
+            .volumetric_scattering = ctx.settings.volumetric_scattering,
+            .ssao_enabled = ssao_enabled,
+            .lpv_enabled = ctx.settings.lpv_enabled and !startup_light_render and !simple_lighting_mode,
+            .lpv_intensity = ctx.settings.lpv_intensity,
+            .lpv_cell_size = lpv_system.getCellSize(),
+            .lpv_grid_size = lpv_system.getGridSize(),
+            .lpv_origin = lpv_origin,
         };
 
         const skip_world_render = render_system.getSafeRenderMode();
@@ -397,7 +378,7 @@ pub const WorldScreen = struct {
                 std.math.clamp(boosted_horizon.z, 0.0, 1.0),
             );
             rhi.renderContext().setClearColor(clear_color);
-            try rhi.updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode and !simple_lighting_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, cloud_params);
+            try rhi.updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode and !simple_lighting_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;
@@ -425,15 +406,13 @@ pub const WorldScreen = struct {
                 .viewport_height = render_h,
                 .sky_params = sky_params,
                 .shadow_sun_dir = shadow_sun_dir,
-                .cloud_params = cloud_params,
                 .main_shader = render_system.getShader(),
                 .env_map_handle = env_map_handle,
-                .shadow = cloud_params.shadow,
+                .shadow = frame_params.shadow,
                 .ssao_enabled = ssao_enabled,
                 .disable_shadow_draw = !shadow_sandbox_active,
                 .disable_gpass_draw = render_system.getDisableGPassDraw(),
                 .disable_ssao = render_system.getDisableSSAO() or startup_light_render,
-                .disable_clouds = render_system.getDisableClouds(),
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled and !startup_light_render,
                 .resolution_scale = resolution_scale,
@@ -759,7 +738,6 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.lod_render)] = self.session.world.lod_enabled;
         states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
         states[@intFromEnum(DebugFeature.ssao)] = !render_system.getDisableSSAO();
-        states[@intFromEnum(DebugFeature.clouds)] = !render_system.getDisableClouds();
         states[@intFromEnum(DebugFeature.fog)] = self.session.atmosphere.fog_enabled;
         states[@intFromEnum(DebugFeature.lpv_overlay)] = ctx.settings.debug_lpv_overlay_active;
         states[@intFromEnum(DebugFeature.frustum_debug)] = ctx.settings.debug_frustum_active;
@@ -899,10 +877,6 @@ pub const WorldScreen = struct {
             .ssao => {
                 const new_val = !render_system.getDisableSSAO();
                 render_system.setDisableSSAO(new_val);
-            },
-            .clouds => {
-                const new_val = !render_system.getDisableClouds();
-                render_system.setDisableClouds(new_val);
             },
             .fog => {
                 self.session.atmosphere.fog_enabled = !self.session.atmosphere.fog_enabled;

@@ -38,7 +38,6 @@ pub const PipelineManager = struct {
     sky_pipeline: c.VkPipeline = null,
     ui_pipeline: c.VkPipeline = null,
     ui_tex_pipeline: c.VkPipeline = null,
-    cloud_pipeline: c.VkPipeline = null,
     water_pipeline: c.VkPipeline = null,
 
     // Swapchain UI pipelines
@@ -50,7 +49,6 @@ pub const PipelineManager = struct {
     sky_pipeline_layout: c.VkPipelineLayout = null,
     ui_pipeline_layout: c.VkPipelineLayout = null,
     ui_tex_pipeline_layout: c.VkPipelineLayout = null,
-    cloud_pipeline_layout: c.VkPipelineLayout = null,
     ui_tex_descriptor_set_layout: c.VkDescriptorSetLayout = null,
 
     // Debug shadow pipeline (conditional)
@@ -190,14 +188,6 @@ pub const PipelineManager = struct {
                 try Utils.checkVk(c.vkCreatePipelineLayout(vk_device, &debug_shadow_layout_full_info, null, &self.debug_shadow_pipeline_layout.?));
             }
         }
-
-        // Cloud pipeline layout
-        var cloud_layout_info = std.mem.zeroes(c.VkPipelineLayoutCreateInfo);
-        cloud_layout_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        cloud_layout_info.pushConstantRangeCount = 1;
-        cloud_layout_info.pPushConstantRanges = &sky_push_constant;
-
-        try Utils.checkVk(c.vkCreatePipelineLayout(vk_device, &cloud_layout_info, null, &self.cloud_pipeline_layout));
     }
 
     /// Destroy all pipeline layouts
@@ -207,8 +197,6 @@ pub const PipelineManager = struct {
         if (self.ui_pipeline_layout) |layout| c.vkDestroyPipelineLayout(vk_device, layout, null);
         if (self.ui_tex_pipeline_layout) |layout| c.vkDestroyPipelineLayout(vk_device, layout, null);
         if (self.ui_tex_descriptor_set_layout) |layout| c.vkDestroyDescriptorSetLayout(vk_device, layout, null);
-        if (self.cloud_pipeline_layout) |layout| c.vkDestroyPipelineLayout(vk_device, layout, null);
-
         if (comptime build_options.debug_shadows) {
             if (self.debug_shadow_pipeline_layout) |layout| c.vkDestroyPipelineLayout(vk_device, layout, null);
             if (self.debug_shadow_descriptor_set_layout) |layout| c.vkDestroyDescriptorSetLayout(vk_device, layout, null);
@@ -225,7 +213,6 @@ pub const PipelineManager = struct {
         if (self.sky_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_tex_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
-        if (self.cloud_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.water_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_swapchain_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
         if (self.ui_swapchain_tex_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
@@ -242,7 +229,6 @@ pub const PipelineManager = struct {
         self.sky_pipeline = null;
         self.ui_pipeline = null;
         self.ui_tex_pipeline = null;
-        self.cloud_pipeline = null;
         self.water_pipeline = null;
         self.ui_swapchain_pipeline = null;
         self.ui_swapchain_tex_pipeline = null;
@@ -341,9 +327,6 @@ pub const PipelineManager = struct {
                 try self.createDebugShadowPipeline(allocator, vk_device, hdr_render_pass, &viewport_state, &dynamic_state, &input_assembly, &rasterizer, &multisampling, &depth_stencil, &ui_color_blending);
             }
         }
-
-        // Cloud Pipeline
-        try self.createCloudPipeline(allocator, vk_device, hdr_render_pass, &viewport_state, &dynamic_state, &input_assembly, &rasterizer, &multisampling, &depth_stencil, &ui_color_blending);
     }
 
     /// Create terrain pipeline and variants
@@ -516,23 +499,6 @@ pub const PipelineManager = struct {
         color_blending: *const c.VkPipelineColorBlendStateCreateInfo,
     ) !void {
         try pipeline_specialized.createDebugShadowPipeline(self, allocator, vk_device, hdr_render_pass, viewport_state, dynamic_state, input_assembly, rasterizer, multisampling, depth_stencil, color_blending);
-    }
-
-    /// Create cloud pipeline
-    fn createCloudPipeline(
-        self: *PipelineManager,
-        allocator: std.mem.Allocator,
-        vk_device: c.VkDevice,
-        hdr_render_pass: c.VkRenderPass,
-        viewport_state: *const c.VkPipelineViewportStateCreateInfo,
-        dynamic_state: *const c.VkPipelineDynamicStateCreateInfo,
-        input_assembly: *const c.VkPipelineInputAssemblyStateCreateInfo,
-        rasterizer: *const c.VkPipelineRasterizationStateCreateInfo,
-        multisampling: *const c.VkPipelineMultisampleStateCreateInfo,
-        depth_stencil: *const c.VkPipelineDepthStencilStateCreateInfo,
-        color_blending: *const c.VkPipelineColorBlendStateCreateInfo,
-    ) !void {
-        try pipeline_specialized.createCloudPipeline(self, allocator, vk_device, hdr_render_pass, viewport_state, dynamic_state, input_assembly, rasterizer, multisampling, depth_stencil, color_blending);
     }
 };
 

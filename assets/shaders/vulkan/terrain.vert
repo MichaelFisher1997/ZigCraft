@@ -33,10 +33,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params;
     vec4 lighting;
-    vec4 cloud_params;
+    vec4 render_flags;
     vec4 shadow_params;
     vec4 pbr_params;
     vec4 volumetric_params;

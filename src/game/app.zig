@@ -316,15 +316,8 @@ pub const App = struct {
             .sun_intensity = 1.0,
             .fog_color = Vec3.zero,
             .fog_density = 0,
-            .wind_offset_x = 0,
-            .wind_offset_z = 0,
-            .cloud_scale = 1.0,
-            .cloud_coverage = 0.5,
-            .cloud_height = 100,
-            .base_color = Vec3.one,
             .pbr_enabled = false,
             .shadow = .{ .distance = 100, .resolution = 1024, .pcf_samples = 1, .cascade_blend = false },
-            .cloud_shadows = false,
             .pbr_quality = 0,
             .exposure = 1.0,
             .saturation = 1.0,
@@ -459,7 +452,6 @@ fn applyShadowTestPreset(settings: *Settings) void {
     settings.shadow_caster_distance = 120.0;
     settings.shadow_pcf_samples = 1;
     settings.shadow_cascade_blend = false;
-    settings.cloud_shadows_enabled = false;
     settings.pbr_enabled = false;
     settings.volumetric_lighting_enabled = false;
     settings.sun_shafts_enabled = false;

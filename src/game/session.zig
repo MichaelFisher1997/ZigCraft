@@ -57,40 +57,6 @@ const SpawnColumn = struct {
     info: @import("../world/worldgen/generator_interface.zig").ColumnInfo,
 };
 
-pub const CloudState = struct {
-    wind_offset_x: f32 = 0.0,
-    wind_offset_z: f32 = 0.0,
-    cloud_scale: f32 = 1.0 / 64.0,
-    cloud_coverage: f32 = 0.5,
-    cloud_height: f32 = 160.0,
-    cloud_thickness: f32 = 12.0,
-    base_color: Vec3 = Vec3.init(1.0, 1.0, 1.0),
-
-    pub fn update(self: *CloudState, delta_time: f32) void {
-        const wind_dir_x: f32 = 1.0;
-        const wind_dir_z: f32 = 0.2;
-        const wind_speed: f32 = 2.0;
-        self.wind_offset_x += wind_dir_x * wind_speed * delta_time;
-        self.wind_offset_z += wind_dir_z * wind_speed * delta_time;
-    }
-
-    pub fn getShadowParams(self: *const CloudState) struct {
-        wind_offset_x: f32,
-        wind_offset_z: f32,
-        cloud_scale: f32,
-        cloud_coverage: f32,
-        cloud_height: f32,
-    } {
-        return .{
-            .wind_offset_x = self.wind_offset_x,
-            .wind_offset_z = self.wind_offset_z,
-            .cloud_scale = self.cloud_scale,
-            .cloud_coverage = self.cloud_coverage,
-            .cloud_height = self.cloud_height,
-        };
-    }
-};
-
 pub const GameSession = struct {
     allocator: std.mem.Allocator,
     world: *World,
@@ -109,7 +75,6 @@ pub const GameSession = struct {
     rhi: *RHI,
 
     atmosphere: Atmosphere,
-    clouds: CloudState,
 
     lod_config: LODConfig,
     creative_mode: bool,
@@ -233,7 +198,6 @@ pub const GameSession = struct {
             .ecs_render_system = ecs_render_system,
             .rhi = rhi,
             .atmosphere = atmosphere,
-            .clouds = CloudState{},
             .lod_config = session.lod_config,
             .creative_mode = true,
         };
@@ -266,7 +230,6 @@ pub const GameSession = struct {
 
     pub fn update(self: *GameSession, dt: f32, total_time: f32, input: IRawInputProvider, mapper: IInputMapper, atlas: *TextureAtlas, window: anytype, paused: bool, skip_world: bool, benchmark_mode: bool) !void {
         self.atmosphere.update(dt);
-        self.clouds.update(dt);
 
         // Update Camera from Player
         self.camera = self.player.camera;

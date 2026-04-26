@@ -37,7 +37,7 @@ nix develop --command zig fmt src/                   # Format code
 -Dskip-present     # Headless mode (skip presentation)
 -Dauto-world=normal  # Auto-open a generator directly (normal/overworld or flat)
 -Dstartup-diagnostic-seconds=5  # Wait N seconds, log chunk/LOD counts, and exit
--Dchunk-debug-mode  # Disable LOD, water, caves, clouds, and decorations for isolation
+-Dchunk-debug-mode  # Disable LOD, water, caves, and decorations for isolation
 -Dchunk-debug-enable=lod,caves  # Re-enable individual systems in chunk-debug-mode
 ```
 
@@ -47,7 +47,6 @@ nix develop --command zig fmt src/                   # Format code
 - `watergen`
 - `waterrender`
 - `caves`
-- `clouds`
 - `decorations`
 
 ---

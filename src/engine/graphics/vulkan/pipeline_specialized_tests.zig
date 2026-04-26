@@ -43,8 +43,6 @@ test "shader registry paths are valid for loading" {
     try testing.expect(shader_registry.UI_FRAG.len > 0);
     try testing.expect(shader_registry.SKY_VERT.len > 0);
     try testing.expect(shader_registry.SKY_FRAG.len > 0);
-    try testing.expect(shader_registry.CLOUD_VERT.len > 0);
-    try testing.expect(shader_registry.CLOUD_FRAG.len > 0);
 }
 
 test "shader paths end with .spv extension" {
@@ -54,8 +52,6 @@ test "shader paths end with .spv extension" {
     try testing.expect(std.mem.endsWith(u8, shader_registry.TERRAIN_FRAG, ".frag.spv"));
     try testing.expect(std.mem.endsWith(u8, shader_registry.SKY_VERT, ".vert.spv"));
     try testing.expect(std.mem.endsWith(u8, shader_registry.SKY_FRAG, ".frag.spv"));
-    try testing.expect(std.mem.endsWith(u8, shader_registry.CLOUD_VERT, ".vert.spv"));
-    try testing.expect(std.mem.endsWith(u8, shader_registry.CLOUD_FRAG, ".frag.spv"));
 }
 
 test "VK_CULL_MODE_NONE equals expected value" {
@@ -84,10 +80,6 @@ test "terrain pipeline variants use different polygon modes" {
 
 test "sky and wireframe pipeline use VK_CULL_MODE_NONE" {
     try testing.expectEqual(@as(c.VkCullModeFlags, c.VK_CULL_MODE_NONE), c.VK_CULL_MODE_NONE);
-}
-
-test "cloud pipeline uses VK_FRONT_FACE_COUNTER_CLOCKWISE" {
-    try testing.expectEqual(@as(c.VkFrontFace, c.VK_FRONT_FACE_COUNTER_CLOCKWISE), c.VK_FRONT_FACE_COUNTER_CLOCKWISE);
 }
 
 // ============================================================================

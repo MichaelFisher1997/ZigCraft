@@ -23,10 +23,10 @@ layout(set = 0, binding = 1) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
-    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
-    vec4 cloud_params;
+    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = reserved
+    vec4 render_flags;
     vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation
     vec4 volumetric_params;
@@ -178,7 +178,7 @@ float brightMask(vec3 color) {
 }
 
 vec3 computeScreenSunShafts(vec2 uv) {
-    if (global.volumetric_params.x < 0.5 || global.cloud_params.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
+    if (global.volumetric_params.x < 0.5 || global.render_flags.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
 
     vec3 currentColor = texture(uHDRBuffer, uv).rgb;
     float currentLuma = dot(currentColor, vec3(0.2126, 0.7152, 0.0722));
@@ -218,7 +218,7 @@ void main() {
         color += texture(uBloomTexture, inUV).rgb * postParams.bloomIntensity;
     }
 
-    if (global.cloud_params.z > 0.5) {
+    if (global.render_flags.z > 0.5) {
         color = agxToneMap(color, global.pbr_params.y, global.pbr_params.z);
         color = applyColorGrading(color, postParams.colorGradingEnabled * postParams.colorGradingIntensity);
         color = applyVignette(color, inUV, postParams.vignetteIntensity);

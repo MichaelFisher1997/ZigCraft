@@ -22,8 +22,6 @@ pub const RhiError = error{
     ResourceNotReady,
     SkyPipelineNotReady,
     SkyPipelineLayoutNotReady,
-    CloudPipelineNotReady,
-    CloudPipelineLayoutNotReady,
     CommandBufferNotReady,
     PendingCopyOverflow,
     Unknown,
@@ -278,14 +276,6 @@ pub const SkyPushConstants = extern struct {
     time: [4]f32, // x=time, y=cam_pos.x, z=cam_pos.y, w=cam_pos.z
 };
 
-pub const CloudPushConstants = extern struct {
-    view_proj: [4][4]f32,
-    camera_pos: [4]f32, // xyz = camera position, w = cloud_height
-    cloud_params: [4]f32, // x = coverage, y = scale, z = wind_offset_x, w = wind_offset_z
-    sun_params: [4]f32, // xyz = sun_dir, w = sun_intensity
-    fog_params: [4]f32, // xyz = fog_color, w = fog_density
-};
-
 pub const ShadowConfig = struct {
     distance: f32 = 250.0,
     resolution: u32 = 4096,
@@ -304,24 +294,17 @@ pub const ShadowParams = struct {
     resolution: u32 = 4096,
 };
 
-pub const CloudParams = struct {
+pub const FrameRenderParams = struct {
     cam_pos: Vec3 = Vec3.init(0, 0, 0),
     view_proj: Mat4 = Mat4.identity,
     sun_dir: Vec3 = Vec3.init(0, 1, 0),
     sun_intensity: f32 = 1.0,
     fog_color: Vec3 = Vec3.init(0.7, 0.8, 0.9),
     fog_density: f32 = 0.0,
-    cloud_height: f32 = 160.0,
-    cloud_coverage: f32 = 0.5,
-    cloud_scale: f32 = 1.0 / 64.0,
-    wind_offset_x: f32 = 0.0,
-    wind_offset_z: f32 = 0.0,
-    base_color: Vec3 = Vec3.init(1.0, 1.0, 1.0),
     pbr_enabled: bool = true,
     simple_lighting_enabled: bool = false,
     shadow_apply_to_beauty: bool = false,
     shadow: ShadowConfig = .{},
-    cloud_shadows: bool = true,
     pbr_quality: u8 = 2,
     volumetric_enabled: bool = true,
     sun_shafts_enabled: bool = false,
@@ -374,23 +357,21 @@ pub const GpuTimingResults = struct {
     lpv_pass_ms: f32,
     sky_pass_ms: f32,
     opaque_pass_ms: f32,
-    cloud_pass_ms: f32,
-    main_pass_ms: f32, // Overall main pass time (sum of sky, opaque, clouds)
+    main_pass_ms: f32, // Overall main pass time (sum of sky and opaque)
     bloom_pass_ms: f32,
     fxaa_pass_ms: f32,
     post_process_pass_ms: f32,
     total_gpu_ms: f32,
 
     pub fn validate(self: GpuTimingResults) void {
-        const expected_main = self.sky_pass_ms + self.opaque_pass_ms + self.cloud_pass_ms;
+        const expected_main = self.sky_pass_ms + self.opaque_pass_ms;
         const epsilon = 0.01;
         if (@abs(self.main_pass_ms - expected_main) > epsilon) {
-            std.debug.print("Timing Drift Warning: Main Pass {d:.3}ms != Sum {d:.3}ms (Sky {d:.3} + Opaque {d:.3} + Cloud {d:.3})\n", .{
+            std.debug.print("Timing Drift Warning: Main Pass {d:.3}ms != Sum {d:.3}ms (Sky {d:.3} + Opaque {d:.3})\n", .{
                 self.main_pass_ms,
                 expected_main,
                 self.sky_pass_ms,
                 self.opaque_pass_ms,
-                self.cloud_pass_ms,
             });
         }
     }

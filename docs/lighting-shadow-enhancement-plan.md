@@ -51,7 +51,7 @@ Tasks:
 - Keep billboard-specific handling for cutout vegetation.
 - Keep caves dark by reducing fill when `vSkyLight` is low.
 - Strengthen the visual readability of the sun disk, solar glow, moon, and dusk palette.
-- Keep LPV, SSAO, volumetrics, fog, and cloud-shadowing disabled in simple mode.
+- Keep LPV, SSAO, volumetrics, and fog disabled in simple mode.
 
 Acceptance:
 - Lit and unlit faces are readable outdoors.
@@ -136,7 +136,7 @@ Tasks:
 - Re-enable the four shadow passes in the render graph.
 - Revalidate CSM split distribution, texel snapping, and seam blending.
 - Confirm reverse-Z sampling, compare op, and depth layouts remain correct.
-- Reintroduce terrain shadow contribution without cloud shadows yet.
+- Reintroduce terrain shadow contribution.
 - Decide whether to keep the current shadow-pass caster-culling bypass or replace it with a correct culling path.
 
 Acceptance:
@@ -186,14 +186,12 @@ Tasks:
 - Re-enable in this order:
   1. fog
   2. volumetrics
-  3. cloud-shadowing
 - Keep every effect gated by real sky visibility.
 - Ensure caves and interiors do not pick up screen-wide or camera-relative light layers.
 
 Acceptance:
 - Fog improves mood instead of flattening the scene.
 - Volumetric lighting reads near the sun and stays out of caves.
-- Cloud shadowing behaves predictably.
 
 Rollback:
 - Any atmospheric layer that reintroduces moving cave light goes back off immediately.

@@ -121,9 +121,6 @@ pub const Settings = struct {
     shadow_cascade_blend: bool = true,
     shadow_caster_distance: f32 = 250.0,
 
-    // Cloud Settings
-    cloud_shadows_enabled: bool = true,
-
     // Volumetric Lighting Settings (Phase 4)
     volumetric_lighting_enabled: bool = true,
     sun_shafts_enabled: bool = false,
@@ -274,10 +271,6 @@ pub const Settings = struct {
                 .labels = &[_][]const u8{ "16 PX", "32 PX", "64 PX", "128 PX", "256 PX", "512 PX" },
                 .values = &[_]u32{ 16, 32, 64, 128, 256, 512 },
             } },
-        };
-        pub const cloud_shadows_enabled = SettingMetadata{
-            .label = "CLOUD SHADOWS",
-            .kind = .toggle,
         };
         pub const lod_enabled = SettingMetadata{
             .label = "LOD SYSTEM",

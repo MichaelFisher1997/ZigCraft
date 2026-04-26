@@ -616,10 +616,6 @@ pub fn destroyMainRenderPassAndPipelines(ctx: anytype) void {
         ctx.debug_shadow.pipeline = null;
     }
 
-    if (ctx.pipeline_manager.cloud_pipeline != null) {
-        c.vkDestroyPipeline(ctx.vulkan_device.vk_device, ctx.pipeline_manager.cloud_pipeline, null);
-        ctx.pipeline_manager.cloud_pipeline = null;
-    }
     if (ctx.render_pass_manager.hdr_render_pass != null) {
         c.vkDestroyRenderPass(ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, null);
         ctx.render_pass_manager.hdr_render_pass = null;

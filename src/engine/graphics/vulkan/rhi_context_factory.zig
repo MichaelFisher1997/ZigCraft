@@ -133,11 +133,6 @@ pub fn createRHI(
         ctx.debug_shadow.vbo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
         ctx.debug_shadow.descriptor_next = .{ 0, 0 };
     }
-    ctx.pipeline_manager.cloud_pipeline = null;
-    ctx.pipeline_manager.cloud_pipeline_layout = null;
-    ctx.cloud.cloud_vbo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
-    ctx.cloud.cloud_ebo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
-    ctx.cloud.cloud_mesh_size = 10000.0;
     ctx.post_process = .{};
     ctx.descriptors.descriptor_pool = null;
     ctx.descriptors.descriptor_set_layout = null;
@@ -194,7 +189,6 @@ pub fn createRHI(
     ctx.ui.ui_screen_width = 0;
     ctx.ui.ui_screen_height = 0;
     ctx.ui.ui_flushed_vertex_count = 0;
-    ctx.cloud.cloud_vao = null;
     ctx.legacy.dummy_shadow_image = null;
     ctx.legacy.dummy_shadow_memory = null;
     ctx.legacy.dummy_shadow_view = null;
