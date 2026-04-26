@@ -141,7 +141,7 @@ pub const ShadowSystem = struct {
         const cascade_index = self.pass_index;
         self.pass_active = false;
 
-        // Render pass handles transition to SHADER_READ_ONLY_OPTIMAL
+        // Depth shadow maps are sampled from the depth/stencil read-only layout.
         self.shadow_image_layouts[cascade_index] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     }
 };

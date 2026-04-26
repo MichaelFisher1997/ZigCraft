@@ -53,13 +53,9 @@ test "pipeline_specialized anytype self parameter accepts PipelineManager" {
     try testing.expect(@TypeOf(manager.ui_swapchain_tex_pipeline) == c.VkPipeline);
 }
 
-test "createCloudPipeline self parameter has cloud_pipeline_layout field" {
-    var manager: PipelineManager = .{};
-    const layout: c.VkPipelineLayout = @ptrFromInt(@as(usize, 1));
-    manager.cloud_pipeline_layout = layout;
-
-    _ = manager.cloud_pipeline_layout;
-    try testing.expect(@TypeOf(manager.cloud_pipeline_layout) == c.VkPipelineLayout);
+test "cloud pipeline state is absent after cloud renderer removal" {
+    try testing.expect(!@hasField(PipelineManager, "cloud_pipeline_layout"));
+    try testing.expect(!@hasDecl(pipeline_specialized, "createCloudPipeline"));
 }
 
 test "PipelineManager has expected struct type info" {
@@ -83,9 +79,8 @@ test "Debug shadow pipeline vertex stride equals 4 floats (16 bytes)" {
     try testing.expectEqual(@as(usize, 16), expected_stride);
 }
 
-test "Cloud pipeline vertex stride equals 2 floats (8 bytes)" {
-    const expected_stride = 2 * @sizeOf(f32);
-    try testing.expectEqual(@as(usize, 8), expected_stride);
+test "PipelineManager has no cloud pipeline field" {
+    try testing.expect(!@hasField(PipelineManager, "cloud_pipeline"));
 }
 
 test "createSwapchainUIPipelines null render pass path" {
