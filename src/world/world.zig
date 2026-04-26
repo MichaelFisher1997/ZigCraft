@@ -118,6 +118,70 @@ pub const IWorld = struct {
     pub fn shadowScene(self: IWorld) shadow_scene.IShadowScene {
         return self.vtable.shadowScene(self.ptr);
     }
+
+    pub fn simulation(self: IWorld) IWorldSimulation {
+        return .{ .world = self };
+    }
+
+    pub fn renderView(self: IWorld) IWorldRenderView {
+        return .{ .world = self };
+    }
+
+    pub fn telemetry(self: IWorld) IWorldTelemetry {
+        return .{ .world = self };
+    }
+};
+
+pub const IWorldSimulation = struct {
+    world: IWorld,
+
+    pub fn update(self: IWorldSimulation, player_pos: Vec3, dt: f32) !void {
+        try self.world.update(player_pos, dt);
+    }
+
+    pub fn deinit(self: IWorldSimulation) void {
+        self.world.deinit();
+    }
+};
+
+pub const IWorldRenderView = struct {
+    world: IWorld,
+
+    pub fn render(self: IWorldRenderView, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        self.world.render(view_proj, camera_pos, render_lod);
+    }
+
+    pub fn renderOpaque(self: IWorldRenderView, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        self.world.renderOpaque(view_proj, camera_pos, render_lod);
+    }
+
+    pub fn renderFluid(self: IWorldRenderView, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
+        self.world.renderFluid(view_proj, camera_pos, render_lod);
+    }
+
+    pub fn shadowScene(self: IWorldRenderView) shadow_scene.IShadowScene {
+        return self.world.shadowScene();
+    }
+};
+
+pub const IWorldTelemetry = struct {
+    world: IWorld,
+
+    pub fn getRenderStats(self: IWorldTelemetry) RenderStats {
+        return self.world.getRenderStats();
+    }
+
+    pub fn getStats(self: IWorldTelemetry) WorldStatsData {
+        return self.world.getStats();
+    }
+
+    pub fn getLODStats(self: IWorldTelemetry) ?@import("lod_manager.zig").LODStats {
+        return self.world.getLODStats();
+    }
+
+    pub fn isLODEnabled(self: IWorldTelemetry) bool {
+        return self.world.isLODEnabled();
+    }
 };
 
 pub const ChunkPos = struct { x: i32, z: i32 };

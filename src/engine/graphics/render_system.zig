@@ -1,7 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const c = @import("../../c.zig").c;
-const build_options = @import("build_options");
 
 const log = @import("../core/log.zig");
 const rhi_pkg = @import("rhi.zig");
@@ -18,11 +17,7 @@ const Vec3 = @import("../math/vec3.zig").Vec3;
 const settings_pkg = @import("../../game/settings.zig");
 const Settings = settings_pkg.Settings;
 const runtime_env = @import("../core/runtime_env.zig");
-
-fn getenv(name: [:0]const u8) ?[]const u8 {
-    const value = std.c.getenv(name) orelse return null;
-    return std.mem.span(value);
-}
+const RenderFeatureFlags = @import("render_feature_flags.zig").RenderFeatureFlags;
 
 pub const RenderSystem = struct {
     allocator: Allocator,
@@ -52,68 +47,26 @@ pub const RenderSystem = struct {
     pub fn init(allocator: Allocator, window: *c.SDL_Window, settings: *const Settings) !*RenderSystem {
         log.log.info("Initializing RenderSystem...", .{});
 
-        const safe_render_env = getenv("ZIGCRAFT_SAFE_RENDER");
-        const safe_render_mode = if (safe_render_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
+        const flags = RenderFeatureFlags.init();
+        const safe_render_mode = flags.safe_render_mode;
+        const safe_mode = flags.safe_mode;
+        const disable_shadow_draw = flags.disable_shadow_draw;
+        const disable_gpass_draw = flags.disable_gpass_draw;
+        const disable_ssao = flags.disable_ssao;
+        const disable_water = flags.disable_water;
+        const disable_taa = flags.disable_taa;
+        const disable_fxaa = flags.disable_fxaa;
+        const disable_bloom = flags.disable_bloom;
 
-        const safe_mode_explicit = getenv("ZIGCRAFT_SAFE_MODE") != null;
-        const safe_mode = runtime_env.safeModeEnabled();
-
-        const disable_shadow_env = getenv("ZIGCRAFT_DISABLE_SHADOWS");
-        const temporary_disable_shadows = false;
-        const disable_shadow_draw = temporary_disable_shadows or if (disable_shadow_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const disable_gpass_env = getenv("ZIGCRAFT_DISABLE_GPASS");
-        const disable_gpass_draw = if (disable_gpass_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const disable_ssao_env = getenv("ZIGCRAFT_DISABLE_SSAO");
-        const disable_ssao = if (disable_ssao_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const chunk_debug_restore_water = chunkDebugRestoreEnabled("water") or chunkDebugRestoreEnabled("waterrender");
-        const disable_water_env = getenv("ZIGCRAFT_DISABLE_WATER");
-        const disable_water = (build_options.chunk_debug_mode and !chunk_debug_restore_water) or if (disable_water_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const disable_taa_env = getenv("ZIGCRAFT_DISABLE_TAA");
-        const disable_taa = if (disable_taa_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const disable_fxaa_env = getenv("ZIGCRAFT_DISABLE_FXAA");
-        const disable_fxaa = if (disable_fxaa_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        const disable_bloom_env = getenv("ZIGCRAFT_DISABLE_BLOOM");
-        const disable_bloom = if (disable_bloom_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-
-        if (build_options.chunk_debug_mode) {
-            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_options.chunk_debug_enable});
+        if (flags.chunk_debug_mode) {
+            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{flags.chunk_debug_enable});
         }
         if (safe_render_mode) {
             log.log.warn("ZIGCRAFT_SAFE_RENDER enabled: skipping world rendering passes", .{});
         }
-        if (!safe_mode_explicit and runtime_env.strictSafeModeAutoEnabled()) {
+        if (!flags.safe_mode_explicit and runtime_env.strictSafeModeAutoEnabled()) {
             log.log.warn("Wayland direct-world launch detected: enabling strict ZIGCRAFT_SAFE_MODE defaults for stability. Set ZIGCRAFT_SAFE_MODE=0 to override", .{});
-        } else if (!safe_mode_explicit and safe_mode) {
+        } else if (!flags.safe_mode_explicit and safe_mode) {
             log.log.warn("Wayland session detected: enabling ZIGCRAFT_SAFE_MODE by default for stability. Set ZIGCRAFT_SAFE_MODE=0 to override", .{});
         }
         if (safe_mode) {
@@ -402,14 +355,3 @@ pub const RenderSystem = struct {
         self.ssao_pass.enabled = !value;
     }
 };
-
-fn chunkDebugRestoreEnabled(name: []const u8) bool {
-    if (!build_options.chunk_debug_mode) return false;
-
-    var it = std.mem.tokenizeScalar(u8, build_options.chunk_debug_enable, ',');
-    while (it.next()) |token| {
-        const trimmed = std.mem.trim(u8, token, " \t");
-        if (std.ascii.eqlIgnoreCase(trimmed, name)) return true;
-    }
-    return false;
-}

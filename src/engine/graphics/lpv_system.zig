@@ -1,5 +1,4 @@
 const std = @import("std");
-const fs = @import("fs");
 const c = @import("../../c.zig").c;
 const rhi_pkg = @import("rhi.zig");
 const log = @import("../core/log.zig");
@@ -11,43 +10,22 @@ const CHUNK_SIZE_Z = @import("../../world/chunk.zig").CHUNK_SIZE_Z;
 const block_registry = @import("../../world/block_registry.zig");
 const VulkanContext = @import("vulkan/rhi_context_types.zig").VulkanContext;
 const Utils = @import("vulkan/utils.zig");
+const lpv_utils = @import("lpv_utils.zig");
+const LPVBackend = @import("lpv_backend.zig").LPVBackend;
+const lpv_types = @import("lpv_types.zig");
 
-const MAX_LIGHTS_PER_UPDATE: usize = 2048;
-// Approximate 1/7 spread for 6-neighbor propagation (close to 1/6 with extra damping)
-// to keep indirect light stable and avoid runaway amplification.
-const DEFAULT_PROPAGATION_FACTOR: f32 = 0.14;
-// Retain 82% of center-cell energy so propagation does not over-blur local contrast.
-const DEFAULT_CENTER_RETENTION: f32 = 0.82;
-const INJECT_SHADER_PATH = "assets/shaders/vulkan/lpv_inject.comp.spv";
-const PROPAGATE_SHADER_PATH = "assets/shaders/vulkan/lpv_propagate.comp.spv";
-
-const GpuLight = extern struct {
-    pos_radius: [4]f32,
-    color: [4]f32,
-};
-
-const InjectPush = extern struct {
-    grid_origin: [4]f32,
-    grid_params: [4]f32,
-    light_count: u32,
-    _pad0: [3]u32,
-};
-
-const PropagatePush = extern struct {
-    grid_size: u32,
-    _pad0: [3]u32,
-    propagation: [4]f32,
-};
+const MAX_LIGHTS_PER_UPDATE = lpv_types.MAX_LIGHTS_PER_UPDATE;
+const DEFAULT_PROPAGATION_FACTOR = lpv_types.DEFAULT_PROPAGATION_FACTOR;
+const DEFAULT_CENTER_RETENTION = lpv_types.DEFAULT_CENTER_RETENTION;
+const INJECT_SHADER_PATH = lpv_types.INJECT_SHADER_PATH;
+const PROPAGATE_SHADER_PATH = lpv_types.PROPAGATE_SHADER_PATH;
+const GpuLight = lpv_types.GpuLight;
+const InjectPush = lpv_types.InjectPush;
+const PropagatePush = lpv_types.PropagatePush;
+const GridResources = lpv_types.GridResources;
 
 pub const LPVSystem = struct {
-    pub const Stats = struct {
-        updated_this_frame: bool = false,
-        light_count: u32 = 0,
-        cpu_update_ms: f32 = 0.0,
-        grid_size: u32 = 0,
-        propagation_iterations: u32 = 0,
-        update_interval_frames: u32 = 6,
-    };
+    pub const Stats = lpv_types.Stats;
 
     allocator: std.mem.Allocator,
     rhi: rhi_pkg.RHI,
@@ -93,19 +71,10 @@ pub const LPVSystem = struct {
     inject_pipeline: c.VkPipeline = null,
     propagate_pipeline: c.VkPipeline = null,
 
-    const GridResources = struct {
-        grid_textures_a: [3]rhi_pkg.TextureHandle = .{ 0, 0, 0 },
-        grid_textures_b: [3]rhi_pkg.TextureHandle = .{ 0, 0, 0 },
-        active_grid_textures: [3]rhi_pkg.TextureHandle = .{ 0, 0, 0 },
-        debug_overlay_texture: rhi_pkg.TextureHandle = 0,
-        debug_overlay_pixels: []f32 = &.{},
-        image_layout_a: c.VkImageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        image_layout_b: c.VkImageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    };
-
     pub fn init(
         allocator: std.mem.Allocator,
         rhi: rhi_pkg.RHI,
+        backend: LPVBackend,
         grid_size: u32,
         cell_size: f32,
         intensity: f32,
@@ -115,7 +84,7 @@ pub const LPVSystem = struct {
         const self = try allocator.create(LPVSystem);
         errdefer allocator.destroy(self);
 
-        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
+        const vk_ctx = backend.vk_ctx;
         const clamped_grid = std.math.clamp(grid_size, 16, 64);
 
         self.* = .{
@@ -160,8 +129,8 @@ pub const LPVSystem = struct {
         );
         errdefer self.destroyOcclusionBuffer();
 
-        try ensureShaderFileExists(INJECT_SHADER_PATH);
-        try ensureShaderFileExists(PROPAGATE_SHADER_PATH);
+        try lpv_utils.ensureShaderFileExists(INJECT_SHADER_PATH);
+        try lpv_utils.ensureShaderFileExists(PROPAGATE_SHADER_PATH);
 
         errdefer self.deinitComputeResources();
         try self.initComputeResources();
@@ -288,9 +257,9 @@ pub const LPVSystem = struct {
 
         const half_extent = (@as(f32, @floatFromInt(self.grid_size)) * self.cell_size) * 0.5;
         const next_origin = Vec3.init(
-            quantizeToCell(camera_pos.x - half_extent, self.cell_size),
-            quantizeToCell(camera_pos.y - half_extent, self.cell_size),
-            quantizeToCell(camera_pos.z - half_extent, self.cell_size),
+            lpv_utils.quantizeToCell(camera_pos.x - half_extent, self.cell_size),
+            lpv_utils.quantizeToCell(camera_pos.y - half_extent, self.cell_size),
+            lpv_utils.quantizeToCell(camera_pos.z - half_extent, self.cell_size),
         );
 
         const moved = @abs(next_origin.x - self.origin.x) >= self.cell_size or
@@ -621,7 +590,7 @@ pub const LPVSystem = struct {
         host_barrier.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
         c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_HOST_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &host_barrier, 0, null, 0, null);
 
-        const groups = divCeil(self.grid_size, 4);
+        const groups = lpv_utils.divCeil(self.grid_size, 4);
 
         const inject_push = InjectPush{
             .grid_origin = .{ self.origin.x, self.origin.y, self.origin.z, self.cell_size },
@@ -785,9 +754,9 @@ pub const LPVSystem = struct {
 
         for (0..gs * gs) |i| {
             const idx = i * 4;
-            self.debug_overlay_pixels[idx + 0] = toneMap(self.debug_overlay_pixels[idx + 0]);
-            self.debug_overlay_pixels[idx + 1] = toneMap(self.debug_overlay_pixels[idx + 1]);
-            self.debug_overlay_pixels[idx + 2] = toneMap(self.debug_overlay_pixels[idx + 2]);
+            self.debug_overlay_pixels[idx + 0] = lpv_utils.toneMap(self.debug_overlay_pixels[idx + 0]);
+            self.debug_overlay_pixels[idx + 1] = lpv_utils.toneMap(self.debug_overlay_pixels[idx + 1]);
+            self.debug_overlay_pixels[idx + 2] = lpv_utils.toneMap(self.debug_overlay_pixels[idx + 2]);
         }
     }
 
@@ -1012,9 +981,9 @@ pub const LPVSystem = struct {
     fn createComputePipelines(self: *LPVSystem) !void {
         const vk = self.vk_ctx.vulkan_device.vk_device;
 
-        const inject_module = try createShaderModule(vk, INJECT_SHADER_PATH, self.allocator);
+        const inject_module = try lpv_utils.createShaderModule(vk, INJECT_SHADER_PATH, self.allocator);
         defer c.vkDestroyShaderModule(vk, inject_module, null);
-        const propagate_module = try createShaderModule(vk, PROPAGATE_SHADER_PATH, self.allocator);
+        const propagate_module = try lpv_utils.createShaderModule(vk, PROPAGATE_SHADER_PATH, self.allocator);
         defer c.vkDestroyShaderModule(vk, propagate_module, null);
 
         var inject_pc = std.mem.zeroes(c.VkPushConstantRange);
@@ -1090,39 +1059,3 @@ pub const LPVSystem = struct {
         self.propagate_ba_descriptor_set = null;
     }
 };
-
-fn quantizeToCell(value: f32, cell_size: f32) f32 {
-    return @floor(value / cell_size) * cell_size;
-}
-
-fn divCeil(v: u32, d: u32) u32 {
-    return @divFloor(v + d - 1, d);
-}
-
-fn toneMap(v: f32) f32 {
-    const x = @max(v, 0.0);
-    return x / (1.0 + x);
-}
-
-fn createShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Allocator) !c.VkShaderModule {
-    const bytes = try fs.cwd().readFileAlloc(path, allocator, 16 * 1024 * 1024);
-    defer allocator.free(bytes);
-    if (bytes.len % 4 != 0) return error.InvalidState;
-
-    var info = std.mem.zeroes(c.VkShaderModuleCreateInfo);
-    info.sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    info.codeSize = bytes.len;
-    info.pCode = @ptrCast(@alignCast(bytes.ptr));
-
-    var module: c.VkShaderModule = null;
-    try Utils.checkVk(c.vkCreateShaderModule(vk, &info, null, &module));
-    return module;
-}
-
-fn ensureShaderFileExists(path: []const u8) !void {
-    fs.cwd().access(path, .{}) catch |err| {
-        log.log.errWithTrace("LPV shader artifact missing: {s} ({})", .{ path, err });
-        log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
-        return err;
-    };
-}
