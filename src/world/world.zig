@@ -126,6 +126,16 @@ pub const IWorld = struct {
 pub const ChunkPos = struct { x: i32, z: i32 };
 
 pub const World = struct {
+    pub const InitOptions = struct {
+        allocator: std.mem.Allocator,
+        render_distance: i32,
+        seed: u64,
+        rhi: RHI,
+        atlas: *const TextureAtlas,
+        generator_index: usize = 0,
+        lod_config: ?ILODConfig = null,
+    };
+
     storage: ChunkStorage,
     streamer: *WorldStreamer,
     renderer: *WorldRenderer,
@@ -147,17 +157,15 @@ pub const World = struct {
     // GPU Block Buffer (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
 
-    pub fn init(allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, atlas: *const TextureAtlas) !*World {
-        return initGen(0, allocator, render_distance, seed, rhi, atlas);
-    }
-
-    pub fn initGen(generator_index: usize, allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, atlas: *const TextureAtlas) !*World {
+    pub fn init(options: InitOptions) !*World {
+        const allocator = options.allocator;
         const world = try allocator.create(World);
+        errdefer allocator.destroy(world);
 
         const storage = ChunkStorage.init(allocator);
         const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
-        const safe_render_distance: i32 = render_distance;
+        const safe_render_distance: i32 = options.render_distance;
         const max_uploads: usize = if (strict_safe_mode)
             @as(usize, 4)
         else if (safe_mode)
@@ -174,8 +182,8 @@ pub const World = struct {
             .renderer = undefined,
             .allocator = allocator,
             .render_distance = safe_render_distance,
-            .generator = try registry.createGenerator(generator_index, seed, allocator),
-            .rhi = rhi,
+            .generator = try registry.createGenerator(options.generator_index, options.seed, allocator),
+            .rhi = options.rhi,
             .paused = false,
             .safe_mode = safe_mode,
             .safe_render_distance = safe_render_distance,
@@ -184,41 +192,32 @@ pub const World = struct {
             .save_manager = null,
             .gpu_block_buffer = null,
         };
+        errdefer world.generator.deinit(allocator);
 
-        log.log.info("World.initGen: initializing WorldRenderer", .{});
-        const culling_size = rhi.getRenderResolution();
+        log.log.info("World.init: initializing WorldRenderer", .{});
+        const culling_size = options.rhi.getRenderResolution();
         var culling_system = if (!safe_mode) blk: {
-            break :blk rhi.createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
+            break :blk options.rhi.createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
                 log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
                 break :blk null;
             };
         } else null;
         errdefer if (culling_system) |system| system.deinit();
 
-        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, atlas, rhi, &culling_system, culling_size, safe_mode);
-        errdefer _ = world.renderer;
+        world.renderer = try WorldRenderer.init(allocator, options.rhi.resourceManager(), options.rhi.renderContext(), options.rhi.query(), &world.storage, options.atlas, options.rhi, &culling_system, culling_size, safe_mode);
+        errdefer world.renderer.deinit();
 
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
 
-        log.log.info("World.initGen: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
+        log.log.info("World.init: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
         errdefer world.streamer.deinit();
 
-        return world;
-    }
-
-    /// Initialize with LOD system enabled for extended render distances
-    pub fn initWithLOD(allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, lod_config: ILODConfig, atlas: *const TextureAtlas) !*World {
-        return initGenWithLOD(0, allocator, render_distance, seed, rhi, lod_config, atlas);
-    }
-
-    pub fn initGenWithLOD(generator_index: usize, allocator: std.mem.Allocator, render_distance: i32, seed: u64, rhi: RHI, lod_config: ILODConfig, atlas: *const TextureAtlas) !*World {
-        const world = try initGen(generator_index, allocator, render_distance, seed, rhi, atlas);
-        errdefer world.deinit();
-
-        world.lod = try WorldLOD.init(allocator, rhi, lod_config, world.generator, atlas);
-        world.lod_enabled = true;
-        world.streamer.setLODManager(world.lod.?.manager);
+        if (options.lod_config) |lod_config| {
+            world.lod = try WorldLOD.init(allocator, options.rhi, lod_config, world.generator, options.atlas);
+            world.lod_enabled = true;
+            world.streamer.setLODManager(world.lod.?.manager);
+        }
         return world;
     }
 

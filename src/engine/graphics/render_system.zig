@@ -48,13 +48,6 @@ pub const RenderSystem = struct {
     water_pass: render_graph_pkg.WaterPass,
     safe_mode: bool,
     safe_render_mode: bool,
-    disable_shadow_draw: bool,
-    disable_gpass_draw: bool,
-    disable_ssao: bool,
-    disable_water: bool,
-    disable_taa: bool,
-    disable_fxaa: bool,
-    disable_bloom: bool,
 
     pub fn init(allocator: Allocator, window: *c.SDL_Window, settings: *const Settings) !*RenderSystem {
         log.log.info("Initializing RenderSystem...", .{});
@@ -223,16 +216,9 @@ pub const RenderSystem = struct {
             .post_process_pass = .{},
             .fxaa_pass = .{ .enabled = !disable_fxaa and settings.fxaa_enabled },
             .water_reflection_pass = undefined,
-            .water_pass = .{ .enabled = true },
+            .water_pass = .{ .enabled = !disable_water },
             .safe_mode = safe_mode,
             .safe_render_mode = safe_render_mode,
-            .disable_shadow_draw = disable_shadow_draw,
-            .disable_gpass_draw = disable_gpass_draw,
-            .disable_ssao = disable_ssao,
-            .disable_water = disable_water,
-            .disable_taa = disable_taa,
-            .disable_fxaa = disable_fxaa,
-            .disable_bloom = disable_bloom,
         };
         render_graph_owned = false;
         errdefer self.render_graph.deinit();
@@ -246,9 +232,15 @@ pub const RenderSystem = struct {
             render_graph_pkg.ShadowPass.init(2, material_system),
             render_graph_pkg.ShadowPass.init(3, material_system),
         };
+        if (disable_shadow_draw) {
+            for (&self.shadow_passes) |*pass| pass.enabled = false;
+        }
         self.g_pass = render_graph_pkg.GPass.init(material_system);
+        self.g_pass.enabled = !disable_gpass_draw;
+        self.ssao_pass.enabled = !disable_ssao;
         self.opaque_pass = render_graph_pkg.OpaquePass.init(material_system);
         self.water_reflection_pass = render_graph_pkg.WaterReflectionPass.init(material_system);
+        self.water_reflection_pass.enabled = !disable_water;
 
         self.rhi.setFXAA((settings.fxaa_enabled and !settings.taa_enabled) and !disable_fxaa);
         self.rhi.setBloom(settings.bloom_enabled and !disable_bloom);
@@ -257,7 +249,7 @@ pub const RenderSystem = struct {
         settings_pkg.apply_logic.applyToRHI(settings, &self.rhi);
 
         if (!safe_render_mode) {
-            if (!disable_shadow_draw) {
+            if (self.shadow_passes[0].enabled) {
                 try self.render_graph.addPass(self.shadow_passes[0].pass());
                 try self.render_graph.addPass(self.shadow_passes[1].pass());
                 try self.render_graph.addPass(self.shadow_passes[2].pass());
@@ -269,12 +261,12 @@ pub const RenderSystem = struct {
             if (!safe_mode) {
                 try self.render_graph.addPass(self.depth_pyramid_pass.pass());
             }
-            if (!disable_water) {
+            if (self.water_reflection_pass.enabled) {
                 try self.render_graph.addPass(self.water_reflection_pass.pass());
             }
             try self.render_graph.addPass(self.sky_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());
-            if (!disable_water) {
+            if (self.water_pass.enabled) {
                 try self.render_graph.addPass(self.water_pass.pass());
             } else {
                 log.log.warn("ZIGCRAFT_DISABLE_WATER enabled", .{});
@@ -340,8 +332,8 @@ pub const RenderSystem = struct {
     }
 
     pub fn applySettings(self: *RenderSystem, settings: *const Settings) void {
-        self.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
-        self.rhi.setBloom(settings.bloom_enabled);
+        self.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled and self.fxaa_pass.enabled);
+        self.rhi.setBloom(settings.bloom_enabled and self.bloom_pass.enabled);
         self.rhi.setBloomIntensity(settings.bloom_intensity);
         settings_pkg.apply_logic.applyToRHI(settings, &self.rhi);
     }
@@ -391,23 +383,23 @@ pub const RenderSystem = struct {
     }
 
     pub fn getDisableShadowDraw(self: *const RenderSystem) bool {
-        return self.disable_shadow_draw;
+        return !self.shadow_passes[0].enabled;
     }
 
     pub fn getDisableGPassDraw(self: *const RenderSystem) bool {
-        return self.disable_gpass_draw;
+        return !self.g_pass.enabled;
     }
 
     pub fn getDisableSSAO(self: *const RenderSystem) bool {
-        return self.disable_ssao;
+        return !self.ssao_pass.enabled;
     }
 
     pub fn setDisableGPassDraw(self: *RenderSystem, value: bool) void {
-        self.disable_gpass_draw = value;
+        self.g_pass.enabled = !value;
     }
 
     pub fn setDisableSSAO(self: *RenderSystem, value: bool) void {
-        self.disable_ssao = value;
+        self.ssao_pass.enabled = !value;
     }
 };
 
