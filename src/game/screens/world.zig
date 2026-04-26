@@ -110,101 +110,12 @@ pub const WorldScreen = struct {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
         const render_system = ctx.render_system;
-        const rhi = render_system.getRHI();
         const now = ctx.time.elapsed;
-        const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
         const benchmark_mode = ctx.benchmark_runner != null;
         const automated_capture = build_options.shadow_test_scene and build_options.screenshot_path.len > 0;
 
         if (!benchmark_mode and !automated_capture) {
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_debug_menu)) {
-                self.debug_menu.toggle();
-                if (self.debug_menu.enabled) {
-                    ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), false);
-                } else {
-                    ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), true);
-                }
-                self.last_debug_toggle_time = now;
-            }
-
-            if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
-                const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
-                errdefer paused_screen.deinit(paused_screen);
-                ctx.screen_manager.pushScreen(paused_screen.screen());
-                return;
-            }
-
-            if (ctx.input_mapper.isActionPressed(ctx.input, .tab_menu)) {
-                ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), !ctx.input.isMouseCaptured());
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_wireframe)) {
-                ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
-                rhi.setWireframe(ctx.settings.wireframe_enabled);
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_textures)) {
-                ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
-                rhi.setTexturesEnabled(ctx.settings.textures_enabled);
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_vsync)) {
-                ctx.settings.vsync = !ctx.settings.vsync;
-                rhi.setVSync(ctx.settings.vsync);
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_shadow_debug_vis)) {
-                log.log.info("Toggling shadow debug visualization (G pressed)", .{});
-                const enable = !ctx.settings.debug_shadows_active;
-                if (enable and !render_system.getDisableShadowDraw()) {
-                    ctx.settings.shadow_sandbox_enabled = true;
-                }
-                settings_data.clearTerrainDebugViews(ctx.settings);
-                ctx.settings.debug_shadows_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
-                if (!self.world.isLODEnabled()) {
-                    log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
-                } else {
-                    self.session.world.lod_enabled = !self.session.world.lod_enabled;
-                    log.log.info("LOD rendering {s}", .{if (self.session.world.lod_enabled) "enabled" else "disabled"});
-                }
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_gpass_render)) {
-                const new_val = !render_system.getDisableGPassDraw();
-                render_system.setDisableGPassDraw(new_val);
-                log.log.info("G-pass rendering {s}", .{if (new_val) "disabled" else "enabled"});
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_ssao)) {
-                const new_val = !render_system.getDisableSSAO();
-                render_system.setDisableSSAO(new_val);
-                log.log.info("SSAO {s}", .{if (new_val) "disabled" else "enabled"});
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_fog)) {
-                self.session.atmosphere.fog_enabled = !self.session.atmosphere.fog_enabled;
-                log.log.info("Fog {s}", .{if (self.session.atmosphere.fog_enabled) "enabled" else "disabled"});
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lpv_overlay)) {
-                ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active;
-                log.log.info("LPV overlay {s}", .{if (ctx.settings.debug_lpv_overlay_active) "enabled" else "disabled"});
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_frustum_debug)) {
-                ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active;
-                log.log.info("Frustum debug {s}", .{if (ctx.settings.debug_frustum_active) "enabled" else "disabled"});
-                self.last_debug_toggle_time = now;
-            }
-            if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_chunk_inspector)) {
-                self.chunk_inspector_overlay.toggle();
-                log.log.info("Chunk inspector {s}", .{if (self.chunk_inspector_overlay.enabled) "enabled" else "disabled"});
-                self.last_debug_toggle_time = now;
-            }
+            if (try self.processControls(now)) return;
         }
 
         if (benchmark_mode) {
@@ -223,6 +134,100 @@ pub const WorldScreen = struct {
         }
 
         self.maybeLogStartupDiagnostic(now);
+    }
+
+    fn processControls(self: *@This(), now: f32) !bool {
+        const ctx = self.context;
+        const render_system = ctx.render_system;
+        const rhi = render_system.getRHI();
+        const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
+
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_debug_menu)) {
+            self.debug_menu.toggle();
+            ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), !self.debug_menu.enabled);
+            self.last_debug_toggle_time = now;
+        }
+
+        if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
+            const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
+            errdefer paused_screen.deinit(paused_screen);
+            ctx.screen_manager.pushScreen(paused_screen.screen());
+            return true;
+        }
+
+        if (ctx.input_mapper.isActionPressed(ctx.input, .tab_menu)) {
+            ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), !ctx.input.isMouseCaptured());
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_wireframe)) {
+            ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
+            rhi.setWireframe(ctx.settings.wireframe_enabled);
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_textures)) {
+            ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
+            rhi.setTexturesEnabled(ctx.settings.textures_enabled);
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_vsync)) {
+            ctx.settings.vsync = !ctx.settings.vsync;
+            rhi.setVSync(ctx.settings.vsync);
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_shadow_debug_vis)) {
+            log.log.info("Toggling shadow debug visualization (G pressed)", .{});
+            const enable = !ctx.settings.debug_shadows_active;
+            if (enable and !render_system.getDisableShadowDraw()) {
+                ctx.settings.shadow_sandbox_enabled = true;
+            }
+            settings_data.clearTerrainDebugViews(ctx.settings);
+            ctx.settings.debug_shadows_active = enable;
+            rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+            rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
+            if (!self.world.isLODEnabled()) {
+                log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
+            } else {
+                self.session.world.lod_enabled = !self.session.world.lod_enabled;
+                log.log.info("LOD rendering {s}", .{if (self.session.world.lod_enabled) "enabled" else "disabled"});
+            }
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_gpass_render)) {
+            const new_val = !render_system.getDisableGPassDraw();
+            render_system.setDisableGPassDraw(new_val);
+            log.log.info("G-pass rendering {s}", .{if (new_val) "disabled" else "enabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_ssao)) {
+            const new_val = !render_system.getDisableSSAO();
+            render_system.setDisableSSAO(new_val);
+            log.log.info("SSAO {s}", .{if (new_val) "disabled" else "enabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_fog)) {
+            self.session.atmosphere.fog_enabled = !self.session.atmosphere.fog_enabled;
+            log.log.info("Fog {s}", .{if (self.session.atmosphere.fog_enabled) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lpv_overlay)) {
+            ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active;
+            log.log.info("LPV overlay {s}", .{if (ctx.settings.debug_lpv_overlay_active) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_frustum_debug)) {
+            ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active;
+            log.log.info("Frustum debug {s}", .{if (ctx.settings.debug_frustum_active) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+        if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_chunk_inspector)) {
+            self.chunk_inspector_overlay.toggle();
+            log.log.info("Chunk inspector {s}", .{if (self.chunk_inspector_overlay.enabled) "enabled" else "disabled"});
+            self.last_debug_toggle_time = now;
+        }
+
+        return false;
     }
 
     fn maybeLogStartupDiagnostic(self: *@This(), now: f32) void {

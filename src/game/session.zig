@@ -31,12 +31,7 @@ const GameAction = input_mapper_pkg.GameAction;
 
 const CSM = @import("../engine/graphics/csm.zig");
 const UISystem = @import("../engine/ui/ui_system.zig").UISystem;
-const Color = @import("../engine/ui/ui_system.zig").Color;
-const Font = @import("../engine/ui/font.zig");
-const Widgets = @import("../engine/ui/widgets.zig");
-const region_pkg = @import("../world/worldgen/region.zig");
-const hotbar = @import("ui/hotbar.zig");
-const worldToChunkFromFloat = @import("../world/chunk.zig").worldToChunkFromFloat;
+const session_hud = @import("ui/session_hud.zig");
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
@@ -317,108 +312,7 @@ pub const GameSession = struct {
     }
 
     pub fn drawHUD(self: *GameSession, ui: *UISystem, atlas: *const TextureAtlas, active_pack: ?[]const u8, fps: f32, screen_w: f32, screen_h: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) !void {
-        if (self.map_controller.show_map) {
-            try self.map_controller.draw(ui, screen_w, screen_h, &self.world_map, self.world.generator, self.camera.position, self.allocator);
-            return;
-        }
-
-        if (self.debug_show_fps) {
-            ui.drawRect(.{ .x = 10, .y = 10, .width = 80, .height = 30 }, Color.rgba(0, 0, 0, 0.7));
-            Font.drawNumber(ui, @intFromFloat(fps), 15, 15, Color.white);
-        }
-
-        const stats = self.world.getStats();
-        const rs = self.world.getRenderStats();
-        const pc = worldToChunkFromFloat(self.camera.position.x, self.camera.position.z);
-        const hy: f32 = 50.0;
-        const fault_count = self.rhi.query().getFaultCount();
-        const hud_h: f32 = if (fault_count > 0) 230 else 210;
-        ui.drawRect(.{ .x = 10, .y = hy, .width = 220, .height = hud_h }, Color.rgba(0, 0, 0, 0.6));
-        Font.drawText(ui, "POS:", 15, hy + 5, 1.5, Color.white);
-        Font.drawNumber(ui, pc.chunk_x, 120, hy + 5, Color.white);
-        Font.drawNumber(ui, pc.chunk_z, 170, hy + 5, Color.white);
-        Font.drawText(ui, "CHUNKS:", 15, hy + 25, 1.5, Color.white);
-        Font.drawNumber(ui, @intCast(stats.chunks_loaded), 140, hy + 25, Color.white);
-        Font.drawText(ui, "VISIBLE:", 15, hy + 45, 1.5, Color.white);
-        Font.drawNumber(ui, @intCast(rs.chunks_rendered), 140, hy + 45, Color.white);
-
-        if (self.world.getLODStats()) |ls| {
-            Font.drawText(ui, "LODS:", 15, hy + 65, 1.5, Color.rgba(0.5, 0.8, 1.0, 1.0));
-            Font.drawNumber(ui, @intCast(ls.totalLoaded()), 140, hy + 65, Color.rgba(0.5, 0.8, 1.0, 1.0));
-        }
-
-        Font.drawText(ui, "QUEUED GEN:", 15, hy + 85, 1.5, Color.white);
-        Font.drawNumber(ui, @intCast(stats.gen_queue), 140, hy + 85, Color.white);
-        Font.drawText(ui, "QUEUED MESH:", 15, hy + 105, 1.5, Color.white);
-        Font.drawNumber(ui, @intCast(stats.mesh_queue), 140, hy + 105, Color.white);
-        Font.drawText(ui, "PENDING UP:", 15, hy + 125, 1.5, Color.white);
-        Font.drawNumber(ui, @intCast(stats.upload_queue), 140, hy + 125, Color.white);
-        const h = self.atmosphere.getHours();
-        const hr = @as(i32, @intFromFloat(h));
-        const mn = @as(i32, @intFromFloat((h - @as(f32, @floatFromInt(hr))) * 60.0));
-        Font.drawText(ui, "TIME:", 15, hy + 145, 1.5, Color.white);
-        Font.drawNumber(ui, hr, 100, hy + 145, Color.white);
-        Font.drawText(ui, ":", 125, hy + 145, 1.5, Color.white);
-        Font.drawNumber(ui, mn, 140, hy + 145, Color.white);
-        Font.drawText(ui, "SUN:", 15, hy + 165, 1.5, Color.white);
-        Font.drawNumber(ui, @intFromFloat(self.atmosphere.sun_intensity * 100.0), 100, hy + 165, Color.white);
-
-        const px_i: i32 = @intFromFloat(self.camera.position.x);
-        const pz_i: i32 = @intFromFloat(self.camera.position.z);
-        const region = self.world.generator.getRegionInfo(px_i, pz_i);
-        const c3 = region_pkg.getRoleColor(region.role);
-        Font.drawText(ui, "ROLE:", 15, hy + 185, 1.5, Color.rgba(c3[0], c3[1], c3[2], 1.0));
-        var buf: [32]u8 = undefined;
-        const label = std.fmt.bufPrint(&buf, "{s}", .{@tagName(region.role)}) catch "???";
-        Font.drawText(ui, label, 100, hy + 165, 1.5, Color.white);
-
-        if (fault_count > 0) {
-            var buf_f: [32]u8 = undefined;
-            const fault_text = std.fmt.bufPrint(&buf_f, "GPU FAULTS: {d}", .{fault_count}) catch "GPU FAULTS: ???";
-            Font.drawText(ui, fault_text, 15, hy + 185, 1.5, Color.red);
-        }
-
-        if (self.debug_show_block_info) {
-            if (self.player.target_block) |target| {
-                const block_type = self.world.getBlock(target.x, target.y, target.z);
-                const tiles = atlas.getTilesForBlock(@intFromEnum(block_type));
-                const ux = screen_w - 350;
-                var uy: f32 = 10;
-                ui.drawRect(.{ .x = ux - 10, .y = uy, .width = 350, .height = 80 }, Color.rgba(0, 0, 0, 0.7));
-                var buf2: [128]u8 = undefined;
-                const pos_text = std.fmt.bufPrint(&buf2, "BLOCK: {s} ({}, {}, {})", .{ @tagName(block_type), target.x, target.y, target.z }) catch "BLOCK: ???";
-                Font.drawText(ui, pos_text, ux, uy + 5, 1.5, Color.white);
-                uy += 25;
-                const tiles_text = std.fmt.bufPrint(&buf2, "TILES: T:{} B:{} S:{}", .{ tiles.top, tiles.bottom, tiles.side }) catch "TILES: ???";
-                Font.drawText(ui, tiles_text, ux, uy + 5, 1.5, Color.white);
-                uy += 25;
-                const pack_name = if (active_pack) |ap| ap else "Default";
-                const pack_text = std.fmt.bufPrint(&buf2, "PACK: {s}", .{pack_name}) catch "PACK: ???";
-                Font.drawText(ui, pack_text, ux, uy + 5, 1.5, Color.white);
-            }
-        }
-
-        if (!self.inventory_ui_state.visible) {
-            const cx = screen_w / 2.0;
-            const cy = screen_h / 2.0;
-            ui.drawRect(.{ .x = cx - 10, .y = cy - 1, .width = 20, .height = 2 }, Color.white);
-            ui.drawRect(.{ .x = cx - 1, .y = cy - 10, .width = 2, .height = 20 }, Color.white);
-        }
-
-        if (!self.inventory_ui_state.visible) hotbar.drawDefault(ui, &self.inventory, screen_w, screen_h);
-
-        if (self.inventory_ui_state.visible) {
-            const time_action = self.inventory_ui_state.draw(ui, &self.inventory, mouse_x, mouse_y, mouse_clicked, screen_w, screen_h);
-            if (time_action) |time_idx| {
-                const times = [_]f32{ 0.0, 0.25, 0.5, 0.75 };
-                if (time_idx < 4) self.atmosphere.setTimeOfDay(times[time_idx]);
-            }
-        }
-
-        if (self.creative_mode) {
-            Font.drawText(ui, "CREATIVE", screen_w - 100, 10, 1.5, Color.rgba(100, 200, 255, 200));
-            if (self.player.fly_mode) Font.drawText(ui, "FLYING", screen_w - 80, 25, 1.5, Color.rgba(150, 255, 150, 200));
-        }
+        try session_hud.draw(self, ui, atlas, active_pack, fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
     }
 };
 
