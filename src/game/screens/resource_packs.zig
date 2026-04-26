@@ -6,6 +6,7 @@ const Widgets = @import("../../engine/ui/widgets.zig");
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
+const ResourcePacksContext = Screen.ResourcePacksContext;
 const settings_pkg = @import("../settings.zig");
 const Settings = settings_pkg.Settings;
 const TextureAtlas = @import("../../engine/graphics/texture_atlas.zig").TextureAtlas;
@@ -16,7 +17,8 @@ const BG_COLOR = Color.rgba(0.12, 0.14, 0.18, 0.95);
 const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
 
 pub const ResourcePacksScreen = struct {
-    context: EngineContext,
+    context: ResourcePacksContext,
+    reload_status: ?[]const u8,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -28,7 +30,8 @@ pub const ResourcePacksScreen = struct {
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*ResourcePacksScreen {
         const self = try allocator.create(ResourcePacksScreen);
         self.* = .{
-            .context = context,
+            .context = context.resourcePacksContext(),
+            .reload_status = null,
         };
         return self;
     }
@@ -97,7 +100,9 @@ pub const ResourcePacksScreen = struct {
             if (!std.mem.eql(u8, prev_pack, "default")) {
                 try settings_pkg.persistence.setTexturePack(settings, ctx.allocator, "default");
                 try manager.setActivePack("default");
+                self.reload_status = "Reloading textures; rendering may pause briefly...";
                 try self.reloadAtlas();
+                self.reload_status = "Texture pack reloaded.";
             }
         }
         sy += btn_height + 10.0 * ui_scale;
@@ -113,10 +118,16 @@ pub const ResourcePacksScreen = struct {
                 if (!is_selected) {
                     try settings_pkg.persistence.setTexturePack(settings, ctx.allocator, pack.name);
                     try manager.setActivePack(pack.name);
+                    self.reload_status = "Reloading textures; rendering may pause briefly...";
                     try self.reloadAtlas();
+                    self.reload_status = "Texture pack reloaded.";
                 }
             }
             sy += btn_height + 10.0 * ui_scale;
+        }
+
+        if (self.reload_status) |status| {
+            Font.drawTextCentered(ui, status, screen_w * 0.5, py + ph - 105.0 * ui_scale, 1.5 * ui_scale, Color.rgba(0.75, 0.82, 0.92, 1.0));
         }
 
         // Back button

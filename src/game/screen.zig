@@ -30,12 +30,148 @@ pub const EngineContext = struct {
     benchmark_runner: ?*BenchmarkRunner = null,
 
     pub fn saveSettings(self: EngineContext) void {
-        settings_pkg.persistence.save(self.settings, self.allocator);
-        @import("input_settings.zig").InputSettings.saveFromMapper(self.allocator, self.input_mapper) catch |err| {
-            @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
+    }
+
+    pub fn menuContext(self: EngineContext) MenuContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .time = self.time,
+            .screen_manager = self.screen_manager,
+        };
+    }
+
+    pub fn settingsContext(self: EngineContext) SettingsContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .screen_manager = self.screen_manager,
+            .render_settings = self.render_settings,
+        };
+    }
+
+    pub fn environmentContext(self: EngineContext) EnvironmentContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .render_system = self.render_system,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .screen_manager = self.screen_manager,
+        };
+    }
+
+    pub fn resourcePacksContext(self: EngineContext) ResourcePacksContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .render_system = self.render_system,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .screen_manager = self.screen_manager,
+        };
+    }
+
+    pub fn worldContext(self: EngineContext) WorldContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .render_system = self.render_system,
+            .audio_system = self.audio_system,
+            .ui_manager = self.ui_manager,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .time = self.time,
+            .screen_manager = self.screen_manager,
+            .skip_world_update = self.skip_world_update,
+            .benchmark_runner = self.benchmark_runner,
         };
     }
 };
+
+pub const MenuContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    time: *Time,
+    screen_manager: *ScreenManager,
+};
+
+pub const SettingsContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    screen_manager: *ScreenManager,
+    render_settings: IRenderSettings,
+
+    pub fn saveSettings(self: SettingsContext) void {
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
+    }
+};
+
+pub const EnvironmentContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    render_system: *RenderSystem,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    screen_manager: *ScreenManager,
+
+    pub fn saveSettings(self: EnvironmentContext) void {
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
+    }
+};
+
+pub const ResourcePacksContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    render_system: *RenderSystem,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    screen_manager: *ScreenManager,
+
+    pub fn saveSettings(self: ResourcePacksContext) void {
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
+    }
+};
+
+pub const WorldContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    render_system: *RenderSystem,
+    audio_system: *AudioSystem,
+    ui_manager: *UISystemManager,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    time: *Time,
+    screen_manager: *ScreenManager,
+    skip_world_update: bool,
+    benchmark_runner: ?*BenchmarkRunner = null,
+};
+
+fn saveSettingsShared(allocator: std.mem.Allocator, settings: *Settings, input_mapper: IInputMapper) void {
+    settings_pkg.persistence.save(settings, allocator);
+    @import("input_settings.zig").InputSettings.saveFromMapper(allocator, input_mapper) catch |err| {
+        @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
+    };
+}
 
 pub const IScreen = struct {
     ptr: *anyopaque,
