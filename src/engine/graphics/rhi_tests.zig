@@ -115,7 +115,7 @@ const MockContext = struct {
         return 0;
     }
 
-    fn computeSSAO(ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
+    fn computeSsao(ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         _ = ptr;
         _ = proj;
         _ = inv_proj;
@@ -228,12 +228,11 @@ const MockContext = struct {
         .getNativeCommandBuffer = getNativeCommandBuffer,
         .getNativeSwapchainExtent = getNativeSwapchainExtent,
         .getNativeDevice = getNativeDevice,
-        .computeSSAO = computeSSAO,
         .drawDebugShadowMap = drawDebugShadowMap,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
-        .compute = computeSSAO,
+        .compute = computeSsao,
     };
 
     const MOCK_WATER_VTABLE = rhi.IWaterContext.VTable{
