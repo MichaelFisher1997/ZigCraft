@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
+const CHUNK_SIZE_Y = @import("chunk.zig").CHUNK_SIZE_Y;
 const NeighborChunks = @import("chunk_mesh.zig").NeighborChunks;
 const BlockType = @import("block.zig").BlockType;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
@@ -433,7 +434,7 @@ pub const World = struct {
     }
 
     pub fn getBlock(self: *World, world_x: i32, world_y: i32, world_z: i32) BlockType {
-        if (world_y < 0 or world_y >= 256) return .air;
+        if (world_y < 0 or world_y >= CHUNK_SIZE_Y) return .air;
         const cp = worldToChunk(world_x, world_z);
         const data = self.getChunk(cp.chunk_x, cp.chunk_z) orelse return .air;
         const local = worldToLocal(world_x, world_z);
@@ -441,7 +442,7 @@ pub const World = struct {
     }
 
     pub fn getDebugLightInfo(self: *World, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
-        if (world_y < 0 or world_y >= 256) return null;
+        if (world_y < 0 or world_y >= CHUNK_SIZE_Y) return null;
         const cp = worldToChunk(world_x, world_z);
         const data = self.getChunk(cp.chunk_x, cp.chunk_z) orelse return null;
         const local = worldToLocal(world_x, world_z);
