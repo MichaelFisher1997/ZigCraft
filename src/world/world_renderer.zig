@@ -25,9 +25,30 @@ const build_options = @import("build_options");
 const runtime_env = @import("../engine/core/runtime_env.zig");
 
 pub const MAX_MDI_CHUNKS: usize = 16384;
+const MB: usize = 1024 * 1024;
+const GPU_BLOCK_SLOT_SIZE: usize = 16 * 16 * 256;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     return runtime_env.getenv(name);
+}
+
+fn parseEnabledEnv(value: ?[]const u8, default_enabled: bool) bool {
+    const val = value orelse return default_enabled;
+    return !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"));
+}
+
+pub fn chooseVertexCapacityMb(vram_mb: usize, strict_safe_mode: bool) usize {
+    if (strict_safe_mode) return @min(@as(usize, 256), @max(@as(usize, 128), @divFloor(vram_mb, 8)));
+    if (vram_mb >= 8192) return 512;
+    if (vram_mb >= 6144) return 384;
+    if (vram_mb >= 4096) return 256;
+    return 128;
+}
+
+pub fn chooseGpuBlockCapacity(vram_mb: usize) usize {
+    const block_budget_mb: usize = if (vram_mb >= 8192) 512 else if (vram_mb >= 6144) 384 else if (vram_mb >= 4096) 256 else 128;
+    const max_by_budget = (block_budget_mb * MB) / GPU_BLOCK_SLOT_SIZE;
+    return @min(MAX_MDI_CHUNKS, max_by_budget);
 }
 
 pub const RenderStats = struct {
@@ -42,6 +63,28 @@ pub const ShadowStats = struct {
     chunks_rendered: u32 = 0,
     chunks_culled: u32 = 0,
 };
+
+test "WorldRenderer chooses vertex capacity from VRAM tier" {
+    try std.testing.expectEqual(@as(usize, 128), chooseVertexCapacityMb(2048, false));
+    try std.testing.expectEqual(@as(usize, 256), chooseVertexCapacityMb(4096, false));
+    try std.testing.expectEqual(@as(usize, 384), chooseVertexCapacityMb(6144, false));
+    try std.testing.expectEqual(@as(usize, 512), chooseVertexCapacityMb(8192, false));
+}
+
+test "WorldRenderer clamps strict safe vertex capacity" {
+    try std.testing.expectEqual(@as(usize, 128), chooseVertexCapacityMb(512, true));
+    try std.testing.expectEqual(@as(usize, 128), chooseVertexCapacityMb(1024, true));
+    try std.testing.expectEqual(@as(usize, 256), chooseVertexCapacityMb(4096, true));
+    try std.testing.expectEqual(@as(usize, 256), chooseVertexCapacityMb(8192, true));
+}
+
+test "WorldRenderer parses boolean feature env" {
+    try std.testing.expect(!parseEnabledEnv("0", true));
+    try std.testing.expect(!parseEnabledEnv("false", true));
+    try std.testing.expect(parseEnabledEnv("1", false));
+    try std.testing.expect(parseEnabledEnv(null, true));
+    try std.testing.expect(!parseEnabledEnv(null, false));
+}
 
 pub const RenderLayer = enum {
     all,
@@ -92,22 +135,8 @@ pub const WorldRenderer = struct {
 
         const vram_bytes = query.getDeviceLocalVramBytes();
         const vram_mb = vram_bytes / (1024 * 1024);
-        const MB: usize = 1024 * 1024;
-
-        const vertex_capacity_mb: usize = if (strict_safe_mode)
-            @min(@as(usize, 256), @max(@as(usize, 128), @divFloor(vram_mb, 8)))
-        else blk: {
-            const budget_mb = if (vram_mb >= 8192) @as(usize, 512) else if (vram_mb >= 6144) @as(usize, 384) else if (vram_mb >= 4096) @as(usize, 256) else @as(usize, 128);
-            break :blk budget_mb;
-        };
-
-        const gpu_block_capacity: usize = blk: {
-            const slot_size = 16 * 16 * 256;
-            const block_budget_mb = if (vram_mb >= 8192) @as(usize, 512) else if (vram_mb >= 6144) @as(usize, 384) else if (vram_mb >= 4096) @as(usize, 256) else @as(usize, 128);
-            const budget_bytes = block_budget_mb * MB;
-            const max_by_budget = budget_bytes / slot_size;
-            break :blk @min(MAX_MDI_CHUNKS, max_by_budget);
-        };
+        const vertex_capacity_mb = chooseVertexCapacityMb(vram_mb, strict_safe_mode);
+        const gpu_block_capacity = chooseGpuBlockCapacity(vram_mb);
 
         log.log.info("VRAM budget: {}MB | vertex_allocator: {}MB | gpu_block_buffer: {} slots", .{ vram_mb, vertex_capacity_mb, gpu_block_capacity });
 
@@ -120,11 +149,7 @@ pub const WorldRenderer = struct {
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
-        const gpu_meshing_env = getenv("ZIGCRAFT_ENABLE_GPU_MESHING");
-        const gpu_meshing_enabled = if (gpu_meshing_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
+        const gpu_meshing_enabled = parseEnabledEnv(getenv("ZIGCRAFT_ENABLE_GPU_MESHING"), false);
 
         const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
@@ -164,13 +189,7 @@ pub const WorldRenderer = struct {
             log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }
 
-        const force_mdi_fallback = blk: {
-            const env_val = getenv("ZIGCRAFT_FORCE_MDI_FALLBACK");
-            break :blk if (env_val) |val|
-                !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-            else
-                true;
-        };
+        const force_mdi_fallback = parseEnabledEnv(getenv("ZIGCRAFT_FORCE_MDI_FALLBACK"), true);
         if (force_mdi_fallback) {
             log.log.info("MDI chunk rendering disabled by default due missing-near-chunk artifacts; set ZIGCRAFT_FORCE_MDI_FALLBACK=0 to test indirect draws", .{});
         }
