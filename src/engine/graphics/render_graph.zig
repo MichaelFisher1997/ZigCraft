@@ -97,9 +97,7 @@ pub const SceneContext = struct {
     env_map_handle: rhi_pkg.TextureHandle,
     shadow: rhi_pkg.ShadowConfig,
     ssao_enabled: bool,
-    disable_shadow_draw: bool,
-    disable_gpass_draw: bool,
-    disable_ssao: bool,
+    shadow_draw_enabled: bool,
     fxaa_enabled: bool = true,
     bloom_enabled: bool = true,
     resolution_scale: f32 = 1.0,
@@ -230,6 +228,7 @@ const SHADOW_PASS_NAMES = [_][]const u8{ "ShadowPass0", "ShadowPass1", "ShadowPa
 pub const ShadowPass = struct {
     cascade_index: u32,
     material_system: *MaterialSystem,
+    enabled: bool = true,
 
     pub fn init(cascade_index: u32, material_system: *MaterialSystem) ShadowPass {
         return .{ .cascade_index = cascade_index, .material_system = material_system };
@@ -291,7 +290,7 @@ pub const ShadowPass = struct {
             });
         }
 
-        if (ctx.disable_shadow_draw) return;
+        if (!self.enabled or !ctx.shadow_draw_enabled) return;
 
         // Keep cutout casters sampling the terrain atlas during the shadow pass.
         // Without this, shadow.frag can alpha-clip against whatever texture was last bound.
@@ -306,6 +305,7 @@ pub const ShadowPass = struct {
 
 pub const GPass = struct {
     material_system: *MaterialSystem,
+    enabled: bool = true,
 
     pub fn init(material_system: *MaterialSystem) GPass {
         return .{ .material_system = material_system };
@@ -325,7 +325,7 @@ pub const GPass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *GPass = @ptrCast(@alignCast(ptr));
-        if (!ctx.ssao_enabled or ctx.disable_gpass_draw) return;
+        if (!self.enabled or !ctx.ssao_enabled) return;
 
         ctx.render_ctx.beginGPass();
         const atlas = self.material_system.getAtlasHandles(ctx.env_map_handle);
@@ -337,6 +337,8 @@ pub const GPass = struct {
 };
 
 pub const SSAOPass = struct {
+    enabled: bool = true,
+
     const VTABLE = IRenderPass.VTable{
         .name = "SSAOPass",
         .needs_main_pass = false,
@@ -350,8 +352,8 @@ pub const SSAOPass = struct {
     }
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
-        if (!ctx.ssao_enabled or ctx.disable_ssao) return;
+        const self: *SSAOPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled or !ctx.ssao_enabled) return;
         const proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled);
         const inv_proj = proj.inverse();
         ctx.ssao_ctx.compute(proj, inv_proj);
@@ -546,6 +548,7 @@ pub const FXAAPass = struct {
 
 pub const WaterReflectionPass = struct {
     material_system: *MaterialSystem,
+    enabled: bool = true,
 
     pub fn init(material_system: *MaterialSystem) WaterReflectionPass {
         return .{ .material_system = material_system };
@@ -565,6 +568,8 @@ pub const WaterReflectionPass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *WaterReflectionPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled) return;
+
         ctx.water_ctx.beginReflectionPass();
         defer ctx.water_ctx.endReflectionPass();
 

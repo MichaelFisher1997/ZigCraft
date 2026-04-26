@@ -146,10 +146,15 @@ pub const GameSession = struct {
         session.* = undefined;
         session.lod_config = lod_config;
 
-        const world = if (effective_lod_enabled)
-            try World.initGenWithLOD(generator_index, allocator, effective_render_distance, seed, rhi.*, session.lod_config.interface(), atlas)
-        else
-            try World.initGen(generator_index, allocator, effective_render_distance, seed, rhi.*, atlas);
+        const world = try World.init(.{
+            .allocator = allocator,
+            .render_distance = effective_render_distance,
+            .seed = seed,
+            .rhi = rhi.*,
+            .atlas = atlas,
+            .generator_index = generator_index,
+            .lod_config = if (effective_lod_enabled) session.lod_config.interface() else null,
+        });
         errdefer world.deinit();
 
         var world_map = try WorldMap.init(rhi.resourceManager(), 256, 256);
