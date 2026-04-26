@@ -62,6 +62,8 @@ pub const GpuAccelerationCoordinator = struct {
         return self.isGpuMeshingEnabled();
     }
 
+    /// Queues GPU meshing and updates the chunk state for success or CPU retry.
+    /// Caller must uphold the main-thread upload invariant documented by ChunkQueueCoordinator.
     pub fn queueGpuMesh(self: *GpuAccelerationCoordinator, data: *ChunkData) bool {
         if (!self.isGpuMeshingEnabled()) return false;
         const buf = self.gpu_block_buffer orelse return false;

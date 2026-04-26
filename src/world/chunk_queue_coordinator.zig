@@ -408,3 +408,76 @@ pub const ChunkQueueCoordinator = struct {
         }
     }
 };
+
+test "stale generation job resets chunk to missing" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const data = try storage.getOrCreate(64, 0);
+    data.chunk.state = .generating;
+    data.chunk.job_token = 7;
+
+    var gpu = GpuAccelerationCoordinator.init(null, null);
+    var coordinator = ChunkQueueCoordinator{
+        .allocator = testing.allocator,
+        .storage = &storage,
+        .generator = undefined,
+        .atlas = undefined,
+        .gen_queue = undefined,
+        .mesh_queue = undefined,
+        .upload_queue = try RingBuffer(ChunkKey).init(testing.allocator, 16),
+        .vertex_allocator = undefined,
+        .gpu = &gpu,
+        .max_uploads_per_frame = 8,
+        .last_pc = .{ .x = 0, .z = 0 },
+        .effective_render_dist = 8,
+    };
+    defer coordinator.deinit();
+
+    ChunkQueueCoordinator.processGenJob(&coordinator, .{
+        .type = .chunk_generation,
+        .dist_sq = 0,
+        .data = .{ .chunk = .{ .x = 64, .z = 0, .job_token = 7 } },
+    });
+
+    try testing.expectEqual(Chunk.State.missing, data.chunk.state);
+}
+
+test "stale mesh job resets chunk to generated" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const data = try storage.getOrCreate(64, 0);
+    data.chunk.state = .meshing;
+    data.chunk.generated = true;
+    data.chunk.job_token = 11;
+
+    var gpu = GpuAccelerationCoordinator.init(null, null);
+    var coordinator = ChunkQueueCoordinator{
+        .allocator = testing.allocator,
+        .storage = &storage,
+        .generator = undefined,
+        .atlas = undefined,
+        .gen_queue = undefined,
+        .mesh_queue = undefined,
+        .upload_queue = try RingBuffer(ChunkKey).init(testing.allocator, 16),
+        .vertex_allocator = undefined,
+        .gpu = &gpu,
+        .max_uploads_per_frame = 8,
+        .last_pc = .{ .x = 0, .z = 0 },
+        .effective_render_dist = 8,
+    };
+    defer coordinator.deinit();
+
+    ChunkQueueCoordinator.processMeshJob(&coordinator, .{
+        .type = .chunk_meshing,
+        .dist_sq = 0,
+        .data = .{ .chunk = .{ .x = 64, .z = 0, .job_token = 11 } },
+    });
+
+    try testing.expectEqual(Chunk.State.generated, data.chunk.state);
+}
