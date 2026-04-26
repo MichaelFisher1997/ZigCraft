@@ -69,6 +69,18 @@ pub const EngineContext = struct {
         };
     }
 
+    pub fn resourcePacksContext(self: EngineContext) ResourcePacksContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .render_system = self.render_system,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .screen_manager = self.screen_manager,
+        };
+    }
+
     pub fn worldContext(self: EngineContext) WorldContext {
         return .{
             .allocator = self.allocator,
@@ -121,6 +133,20 @@ pub const EnvironmentContext = struct {
     screen_manager: *ScreenManager,
 
     pub fn saveSettings(self: EnvironmentContext) void {
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
+    }
+};
+
+pub const ResourcePacksContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    render_system: *RenderSystem,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    screen_manager: *ScreenManager,
+
+    pub fn saveSettings(self: ResourcePacksContext) void {
         saveSettingsShared(self.allocator, self.settings, self.input_mapper);
     }
 };

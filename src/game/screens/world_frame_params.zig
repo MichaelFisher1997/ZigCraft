@@ -1,5 +1,3 @@
-const std = @import("std");
-
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const Camera = @import("../../engine/graphics/camera.zig").Camera;
