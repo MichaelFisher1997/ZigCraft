@@ -316,18 +316,18 @@ pub const WorldRenderer = struct {
                 self.render_ctx.setModelMatrix(model, Vec3.one, 0);
 
                 if (layer != .fluid) {
-                    if (data.mesh.solid_allocation) |alloc| {
+                    if (data.render.mesh.solid_allocation) |alloc| {
                         total_vertices += alloc.count;
                         self.last_render_stats.vertices_rendered += alloc.count;
                         self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                     }
-                    if (data.mesh.cutout_allocation) |alloc| {
+                    if (data.render.mesh.cutout_allocation) |alloc| {
                         self.last_render_stats.vertices_rendered += alloc.count;
                         self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                     }
                 }
                 if (layer != .terrain) {
-                    if (data.mesh.fluid_allocation) |alloc| {
+                    if (data.render.mesh.fluid_allocation) |alloc| {
                         self.last_render_stats.vertices_rendered += alloc.count;
                         self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                     }
@@ -347,7 +347,7 @@ pub const WorldRenderer = struct {
             };
 
             if (layer != .fluid) {
-                if (data.mesh.solid_allocation) |alloc| {
+                if (data.render.mesh.solid_allocation) |alloc| {
                     self.last_render_stats.vertices_rendered += alloc.count;
                     self.draw_commands.append(self.allocator, .{
                         .vertexCount = alloc.count,
@@ -356,7 +356,7 @@ pub const WorldRenderer = struct {
                         .firstInstance = instance_idx,
                     }) catch |err| log.log.debug("MDI: solid cmd append failed: {}", .{err});
                 }
-                if (data.mesh.cutout_allocation) |alloc| {
+                if (data.render.mesh.cutout_allocation) |alloc| {
                     self.last_render_stats.vertices_rendered += alloc.count;
                     self.draw_commands.append(self.allocator, .{
                         .vertexCount = alloc.count,
@@ -367,7 +367,7 @@ pub const WorldRenderer = struct {
                 }
             }
             if (layer != .terrain) {
-                if (data.mesh.fluid_allocation) |alloc| {
+                if (data.render.mesh.fluid_allocation) |alloc| {
                     self.last_render_stats.vertices_rendered += alloc.count;
                     self.draw_commands.append(self.allocator, .{
                         .vertexCount = alloc.count,
@@ -435,15 +435,15 @@ pub const WorldRenderer = struct {
                 self.render_ctx.setModelMatrix(model, Vec3.one, 0);
 
                 if (layer != .fluid) {
-                    if (data.mesh.solid_allocation) |alloc| {
+                    if (data.render.mesh.solid_allocation) |alloc| {
                         self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                     }
-                    if (data.mesh.cutout_allocation) |alloc| {
+                    if (data.render.mesh.cutout_allocation) |alloc| {
                         self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                     }
                 }
                 if (layer != .terrain) {
-                    if (data.mesh.fluid_allocation) |alloc| {
+                    if (data.render.mesh.fluid_allocation) |alloc| {
                         self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                     }
                 }
@@ -492,7 +492,7 @@ pub const WorldRenderer = struct {
                 const dz = cz - pc_z;
                 const dist_sq = dx * dx + dz * dz;
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                    if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
                         const is_camera_neighborhood = @abs(cx - pc_x) <= 1 and @abs(cz - pc_z) <= 1;
                         if (!is_camera_neighborhood and !frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
                             frustum_culled += 1;
@@ -517,22 +517,22 @@ pub const WorldRenderer = struct {
                             }
                             log.log.warn("DIAGNOSE_CHUNK ({},{}): block_counts=[{s}] verts={}", .{
                                 cx, cz, buf[0..len],
-                                (if (data.mesh.solid_allocation) |a| a.count else 0) +
-                                    (if (data.mesh.cutout_allocation) |a| a.count else 0) +
-                                    (if (data.mesh.fluid_allocation) |a| a.count else 0),
+                                (if (data.render.mesh.solid_allocation) |a| a.count else 0) +
+                                    (if (data.render.mesh.cutout_allocation) |a| a.count else 0) +
+                                    (if (data.render.mesh.fluid_allocation) |a| a.count else 0),
                             });
                         }
 
-                        if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                        if (data.render.mesh.solid_allocation == null and data.render.mesh.cutout_allocation == null and data.render.mesh.fluid_allocation == null) {
                             visible_no_mesh += 1;
                             if (visible_no_mesh == 1) {
                                 first_no_mesh_cx = @intCast(cx);
                                 first_no_mesh_cz = @intCast(cz);
                             }
                         } else {
-                            const solid_verts = if (data.mesh.solid_allocation) |a| a.count else 0;
-                            const cutout_verts = if (data.mesh.cutout_allocation) |a| a.count else 0;
-                            const fluid_verts = if (data.mesh.fluid_allocation) |a| a.count else 0;
+                            const solid_verts = if (data.render.mesh.solid_allocation) |a| a.count else 0;
+                            const cutout_verts = if (data.render.mesh.cutout_allocation) |a| a.count else 0;
+                            const fluid_verts = if (data.render.mesh.fluid_allocation) |a| a.count else 0;
                             if (solid_verts + cutout_verts + fluid_verts == 0) {
                                 visible_zero_verts += 1;
                                 if (visible_zero_verts == 1) {
@@ -563,8 +563,8 @@ pub const WorldRenderer = struct {
         if (build_options.startup_diagnostic_seconds == 0 and missing_in_circle > 0 and self.render_frame_count % 60 == 0) {
             if (self.storage.chunks.get(.{ .x = missing_cx, .z = missing_cz })) |d| {
                 log.log.debug("CPU_CULL_GAP: missing_in_circle={} last_missing=({},{}) state={} has_alloc={} pc=({},{}) rd={}", .{
-                    missing_in_circle,           missing_cx,                                                                                             missing_cz,
-                    @intFromEnum(d.chunk.state), d.mesh.solid_allocation != null or d.mesh.cutout_allocation != null or d.mesh.fluid_allocation != null, pc_x,
+                    missing_in_circle,           missing_cx,                                                                                                                  missing_cz,
+                    @intFromEnum(d.chunk.state), d.render.mesh.solid_allocation != null or d.render.mesh.cutout_allocation != null or d.render.mesh.fluid_allocation != null, pc_x,
                     pc_z,                        r_dist,
                 });
             } else {
@@ -606,7 +606,7 @@ pub const WorldRenderer = struct {
                     const bdist = bdx * bdx + bdz * bdz;
                     if (bdist >= (r_dist - 1) * (r_dist - 1) and bdist <= r_dist * r_dist) {
                         if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(bx)), .z = @as(i32, @intCast(bz)) })) |data| {
-                            if (data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                            if (data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
                                 boundary_renderable += 1;
                             } else {
                                 boundary_missing += 1;
@@ -679,7 +679,7 @@ pub const WorldRenderer = struct {
             var cx = pc_x - r_dist;
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                    if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
                         self.aabb_data.append(self.allocator, chunkAABB(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos)) catch continue;
                         self.chunk_lookup[fi].append(self.allocator, data) catch continue;
                     }
@@ -726,7 +726,7 @@ pub const WorldRenderer = struct {
             var cx = pc_x - r_dist;
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                    if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
                         const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
 
@@ -737,12 +737,12 @@ pub const WorldRenderer = struct {
                         const rel_y = -camera_pos.y;
                         const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
-                        if (data.mesh.solid_allocation) |alloc| {
+                        if (data.render.mesh.solid_allocation) |alloc| {
                             self.render_ctx.setModelMatrix(model, Vec3.one, 0);
 
                             self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                         }
-                        if (data.mesh.cutout_allocation) |alloc| {
+                        if (data.render.mesh.cutout_allocation) |alloc| {
                             self.render_ctx.setModelMatrix(model, Vec3.one, 0);
                             self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                         }

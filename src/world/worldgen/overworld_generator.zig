@@ -80,6 +80,10 @@ pub const OverworldGenerator = struct {
         };
     }
 
+    pub fn deinit(self: *OverworldGenerator) void {
+        _ = self;
+    }
+
     pub fn getNoiseSampler(self: *const OverworldGenerator) *const NoiseSampler {
         return self.terrain_shape.getNoiseSampler();
     }

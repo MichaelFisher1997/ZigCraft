@@ -236,7 +236,7 @@ pub const GpuMesher = struct {
                     copied_any = true;
                 }
 
-                data.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                data.render.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                 data.chunk.state = .renderable;
                 data.chunk.dirty = false;
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
