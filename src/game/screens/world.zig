@@ -364,7 +364,7 @@ pub const WorldScreen = struct {
                 std.math.clamp(boosted_horizon.z, 0.0, 1.0),
             );
             rhi.renderContext().setClearColor(clear_color);
-            try rhi.updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode and !simple_lighting_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
+            try rhi.updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;
@@ -718,6 +718,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.shadow_seam_diag)] = ctx.settings.debug_shadow_seam_diag;
         states[@intFromEnum(DebugFeature.direct_key_debug)] = ctx.settings.debug_direct_key_active;
         states[@intFromEnum(DebugFeature.sky_fill_debug)] = ctx.settings.debug_sky_fill_active;
+        states[@intFromEnum(DebugFeature.entrance_bounce_debug)] = ctx.settings.debug_entrance_bounce_active;
         states[@intFromEnum(DebugFeature.block_light_debug)] = ctx.settings.debug_block_light_active;
         states[@intFromEnum(DebugFeature.outdoor_factor_debug)] = ctx.settings.debug_outdoor_factor_active;
         states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
@@ -828,6 +829,13 @@ pub const WorldScreen = struct {
                 const enable = !ctx.settings.debug_sky_fill_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_sky_fill_active = enable;
+                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            },
+            .entrance_bounce_debug => {
+                const enable = !ctx.settings.debug_entrance_bounce_active;
+                settings_data.clearTerrainDebugViews(ctx.settings);
+                ctx.settings.debug_entrance_bounce_active = enable;
                 rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },

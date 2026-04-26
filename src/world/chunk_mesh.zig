@@ -11,6 +11,9 @@ const log = @import("../engine/core/log.zig");
 const Chunk = @import("chunk.zig").Chunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
+const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
+const BlockType = @import("block.zig").BlockType;
+const LightingComputer = @import("worldgen/lighting_computer.zig").LightingComputer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RenderContext = rhi_mod.RenderContext;
@@ -384,3 +387,52 @@ pub const ChunkMesh = struct {
         }
     }
 };
+
+test "ChunkMesh gives three-deep tunnel end wall entrance light" {
+    var chunk = Chunk.init(0, 0);
+
+    var z: u32 = 4;
+    while (z <= 9) : (z += 1) {
+        var y: u32 = 3;
+        while (y <= 5) : (y += 1) {
+            var x: u32 = 7;
+            while (x <= 9) : (x += 1) {
+                chunk.setBlock(x, y, z, .stone);
+            }
+        }
+    }
+
+    z = 4;
+    while (z <= 8) : (z += 1) {
+        chunk.setBlock(8, 4, z, .air);
+    }
+
+    try LightingComputer.computeSkylight(&chunk, std.testing.allocator);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** MAX_BLOCK_TYPES;
+    atlas.tile_mappings[@intFromEnum(BlockType.stone)] = TextureAtlas.BlockTiles.uniform(5);
+
+    var mesh = ChunkMesh.init(std.testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, .empty, &atlas);
+
+    const solid = mesh.pending_solid orelse return error.TestExpectedEqual;
+    var max_entrance: u8 = 0;
+    var min_entrance: u8 = 255;
+    var matched_vertices: u32 = 0;
+    for (solid) |v| {
+        if (@abs(v.pos[2] - 9.0) > 0.001) continue;
+        if (v.pos[0] < 8.0 or v.pos[0] > 9.0) continue;
+        if (v.pos[1] < 4.0 or v.pos[1] > 5.0) continue;
+        const entrance: u8 = @intCast((v.blocklight >> 24) & 0xFF);
+        max_entrance = @max(max_entrance, entrance);
+        min_entrance = @min(min_entrance, entrance);
+        matched_vertices += 1;
+    }
+
+    try std.testing.expect(matched_vertices > 0);
+    try std.testing.expect(max_entrance > 0);
+    try std.testing.expect(min_entrance > 0);
+}

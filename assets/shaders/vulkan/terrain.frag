@@ -57,6 +57,7 @@ const int DEBUG_DIRECT_KEY = 7;
 const int DEBUG_SKY_FILL = 8;
 const int DEBUG_BLOCK_LIGHT = 9;
 const int DEBUG_OUTDOOR_FACTOR = 10;
+const int DEBUG_ENTRANCE_BOUNCE = 11;
 
 // World-space hash for LOD transition masking.
 // Using world-space noise avoids a fixed screen-space dot pattern.
@@ -421,104 +422,66 @@ vec3 computeBRDF(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness) {
 }
 
 float baselineOutdoorFactor(float skyLight) {
-    return smoothstep(0.42, 0.92, clamp(skyLight, 0.0, 1.0));
+    return smoothstep(0.86, 0.98, clamp(skyLight, 0.0, 1.0));
 }
 
 float debugOutdoorFactor(float skyLight) {
     return baselineOutdoorFactor(skyLight);
 }
 
+float classicLightCurve(float lightLevel) {
+    float l = clamp(lightLevel, 0.0, 1.0);
+    return l * l * (3.0 - 2.0 * l);
+}
+
 vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float entranceBounceIn, vec2 entranceDirIn, vec3 blockLightIn, float ao, float shadowAmount, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
     float outdoor = baselineOutdoorFactor(skyLightIn);
     float diagonalDelta = abs(abs(N.x) - abs(N.z));
     float isBillboard = (abs(N.y) < 0.01 && diagonalDelta < 0.05) ? 1.0 : 0.0;
-    float baseSunFacing = dot(N, L);
-    float baseMoonFacing = dot(N, -L);
-    float billboardSunFacing = max(baseSunFacing, 0.0) * 0.42 + abs(baseSunFacing) * 0.10;
-    float billboardMoonFacing = max(baseMoonFacing, 0.0) * 0.40 + abs(baseMoonFacing) * 0.08;
-    float sunFacing = mix(baseSunFacing, billboardSunFacing, isBillboard);
-    float moonFacing = mix(baseMoonFacing, billboardMoonFacing, isBillboard);
-    float sideFactor = 1.0 - abs(N.y);
-
-    float sunWrap = mix(0.08 * outdoor * sideFactor, 0.10 + 0.06 * outdoor, isBillboard);
-    float moonWrap = 0.18;
-    float sunDiffuse = clamp((sunFacing + sunWrap) / (1.0 + sunWrap), 0.0, 1.0);
-    float moonDiffuse = clamp((moonFacing + moonWrap) / (1.0 + moonWrap), 0.0, 1.0);
+    float faceUp = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    float sideFactor = clamp(1.0 - abs(N.y), 0.0, 1.0);
+    float faceShade = mix(0.58, 1.0, faceUp) + sideFactor * 0.10;
+    float sunDiffuse = clamp((dot(N, L) + 0.12) / 1.12, 0.0, 1.0);
+    sunDiffuse = mix(sunDiffuse, max(sunDiffuse, 0.38), isBillboard);
 
     float sunAmount = clamp(global.params.w, 0.0, 1.0);
-    float moonAmount = (1.0 - sunAmount) * 0.12;
-    float shadowVis = smoothstep(0.08, 0.75, clamp(shadowAmount, 0.0, 1.0));
-    float sunAccess = max(outdoor, smoothstep(0.30, 0.88, skyLightIn) * (1.0 - shadowVis));
-    float rawSkyIndirect = pow(clamp(skyLightIn, 0.0, 1.0), 1.55);
-    float aperture = smoothstep(0.08, 0.72, entranceBounceIn);
-    float caveAmbientGate = max(outdoor, max(aperture, rawSkyIndirect));
-    float skyIndirect = rawSkyIndirect * mix(0.48, 1.0, caveAmbientGate);
+    float moonAmount = (1.0 - sunAmount) * 0.20;
+    float skyLight = clamp(skyLightIn, 0.0, 1.0);
+    float entrance = clamp(entranceBounceIn, 0.0, 1.0);
+    float skyCurve = classicLightCurve(skyLight);
+    float entranceCurve = pow(entrance, 0.72) * (1.0 - outdoor);
+    float blockLevel = clamp(max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b)), 0.0, 1.0);
+    float blockCurve = classicLightCurve(blockLevel);
+    float caveLightLevel = max(max(skyLight, entrance * 0.85), blockLevel);
+    float darknessGate = smoothstep(0.002, 0.052, caveLightLevel);
+    float visibilityFloor = 1.0 - outdoor;
+    float caveSideVisibility = visibilityFloor * (0.45 + 0.55 * sideFactor);
 
-    vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.88, 0.70), 0.20);
-    vec3 moonKeyTint = vec3(0.16, 0.20, 0.30);
-    float hemi = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-    float twilight = (1.0 - smoothstep(0.10, 0.38, abs(L.y))) * outdoor;
-    vec3 zenithTint = mix(vec3(0.05, 0.06, 0.08), global.fog_color.rgb, 0.60);
-    vec3 horizonTint = mix(vec3(0.08, 0.06, 0.05), global.fog_color.rgb, 0.35);
-    vec3 skyFillTint = mix(horizonTint, zenithTint, pow(hemi, 0.7));
-    vec3 twilightTint = mix(horizonTint, sunKeyTint, 0.35);
+    float caveEntranceMask = smoothstep(0.015, 0.10, entrance) * (1.0 - outdoor);
+    float shadowGate = smoothstep(0.90, 1.0, skyLight) * outdoor * (1.0 - caveEntranceMask);
+    float shadowVis = smoothstep(0.12, 0.80, clamp(shadowAmount, 0.0, 1.0)) * global.shadow_params.z * shadowGate;
 
-    vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * (0.08 + 0.92 * sunAccess) * 1.05;
-    keyLight += moonKeyTint * moonDiffuse * moonAmount * outdoor;
+    vec2 nXZ = length(N.xz) > 0.001 ? normalize(N.xz) : vec2(0.0);
+    vec2 entranceDir = length(entranceDirIn) > 0.001 ? normalize(entranceDirIn) : vec2(0.0);
+    float entranceFacing = clamp(dot(nXZ, entranceDir), 0.0, 1.0) * sideFactor;
 
-    float sideFill = 0.16 * outdoor * sideFactor * mix(1.0, 0.10, isBillboard);
-    float twilightLift = twilight * (0.07 + 0.11 * sideFactor * mix(1.0, 0.10, isBillboard));
-    float ambientFloor = 0.030 * smoothstep(0.02, 0.30, caveAmbientGate);
-    float fillStrength = ambientFloor + skyIndirect * mix(0.18, 0.28, hemi) + 0.080 * outdoor + sideFill + twilightLift;
-    vec3 skyFill = skyFillTint * global.lighting.x * fillStrength;
-    vec3 twilightBounce = twilightTint * twilight * (0.08 + 0.15 * sideFactor) * mix(1.0, 0.16, isBillboard);
-    vec3 blockFill = blockLightIn;
-    float billboardKeyScale = mix(0.88, 0.68, 1.0 - sunAmount);
-    float billboardFillScale = mix(0.78, 0.50, 1.0 - sunAmount);
-    float fillShadowStrength = mix(0.24, 0.36, 1.0 - sunAmount);
-    keyLight *= mix(1.0, billboardKeyScale, isBillboard);
-    skyFill *= mix(1.15, billboardFillScale, isBillboard);
-    skyFill += twilightBounce;
-    keyLight *= (1.0 - shadowVis);
-    skyFill *= (1.0 - fillShadowStrength * shadowVis * outdoor);
-    float coveredCave = 1.0 - outdoor;
-    float skylitMouth = smoothstep(0.02, 0.24, skyLightIn) * (1.0 - smoothstep(0.32, 0.58, skyLightIn));
-    float apertureRim = max(smoothstep(0.001, 0.055, skyLightIn), smoothstep(0.001, 0.075, entranceBounceIn)) * coveredCave;
-    float mouthCore = max(smoothstep(0.16, 0.62, entranceBounceIn), smoothstep(0.055, 0.22, skyLightIn)) * coveredCave;
-    float caveMouth = max(aperture, skylitMouth * 0.62) * coveredCave;
-    float mouthWallGate = max(mouthCore, max(apertureRim, max(smoothstep(0.035, 0.38, entranceBounceIn), smoothstep(0.01, 0.14, skylitMouth))));
-    float surfaceCaveMouth = caveMouth * mix(1.0, mouthWallGate, sideFactor);
-    float sunAltitude = smoothstep(0.03, 0.62, L.y) * sunAmount;
-    float nXZLen = max(length(N.xz), 0.001);
-    vec2 nXZ = N.xz / nXZLen;
-    float sunXZLen = max(length(L.xz), 0.001);
-    vec2 sunXZ = L.xz / sunXZLen;
-    vec2 entranceDir = length(entranceDirIn) > 0.05 ? normalize(entranceDirIn) : sunXZ;
-    float portalSunAlignment = max(dot(entranceDir, sunXZ), 0.0);
-    float directPortalSun = sunAltitude * smoothstep(0.08, 0.82, portalSunAlignment);
-    float facesAperture = max(dot(nXZ, entranceDir), 0.0);
-    float facesSun = max(dot(nXZ, sunXZ), 0.0);
-    float awayFromAperture = max(dot(nXZ, -entranceDir), 0.0);
-    float directionalWall = 0.18 + 0.50 * facesAperture + 0.28 * facesSun - 0.16 * awayFromAperture;
-    float bounceFacing = clamp(mix(0.30, 0.86, hemi) + sideFactor * directionalWall, 0.10, 1.25);
-    vec3 caveBounceTint = mix(vec3(0.46, 0.52, 0.60), vec3(1.0, 0.86, 0.62), directPortalSun * 0.35);
-    float portalEnergy = 0.078 + 0.085 * sunAltitude + 0.075 * directPortalSun + entranceBounceIn * 0.16;
-    vec3 caveBounce = caveBounceTint * surfaceCaveMouth * bounceFacing * portalEnergy;
-    caveBounce += caveBounceTint * surfaceCaveMouth * hemi * directPortalSun * 0.035;
-    skyFill += caveBounce;
-    float nearPortal = max(smoothstep(0.0, 0.18, entranceBounceIn), smoothstep(0.01, 0.16, skylitMouth) * 0.75) * coveredCave;
-    float surfaceNearPortal = nearPortal * mix(1.0, mouthWallGate, sideFactor);
-    vec3 neutralPortalFloor = vec3(0.088, 0.098, 0.114) * surfaceCaveMouth * (0.70 + 0.14 * hemi + 0.28 * sideFactor);
-    neutralPortalFloor += vec3(0.042, 0.047, 0.056) * surfaceNearPortal * (0.58 + 0.42 * sideFactor);
-    neutralPortalFloor += vec3(0.026, 0.030, 0.037) * apertureRim * (0.45 + 0.35 * sideFactor + 0.20 * hemi);
-    neutralPortalFloor += vec3(0.038, 0.043, 0.052) * mouthCore * (0.28 + 0.54 * sideFactor + 0.18 * hemi);
-    skyFill += neutralPortalFloor;
-    float caveExposure = max(skyIndirect, aperture * 0.74);
-    float deepCave = 1.0 - smoothstep(0.02, 0.32, caveExposure);
-    float dyingCaveLight = smoothstep(0.006, 0.18, caveExposure);
-    vec3 darkAdaptedAmbient = vec3(0.060, 0.067, 0.082) * deepCave * dyingCaveLight * (0.54 + 0.46 * hemi);
-    skyFill += darkAdaptedAmbient;
-    vec3 lightColor = keyLight + skyFill + blockFill;
+    vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.90, 0.72), 0.25);
+    vec3 moonKeyTint = vec3(0.18, 0.22, 0.34);
+    vec3 skyTint = mix(vec3(0.52, 0.70, 0.86), global.fog_color.rgb, 0.45);
+    vec3 entranceTint = vec3(0.50, 0.68, 0.82);
+    vec3 caveTint = vec3(0.24, 0.245, 0.255);
+
+    float lowEntranceReadability = smoothstep(0.025, 0.16, entrance) * (1.0 - outdoor);
+    float indoorFloor = (0.085 * darknessGate) + (0.040 * lowEntranceReadability);
+    vec3 skyFill = caveTint * (indoorFloor + caveSideVisibility * 0.060);
+    skyFill += skyTint * global.lighting.x * skyCurve * (0.58 + 0.18 * faceUp);
+    skyFill += entranceTint * global.lighting.x * entranceCurve * (0.42 + 0.28 * entranceFacing + 0.12 * faceUp);
+
+    vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * outdoor * (1.0 - shadowVis) * 0.55;
+    keyLight += moonKeyTint * moonAmount * outdoor * (0.20 + 0.35 * faceUp);
+    vec3 blockFill = blockLightIn * (0.18 + blockCurve * 0.92);
+    vec3 lightColor = (keyLight + skyFill + blockFill) * faceShade;
+    lightColor = max(lightColor, caveTint * (0.58 * caveSideVisibility + 0.42 * darknessGate + entranceCurve * 0.95 + blockCurve));
 
     directKeyOut = clamp(max(max(keyLight.r, keyLight.g), keyLight.b), 0.0, 1.0);
     skyFillOut = clamp(max(max(skyFill.r, skyFill.g), skyFill.b), 0.0, 1.0);
@@ -526,7 +489,11 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
     outdoorOut = debugOutdoorFactor(skyLightIn);
 
     float aoFactor = mix(1.0, ao, 0.14);
-    return albedo * clamp(lightColor * aoFactor, 0.0, 1.0);
+    float lightReadability = clamp(max(max(lightColor.r, lightColor.g), lightColor.b), 0.0, 1.0);
+    float colorVisibility = smoothstep(0.24, 0.72, max(max(skyCurve, entranceCurve), blockCurve));
+    float luma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+    vec3 caveAlbedo = mix(vec3(luma), albedo, max(colorVisibility, outdoor));
+    return caveAlbedo * clamp(lightColor * aoFactor, vec3(0.0), vec3(1.0)) + vec3(luma) * caveTint * (1.0 - colorVisibility) * lightReadability * darknessGate * 0.10;
 }
 
 vec3 computeLegacyDirect(vec3 albedo, float nDotL, float totalShadow, float skyLightIn, vec3 blockLightIn, float intensityFactor) {
@@ -746,6 +713,8 @@ void main() {
             float tintStrength = smoothstep(0.05, 0.2, chroma);
             vec3 tint = mix(vec3(1.0), normalizedTint, tintStrength);
             albedo = texColor.rgb * tint;
+            float albedoLuma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+            albedo = max(albedo, vec3(0.055) * smoothstep(0.0, 0.09, 0.09 - albedoLuma));
         }
         float beautyShadowAmount = (global.shadow_params.w > 0.5) ? shadowFactor : 0.0;
         color = computeSimpleLighting(albedo, N, L, vSkyLight, vEntranceBounce, vEntranceDir, vBlockLight, ao, beautyShadowAmount, debugDirectKey, debugSkyFill, debugBlockLight, debugOutdoor);
@@ -789,8 +758,12 @@ void main() {
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
         if (debugChannel < DEBUG_SHADOW_FACTOR + 0.5) {
-            vec3 debugShadow = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), shadowFactor);
-            color = mix(vec3(0.02, 0.02, 0.02), debugShadow, atmosphericVisibility);
+            float caveEntranceMask = smoothstep(0.015, 0.10, vEntranceBounce) * (1.0 - debugOutdoor);
+            float debugShadowGate = smoothstep(0.90, 1.0, vSkyLight) * debugOutdoor * (1.0 - caveEntranceMask);
+            float effectiveShadow = shadowFactor * global.shadow_params.z * debugShadowGate;
+            vec3 debugShadow = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), effectiveShadow);
+            float debugVisibility = max(atmosphericVisibility, max(smoothstep(0.001, 0.08, vEntranceBounce), smoothstep(0.001, 0.08, max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)))));
+            color = mix(vec3(0.02, 0.02, 0.02), debugShadow, max(debugVisibility, 0.20));
         } else if (debugChannel < DEBUG_CASCADE_INDEX + 0.5) {
             color = (layer == 0) ? vec3(1.0, 0.2, 0.2)
                   : (layer == 1) ? vec3(0.2, 1.0, 0.2)
@@ -830,6 +803,8 @@ void main() {
             color = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 0.45, 0.12), debugBlockLight);
         } else if (debugChannel < DEBUG_OUTDOOR_FACTOR + 0.5) {
             color = vec3(debugOutdoor);
+        } else if (debugChannel < DEBUG_ENTRANCE_BOUNCE + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(0.18, 0.85, 1.0), clamp(vEntranceBounce, 0.0, 1.0));
         }
     }
 

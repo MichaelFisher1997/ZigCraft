@@ -33,6 +33,12 @@ const RenderStats = @import("world_renderer.zig").RenderStats;
 const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
 const ChunkStateCounts = @import("../engine/ui/chunk_inspector_overlay.zig").ChunkStateCounts;
+
+pub const DebugLightInfo = struct {
+    sky: u4,
+    block: u4,
+    entrance_bounce: u4,
+};
 const WorldStateData = @import("../engine/ui/chunk_inspector_overlay.zig").WorldStateData;
 const JobQueue = @import("../engine/core/job_system.zig").JobQueue;
 const WorkerPool = @import("../engine/core/job_system.zig").WorkerPool;
@@ -432,6 +438,19 @@ pub const World = struct {
         const data = self.getChunk(cp.chunk_x, cp.chunk_z) orelse return .air;
         const local = worldToLocal(world_x, world_z);
         return data.chunk.getBlock(local.x, @intCast(world_y), local.z);
+    }
+
+    pub fn getDebugLightInfo(self: *World, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
+        if (world_y < 0 or world_y >= 256) return null;
+        const cp = worldToChunk(world_x, world_z);
+        const data = self.getChunk(cp.chunk_x, cp.chunk_z) orelse return null;
+        const local = worldToLocal(world_x, world_z);
+        const light = data.chunk.getLight(local.x, @intCast(world_y), local.z);
+        return .{
+            .sky = light.getSkyLight(),
+            .block = light.getBlockLight(),
+            .entrance_bounce = data.chunk.getEntranceBounce(local.x, @intCast(world_y), local.z),
+        };
     }
 
     pub fn getColumnInfo(self: *const World, world_x: i32, world_z: i32) gen_interface.ColumnInfo {

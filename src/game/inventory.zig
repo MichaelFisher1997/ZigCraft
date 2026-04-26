@@ -39,14 +39,17 @@ pub const Inventory = struct {
             .selected_slot = 0,
         };
 
-        // Fill inventory with all available block types
-        // Skip air (0)
-        var slot_idx: u8 = 0;
+        const hotbar_blocks = [_]BlockType{ .stone, .dirt, .grass, .sand, .water, .wood, .leaves, .cobblestone, .gravel };
+        for (hotbar_blocks, 0..) |block_type, slot_idx| {
+            inv.slots[slot_idx] = .{ .block_type = block_type, .count = 64 };
+        }
+
+        var slot_idx: u8 = HOTBAR_SIZE;
         var block_id: u8 = 1;
         while (slot_idx < TOTAL_SLOTS and block_id < 255) : (block_id += 1) {
-            // Check if block_id is a valid enum value
             const maybe_bt = std.enums.fromInt(BlockType, block_id);
             if (maybe_bt) |bt| {
+                if (containsBlock(&hotbar_blocks, bt)) continue;
                 inv.slots[slot_idx] = .{ .block_type = bt, .count = 64 };
                 slot_idx += 1;
             } else {
@@ -56,6 +59,13 @@ pub const Inventory = struct {
         }
 
         return inv;
+    }
+
+    fn containsBlock(blocks: []const BlockType, block: BlockType) bool {
+        for (blocks) |candidate| {
+            if (candidate == block) return true;
+        }
+        return false;
     }
 
     /// Initialize an empty inventory.
@@ -214,6 +224,8 @@ test "Inventory initialization" {
     try std.testing.expectEqual(@as(u8, 0), inv.selected_slot);
     try std.testing.expect(inv.slots[0] != null);
     try std.testing.expectEqual(BlockType.stone, inv.slots[0].?.block_type);
+    try std.testing.expectEqual(BlockType.gravel, inv.slots[8].?.block_type);
+    try std.testing.expect(inv.slots[8].?.block_type != .bedrock);
 }
 
 test "Inventory selection" {

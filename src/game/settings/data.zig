@@ -13,11 +13,13 @@ pub const ShadowDebugChannel = enum(u32) {
     sky_fill = 8,
     block_light = 9,
     outdoor_factor = 10,
+    entrance_bounce = 11,
 };
 
 pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {
     if (settings.debug_direct_key_active) return .direct_key;
     if (settings.debug_sky_fill_active) return .sky_fill;
+    if (settings.debug_entrance_bounce_active) return .entrance_bounce;
     if (settings.debug_block_light_active) return .block_light;
     if (settings.debug_outdoor_factor_active) return .outdoor_factor;
     if (settings.debug_shadow_seam_diag) return .seam_diagnostics;
@@ -42,6 +44,7 @@ pub fn clearTerrainDebugViews(settings: *@This().Settings) void {
     settings.debug_shadow_seam_diag = false;
     settings.debug_direct_key_active = false;
     settings.debug_sky_fill_active = false;
+    settings.debug_entrance_bounce_active = false;
     settings.debug_block_light_active = false;
     settings.debug_outdoor_factor_active = false;
 }
@@ -90,6 +93,7 @@ pub const Settings = struct {
     shadow_probe_enabled: bool = false,
     debug_direct_key_active: bool = false,
     debug_sky_fill_active: bool = false,
+    debug_entrance_bounce_active: bool = false,
     debug_block_light_active: bool = false,
     debug_outdoor_factor_active: bool = false,
     debug_lpv_overlay_active: bool = false,
@@ -111,27 +115,27 @@ pub const Settings = struct {
     environment_map: []const u8 = "default", // "default" or filename.exr/hdr
 
     // PBR Settings
-    pbr_enabled: bool = true,
-    pbr_quality: u8 = 2, // 0=Off, 1=Low (no normal maps), 2=Full
-    exposure: f32 = 0.9,
-    saturation: f32 = 1.3,
+    pbr_enabled: bool = false,
+    pbr_quality: u8 = 0, // 0=Off, 1=Low (no normal maps), 2=Full
+    exposure: f32 = 1.0,
+    saturation: f32 = 1.0,
 
     // Shadow Settings
-    shadow_pcf_samples: u8 = 12, // 4, 8, 12, 16
+    shadow_pcf_samples: u8 = 4, // 4, 8, 12, 16
     shadow_cascade_blend: bool = true,
     shadow_caster_distance: f32 = 250.0,
 
     // Volumetric Lighting Settings (Phase 4)
-    volumetric_lighting_enabled: bool = true,
+    volumetric_lighting_enabled: bool = false,
     sun_shafts_enabled: bool = false,
     sun_shafts_intensity: f32 = 0.45,
     volumetric_density: f32 = 0.05, // Fog density
     volumetric_steps: u32 = 16, // Raymarching steps
     volumetric_scattering: f32 = 0.8, // Mie scattering anisotropy (G)
-    ssao_enabled: bool = true,
+    ssao_enabled: bool = false,
 
     // LPV Settings (Issue #260)
-    lpv_enabled: bool = true,
+    lpv_enabled: bool = false,
     lpv_quality_preset: u32 = 1, // 0=Fast, 1=Balanced, 2=Quality
     lpv_intensity: f32 = 0.5,
     lpv_cell_size: f32 = 2.0,
@@ -143,7 +147,7 @@ pub const Settings = struct {
     fxaa_enabled: bool = true,
 
     // Bloom Settings (Phase 3)
-    bloom_enabled: bool = true,
+    bloom_enabled: bool = false,
     bloom_intensity: f32 = 0.5,
 
     // Post-Processing Settings (Phase 6)

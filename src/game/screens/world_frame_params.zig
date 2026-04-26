@@ -76,10 +76,10 @@ pub fn build(input: BuildInput) BuiltParams {
             .shadow = .{
                 .distance = input.shadow_distance_active,
                 .resolution = input.settings.getShadowResolution(),
-                .pcf_samples = if (input.shadow_sandbox_active) @as(u8, 1) else input.settings.shadow_pcf_samples,
-                .cascade_blend = false,
+                .pcf_samples = input.settings.shadow_pcf_samples,
+                .cascade_blend = input.settings.shadow_cascade_blend,
                 .caster_distance = input.shadow_caster_distance_active,
-                .strength = if (input.safe_mode or !input.shadow_sandbox_active) 0.0 else 0.35,
+                .strength = if (input.safe_mode or !input.shadow_sandbox_active) 0.0 else 0.20,
             },
             .pbr_quality = input.settings.pbr_quality,
             .exposure = input.settings.exposure,

@@ -164,48 +164,44 @@ void main() {
 
     float zenith = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     float horizon = 1.0 - abs(dir.y);
-    float horizonBand = pow(horizon, 1.7);
-    float twilight = 1.0 - smoothstep(0.06, 0.28, abs(pc.sun_dir.y));
+    float horizonBand = pow(horizon, 2.4);
+    float twilight = 1.0 - smoothstep(0.03, 0.24, abs(pc.sun_dir.y));
 
-    vec3 zenithSky = pc.sky_color.xyz * mix(2.45, 3.0, zenith);
-    vec3 horizonSky = pc.horizon_color.xyz * mix(2.2, 2.8, horizonBand);
-    vec3 sky = mix(horizonSky, zenithSky, pow(zenith, 0.64));
+    vec3 zenithSky = pc.sky_color.xyz * mix(1.25, 1.55, zenith);
+    vec3 horizonSky = pc.horizon_color.xyz * mix(1.45, 1.70, horizonBand);
+    vec3 sky = mix(horizonSky, zenithSky, smoothstep(0.0, 0.95, pow(zenith, 0.70)));
 
     float sunDot = dot(dir, normalize(pc.sun_dir.xyz));
-    float sunDisc = smoothstep(0.9988, 0.99982, sunDot);
+    float sunDisc = smoothstep(0.99910, 0.99978, sunDot);
     vec3 sunColor = global.sun_color.rgb;
 
-    float sunGlow = pow(max(sunDot, 0.0), 4.0) * 0.12;
-    sunGlow += pow(max(sunDot, 0.0), 14.0) * 0.24;
-    sunGlow += pow(max(sunDot, 0.0), 56.0) * 0.36;
-    sunGlow += pow(max(sunDot, 0.0), 180.0) * 0.30;
+    float sunGlow = pow(max(sunDot, 0.0), 18.0) * 0.12;
+    sunGlow += pow(max(sunDot, 0.0), 80.0) * 0.16;
 
     float moonDot = dot(dir, -normalize(pc.sun_dir.xyz));
-    float moonDisc = smoothstep(0.9990, 0.99962, moonDot);
+    float moonDisc = smoothstep(0.99908, 0.99966, moonDot);
     vec3 moonColor = pow(vec3(0.9, 0.9, 1.0), vec3(2.2));
-    float moonGlow = pow(max(moonDot, 0.0), 8.0) * 0.04;
-    moonGlow += pow(max(moonDot, 0.0), 48.0) * 0.10;
+    float moonGlow = pow(max(moonDot, 0.0), 34.0) * 0.045;
 
     float starIntensity = 0.0;
     if (pc.params.z < 0.3 && dir.y > 0.0) {
         float nightFactor = 1.0 - pc.params.z * 3.33;
-        starIntensity = stars(dir) * nightFactor * 1.5;
+        starIntensity = stars(dir) * nightFactor * 0.75;
     }
 
-    vec3 warmHaze = sunColor * vec3(1.06, 0.70, 0.30) * twilight * horizonBand * 0.10;
-    float sunScatter = pow(max(sunDot, 0.0), 3.8) * (0.05 + 0.16 * twilight);
+    vec3 warmHaze = sunColor * vec3(1.06, 0.72, 0.36) * twilight * horizonBand * 0.035;
+    float sunScatter = pow(max(sunDot, 0.0), 5.0) * (0.025 + 0.045 * twilight);
     sky += warmHaze + sunColor * sunScatter;
 
     vec3 finalColor = sky;
 
-    finalColor += sunGlow * sunColor * pc.params.z * 1.35;
-    finalColor += sunDisc * sunColor * pc.params.z * 6.5;
-    finalColor += moonGlow * moonColor * pc.params.w * 2.2;
-    finalColor += moonDisc * moonColor * pc.params.w * 3.0;
+    finalColor += sunGlow * sunColor * pc.params.z * 0.8;
+    finalColor += sunDisc * sunColor * pc.params.z * 2.2;
+    finalColor += moonGlow * moonColor * pc.params.w * 1.0;
+    finalColor += moonDisc * moonColor * pc.params.w * 1.4;
     finalColor += vec3(starIntensity);
 
-    // Volumetric Scattering (Phase 4)
-    if (global.volumetric_params.x > 0.5) {
+    if (global.volumetric_params.x > 0.5 && global.render_flags.w < 0.5) {
         float dither = hash21(gl_FragCoord.xy + vec2(global.params.x));
         // Use camera-relative origin (0,0,0) for raymarching start
         vec4 volumetric = calculateVolumetric(vec3(0.0), dir, dither);

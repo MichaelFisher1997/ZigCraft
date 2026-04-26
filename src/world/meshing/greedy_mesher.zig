@@ -113,45 +113,49 @@ pub fn meshSlice(
             const k = k_opt.?;
 
             var width: u32 = 1;
-            while (su + width < du) : (width += 1) {
-                const nxt_opt = mask[su + width + sv * du];
-                if (nxt_opt == null) break;
-                const nxt = nxt_opt.?;
-                if (nxt.block != k.block or nxt.side != k.side) break;
-                const sky_diff = @as(i8, @intCast(nxt.light.getSkyLight())) - @as(i8, @intCast(k.light.getSkyLight()));
-                const r_diff = @as(i8, @intCast(nxt.light.getBlockLightR())) - @as(i8, @intCast(k.light.getBlockLightR()));
-                const g_diff = @as(i8, @intCast(nxt.light.getBlockLightG())) - @as(i8, @intCast(k.light.getBlockLightG()));
-                const b_diff = @as(i8, @intCast(nxt.light.getBlockLightB())) - @as(i8, @intCast(k.light.getBlockLightB()));
-                const bounce_diff = @as(i8, @intCast(nxt.entrance_bounce)) - @as(i8, @intCast(k.entrance_bounce));
-                if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or nxt.entrance_dir != k.entrance_dir) break;
-
-                const diff_r = @abs(nxt.color[0] - k.color[0]);
-                const diff_g = @abs(nxt.color[1] - k.color[1]);
-                const diff_b = @abs(nxt.color[2] - k.color[2]);
-                if (diff_r > MAX_COLOR_DIFF_FOR_MERGE or diff_g > MAX_COLOR_DIFF_FOR_MERGE or diff_b > MAX_COLOR_DIFF_FOR_MERGE) break;
-            }
-            var height: u32 = 1;
-            var dvh: u32 = 1;
-            outer: while (sv + dvh < dv) : (dvh += 1) {
-                var duw: u32 = 0;
-                while (duw < width) : (duw += 1) {
-                    const nxt_opt = mask[su + duw + (sv + dvh) * du];
-                    if (nxt_opt == null) break :outer;
+            if (k.entrance_bounce == 0) {
+                while (su + width < du) : (width += 1) {
+                    const nxt_opt = mask[su + width + sv * du];
+                    if (nxt_opt == null) break;
                     const nxt = nxt_opt.?;
-                    if (nxt.block != k.block or nxt.side != k.side) break :outer;
+                    if (nxt.block != k.block or nxt.side != k.side) break;
                     const sky_diff = @as(i8, @intCast(nxt.light.getSkyLight())) - @as(i8, @intCast(k.light.getSkyLight()));
                     const r_diff = @as(i8, @intCast(nxt.light.getBlockLightR())) - @as(i8, @intCast(k.light.getBlockLightR()));
                     const g_diff = @as(i8, @intCast(nxt.light.getBlockLightG())) - @as(i8, @intCast(k.light.getBlockLightG()));
                     const b_diff = @as(i8, @intCast(nxt.light.getBlockLightB())) - @as(i8, @intCast(k.light.getBlockLightB()));
                     const bounce_diff = @as(i8, @intCast(nxt.entrance_bounce)) - @as(i8, @intCast(k.entrance_bounce));
-                    if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or nxt.entrance_dir != k.entrance_dir) break :outer;
+                    if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or nxt.entrance_dir != k.entrance_dir) break;
 
                     const diff_r = @abs(nxt.color[0] - k.color[0]);
                     const diff_g = @abs(nxt.color[1] - k.color[1]);
                     const diff_b = @abs(nxt.color[2] - k.color[2]);
-                    if (diff_r > MAX_COLOR_DIFF_FOR_MERGE or diff_g > MAX_COLOR_DIFF_FOR_MERGE or diff_b > MAX_COLOR_DIFF_FOR_MERGE) break :outer;
+                    if (diff_r > MAX_COLOR_DIFF_FOR_MERGE or diff_g > MAX_COLOR_DIFF_FOR_MERGE or diff_b > MAX_COLOR_DIFF_FOR_MERGE) break;
                 }
-                height += 1;
+            }
+            var height: u32 = 1;
+            var dvh: u32 = 1;
+            if (k.entrance_bounce == 0) {
+                outer: while (sv + dvh < dv) : (dvh += 1) {
+                    var duw: u32 = 0;
+                    while (duw < width) : (duw += 1) {
+                        const nxt_opt = mask[su + duw + (sv + dvh) * du];
+                        if (nxt_opt == null) break :outer;
+                        const nxt = nxt_opt.?;
+                        if (nxt.block != k.block or nxt.side != k.side) break :outer;
+                        const sky_diff = @as(i8, @intCast(nxt.light.getSkyLight())) - @as(i8, @intCast(k.light.getSkyLight()));
+                        const r_diff = @as(i8, @intCast(nxt.light.getBlockLightR())) - @as(i8, @intCast(k.light.getBlockLightR()));
+                        const g_diff = @as(i8, @intCast(nxt.light.getBlockLightG())) - @as(i8, @intCast(k.light.getBlockLightG()));
+                        const b_diff = @as(i8, @intCast(nxt.light.getBlockLightB())) - @as(i8, @intCast(k.light.getBlockLightB()));
+                        const bounce_diff = @as(i8, @intCast(nxt.entrance_bounce)) - @as(i8, @intCast(k.entrance_bounce));
+                        if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or nxt.entrance_dir != k.entrance_dir) break :outer;
+
+                        const diff_r = @abs(nxt.color[0] - k.color[0]);
+                        const diff_g = @abs(nxt.color[1] - k.color[1]);
+                        const diff_b = @abs(nxt.color[2] - k.color[2]);
+                        if (diff_r > MAX_COLOR_DIFF_FOR_MERGE or diff_g > MAX_COLOR_DIFF_FOR_MERGE or diff_b > MAX_COLOR_DIFF_FOR_MERGE) break :outer;
+                    }
+                    height += 1;
+                }
             }
 
             const k_def = block_registry.getBlockDefinition(k.block);
@@ -188,9 +192,9 @@ fn addGreedyFace(
     block_def: *const block_registry.BlockDefinition,
     forward: bool,
     si: u32,
-    light: PackedLight,
-    entrance_bounce: u4,
-    entrance_dir: u8,
+    face_light: PackedLight,
+    face_entrance_bounce: u4,
+    face_entrance_dir: u8,
     tint: [3]f32,
     chunk: *const Chunk,
     neighbors: NeighborChunks,
@@ -273,6 +277,7 @@ fn addGreedyFace(
 
     // Calculate AO for all 4 corners
     const ao = ao_calculator.calculateQuadAO(chunk, neighbors, axis, forward, p);
+    const face_light_floor = lighting_sampler.normalizeLightValues(face_light, face_entrance_bounce, face_entrance_dir);
 
     // Choose triangle orientation to minimize AO artifacts (flipping the diagonal)
     var idxs: [6]usize = undefined;
@@ -282,10 +287,8 @@ fn addGreedyFace(
         idxs = .{ 0, 1, 2, 0, 2, 3 };
     }
 
-    // Normalize light values
-    const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
-
     for (idxs) |i| {
+        const norm_light = maxLightFloor(lighting_sampler.sampleSmoothLightAtVertex(chunk, neighbors, p[i], nf), face_light_floor);
         try verts.append(allocator, Vertex.initWithEntrance(
             p[i],
             col,
@@ -299,4 +302,17 @@ fn addGreedyFace(
             norm_light.entrance_dir,
         ));
     }
+}
+
+fn maxLightFloor(light: lighting_sampler.NormalizedLight, floor: lighting_sampler.NormalizedLight) lighting_sampler.NormalizedLight {
+    return .{
+        .skylight = @max(light.skylight, floor.skylight),
+        .blocklight = .{
+            @max(light.blocklight[0], floor.blocklight[0]),
+            @max(light.blocklight[1], floor.blocklight[1]),
+            @max(light.blocklight[2], floor.blocklight[2]),
+        },
+        .entrance_bounce = @max(light.entrance_bounce, floor.entrance_bounce),
+        .entrance_dir = if (light.entrance_bounce >= floor.entrance_bounce) light.entrance_dir else floor.entrance_dir,
+    };
 }
