@@ -841,7 +841,7 @@ fn getNativeDevice(ctx_ptr: *anyopaque) u64 {
     return native_access.getNativeDevice(ctx);
 }
 
-fn computeSSAO(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
+fn computeSsao(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.ssao_system.compute(
         ctx.vulkan_device.vk_device,
@@ -859,7 +859,7 @@ fn drawDebugShadowMap(ctx_ptr: *anyopaque, cascade_index: usize, depth_map_handl
 }
 
 const VULKAN_SSAO_VTABLE = rhi.ISSAOContext.VTable{
-    .compute = computeSSAO,
+    .compute = computeSsao,
 };
 
 const VULKAN_UI_CONTEXT_VTABLE = rhi.IUIContext.VTable{
