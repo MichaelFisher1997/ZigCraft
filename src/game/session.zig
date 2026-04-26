@@ -331,7 +331,7 @@ pub const GameSession = struct {
         const rs = self.world.getRenderStats();
         const pc = worldToChunkFromFloat(self.camera.position.x, self.camera.position.z);
         const hy: f32 = 50.0;
-        const fault_count = self.rhi.getFaultCount();
+        const fault_count = self.rhi.query().getFaultCount();
         const hud_h: f32 = if (fault_count > 0) 230 else 210;
         ui.drawRect(.{ .x = 10, .y = hy, .width = 220, .height = hud_h }, Color.rgba(0, 0, 0, 0.6));
         Font.drawText(ui, "POS:", 15, hy + 5, 1.5, Color.white);

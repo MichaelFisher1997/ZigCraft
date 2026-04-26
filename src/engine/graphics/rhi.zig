@@ -231,6 +231,9 @@ pub const ResourceManager = struct {
 /// ```
 pub const RenderContext = struct {
     render: IRenderContext,
+    passes: IPassOrchestrationContext,
+    post_process: IPostProcessContext,
+    native: INativeHandlesContext,
     encoder: IGraphicsCommandEncoder,
     state: IRenderStateContext,
 
@@ -243,40 +246,40 @@ pub const RenderContext = struct {
         self.render.endFrame();
     }
     pub fn abortFrame(self: RenderContext) void {
-        self.render.vtable.abortFrame(self.render.ptr);
+        self.render.abortFrame();
     }
     pub fn beginMainPass(self: RenderContext) void {
-        self.render.beginMainPass();
+        self.passes.beginMainPass();
     }
     pub fn endMainPass(self: RenderContext) void {
-        self.render.endMainPass();
+        self.passes.endMainPass();
     }
     pub fn beginPostProcessPass(self: RenderContext) void {
-        self.render.beginPostProcessPass();
+        self.passes.beginPostProcessPass();
     }
     pub fn endPostProcessPass(self: RenderContext) void {
-        self.render.endPostProcessPass();
+        self.passes.endPostProcessPass();
     }
     pub fn beginGPass(self: RenderContext) void {
-        self.render.vtable.beginGPass(self.render.ptr);
+        self.passes.beginGPass();
     }
     pub fn endGPass(self: RenderContext) void {
-        self.render.vtable.endGPass(self.render.ptr);
+        self.passes.endGPass();
     }
     pub fn beginFXAAPass(self: RenderContext) void {
-        self.render.beginFXAAPass();
+        self.passes.beginFXAAPass();
     }
     pub fn endFXAAPass(self: RenderContext) void {
-        self.render.endFXAAPass();
+        self.passes.endFXAAPass();
     }
     pub fn computeBloom(self: RenderContext) void {
-        self.render.computeBloom();
+        self.post_process.computeBloom();
     }
     pub fn computeTAA(self: RenderContext) void {
-        self.render.computeTAA();
+        self.post_process.computeTAA();
     }
     pub fn computeDepthPyramid(self: RenderContext) void {
-        self.render.computeDepthPyramid();
+        self.post_process.computeDepthPyramid();
     }
     pub fn requestSwapchainRecreate(self: RenderContext) void {
         self.render.requestSwapchainRecreate();
@@ -285,28 +288,28 @@ pub const RenderContext = struct {
         self.render.vtable.setClearColor(self.render.ptr, color);
     }
     pub fn getNativeSkyPipeline(self: RenderContext) u64 {
-        return self.render.vtable.getNativeSkyPipeline(self.render.ptr);
+        return self.native.getSkyPipeline();
     }
     pub fn getNativeSkyPipelineLayout(self: RenderContext) u64 {
-        return self.render.vtable.getNativeSkyPipelineLayout(self.render.ptr);
+        return self.native.getSkyPipelineLayout();
     }
     pub fn getNativeWaterPipeline(self: RenderContext) u64 {
-        return self.render.vtable.getNativeWaterPipeline(self.render.ptr);
+        return self.native.getWaterPipeline();
     }
     pub fn getNativeWaterPipelineLayout(self: RenderContext) u64 {
-        return self.render.vtable.getNativeWaterPipelineLayout(self.render.ptr);
+        return self.native.getWaterPipelineLayout();
     }
     pub fn getNativeMainDescriptorSet(self: RenderContext) u64 {
-        return self.render.vtable.getNativeMainDescriptorSet(self.render.ptr);
+        return self.native.getMainDescriptorSet();
     }
     pub fn getNativeCommandBuffer(self: RenderContext) u64 {
-        return self.render.vtable.getNativeCommandBuffer(self.render.ptr);
+        return self.native.getCommandBuffer();
     }
     pub fn getNativeSwapchainExtent(self: RenderContext) [2]u32 {
-        return self.render.vtable.getNativeSwapchainExtent(self.render.ptr);
+        return self.native.getSwapchainExtent();
     }
     pub fn getNativeDevice(self: RenderContext) u64 {
-        return self.render.vtable.getNativeDevice(self.render.ptr);
+        return self.native.getDevice();
     }
 
     // --- IGraphicsCommandEncoder delegates ---
@@ -661,48 +664,10 @@ pub const IRenderContext = struct {
         beginFrame: *const fn (ptr: *anyopaque) void,
         endFrame: *const fn (ptr: *anyopaque) void,
         abortFrame: *const fn (ptr: *anyopaque) void,
-        beginMainPass: *const fn (ptr: *anyopaque) void,
-        endMainPass: *const fn (ptr: *anyopaque) void,
-        beginPostProcessPass: *const fn (ptr: *anyopaque) void,
-        endPostProcessPass: *const fn (ptr: *anyopaque) void,
-        beginGPass: *const fn (ptr: *anyopaque) void,
-        endGPass: *const fn (ptr: *anyopaque) void,
-        // FXAA pass
-        beginFXAAPass: *const fn (ptr: *anyopaque) void,
-        endFXAAPass: *const fn (ptr: *anyopaque) void,
         requestSwapchainRecreate: *const fn (ptr: *anyopaque) void,
-        // Bloom pass
-        computeBloom: *const fn (ptr: *anyopaque) void,
-        // TAA pass
-        computeTAA: *const fn (ptr: *anyopaque) void,
-        // Depth pyramid
-        computeDepthPyramid: *const fn (ptr: *anyopaque) void,
         getEncoder: *const fn (ptr: *anyopaque) IGraphicsCommandEncoder,
         getStateContext: *const fn (ptr: *anyopaque) IRenderStateContext,
-
-        // High-level context state
         setClearColor: *const fn (ptr: *anyopaque, color: Vec3) void,
-
-        // Resource Accessors for Systems
-        // Note: All accessors return backend-specific handles (e.g., Vulkan handles as u64).
-        // If a resource is not initialized or unavailable, the accessor returns 0.
-
-        /// Returns the native sky pipeline handle (VkPipeline).
-        getNativeSkyPipeline: *const fn (ptr: *anyopaque) u64,
-        /// Returns the native sky pipeline layout handle (VkPipelineLayout).
-        getNativeSkyPipelineLayout: *const fn (ptr: *anyopaque) u64,
-        /// Returns the native water pipeline handle (VkPipeline).
-        getNativeWaterPipeline: *const fn (ptr: *anyopaque) u64,
-        /// Returns the native water pipeline layout handle (VkPipelineLayout).
-        getNativeWaterPipelineLayout: *const fn (ptr: *anyopaque) u64,
-        /// Returns the main native descriptor set handle (VkDescriptorSet).
-        getNativeMainDescriptorSet: *const fn (ptr: *anyopaque) u64,
-        /// Returns the native command buffer handle for the current frame (VkCommandBuffer).
-        getNativeCommandBuffer: *const fn (ptr: *anyopaque) u64,
-        /// Returns the current swapchain extent [width, height].
-        getNativeSwapchainExtent: *const fn (ptr: *anyopaque) [2]u32,
-        /// Returns the native device handle (VkDevice).
-        getNativeDevice: *const fn (ptr: *anyopaque) u64,
     };
 
     pub fn beginFrame(self: IRenderContext) void {
@@ -711,32 +676,8 @@ pub const IRenderContext = struct {
     pub fn endFrame(self: IRenderContext) void {
         self.vtable.endFrame(self.ptr);
     }
-    pub fn beginMainPass(self: IRenderContext) void {
-        self.vtable.beginMainPass(self.ptr);
-    }
-    pub fn endMainPass(self: IRenderContext) void {
-        self.vtable.endMainPass(self.ptr);
-    }
-    pub fn beginPostProcessPass(self: IRenderContext) void {
-        self.vtable.beginPostProcessPass(self.ptr);
-    }
-    pub fn endPostProcessPass(self: IRenderContext) void {
-        self.vtable.endPostProcessPass(self.ptr);
-    }
-    pub fn beginFXAAPass(self: IRenderContext) void {
-        self.vtable.beginFXAAPass(self.ptr);
-    }
-    pub fn endFXAAPass(self: IRenderContext) void {
-        self.vtable.endFXAAPass(self.ptr);
-    }
-    pub fn computeBloom(self: IRenderContext) void {
-        self.vtable.computeBloom(self.ptr);
-    }
-    pub fn computeTAA(self: IRenderContext) void {
-        self.vtable.computeTAA(self.ptr);
-    }
-    pub fn computeDepthPyramid(self: IRenderContext) void {
-        self.vtable.computeDepthPyramid(self.ptr);
+    pub fn abortFrame(self: IRenderContext) void {
+        self.vtable.abortFrame(self.ptr);
     }
     pub fn requestSwapchainRecreate(self: IRenderContext) void {
         self.vtable.requestSwapchainRecreate(self.ptr);
@@ -747,37 +688,108 @@ pub const IRenderContext = struct {
     pub fn getState(self: IRenderContext) IRenderStateContext {
         return self.vtable.getStateContext(self.ptr);
     }
+};
 
-    pub fn getNativeSwapchainExtent(self: IRenderContext) [2]u32 {
-        return self.vtable.getNativeSwapchainExtent(self.ptr);
-    }
+pub const IPassOrchestrationContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
 
-    // Pass-throughs to encoder (convenience)
-    pub fn bindShader(self: IRenderContext, handle: ShaderHandle) void {
-        self.getEncoder().bindShader(handle);
-    }
-    pub fn bindTexture(self: IRenderContext, handle: TextureHandle, slot: u32) void {
-        self.getEncoder().bindTexture(handle, slot);
-    }
-    pub fn draw(self: IRenderContext, handle: BufferHandle, count: u32, mode: DrawMode) void {
-        self.getEncoder().draw(handle, count, mode);
-    }
-    pub fn drawOffset(self: IRenderContext, handle: BufferHandle, count: u32, mode: DrawMode, offset: usize) void {
-        self.getEncoder().drawOffset(handle, count, mode, offset);
-    }
-    pub fn drawIndexed(self: IRenderContext, vbo: BufferHandle, ebo: BufferHandle, count: u32) void {
-        self.getEncoder().drawIndexed(vbo, ebo, count);
-    }
-    pub fn bindBuffer(self: IRenderContext, handle: BufferHandle, usage: BufferUsage) void {
-        self.getEncoder().bindBuffer(handle, usage);
-    }
-    pub fn pushConstants(self: IRenderContext, stages: ShaderStageFlags, offset: u32, size: u32, data: *const anyopaque) void {
-        self.getEncoder().pushConstants(stages, offset, size, data);
-    }
+    pub const VTable = struct {
+        beginMainPass: *const fn (ptr: *anyopaque) void,
+        endMainPass: *const fn (ptr: *anyopaque) void,
+        beginPostProcessPass: *const fn (ptr: *anyopaque) void,
+        endPostProcessPass: *const fn (ptr: *anyopaque) void,
+        beginGPass: *const fn (ptr: *anyopaque) void,
+        endGPass: *const fn (ptr: *anyopaque) void,
+        beginFXAAPass: *const fn (ptr: *anyopaque) void,
+        endFXAAPass: *const fn (ptr: *anyopaque) void,
+    };
 
-    // Pass-throughs to state (convenience)
-    pub fn setModelMatrix(self: IRenderContext, model: Mat4, color: Vec3, mask_radius: f32) void {
-        self.getState().setModelMatrix(model, color, mask_radius);
+    pub fn beginMainPass(self: IPassOrchestrationContext) void {
+        self.vtable.beginMainPass(self.ptr);
+    }
+    pub fn endMainPass(self: IPassOrchestrationContext) void {
+        self.vtable.endMainPass(self.ptr);
+    }
+    pub fn beginPostProcessPass(self: IPassOrchestrationContext) void {
+        self.vtable.beginPostProcessPass(self.ptr);
+    }
+    pub fn endPostProcessPass(self: IPassOrchestrationContext) void {
+        self.vtable.endPostProcessPass(self.ptr);
+    }
+    pub fn beginGPass(self: IPassOrchestrationContext) void {
+        self.vtable.beginGPass(self.ptr);
+    }
+    pub fn endGPass(self: IPassOrchestrationContext) void {
+        self.vtable.endGPass(self.ptr);
+    }
+    pub fn beginFXAAPass(self: IPassOrchestrationContext) void {
+        self.vtable.beginFXAAPass(self.ptr);
+    }
+    pub fn endFXAAPass(self: IPassOrchestrationContext) void {
+        self.vtable.endFXAAPass(self.ptr);
+    }
+};
+
+pub const IPostProcessContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        computeBloom: *const fn (ptr: *anyopaque) void,
+        computeTAA: *const fn (ptr: *anyopaque) void,
+        computeDepthPyramid: *const fn (ptr: *anyopaque) void,
+    };
+
+    pub fn computeBloom(self: IPostProcessContext) void {
+        self.vtable.computeBloom(self.ptr);
+    }
+    pub fn computeTAA(self: IPostProcessContext) void {
+        self.vtable.computeTAA(self.ptr);
+    }
+    pub fn computeDepthPyramid(self: IPostProcessContext) void {
+        self.vtable.computeDepthPyramid(self.ptr);
+    }
+};
+
+pub const INativeHandlesContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        getSkyPipeline: *const fn (ptr: *anyopaque) u64,
+        getSkyPipelineLayout: *const fn (ptr: *anyopaque) u64,
+        getWaterPipeline: *const fn (ptr: *anyopaque) u64,
+        getWaterPipelineLayout: *const fn (ptr: *anyopaque) u64,
+        getMainDescriptorSet: *const fn (ptr: *anyopaque) u64,
+        getCommandBuffer: *const fn (ptr: *anyopaque) u64,
+        getSwapchainExtent: *const fn (ptr: *anyopaque) [2]u32,
+        getDevice: *const fn (ptr: *anyopaque) u64,
+    };
+
+    pub fn getSkyPipeline(self: INativeHandlesContext) u64 {
+        return self.vtable.getSkyPipeline(self.ptr);
+    }
+    pub fn getSkyPipelineLayout(self: INativeHandlesContext) u64 {
+        return self.vtable.getSkyPipelineLayout(self.ptr);
+    }
+    pub fn getWaterPipeline(self: INativeHandlesContext) u64 {
+        return self.vtable.getWaterPipeline(self.ptr);
+    }
+    pub fn getWaterPipelineLayout(self: INativeHandlesContext) u64 {
+        return self.vtable.getWaterPipelineLayout(self.ptr);
+    }
+    pub fn getMainDescriptorSet(self: INativeHandlesContext) u64 {
+        return self.vtable.getMainDescriptorSet(self.ptr);
+    }
+    pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
+        return self.vtable.getCommandBuffer(self.ptr);
+    }
+    pub fn getSwapchainExtent(self: INativeHandlesContext) [2]u32 {
+        return self.vtable.getSwapchainExtent(self.ptr);
+    }
+    pub fn getDevice(self: INativeHandlesContext) u64 {
+        return self.vtable.getDevice(self.ptr);
     }
 };
 
@@ -821,6 +833,9 @@ pub const IDeviceQuery = struct {
 
     pub fn getRenderResolution(self: IDeviceQuery) RenderResolution {
         return self.vtable.getRenderResolution(self.ptr);
+    }
+    pub fn waitIdle(self: IDeviceQuery) void {
+        self.vtable.waitIdle(self.ptr);
     }
 };
 
@@ -876,6 +891,9 @@ pub const RHI = struct {
         // Composition of all vtables (temp)
         resources: IResourceFactory.VTable,
         render: IRenderContext.VTable,
+        passes: IPassOrchestrationContext.VTable,
+        post_process: IPostProcessContext.VTable,
+        native: INativeHandlesContext.VTable,
         ssao: ISSAOContext.VTable,
         debug_overlay: IDebugOverlayContext.VTable,
         shadow: IShadowContext.VTable,
@@ -925,9 +943,21 @@ pub const RHI = struct {
         const rc = self.context();
         return .{
             .render = rc,
+            .passes = self.passOrchestration(),
+            .post_process = self.postProcess(),
+            .native = self.nativeHandles(),
             .encoder = rc.getEncoder(),
             .state = rc.getState(),
         };
+    }
+    pub fn passOrchestration(self: RHI) IPassOrchestrationContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.passes };
+    }
+    pub fn postProcess(self: RHI) IPostProcessContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.post_process };
+    }
+    pub fn nativeHandles(self: RHI) INativeHandlesContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.native };
     }
     pub fn encoder(self: RHI) IGraphicsCommandEncoder {
         return self.context().getEncoder();
@@ -1021,16 +1051,16 @@ pub const RHI = struct {
         self.vtable.render.setClearColor(self.ptr, color);
     }
     pub fn beginMainPass(self: RHI) void {
-        self.vtable.render.beginMainPass(self.ptr);
+        self.vtable.passes.beginMainPass(self.ptr);
     }
     pub fn endMainPass(self: RHI) void {
-        self.vtable.render.endMainPass(self.ptr);
+        self.vtable.passes.endMainPass(self.ptr);
     }
     pub fn beginPostProcessPass(self: RHI) void {
-        self.vtable.render.beginPostProcessPass(self.ptr);
+        self.vtable.passes.beginPostProcessPass(self.ptr);
     }
     pub fn endPostProcessPass(self: RHI) void {
-        self.vtable.render.endPostProcessPass(self.ptr);
+        self.vtable.passes.endPostProcessPass(self.ptr);
     }
     pub fn draw(self: RHI, handle: BufferHandle, count: u32, mode: DrawMode) void {
         self.encoder().draw(handle, count, mode);
@@ -1129,28 +1159,28 @@ pub const RHI = struct {
         self.vtable.shadow.endPass(self.ptr);
     }
     pub fn beginGPass(self: RHI) void {
-        self.vtable.render.beginGPass(self.ptr);
+        self.vtable.passes.beginGPass(self.ptr);
     }
     pub fn endGPass(self: RHI) void {
-        self.vtable.render.endGPass(self.ptr);
+        self.vtable.passes.endGPass(self.ptr);
     }
     pub fn beginFXAAPass(self: RHI) void {
-        self.vtable.render.beginFXAAPass(self.ptr);
+        self.vtable.passes.beginFXAAPass(self.ptr);
     }
     pub fn endFXAAPass(self: RHI) void {
-        self.vtable.render.endFXAAPass(self.ptr);
+        self.vtable.passes.endFXAAPass(self.ptr);
     }
     pub fn computeBloom(self: RHI) void {
-        self.vtable.render.computeBloom(self.ptr);
+        self.vtable.post_process.computeBloom(self.ptr);
     }
     pub fn computeTAA(self: RHI) void {
-        self.vtable.render.computeTAA(self.ptr);
+        self.vtable.post_process.computeTAA(self.ptr);
     }
     pub fn computeDepthPyramid(self: RHI) void {
-        self.vtable.render.computeDepthPyramid(self.ptr);
+        self.vtable.post_process.computeDepthPyramid(self.ptr);
     }
     pub fn setTextureUniforms(self: RHI, enabled: bool, handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
-        self.vtable.render.setTextureUniforms(self.ptr, enabled, handles);
+        self.state().setTextureUniforms(enabled, handles);
     }
     pub fn setViewport(self: RHI, width: u32, height: u32) void {
         self.encoder().setViewport(width, height);

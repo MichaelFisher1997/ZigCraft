@@ -83,8 +83,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             // Init MDI buffers (capacity for ~2048 LOD regions)
             const max_regions = 2048;
             var instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle = undefined;
+            const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi;
             for (0..rhi_types.MAX_FRAMES_IN_FLIGHT) |i| {
-                instance_buffers[i] = try rhi.createBuffer(max_regions * @sizeOf(rhi_types.InstanceData), .storage);
+                instance_buffers[i] = try resources.createBuffer(max_regions * @sizeOf(rhi_types.InstanceData), .storage);
             }
 
             renderer.* = .{
@@ -102,7 +103,8 @@ pub fn LODRenderer(comptime RHI: type) type {
         pub fn deinit(self: *Self) void {
             for (0..rhi_types.MAX_FRAMES_IN_FLIGHT) |i| {
                 if (self.instance_buffers[i] != 0) {
-                    self.rhi.destroyBuffer(self.instance_buffers[i]);
+                    const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
+                    resources.destroyBuffer(self.instance_buffers[i]);
                 }
             }
             self.instance_data.deinit(self.allocator);
@@ -124,12 +126,14 @@ pub fn LODRenderer(comptime RHI: type) type {
             max_distance_chunks: ?i32,
         ) void {
             // Update frame index
-            self.frame_index = self.rhi.getFrameIndex();
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
+            self.frame_index = query.getFrameIndex();
 
             // Use the LOD descriptor set while issuing LOD draws, then restore
             // normal terrain descriptor mode so the chunk pass keeps its textures.
-            defer if (@hasDecl(RHI, "setInstanceBuffer")) self.rhi.setInstanceBuffer(0);
-            self.rhi.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
+            defer if (@hasDecl(@TypeOf(render_ctx), "setInstanceBuffer")) render_ctx.setInstanceBuffer(0);
+            render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
 
             const frustum = Frustum.fromViewProj(view_proj);
             // Keep LOD terrain slightly below full chunks so the handoff zone does not
@@ -153,8 +157,8 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             for (self.draw_list.items, 0..) |mesh, idx| {
                 const instance = self.instance_data.items[idx];
-                self.rhi.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
-                self.rhi.draw(mesh.buffer_handle, mesh.vertex_count, .triangles);
+                render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
+                render_ctx.draw(mesh.buffer_handle, mesh.vertex_count, .triangles);
             }
         }
 
@@ -358,11 +362,13 @@ pub fn LODRenderer(comptime RHI: type) type {
             const Wrapper = struct {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    return mesh.upload(rhi.*);
+                    const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi.*;
+                    return mesh.upload(resources);
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    mesh.deinit(rhi.*);
+                    const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi.*;
+                    mesh.deinit(resources);
                 }
                 fn onWaitIdle(ctx: *anyopaque) void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));

@@ -217,6 +217,13 @@ const MockContext = struct {
         .beginFrame = undefined,
         .endFrame = undefined,
         .abortFrame = undefined,
+        .requestSwapchainRecreate = undefined,
+        .getEncoder = MockContext.getEncoder,
+        .getStateContext = MockContext.getStateContext,
+        .setClearColor = undefined,
+    };
+
+    const MOCK_PASSES_VTABLE = rhi.IPassOrchestrationContext.VTable{
         .beginMainPass = undefined,
         .endMainPass = undefined,
         .beginPostProcessPass = undefined,
@@ -225,21 +232,23 @@ const MockContext = struct {
         .endGPass = undefined,
         .beginFXAAPass = undefined,
         .endFXAAPass = undefined,
-        .requestSwapchainRecreate = undefined,
+    };
+
+    const MOCK_POST_PROCESS_VTABLE = rhi.IPostProcessContext.VTable{
         .computeBloom = undefined,
         .computeTAA = undefined,
         .computeDepthPyramid = undefined,
-        .getEncoder = MockContext.getEncoder,
-        .getStateContext = MockContext.getStateContext,
-        .setClearColor = undefined,
-        .getNativeSkyPipeline = getNativeSkyPipeline,
-        .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getNativeWaterPipeline = getNativeWaterPipeline,
-        .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
-        .getNativeMainDescriptorSet = getNativeMainDescriptorSet,
-        .getNativeCommandBuffer = getNativeCommandBuffer,
-        .getNativeSwapchainExtent = getNativeSwapchainExtent,
-        .getNativeDevice = getNativeDevice,
+    };
+
+    const MOCK_NATIVE_VTABLE = rhi.INativeHandlesContext.VTable{
+        .getSkyPipeline = getNativeSkyPipeline,
+        .getSkyPipelineLayout = getNativeSkyPipelineLayout,
+        .getWaterPipeline = getNativeWaterPipeline,
+        .getWaterPipelineLayout = getNativeWaterPipelineLayout,
+        .getMainDescriptorSet = getNativeMainDescriptorSet,
+        .getCommandBuffer = getNativeCommandBuffer,
+        .getSwapchainExtent = getNativeSwapchainExtent,
+        .getDevice = getNativeDevice,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
@@ -376,6 +385,9 @@ const MockContext = struct {
         .deinit = undefined,
         .resources = MOCK_RESOURCES_VTABLE,
         .render = MOCK_RENDER_VTABLE,
+        .passes = MOCK_PASSES_VTABLE,
+        .post_process = MOCK_POST_PROCESS_VTABLE,
+        .native = MOCK_NATIVE_VTABLE,
         .ssao = MOCK_SSAO_VTABLE,
         .debug_overlay = MOCK_DEBUG_OVERLAY_VTABLE,
         .shadow = MOCK_SHADOW_VTABLE,

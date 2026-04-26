@@ -349,7 +349,7 @@ pub const App = struct {
         if (build_options.benchmark) {
             if (self.benchmark_runner) |runner| {
                 const gpu_timing = self.render_system.getRHI().timing().getTimingResults();
-                const draw_calls = self.render_system.getRHI().getDrawCallCount();
+                const draw_calls = self.render_system.getRHI().query().getDrawCallCount();
                 try runner.recordFrame(self.time.delta_time, self.time.fps, gpu_timing, world_stats, draw_calls);
 
                 if (runner.isComplete()) {
@@ -401,14 +401,14 @@ pub const App = struct {
     pub fn run(self: *App) !void {
         self.render_system.setViewport(self.input.interface().getWindowWidth(), self.input.interface().getWindowHeight());
         log.log.info("=== ZigCraft ===", .{});
-        var last_fault_count: u32 = self.render_system.getRHI().getFaultCount();
+        var last_fault_count: u32 = self.render_system.getRHI().query().getFaultCount();
         var gpu_recovery_attempts: u32 = 0;
         while (!self.input.interface().shouldQuit()) {
             self.runSingleFrame() catch |err| {
                 log.log.err("Frame error: {}", .{err});
                 return err;
             };
-            const current_faults = self.render_system.getRHI().getFaultCount();
+            const current_faults = self.render_system.getRHI().query().getFaultCount();
             if (current_faults > last_fault_count) {
                 gpu_recovery_attempts += 1;
                 last_fault_count = current_faults;

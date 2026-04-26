@@ -62,12 +62,12 @@ pub const LODMesh = struct {
         };
     }
 
-    pub fn deinit(self: *LODMesh, rhi: anytype) void {
+    pub fn deinit(self: *LODMesh, resources: anytype) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
         if (self.buffer_handle != 0) {
-            rhi.destroyBuffer(self.buffer_handle);
+            resources.destroyBuffer(self.buffer_handle);
             self.buffer_handle = 0;
         }
         if (self.pending_vertices) |p| {
@@ -307,7 +307,7 @@ pub const LODMesh = struct {
     }
 
     /// Upload pending vertices to GPU
-    pub fn upload(self: *LODMesh, rhi: anytype) RhiError!void {
+    pub fn upload(self: *LODMesh, resources: anytype) RhiError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -328,14 +328,14 @@ pub const LODMesh = struct {
         // Create or resize buffer
         if (self.buffer_handle == 0 or needed_capacity > self.capacity * @sizeOf(Vertex)) {
             if (self.buffer_handle != 0) {
-                rhi.destroyBuffer(self.buffer_handle);
+                resources.destroyBuffer(self.buffer_handle);
             }
-            self.buffer_handle = try rhi.createBuffer(needed_capacity, .vertex);
+            self.buffer_handle = try resources.createBuffer(needed_capacity, .vertex);
             self.capacity = @intCast(needed_capacity / @sizeOf(Vertex));
         }
 
         // Upload data
-        try rhi.uploadBuffer(self.buffer_handle, std.mem.sliceAsBytes(pending));
+        try resources.uploadBuffer(self.buffer_handle, std.mem.sliceAsBytes(pending));
         self.vertex_count = @intCast(pending.len);
 
         self.allocator.free(pending);
@@ -344,9 +344,9 @@ pub const LODMesh = struct {
     }
 
     /// Draw the LOD mesh
-    pub fn draw(self: *const LODMesh, rhi: anytype) void {
+    pub fn draw(self: *const LODMesh, render_ctx: anytype) void {
         if (!self.ready or self.buffer_handle == 0 or self.vertex_count == 0) return;
-        rhi.draw(self.buffer_handle, self.vertex_count, .triangles);
+        render_ctx.draw(self.buffer_handle, self.vertex_count, .triangles);
     }
 };
 

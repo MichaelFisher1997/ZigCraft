@@ -285,32 +285,32 @@ pub const RenderSystem = struct {
     }
 
     pub fn deinit(self: *RenderSystem) void {
-        self.rhi.waitIdle();
+        self.rhi.query().waitIdle();
 
         self.render_graph.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
         self.resource_pack_manager.deinit();
-        if (self.shader != rhi_pkg.InvalidShaderHandle) self.rhi.destroyShader(self.shader);
+        if (self.shader != rhi_pkg.InvalidShaderHandle) self.rhi.resourceManager().destroyShader(self.shader);
         self.rhi.deinit();
 
         self.allocator.destroy(self);
     }
 
     pub fn beginFrame(self: *RenderSystem) void {
-        self.rhi.beginFrame();
+        self.rhi.renderContext().beginFrame();
     }
 
     pub fn endFrame(self: *RenderSystem) void {
-        self.rhi.endFrame();
+        self.rhi.renderContext().endFrame();
     }
 
     pub fn waitIdle(self: *RenderSystem) void {
-        self.rhi.waitIdle();
+        self.rhi.query().waitIdle();
     }
 
     pub fn setViewport(self: *RenderSystem, width: u32, height: u32) void {
-        self.rhi.setViewport(width, height);
+        self.rhi.renderContext().setViewport(width, height);
     }
 
     pub fn updateGlobalUniforms(
@@ -328,7 +328,7 @@ pub const RenderSystem = struct {
         use_texture: bool,
         frame_params: rhi_pkg.FrameRenderParams,
     ) !void {
-        try self.rhi.updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
+        try self.rhi.renderContext().updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
     }
 
     pub fn applySettings(self: *RenderSystem, settings: *const Settings) void {
