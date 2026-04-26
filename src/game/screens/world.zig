@@ -400,7 +400,6 @@ pub const WorldScreen = struct {
                 .shadow_scene = self.world.shadowScene(),
                 .camera = camera,
                 .atmosphere_system = render_system.getAtmosphereSystem(),
-                .material_system = render_system.getMaterialSystem(),
                 .aspect = aspect,
                 .taa_enabled = taa_enabled,
                 .viewport_width = render_w,

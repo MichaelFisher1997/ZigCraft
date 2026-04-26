@@ -53,6 +53,7 @@ const CSM = @import("csm.zig");
 const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
 pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
+const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
 
 pub const LPVConfig = struct {
     grid_size: u32,
@@ -86,7 +87,6 @@ pub const SceneContext = struct {
     shadow_scene: shadow_scene.IShadowScene,
     camera: *Camera,
     atmosphere_system: *AtmosphereSystem,
-    material_system: *MaterialSystem,
     aspect: f32,
     sky_params: rhi_pkg.SkyParams,
     shadow_sun_dir: Vec3,
@@ -138,6 +138,7 @@ pub const RenderGraph = struct {
     passes: std.ArrayListUnmanaged(IRenderPass),
     allocator: std.mem.Allocator,
     lpv_system: *LPVSystem,
+    material_system: ?*MaterialSystem,
 
     pub fn init(allocator: std.mem.Allocator, rhi: rhi_pkg.RHI, lpv_config: LPVConfig) !RenderGraph {
         const lpv_system = try LPVSystem.init(
@@ -154,16 +155,26 @@ pub const RenderGraph = struct {
             .passes = .empty,
             .allocator = allocator,
             .lpv_system = lpv_system,
+            .material_system = null,
         };
     }
 
     pub fn deinit(self: *RenderGraph) void {
         self.passes.deinit(self.allocator);
         self.lpv_system.deinit();
+        if (self.material_system) |material_system| material_system.deinit();
     }
 
     pub fn getLPVSystem(self: *RenderGraph) *LPVSystem {
         return self.lpv_system;
+    }
+
+    pub fn initMaterials(self: *RenderGraph, atlas: *TextureAtlas) !void {
+        self.material_system = try MaterialSystem.init(self.allocator, atlas);
+    }
+
+    pub fn materials(self: *RenderGraph) *MaterialSystem {
+        return self.material_system.?;
     }
 
     pub fn addPass(self: *RenderGraph, pass: IRenderPass) !void {
@@ -207,9 +218,10 @@ const SHADOW_PASS_NAMES = [_][]const u8{ "ShadowPass0", "ShadowPass1", "ShadowPa
 
 pub const ShadowPass = struct {
     cascade_index: u32,
+    material_system: *MaterialSystem,
 
-    pub fn init(cascade_index: u32) ShadowPass {
-        return .{ .cascade_index = cascade_index };
+    pub fn init(cascade_index: u32, material_system: *MaterialSystem) ShadowPass {
+        return .{ .cascade_index = cascade_index, .material_system = material_system };
     }
 
     const VTABLES = [_]IRenderPass.VTable{
@@ -272,7 +284,7 @@ pub const ShadowPass = struct {
 
         // Keep cutout casters sampling the terrain atlas during the shadow pass.
         // Without this, shadow.frag can alpha-clip against whatever texture was last bound.
-        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
+        self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
 
         ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
         errdefer ctx.shadow_ctx.endPass();
@@ -282,6 +294,12 @@ pub const ShadowPass = struct {
 };
 
 pub const GPass = struct {
+    material_system: *MaterialSystem,
+
+    pub fn init(material_system: *MaterialSystem) GPass {
+        return .{ .material_system = material_system };
+    }
+
     const VTABLE = IRenderPass.VTable{
         .name = "GPass",
         .needs_main_pass = false,
@@ -295,11 +313,11 @@ pub const GPass = struct {
     }
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
+        const self: *GPass = @ptrCast(@alignCast(ptr));
         if (!ctx.ssao_enabled or ctx.disable_gpass_draw) return;
 
         ctx.render_ctx.beginGPass();
-        const atlas = ctx.material_system.getAtlasHandles(ctx.env_map_handle);
+        const atlas = self.material_system.getAtlasHandles(ctx.env_map_handle);
         ctx.render_ctx.bindTexture(atlas.diffuse, 1);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, false);
@@ -376,6 +394,12 @@ pub const SkyPass = struct {
 };
 
 pub const OpaquePass = struct {
+    material_system: *MaterialSystem,
+
+    pub fn init(material_system: *MaterialSystem) OpaquePass {
+        return .{ .material_system = material_system };
+    }
+
     const VTABLE = IRenderPass.VTable{
         .name = "OpaquePass",
         .needs_main_pass = true,
@@ -389,9 +413,9 @@ pub const OpaquePass = struct {
     }
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
+        const self: *OpaquePass = @ptrCast(@alignCast(ptr));
         ctx.render_ctx.bindShader(ctx.main_shader);
-        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
+        self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.red, 11);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.blue, 13);
@@ -510,6 +534,12 @@ pub const FXAAPass = struct {
 };
 
 pub const WaterReflectionPass = struct {
+    material_system: *MaterialSystem,
+
+    pub fn init(material_system: *MaterialSystem) WaterReflectionPass {
+        return .{ .material_system = material_system };
+    }
+
     const VTABLE = IRenderPass.VTable{
         .name = "WaterReflectionPass",
         .needs_main_pass = false,
@@ -523,7 +553,7 @@ pub const WaterReflectionPass = struct {
     }
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
+        const self: *WaterReflectionPass = @ptrCast(@alignCast(ptr));
         ctx.water_ctx.beginReflectionPass();
         defer ctx.water_ctx.endReflectionPass();
 
@@ -532,7 +562,7 @@ pub const WaterReflectionPass = struct {
         const reflected_vp = ctx.water_ctx.computeReflectedViewProj(view, proj, ctx.camera.position);
 
         ctx.render_ctx.bindShader(ctx.main_shader);
-        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
+        self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.red, 11);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.blue, 13);
