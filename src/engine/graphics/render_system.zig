@@ -18,6 +18,7 @@ const settings_pkg = @import("../../game/settings.zig");
 const Settings = settings_pkg.Settings;
 const runtime_env = @import("../core/runtime_env.zig");
 const RenderFeatureFlags = @import("render_feature_flags.zig").RenderFeatureFlags;
+const cloud_pkg = @import("cloud_system.zig");
 
 pub const RenderSystem = struct {
     allocator: Allocator,
@@ -27,12 +28,14 @@ pub const RenderSystem = struct {
     atlas: TextureAtlas,
     env_map: ?Texture,
     render_graph: RenderGraph,
+    cloud_system: *cloud_pkg.CloudSystem,
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
     ssao_pass: render_graph_pkg.SSAOPass,
     depth_pyramid_pass: render_graph_pkg.DepthPyramidPass,
     mesh_build_pass: render_graph_pkg.MeshBuildPass,
     sky_pass: render_graph_pkg.SkyPass,
+    cloud_pass: render_graph_pkg.CloudPass,
     opaque_pass: render_graph_pkg.OpaquePass,
     entity_pass: render_graph_pkg.EntityPass,
     taa_pass: render_graph_pkg.TAAPass,
@@ -145,6 +148,19 @@ pub const RenderSystem = struct {
         var render_graph_owned = true;
         errdefer if (render_graph_owned) render_graph.deinit();
 
+        const cloud_system = try cloud_pkg.CloudSystem.init(allocator, rhi.resourceManager(), .{
+            .enabled = settings.clouds_enabled,
+            .enable_3d = settings.clouds_3d_enabled,
+            .soft = settings.clouds_soft,
+            .radius = settings.cloud_radius,
+            .density = settings.cloud_density,
+            .height = settings.cloud_height,
+            .thickness = settings.cloud_thickness,
+            .speed_x = settings.cloud_speed_x,
+            .speed_z = settings.cloud_speed_z,
+        });
+        errdefer cloud_system.deinit();
+
         const self = try allocator.create(RenderSystem);
         errdefer allocator.destroy(self);
 
@@ -156,12 +172,14 @@ pub const RenderSystem = struct {
             .atlas = atlas,
             .env_map = env_map,
             .render_graph = render_graph,
+            .cloud_system = cloud_system,
             .shadow_passes = undefined,
             .g_pass = undefined,
             .ssao_pass = .{},
             .depth_pyramid_pass = .{},
             .mesh_build_pass = .{},
             .sky_pass = .{},
+            .cloud_pass = .{},
             .opaque_pass = undefined,
             .entity_pass = .{},
             .taa_pass = .{ .enabled = !disable_taa and settings.taa_enabled },
@@ -218,6 +236,7 @@ pub const RenderSystem = struct {
                 try self.render_graph.addPass(self.water_reflection_pass.pass());
             }
             try self.render_graph.addPass(self.sky_pass.pass());
+            try self.render_graph.addPass(self.cloud_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());
             if (self.water_pass.enabled) {
                 try self.render_graph.addPass(self.water_pass.pass());
@@ -240,6 +259,7 @@ pub const RenderSystem = struct {
     pub fn deinit(self: *RenderSystem) void {
         self.rhi.query().waitIdle();
 
+        self.cloud_system.deinit();
         self.render_graph.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
@@ -288,6 +308,17 @@ pub const RenderSystem = struct {
         self.rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled and self.fxaa_pass.enabled);
         self.rhi.setBloom(settings.bloom_enabled and self.bloom_pass.enabled);
         self.rhi.setBloomIntensity(settings.bloom_intensity);
+        self.cloud_system.setConfig(.{
+            .enabled = settings.clouds_enabled,
+            .enable_3d = settings.clouds_3d_enabled,
+            .soft = settings.clouds_soft,
+            .radius = settings.cloud_radius,
+            .density = settings.cloud_density,
+            .height = settings.cloud_height,
+            .thickness = settings.cloud_thickness,
+            .speed_x = settings.cloud_speed_x,
+            .speed_z = settings.cloud_speed_z,
+        });
         settings_pkg.apply_logic.applyToRHI(settings, &self.rhi);
     }
 
@@ -305,6 +336,10 @@ pub const RenderSystem = struct {
 
     pub fn getLPVSystem(self: *RenderSystem) *render_graph_pkg.LPVSystem {
         return self.render_graph.getLPVSystem();
+    }
+
+    pub fn getCloudSystem(self: *RenderSystem) *cloud_pkg.CloudSystem {
+        return self.cloud_system;
     }
 
     pub fn getAtlas(self: *RenderSystem) *TextureAtlas {

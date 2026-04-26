@@ -11,7 +11,7 @@
 |________/|______/ \______/  \______/ |__/  |__/|__/  |__/|__/         |__/   
 ```
 
-  <img src="https://github.com/OpenStaticFish/ZigCraft/raw/main/assets/screenshots/hero.png" alt="ZigCraft Hero" width="100%" />
+  <img src="assets/screenshots/clouds.png" alt="ZigCraft voxel landscape with clouds" width="100%" />
 
   # ⚡ ZigCraft ⚡
 
@@ -57,11 +57,9 @@ Optimized for high chunk render distances with greedy meshing, job-based multith
 
 ## 🖼️ Screenshots
 
-| PBR Materials | Cascaded Shadows | Biomes |
-|---------------|------------------|---------|
-| ![PBR](https://github.com/OpenStaticFish/ZigCraft/raw/main/assets/screenshots/hero.png) | ![Shadows](https://github.com/OpenStaticFish/ZigCraft/raw/main/assets/screenshots/hero.png) | ![Biomes](https://github.com/OpenStaticFish/ZigCraft/raw/main/assets/screenshots/hero.png) |
-
-*More screenshots coming soon!*
+| Luanti-Style Clouds | Biomes | Terrain |
+|---------------------|--------|---------|
+| ![Luanti-style clouds](assets/screenshots/clouds.png) | ![Biomes](assets/screenshots/hero.png) | ![Terrain](assets/screenshots/hero.png) |
 
 ## ⌨️ Controls
 
