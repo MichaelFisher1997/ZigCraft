@@ -11,7 +11,6 @@ const NOISE_BOUND: f32 = 1.0 + 0.5 + 0.25;
 pub const CloudConfig = struct {
     enabled: bool = true,
     enable_3d: bool = true,
-    soft: bool = false,
     radius: u16 = 25,
     density: f32 = 0.42,
     height: f32 = 192.0,
@@ -28,6 +27,7 @@ pub const CloudSystem = struct {
     vertices: std.ArrayListUnmanaged(rhi.Vertex) = .empty,
     grid: std.ArrayListUnmanaged(bool) = .empty,
     vertex_buffer: rhi.BufferHandle = rhi.InvalidBufferHandle,
+    vertex_buffer_capacity: usize = 0,
     mesh_origin_x: f32 = 0.0,
     mesh_origin_z: f32 = 0.0,
     mesh_camera_pos: Vec3 = Vec3.zero,
@@ -38,7 +38,6 @@ pub const CloudSystem = struct {
     mesh_valid: bool = false,
     gpu_valid: bool = false,
     vertex_count: u32 = 0,
-    camera_inside_cloud: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, resources: rhi.ResourceManager, config: CloudConfig) !*CloudSystem {
         const self = try allocator.create(CloudSystem);
@@ -67,15 +66,6 @@ pub const CloudSystem = struct {
         self.origin_z += dt * self.config.speed_z;
     }
 
-    pub fn update(self: *CloudSystem, camera_pos: Vec3) void {
-        self.camera_inside_cloud = false;
-        if (!self.is3D()) return;
-        if (camera_pos.y < self.config.height or camera_pos.y > self.config.height + self.config.thickness) return;
-        const nx: i32 = @intFromFloat(@floor((camera_pos.x - self.origin_x) / CLOUD_SIZE + 0.5));
-        const nz: i32 = @intFromFloat(@floor((camera_pos.z - self.origin_z) / CLOUD_SIZE + 0.5));
-        self.camera_inside_cloud = self.gridFilled(nx, nz);
-    }
-
     pub fn render(self: *CloudSystem, ctx: rhi.RenderContext, camera_pos: Vec3) !void {
         if (!self.config.enabled or self.config.density <= 0.0) return;
         try self.updateMesh(camera_pos);
@@ -89,6 +79,7 @@ pub const CloudSystem = struct {
         );
         ctx.setModelMatrix(Mat4.translate(smooth_offset), Vec3.one, 0);
         ctx.drawOffset(self.vertex_buffer, self.vertex_count, .triangles, 0);
+        // Force OpaquePass to rebind terrain state after clouds use the same pipeline.
         ctx.setTerrainPipelineBound(false);
     }
 
@@ -172,9 +163,20 @@ pub const CloudSystem = struct {
         if (self.gpu_valid) return;
         if (self.vertices.items.len == 0) return;
         const vertex_bytes = std.mem.sliceAsBytes(self.vertices.items);
+
+        if (self.vertex_buffer != rhi.InvalidBufferHandle and vertex_bytes.len <= self.vertex_buffer_capacity) {
+            try self.resources.updateBuffer(self.vertex_buffer, 0, vertex_bytes);
+            self.gpu_valid = true;
+            return;
+        }
+
+        const new_buffer = try self.resources.createBuffer(vertex_bytes.len, .vertex);
+        errdefer self.resources.destroyBuffer(new_buffer);
+        try self.resources.uploadBuffer(new_buffer, vertex_bytes);
+
         if (self.vertex_buffer != rhi.InvalidBufferHandle) self.resources.destroyBuffer(self.vertex_buffer);
-        self.vertex_buffer = try self.resources.createBuffer(vertex_bytes.len, .vertex);
-        try self.resources.uploadBuffer(self.vertex_buffer, vertex_bytes);
+        self.vertex_buffer = new_buffer;
+        self.vertex_buffer_capacity = vertex_bytes.len;
         self.gpu_valid = true;
     }
 

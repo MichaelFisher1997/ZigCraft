@@ -128,19 +128,7 @@ pub const WorldScreen = struct {
         ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
 
         try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture);
-        render_system.getCloudSystem().setConfig(.{
-            .enabled = ctx.settings.clouds_enabled,
-            .enable_3d = ctx.settings.clouds_3d_enabled,
-            .soft = ctx.settings.clouds_soft,
-            .radius = ctx.settings.cloud_radius,
-            .density = ctx.settings.cloud_density,
-            .height = ctx.settings.cloud_height,
-            .thickness = ctx.settings.cloud_thickness,
-            .speed_x = ctx.settings.cloud_speed_x,
-            .speed_z = ctx.settings.cloud_speed_z,
-        });
         render_system.getCloudSystem().step(dt);
-        render_system.getCloudSystem().update(cam.position);
 
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);

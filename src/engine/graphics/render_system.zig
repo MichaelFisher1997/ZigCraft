@@ -151,7 +151,6 @@ pub const RenderSystem = struct {
         const cloud_system = try cloud_pkg.CloudSystem.init(allocator, rhi.resourceManager(), .{
             .enabled = settings.clouds_enabled,
             .enable_3d = settings.clouds_3d_enabled,
-            .soft = settings.clouds_soft,
             .radius = settings.cloud_radius,
             .density = settings.cloud_density,
             .height = settings.cloud_height,
@@ -311,7 +310,6 @@ pub const RenderSystem = struct {
         self.cloud_system.setConfig(.{
             .enabled = settings.clouds_enabled,
             .enable_3d = settings.clouds_3d_enabled,
-            .soft = settings.clouds_soft,
             .radius = settings.cloud_radius,
             .density = settings.cloud_density,
             .height = settings.cloud_height,

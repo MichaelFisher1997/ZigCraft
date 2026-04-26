@@ -165,7 +165,6 @@ pub const Settings = struct {
     // Cloud Settings (Luanti-style CPU mesh clouds)
     clouds_enabled: bool = true,
     clouds_3d_enabled: bool = true,
-    clouds_soft: bool = false,
     cloud_radius: u16 = 25,
     cloud_density: f32 = 0.42,
     cloud_height: f32 = 192.0,
