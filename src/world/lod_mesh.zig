@@ -52,6 +52,43 @@ pub const LODMeshResources = struct {
         return .{ .ptr = rhi, .vtable = &rhi_vtable };
     }
 
+    pub fn fromProvider(comptime Provider: type, provider: *Provider) LODMeshResources {
+        const Adapter = struct {
+            fn createBuffer(ptr: *anyopaque, size: usize, usage: BufferUsage) RhiError!BufferHandle {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    return typed.resourceManager().createBuffer(size, usage);
+                }
+                return typed.createBuffer(size, usage);
+            }
+
+            fn uploadBuffer(ptr: *anyopaque, handle: BufferHandle, data: []const u8) RhiError!void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    return typed.resourceManager().uploadBuffer(handle, data);
+                }
+                return typed.uploadBuffer(handle, data);
+            }
+
+            fn destroyBuffer(ptr: *anyopaque, handle: BufferHandle) void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    typed.resourceManager().destroyBuffer(handle);
+                    return;
+                }
+                typed.destroyBuffer(handle);
+            }
+
+            const vtable = VTable{
+                .createBuffer = @This().createBuffer,
+                .uploadBuffer = @This().uploadBuffer,
+                .destroyBuffer = @This().destroyBuffer,
+            };
+        };
+
+        return .{ .ptr = provider, .vtable = &Adapter.vtable };
+    }
+
     pub fn createBuffer(self: LODMeshResources, size: usize, usage: BufferUsage) RhiError!BufferHandle {
         return self.vtable.createBuffer(self.ptr, size, usage);
     }

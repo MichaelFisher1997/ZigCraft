@@ -363,11 +363,11 @@ pub fn LODRenderer(comptime RHI: type) type {
             const Wrapper = struct {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    return mesh.upload(LODMeshResources.fromRHI(rhi));
+                    return mesh.upload(LODMeshResources.fromProvider(RHI, rhi));
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    mesh.deinit(LODMeshResources.fromRHI(rhi));
+                    mesh.deinit(LODMeshResources.fromProvider(RHI, rhi));
                 }
                 fn onWaitIdle(ctx: *anyopaque) void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
