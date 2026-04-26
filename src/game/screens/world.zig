@@ -419,9 +419,7 @@ pub const WorldScreen = struct {
                 .overlay_renderer = if (clean_capture) null else renderOverlay,
                 .overlay_ctx = if (clean_capture) null else self,
                 .cached_cascades = &frame_cascades,
-                .lpv_texture_handle = lpv_system.getTextureHandle(),
-                .lpv_texture_handle_g = lpv_system.getTextureHandleG(),
-                .lpv_texture_handle_b = lpv_system.getTextureHandleB(),
+                .lpv_textures = render_graph_pkg.LPVTextureHandles.fromSystem(lpv_system),
                 .gpu_mesh_dispatch_fn = if (self.session.world.renderer.getGpuMesher() != null) WorldRenderer.processGpuMeshing else null,
                 .gpu_mesh_dispatch_ctx = @ptrCast(self.session.world.renderer),
             };

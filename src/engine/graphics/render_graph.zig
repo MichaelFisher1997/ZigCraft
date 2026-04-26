@@ -52,7 +52,30 @@ const log = @import("../core/log.zig");
 const CSM = @import("csm.zig");
 const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
+pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
 const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
+
+pub const LPVConfig = struct {
+    grid_size: u32,
+    cell_size: f32,
+    intensity: f32,
+    propagation_iterations: u32,
+    enabled: bool,
+};
+
+pub const LPVTextureHandles = struct {
+    red: rhi_pkg.TextureHandle = 0,
+    green: rhi_pkg.TextureHandle = 0,
+    blue: rhi_pkg.TextureHandle = 0,
+
+    pub fn fromSystem(lpv_system: *LPVSystem) LPVTextureHandles {
+        return .{
+            .red = lpv_system.getTextureHandle(),
+            .green = lpv_system.getTextureHandleG(),
+            .blue = lpv_system.getTextureHandleB(),
+        };
+    }
+};
 
 pub const SceneContext = struct {
     render_ctx: RenderContext,
@@ -82,9 +105,7 @@ pub const SceneContext = struct {
     resolution_scale: f32 = 1.0,
     overlay_renderer: ?*const fn (ctx: SceneContext) void = null,
     overlay_ctx: ?*anyopaque = null,
-    lpv_texture_handle: rhi_pkg.TextureHandle = 0,
-    lpv_texture_handle_g: rhi_pkg.TextureHandle = 0,
-    lpv_texture_handle_b: rhi_pkg.TextureHandle = 0,
+    lpv_textures: LPVTextureHandles = .{},
     cached_cascades: *?CSM.ShadowCascades,
     gpu_mesh_dispatch_fn: ?*const fn (*anyopaque) void = null,
     gpu_mesh_dispatch_ctx: ?*anyopaque = null,
@@ -116,19 +137,36 @@ pub const IRenderPass = struct {
 pub const RenderGraph = struct {
     passes: std.ArrayListUnmanaged(IRenderPass),
     allocator: std.mem.Allocator,
+    lpv_system: *LPVSystem,
     material_system: ?*MaterialSystem,
 
-    pub fn init(allocator: std.mem.Allocator) RenderGraph {
+    pub fn init(allocator: std.mem.Allocator, rhi: rhi_pkg.RHI, lpv_config: LPVConfig) !RenderGraph {
+        const lpv_system = try LPVSystem.init(
+            allocator,
+            rhi,
+            lpv_config.grid_size,
+            lpv_config.cell_size,
+            lpv_config.intensity,
+            lpv_config.propagation_iterations,
+            lpv_config.enabled,
+        );
+
         return .{
             .passes = .empty,
             .allocator = allocator,
+            .lpv_system = lpv_system,
             .material_system = null,
         };
     }
 
     pub fn deinit(self: *RenderGraph) void {
         self.passes.deinit(self.allocator);
+        self.lpv_system.deinit();
         if (self.material_system) |material_system| material_system.deinit();
+    }
+
+    pub fn getLPVSystem(self: *RenderGraph) *LPVSystem {
+        return self.lpv_system;
     }
 
     pub fn initMaterials(self: *RenderGraph, atlas: *TextureAtlas) !void {
@@ -378,9 +416,9 @@ pub const OpaquePass = struct {
         const self: *OpaquePass = @ptrCast(@alignCast(ptr));
         ctx.render_ctx.bindShader(ctx.main_shader);
         self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
-        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle, 11);
-        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
-        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
+        ctx.render_ctx.bindTexture(ctx.lpv_textures.red, 11);
+        ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
+        ctx.render_ctx.bindTexture(ctx.lpv_textures.blue, 13);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, true);
     }
@@ -525,9 +563,9 @@ pub const WaterReflectionPass = struct {
 
         ctx.render_ctx.bindShader(ctx.main_shader);
         self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
-        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle, 11);
-        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_g, 12);
-        ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
+        ctx.render_ctx.bindTexture(ctx.lpv_textures.red, 11);
+        ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
+        ctx.render_ctx.bindTexture(ctx.lpv_textures.blue, 13);
 
         ctx.world.renderOpaque(reflected_vp, ctx.camera.position, true);
     }
