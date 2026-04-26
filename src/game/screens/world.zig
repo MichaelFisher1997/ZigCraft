@@ -59,9 +59,8 @@ pub const WorldScreen = struct {
     chunk_inspector_overlay: ChunkInspectorOverlay = .{},
     startup_diagnostic_start: f32 = 0,
     startup_diagnostic_logged: bool = false,
-    shadow_sandbox_sun_dir: Vec3 = Vec3.init(0.0, 1.0, 0.0),
-    shadow_sandbox_sun_locked: bool = false,
-
+    stable_shadow_sun_dir: Vec3 = Vec3.init(0.0, 1.0, 0.0),
+    stable_shadow_sun_initialized: bool = false,
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
         .update = update,
@@ -110,8 +109,9 @@ pub const WorldScreen = struct {
         const now = ctx.time.elapsed;
         const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
         const benchmark_mode = ctx.benchmark_runner != null;
+        const automated_capture = build_options.shadow_test_scene and build_options.screenshot_path.len > 0;
 
-        if (!benchmark_mode) {
+        if (!benchmark_mode and !automated_capture) {
             if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_debug_menu)) {
                 self.debug_menu.toggle();
                 if (self.debug_menu.enabled) {
@@ -217,7 +217,7 @@ pub const WorldScreen = struct {
         const cam = &self.session.player.camera;
         ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
 
-        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode);
+        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture);
 
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
@@ -300,18 +300,12 @@ pub const WorldScreen = struct {
         const clouds_enabled = !render_system.getDisableClouds();
         const shadow_sandbox_active = ctx.settings.shadow_sandbox_enabled and !render_system.getDisableShadowDraw() and !startup_light_render;
         const shadow_beauty_active = ctx.settings.shadow_beauty_enabled and shadow_sandbox_active;
+        const clean_capture = build_options.shadow_test_scene and build_options.screenshot_path.len > 0;
         const shadow_distance_active = if (shadow_sandbox_active) @min(ctx.settings.shadow_distance, 160.0) else ctx.settings.shadow_distance;
         const shadow_caster_distance_active = if (shadow_sandbox_active) @min(ctx.settings.shadow_caster_distance, shadow_distance_active) else ctx.settings.shadow_caster_distance;
-        const atmosphere_sun_dir = self.session.atmosphere.celestial.sun_dir;
-        if (shadow_sandbox_active) {
-            if (!self.shadow_sandbox_sun_locked) {
-                self.shadow_sandbox_sun_dir = atmosphere_sun_dir;
-                self.shadow_sandbox_sun_locked = true;
-            }
-        } else {
-            self.shadow_sandbox_sun_locked = false;
-        }
-        const render_sun_dir = if (shadow_sandbox_active) self.shadow_sandbox_sun_dir else atmosphere_sun_dir;
+        const render_sun_dir = self.session.atmosphere.celestial.sun_dir;
+        const shadow_sun_dir = if (shadow_sandbox_active) self.resolveStableShadowSunDir(render_sun_dir) else render_sun_dir;
+        if (!shadow_sandbox_active) self.stable_shadow_sun_initialized = false;
 
         const sky_params = rhi_pkg.SkyParams{
             .cam_pos = camera.position,
@@ -380,6 +374,8 @@ pub const WorldScreen = struct {
                 .exposure = ctx.settings.exposure,
                 .saturation = ctx.settings.saturation,
                 .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
+                .sun_shafts_enabled = ctx.settings.sun_shafts_enabled and shadow_sandbox_active and !safe_mode,
+                .sun_shafts_intensity = ctx.settings.sun_shafts_intensity,
                 .volumetric_density = ctx.settings.volumetric_density,
                 .volumetric_steps = ctx.settings.volumetric_steps,
                 .volumetric_scattering = ctx.settings.volumetric_scattering,
@@ -428,6 +424,7 @@ pub const WorldScreen = struct {
                 .viewport_width = render_w,
                 .viewport_height = render_h,
                 .sky_params = sky_params,
+                .shadow_sun_dir = shadow_sun_dir,
                 .cloud_params = cloud_params,
                 .main_shader = render_system.getShader(),
                 .env_map_handle = env_map_handle,
@@ -440,8 +437,8 @@ pub const WorldScreen = struct {
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled and !startup_light_render,
                 .resolution_scale = resolution_scale,
-                .overlay_renderer = renderOverlay,
-                .overlay_ctx = self,
+                .overlay_renderer = if (clean_capture) null else renderOverlay,
+                .overlay_ctx = if (clean_capture) null else self,
                 .cached_cascades = &frame_cascades,
                 .lpv_texture_handle = lpv_system.getTextureHandle(),
                 .lpv_texture_handle_g = lpv_system.getTextureHandleG(),
@@ -466,7 +463,9 @@ pub const WorldScreen = struct {
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
         const hud_clicked = if (self.debug_menu.enabled) false else mouse_clicked;
 
-        try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
+        if (!clean_capture) {
+            try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
+        }
 
         if (startup_loading) {
             const msg = "LOADING TERRAIN...";
@@ -487,7 +486,7 @@ pub const WorldScreen = struct {
                 aspect,
                 0.1,
                 shadow_dist,
-                render_sun_dir,
+                shadow_sun_dir,
                 camera.getViewMatrixOriginCentered(),
                 camera.position,
                 true,
@@ -496,7 +495,7 @@ pub const WorldScreen = struct {
         }
         if (ctx.settings.shadow_probe_enabled) {
             const probe = if (shadow_sandbox_active)
-                self.buildShadowProbe(camera, aspect, ctx.settings.getShadowResolution(), shadow_distance_active, render_sun_dir)
+                self.buildShadowProbe(camera, aspect, ctx.settings.getShadowResolution(), shadow_distance_active, shadow_sun_dir)
             else
                 null;
             self.drawShadowProbeOverlay(ui, probe, screen_h, ctx.settings.ui_scale);
@@ -673,6 +672,18 @@ pub const WorldScreen = struct {
                 cascades.light_space_matrices[cascade_index].data[3][2],
             ),
         };
+    }
+
+    fn resolveStableShadowSunDir(self: *WorldScreen, live_sun_dir: Vec3) Vec3 {
+        // Moving the light-space basis every frame causes visible sub-texel shimmer.
+        // Quantize shadow direction updates to small angular steps; shadows still
+        // track time of day, but the cascade projection no longer jitters constantly.
+        const min_dot = 0.99999;
+        if (!self.stable_shadow_sun_initialized or self.stable_shadow_sun_dir.dot(live_sun_dir) < min_dot) {
+            self.stable_shadow_sun_dir = live_sun_dir;
+            self.stable_shadow_sun_initialized = true;
+        }
+        return self.stable_shadow_sun_dir;
     }
 
     fn drawShadowProbeOverlay(self: *WorldScreen, ui: *UISystem, probe: ?ShadowProbeInfo, screen_h: f32, ui_scale: f32) void {

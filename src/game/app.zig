@@ -57,6 +57,7 @@ pub const App = struct {
     pending_world_launch: ?PendingWorldLaunch = null,
     startup_world_delay_frames: u32 = 3,
     direct_launch_resize_guard_frames: u32 = 0,
+    screenshot_delay_start: ?f32 = null,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -67,6 +68,9 @@ pub const App = struct {
 
         if (build_options.benchmark) {
             applyBenchmarkPreset(settings_manager.ptr(), build_options.benchmark_preset);
+        }
+        if (build_options.shadow_test_scene) {
+            applyShadowTestPreset(settings_manager.ptr());
         }
 
         const initial_window_width: u32 = if (build_options.benchmark) 1920 else settings_manager.settings.window_width;
@@ -146,6 +150,7 @@ pub const App = struct {
             .pending_world_launch = null,
             .startup_world_delay_frames = 3,
             .direct_launch_resize_guard_frames = 0,
+            .screenshot_delay_start = null,
         };
         errdefer app.screen_manager.deinit();
 
@@ -154,10 +159,20 @@ pub const App = struct {
         }
 
         const engine_ctx = app.engineContext();
-        if (build_options.screenshot_path.len > 0) {
-            log.log.info("SCREENSHOT MODE: Loading menu for screenshot capture to '{s}'", .{build_options.screenshot_path});
-            const home_screen = try HomeScreen.init(allocator, engine_ctx);
-            app.screen_manager.setScreen(home_screen.screen());
+        if (build_options.shadow_test_scene) {
+            log.log.info("SHADOW TEST SCENE: Deferring deterministic test world launch", .{});
+            app.pending_world_launch = .{ .seed = 12345, .generator_index = 2 };
+            if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
+        } else if (build_options.screenshot_path.len > 0) {
+            if (resolveAutoWorldGenerator()) |generator_index| {
+                log.log.info("SCREENSHOT WORLD MODE: Deferring '{s}' world launch for capture to '{s}'", .{ build_options.auto_world, build_options.screenshot_path });
+                app.pending_world_launch = .{ .seed = 12345, .generator_index = generator_index };
+                if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
+            } else {
+                log.log.info("SCREENSHOT MODE: Loading menu for screenshot capture to '{s}'", .{build_options.screenshot_path});
+                const home_screen = try HomeScreen.init(allocator, engine_ctx);
+                app.screen_manager.setScreen(home_screen.screen());
+            }
         } else if (build_options.benchmark) {
             log.log.info("BENCHMARK MODE: Deferring world launch until swapchain settles", .{});
             app.pending_world_launch = .{ .seed = 12345, .generator_index = 0 };
@@ -355,13 +370,29 @@ pub const App = struct {
         if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
             var target_frames: u32 = 120;
+            if (build_options.screenshot_path.len > 0) {
+                target_frames = build_options.screenshot_frame;
+            }
             if (getenv("ZIGCRAFT_SMOKE_FRAMES")) |val| {
                 if (std.fmt.parseInt(u32, val, 10)) |parsed| {
                     target_frames = parsed;
                 } else |_| {}
             }
 
-            if (self.smoke_test_frames >= target_frames) {
+            const screenshot_delay_ready = build_options.screenshot_path.len > 0 and build_options.screenshot_delay_seconds > 0;
+            const should_finish = if (screenshot_delay_ready) blk: {
+                const target_loaded = self.pending_world_launch == null and self.screen_manager.stack.items.len > 0;
+                if (!target_loaded) break :blk false;
+
+                const start = self.screenshot_delay_start orelse start: {
+                    self.screenshot_delay_start = self.time.elapsed;
+                    break :start self.time.elapsed;
+                };
+                const delay_s: f32 = @floatFromInt(build_options.screenshot_delay_seconds);
+                break :blk self.time.elapsed - start >= delay_s;
+            } else self.smoke_test_frames >= target_frames;
+
+            if (should_finish) {
                 if (build_options.screenshot_path.len > 0) {
                     log.log.info("SCREENSHOT: Capturing frame to '{s}'", .{build_options.screenshot_path});
                     if (!self.render_system.getRHI().captureFrame(build_options.screenshot_path)) {
@@ -415,13 +446,43 @@ fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
     log.log.warn("BENCHMARK: Unknown preset '{s}', keeping loaded settings", .{preset_name});
 }
 
+fn applyShadowTestPreset(settings: *Settings) void {
+    settings.window_width = 1280;
+    settings.window_height = 720;
+    settings.render_distance = 4;
+    settings.lod_enabled = false;
+    settings.render_distance_preset = .low;
+    settings.shadow_sandbox_enabled = true;
+    settings.shadow_beauty_enabled = true;
+    settings.shadow_quality = 2;
+    settings.shadow_distance = 120.0;
+    settings.shadow_caster_distance = 120.0;
+    settings.shadow_pcf_samples = 1;
+    settings.shadow_cascade_blend = false;
+    settings.cloud_shadows_enabled = false;
+    settings.pbr_enabled = false;
+    settings.volumetric_lighting_enabled = false;
+    settings.sun_shafts_enabled = false;
+    settings.ssao_enabled = false;
+    settings.lpv_enabled = false;
+    settings.taa_enabled = false;
+    settings.fxaa_enabled = false;
+    settings.bloom_enabled = false;
+    settings.vignette_enabled = false;
+    settings.film_grain_enabled = false;
+}
+
 fn resolveAutoWorldGenerator() ?usize {
+    if (build_options.shadow_test_scene) return 2;
     if (build_options.auto_world.len == 0) return null;
     if (std.ascii.eqlIgnoreCase(build_options.auto_world, "normal") or std.ascii.eqlIgnoreCase(build_options.auto_world, "overworld")) {
         return 0;
     }
     if (std.ascii.eqlIgnoreCase(build_options.auto_world, "flat")) {
         return 1;
+    }
+    if (std.ascii.eqlIgnoreCase(build_options.auto_world, "shadow-test") or std.ascii.eqlIgnoreCase(build_options.auto_world, "lighting-test")) {
+        return 2;
     }
 
     log.log.warn("Unknown -Dauto-world value '{s}', defaulting to overworld", .{build_options.auto_world});

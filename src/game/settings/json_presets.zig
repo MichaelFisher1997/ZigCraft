@@ -25,6 +25,8 @@ pub const PresetConfig = struct {
     exposure: f32,
     saturation: f32,
     volumetric_lighting_enabled: bool,
+    sun_shafts_enabled: bool = false,
+    sun_shafts_intensity: f32 = 0.45,
     volumetric_density: f32,
     volumetric_steps: u32,
     volumetric_scattering: f32,
@@ -147,6 +149,8 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.exposure = config.exposure;
     settings.saturation = config.saturation;
     settings.volumetric_lighting_enabled = config.volumetric_lighting_enabled;
+    settings.sun_shafts_enabled = config.sun_shafts_enabled;
+    settings.sun_shafts_intensity = config.sun_shafts_intensity;
     settings.volumetric_density = config.volumetric_density;
     settings.volumetric_steps = config.volumetric_steps;
     settings.volumetric_scattering = config.volumetric_scattering;
@@ -192,6 +196,8 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         settings.render_distance == preset.render_distance and
         settings.render_distance_preset == preset.render_distance_preset and
         settings.volumetric_lighting_enabled == preset.volumetric_lighting_enabled and
+        settings.sun_shafts_enabled == preset.sun_shafts_enabled and
+        std.math.approxEqAbs(f32, settings.sun_shafts_intensity, preset.sun_shafts_intensity, epsilon) and
         std.math.approxEqAbs(f32, settings.volumetric_density, preset.volumetric_density, epsilon) and
         settings.volumetric_steps == preset.volumetric_steps and
         std.math.approxEqAbs(f32, settings.volumetric_scattering, preset.volumetric_scattering, epsilon) and

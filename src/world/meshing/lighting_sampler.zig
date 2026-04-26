@@ -6,6 +6,8 @@
 const std = @import("std");
 const Chunk = @import("../chunk.zig").Chunk;
 const PackedLight = @import("../chunk.zig").PackedLight;
+const unpackEntranceDirX = @import("../chunk.zig").unpackEntranceDirX;
+const unpackEntranceDirZ = @import("../chunk.zig").unpackEntranceDirZ;
 const Face = @import("../block.zig").Face;
 const boundary = @import("boundary.zig");
 const NeighborChunks = boundary.NeighborChunks;
@@ -15,6 +17,8 @@ const SUBCHUNK_SIZE = boundary.SUBCHUNK_SIZE;
 pub const NormalizedLight = struct {
     skylight: f32,
     blocklight: [3]f32,
+    entrance_bounce: f32,
+    entrance_dir: [2]f32,
 };
 
 /// Sample light from the exposed air side of a face boundary.
@@ -29,14 +33,41 @@ pub inline fn sampleLightAtBoundary(chunk: *const Chunk, neighbors: NeighborChun
     };
 }
 
+pub inline fn sampleEntranceBounceAtBoundary(chunk: *const Chunk, neighbors: NeighborChunks, axis: Face, s: i32, u: u32, v: u32, si: u32, positive_side: bool) u4 {
+    const y_off: i32 = @intCast(si * SUBCHUNK_SIZE);
+    return switch (axis) {
+        .top => chunk.getEntranceBounceSafe(@intCast(u), if (positive_side) s else s - 1, @intCast(v)),
+        .east => boundary.getEntranceBounceCross(chunk, neighbors, if (positive_side) s else s - 1, y_off + @as(i32, @intCast(u)), @intCast(v)),
+        .south => boundary.getEntranceBounceCross(chunk, neighbors, @intCast(u), y_off + @as(i32, @intCast(v)), if (positive_side) s else s - 1),
+        else => unreachable,
+    };
+}
+
+pub inline fn sampleEntranceDirAtBoundary(chunk: *const Chunk, neighbors: NeighborChunks, axis: Face, s: i32, u: u32, v: u32, si: u32, positive_side: bool) u8 {
+    const y_off: i32 = @intCast(si * SUBCHUNK_SIZE);
+    return switch (axis) {
+        .top => chunk.getEntranceDirSafe(@intCast(u), if (positive_side) s else s - 1, @intCast(v)),
+        .east => boundary.getEntranceDirCross(chunk, neighbors, if (positive_side) s else s - 1, y_off + @as(i32, @intCast(u)), @intCast(v)),
+        .south => boundary.getEntranceDirCross(chunk, neighbors, @intCast(u), y_off + @as(i32, @intCast(v)), if (positive_side) s else s - 1),
+        else => unreachable,
+    };
+}
+
 /// Convert a PackedLight into normalized [0.0, 1.0] values for vertex attributes.
-pub inline fn normalizeLightValues(light: PackedLight) NormalizedLight {
+pub inline fn normalizeLightValues(light: PackedLight, entrance_bounce: u4, entrance_dir: u8) NormalizedLight {
+    const dir_x = unpackEntranceDirX(entrance_dir);
+    const dir_z = unpackEntranceDirZ(entrance_dir);
     return .{
         .skylight = @as(f32, @floatFromInt(light.getSkyLight())) / 15.0,
         .blocklight = .{
             @as(f32, @floatFromInt(light.getBlockLightR())) / 15.0,
             @as(f32, @floatFromInt(light.getBlockLightG())) / 15.0,
             @as(f32, @floatFromInt(light.getBlockLightB())) / 15.0,
+        },
+        .entrance_bounce = @as(f32, @floatFromInt(entrance_bounce)) / 15.0,
+        .entrance_dir = .{
+            @as(f32, @floatFromInt(dir_x)),
+            @as(f32, @floatFromInt(dir_z)),
         },
     };
 }

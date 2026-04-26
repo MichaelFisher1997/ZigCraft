@@ -52,7 +52,7 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
         .cloud_params = .{ cloud_params.cloud_height, if (cloud_params.cloud_shadows) 1.0 else 0.0, if (cloud_params.pbr_enabled) 1.0 else 0.0, if (cloud_params.simple_lighting_enabled) 1.0 else 0.0 },
         .shadow_params = .{ @floatFromInt(cloud_params.shadow.pcf_samples), if (cloud_params.shadow.cascade_blend) 1.0 else 0.0, cloud_params.shadow.strength, if (cloud_params.shadow_apply_to_beauty) 1.0 else 0.0 },
         .pbr_params = .{ @floatFromInt(cloud_params.pbr_quality), cloud_params.exposure, cloud_params.saturation, if (cloud_params.ssao_enabled) 1.0 else 0.0 },
-        .volumetric_params = .{ if (cloud_params.volumetric_enabled) 1.0 else 0.0, cloud_params.volumetric_density, @floatFromInt(cloud_params.volumetric_steps), cloud_params.volumetric_scattering },
+        .volumetric_params = .{ if (cloud_params.volumetric_enabled or cloud_params.sun_shafts_enabled) 1.0 else 0.0, if (cloud_params.sun_shafts_enabled) cloud_params.sun_shafts_intensity else cloud_params.volumetric_density, @floatFromInt(cloud_params.volumetric_steps), cloud_params.volumetric_scattering },
         .viewport_size = .{ @floatFromInt(ctx.swapchain.swapchain.extent.width), @floatFromInt(ctx.swapchain.swapchain.extent.height), if (ctx.options.debug_shadows_active) 1.0 else 0.0, @floatFromInt(ctx.options.shadow_debug_channel) },
         .lpv_params = .{ if (cloud_params.lpv_enabled) 1.0 else 0.0, cloud_params.lpv_intensity, cloud_params.lpv_cell_size, @floatFromInt(cloud_params.lpv_grid_size) },
         .lpv_origin = .{ cloud_params.lpv_origin.x, cloud_params.lpv_origin.y, cloud_params.lpv_origin.z, 0.0 },

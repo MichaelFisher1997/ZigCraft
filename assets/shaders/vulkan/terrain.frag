@@ -15,6 +15,8 @@ layout(location = 11) in float vAO;
 layout(location = 12) in vec4 vClipPosCurrent;
 layout(location = 13) in vec4 vClipPosPrev;
 layout(location = 14) in float vMaskRadius;
+layout(location = 15) in float vEntranceBounce;
+layout(location = 16) in vec2 vEntranceDir;
 
 layout(location = 0) out vec4 FragColor;
 
@@ -282,19 +284,8 @@ float manualShadowCompareLinear(vec2 uv, int layer, float compareDepth) {
     return mix(mix(s00, s10, blend.x), mix(s01, s11, blend.x), blend.y);
 }
 
-float manualShadowPcfPoisson(vec2 uv, int layer, float compareDepth) {
-    float uvTexelSize = max(shadows.shadow_params.y, 1.0 / 4096.0);
-    float shadow = manualShadowCompareLinear(uv, layer, compareDepth) * 2.0;
-    float weightSum = 2.0;
-    const float radius = 3.0;
-
-    for (int i = 0; i < 16; i++) {
-        float diskRadius = length(poissonDisk16[i]);
-        float weight = mix(1.0, 0.45, diskRadius);
-        shadow += manualShadowCompareLinear(uv + poissonDisk16[i] * uvTexelSize * radius, layer, compareDepth) * weight;
-        weightSum += weight;
-    }
-    return shadow / weightSum;
+float manualShadowPcfStable(vec2 uv, int layer, float compareDepth) {
+    return manualShadowCompareLinear(uv, layer, compareDepth);
 }
 
 float hardShadowCompare(vec2 uv, int layer, float compareDepth) {
@@ -352,7 +343,7 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     int pcfSamples = int(global.shadow_params.x);
 
     if (pcfSamples <= 1) {
-        return manualShadowPcfPoisson(projCoords.xy, layer, compareDepth);
+        return manualShadowPcfStable(projCoords.xy, layer, compareDepth);
     }
 
     if (pcfSamples <= 4) {
@@ -507,14 +498,14 @@ vec3 computeBRDF(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness) {
 }
 
 float baselineOutdoorFactor(float skyLight) {
-    return smoothstep(0.0, 0.05, clamp(skyLight, 0.0, 1.0));
+    return smoothstep(0.42, 0.92, clamp(skyLight, 0.0, 1.0));
 }
 
 float debugOutdoorFactor(float skyLight) {
-    return smoothstep(0.0, 0.45, clamp(skyLight, 0.0, 1.0));
+    return baselineOutdoorFactor(skyLight);
 }
 
-vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, vec3 blockLightIn, float ao, float shadowAmount, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
+vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float entranceBounceIn, vec2 entranceDirIn, vec3 blockLightIn, float ao, float shadowAmount, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
     float outdoor = baselineOutdoorFactor(skyLightIn);
     float diagonalDelta = abs(abs(N.x) - abs(N.z));
     float isBillboard = (abs(N.y) < 0.01 && diagonalDelta < 0.05) ? 1.0 : 0.0;
@@ -533,6 +524,12 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, vec3 b
 
     float sunAmount = clamp(global.params.w, 0.0, 1.0);
     float moonAmount = (1.0 - sunAmount) * 0.12;
+    float shadowVis = smoothstep(0.08, 0.75, clamp(shadowAmount, 0.0, 1.0));
+    float sunAccess = max(outdoor, smoothstep(0.30, 0.88, skyLightIn) * (1.0 - shadowVis));
+    float rawSkyIndirect = pow(clamp(skyLightIn, 0.0, 1.0), 1.55);
+    float aperture = smoothstep(0.08, 0.72, entranceBounceIn);
+    float caveAmbientGate = max(outdoor, max(aperture, rawSkyIndirect));
+    float skyIndirect = rawSkyIndirect * mix(0.48, 1.0, caveAmbientGate);
 
     vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.88, 0.70), 0.20);
     vec3 moonKeyTint = vec3(0.16, 0.20, 0.30);
@@ -543,24 +540,61 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, vec3 b
     vec3 skyFillTint = mix(horizonTint, zenithTint, pow(hemi, 0.7));
     vec3 twilightTint = mix(horizonTint, sunKeyTint, 0.35);
 
-    vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * (0.55 + 0.45 * outdoor) * 1.05;
+    vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * (0.08 + 0.92 * sunAccess) * 1.05;
     keyLight += moonKeyTint * moonDiffuse * moonAmount * outdoor;
 
-    float sideFill = 0.22 * outdoor * sideFactor * mix(1.0, 0.10, isBillboard);
+    float sideFill = 0.16 * outdoor * sideFactor * mix(1.0, 0.10, isBillboard);
     float twilightLift = twilight * (0.07 + 0.11 * sideFactor * mix(1.0, 0.10, isBillboard));
-    float fillStrength = 0.050 + skyLightIn * mix(0.22, 0.30, hemi) + 0.09 * outdoor + sideFill + twilightLift;
+    float ambientFloor = 0.030 * smoothstep(0.02, 0.30, caveAmbientGate);
+    float fillStrength = ambientFloor + skyIndirect * mix(0.18, 0.28, hemi) + 0.080 * outdoor + sideFill + twilightLift;
     vec3 skyFill = skyFillTint * global.lighting.x * fillStrength;
     vec3 twilightBounce = twilightTint * twilight * (0.08 + 0.15 * sideFactor) * mix(1.0, 0.16, isBillboard);
     vec3 blockFill = blockLightIn;
     float billboardKeyScale = mix(0.88, 0.68, 1.0 - sunAmount);
     float billboardFillScale = mix(0.78, 0.50, 1.0 - sunAmount);
-    float shadowVis = smoothstep(0.08, 0.75, clamp(shadowAmount, 0.0, 1.0));
     float fillShadowStrength = mix(0.24, 0.36, 1.0 - sunAmount);
     keyLight *= mix(1.0, billboardKeyScale, isBillboard);
     skyFill *= mix(1.15, billboardFillScale, isBillboard);
     skyFill += twilightBounce;
     keyLight *= (1.0 - shadowVis);
     skyFill *= (1.0 - fillShadowStrength * shadowVis * outdoor);
+    float coveredCave = 1.0 - outdoor;
+    float skylitMouth = smoothstep(0.02, 0.24, skyLightIn) * (1.0 - smoothstep(0.32, 0.58, skyLightIn));
+    float apertureRim = max(smoothstep(0.001, 0.055, skyLightIn), smoothstep(0.001, 0.075, entranceBounceIn)) * coveredCave;
+    float mouthCore = max(smoothstep(0.16, 0.62, entranceBounceIn), smoothstep(0.055, 0.22, skyLightIn)) * coveredCave;
+    float caveMouth = max(aperture, skylitMouth * 0.62) * coveredCave;
+    float mouthWallGate = max(mouthCore, max(apertureRim, max(smoothstep(0.035, 0.38, entranceBounceIn), smoothstep(0.01, 0.14, skylitMouth))));
+    float surfaceCaveMouth = caveMouth * mix(1.0, mouthWallGate, sideFactor);
+    float sunAltitude = smoothstep(0.03, 0.62, L.y) * sunAmount;
+    float nXZLen = max(length(N.xz), 0.001);
+    vec2 nXZ = N.xz / nXZLen;
+    float sunXZLen = max(length(L.xz), 0.001);
+    vec2 sunXZ = L.xz / sunXZLen;
+    vec2 entranceDir = length(entranceDirIn) > 0.05 ? normalize(entranceDirIn) : sunXZ;
+    float portalSunAlignment = max(dot(entranceDir, sunXZ), 0.0);
+    float directPortalSun = sunAltitude * smoothstep(0.08, 0.82, portalSunAlignment);
+    float facesAperture = max(dot(nXZ, entranceDir), 0.0);
+    float facesSun = max(dot(nXZ, sunXZ), 0.0);
+    float awayFromAperture = max(dot(nXZ, -entranceDir), 0.0);
+    float directionalWall = 0.18 + 0.50 * facesAperture + 0.28 * facesSun - 0.16 * awayFromAperture;
+    float bounceFacing = clamp(mix(0.30, 0.86, hemi) + sideFactor * directionalWall, 0.10, 1.25);
+    vec3 caveBounceTint = mix(vec3(0.46, 0.52, 0.60), vec3(1.0, 0.86, 0.62), directPortalSun * 0.35);
+    float portalEnergy = 0.078 + 0.085 * sunAltitude + 0.075 * directPortalSun + entranceBounceIn * 0.16;
+    vec3 caveBounce = caveBounceTint * surfaceCaveMouth * bounceFacing * portalEnergy;
+    caveBounce += caveBounceTint * surfaceCaveMouth * hemi * directPortalSun * 0.035;
+    skyFill += caveBounce;
+    float nearPortal = max(smoothstep(0.0, 0.18, entranceBounceIn), smoothstep(0.01, 0.16, skylitMouth) * 0.75) * coveredCave;
+    float surfaceNearPortal = nearPortal * mix(1.0, mouthWallGate, sideFactor);
+    vec3 neutralPortalFloor = vec3(0.088, 0.098, 0.114) * surfaceCaveMouth * (0.70 + 0.14 * hemi + 0.28 * sideFactor);
+    neutralPortalFloor += vec3(0.042, 0.047, 0.056) * surfaceNearPortal * (0.58 + 0.42 * sideFactor);
+    neutralPortalFloor += vec3(0.026, 0.030, 0.037) * apertureRim * (0.45 + 0.35 * sideFactor + 0.20 * hemi);
+    neutralPortalFloor += vec3(0.038, 0.043, 0.052) * mouthCore * (0.28 + 0.54 * sideFactor + 0.18 * hemi);
+    skyFill += neutralPortalFloor;
+    float caveExposure = max(skyIndirect, aperture * 0.74);
+    float deepCave = 1.0 - smoothstep(0.02, 0.32, caveExposure);
+    float dyingCaveLight = smoothstep(0.006, 0.18, caveExposure);
+    vec3 darkAdaptedAmbient = vec3(0.060, 0.067, 0.082) * deepCave * dyingCaveLight * (0.54 + 0.46 * hemi);
+    skyFill += darkAdaptedAmbient;
     vec3 lightColor = keyLight + skyFill + blockFill;
 
     directKeyOut = clamp(max(max(keyLight.r, keyLight.g), keyLight.b), 0.0, 1.0);
@@ -667,6 +701,62 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
     return vec4(accumulatedScattering, transmittance);
 }
 
+vec3 computeSunShafts(vec3 rayStart, vec3 rayEnd, vec3 receiverNormal, float receiverSkyLight, float receiverShadow, float dither) {
+    if (global.volumetric_params.x < 0.5 || global.shadow_params.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
+
+    vec3 rayDir = rayEnd - rayStart;
+    float totalDist = length(rayDir);
+    if (totalDist <= 0.001) return vec3(0.0);
+    rayDir /= totalDist;
+
+    vec3 L = normalize(global.sun_dir.xyz);
+    float viewScatter = pow(clamp(dot(rayDir, L) * 0.5 + 0.5, 0.0, 1.0), 2.0);
+    float caveGate = 1.0 - smoothstep(0.08, 0.55, clamp(receiverSkyLight, 0.0, 1.0));
+    float shadowGate = smoothstep(0.06, 0.70, receiverShadow);
+    float visibilityGate = caveGate * mix(0.70, 1.0, shadowGate);
+    float receiverGate = smoothstep(-0.10, 0.55, receiverNormal.y);
+    visibilityGate *= receiverGate;
+    if (visibilityGate <= 0.001) return vec3(0.0);
+
+    const int steps = 8;
+    float maxDist = min(totalDist, 80.0);
+    float stepSize = maxDist / float(steps);
+    float litAccum = 0.0;
+    float weightAccum = 0.0;
+
+    for (int i = 0; i < steps; i++) {
+        float t = (float(i) + dither) * stepSize;
+        vec3 p = rayStart + rayDir * t;
+        float depth = length(p);
+        float lit = getVolShadow(p, depth);
+        float distanceFade = 1.0 - smoothstep(0.0, maxDist, t);
+        float weight = mix(0.35, 1.0, distanceFade);
+        litAccum += lit * weight;
+        weightAccum += weight;
+    }
+
+    float viewBeam = litAccum / max(weightAccum, 0.001);
+    viewBeam *= mix(0.45, 1.0, viewScatter);
+
+    float sunSpill = 0.0;
+    const int spillSteps = 6;
+    for (int i = 0; i < spillSteps; i++) {
+        float t = (float(i) + 0.5 + dither * 0.25) * 2.25;
+        vec3 p = rayEnd + L * t;
+        float lit = getVolShadow(p, length(p));
+        float weight = 1.0 - float(i) / float(spillSteps);
+        sunSpill += lit * weight;
+    }
+    sunSpill /= 3.5;
+
+    float beam = viewBeam * 0.65 + sunSpill * 0.18;
+    beam *= visibilityGate;
+    beam *= smoothstep(0.03, 0.40, maxDist / 80.0);
+
+    vec3 warmSun = mix(global.sun_color.rgb, vec3(1.0, 0.84, 0.52), 0.35);
+    return warmSun * beam * global.volumetric_params.y * 1.35;
+}
+
 void main() {
     vec3 color;
     float outputAlpha = 1.0;
@@ -737,7 +827,7 @@ void main() {
             albedo = texColor.rgb * tint;
         }
         float beautyShadowAmount = (global.shadow_params.w > 0.5) ? shadowFactor : 0.0;
-        color = computeSimpleLighting(albedo, N, L, vSkyLight, vBlockLight, ao, beautyShadowAmount, debugDirectKey, debugSkyFill, debugBlockLight, debugOutdoor);
+        color = computeSimpleLighting(albedo, N, L, vSkyLight, vEntranceBounce, vEntranceDir, vBlockLight, ao, beautyShadowAmount, debugDirectKey, debugSkyFill, debugBlockLight, debugOutdoor);
     } else if (global.lighting.y > 0.5 && vTileID >= 0) {
         vec4 texColor = texture(uTexture, uv);
         if (texColor.a < 0.1) discard;
@@ -761,10 +851,13 @@ void main() {
         color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
     }
 
-    if (global.volumetric_params.x > 0.5 && atmosphericVisibility > 0.01) {
-        vec4 volumetric = computeVolumetric(vec3(0.0), vFragPosWorld, cloudHash(gl_FragCoord.xy + vec2(global.params.x)));
-        volumetric.rgb *= atmosphericVisibility;
-        color = color * volumetric.a + volumetric.rgb;
+    if (global.volumetric_params.x > 0.5 && global.cloud_params.w <= 0.5) {
+        float shaftDither = cloudHash(gl_FragCoord.xy + vec2(global.params.x));
+        if (atmosphericVisibility > 0.01) {
+            vec4 volumetric = computeVolumetric(vec3(0.0), vFragPosWorld, shaftDither);
+            volumetric.rgb *= atmosphericVisibility;
+            color = color * volumetric.a + volumetric.rgb;
+        }
     }
 
     if (global.params.z > 0.5) {

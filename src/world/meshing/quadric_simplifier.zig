@@ -605,7 +605,7 @@ fn collectResults(
 }
 
 fn makeVertex(x: f32, y: f32, z: f32) Vertex {
-    return Vertex.init(.{ x, y, z }, .{ 1.0, 1.0, 1.0 }, .{ 0.0, 1.0, 0.0 }, .{ 0.0, 0.0 }, 0, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0);
+    return Vertex.init(.{ x, y, z }, .{ 1.0, 1.0, 1.0 }, .{ 0.0, 1.0, 0.0 }, .{ 0.0, 0.0 }, 0, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0);
 }
 
 fn createCube(allocator: Allocator) !struct { vertices: []Vertex, indices: []u32 } {

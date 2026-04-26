@@ -170,50 +170,191 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
     };
     const bytes: [*]const u8 = @ptrCast(@alignCast(mapped_ptr));
 
-    writePPM(bytes, width, height, path, image_format);
+    return writeImage(bytes, width, height, path, image_format);
+}
 
+const ScreenshotFormat = enum {
+    png,
+    jpeg,
+    gif,
+    webp,
+};
+
+fn writeImage(data: [*]const u8, width: u32, height: u32, path: []const u8, format: c.VkFormat) bool {
+    const output_format = detectScreenshotFormat(path) orelse {
+        log.log.err("screenshot: unsupported image path '{s}' (use .png, .jpg, .jpeg, .gif, or .webp)", .{path});
+        return false;
+    };
+
+    return switch (output_format) {
+        .png => writePNG(data, width, height, path, format),
+        .jpeg, .gif, .webp => unsupportedEncoder(path, output_format),
+    };
+}
+
+fn unsupportedEncoder(path: []const u8, format: ScreenshotFormat) bool {
+    log.log.err("screenshot: {s} output is allowed but not implemented yet for '{s}'; use .png", .{ @tagName(format), path });
+    return false;
+}
+
+fn detectScreenshotFormat(path: []const u8) ?ScreenshotFormat {
+    if (hasExtension(path, ".png")) return .png;
+    if (hasExtension(path, ".jpg") or hasExtension(path, ".jpeg")) return .jpeg;
+    if (hasExtension(path, ".gif")) return .gif;
+    if (hasExtension(path, ".webp")) return .webp;
+    return null;
+}
+
+fn hasExtension(path: []const u8, ext: []const u8) bool {
+    if (path.len < ext.len) return false;
+    const tail = path[path.len - ext.len ..];
+    for (tail, ext) |a, b| {
+        if (std.ascii.toLower(a) != b) return false;
+    }
     return true;
 }
 
-fn writePPM(data: [*]const u8, width: u32, height: u32, path: []const u8, format: c.VkFormat) void {
+fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format: c.VkFormat) bool {
     if (width > 16384) {
         log.log.err("screenshot: width {} exceeds max supported 16384", .{width});
-        return;
+        return false;
     }
 
-    const file = fs.cwd().createFile(path, .{}) catch {
-        log.log.err("screenshot: failed to create file '{s}'", .{path});
-        return;
+    const allocator = std.heap.page_allocator;
+    const row_bytes: usize = @as(usize, width) * 3;
+    const raw_size: usize = (@as(usize, height) * (row_bytes + 1));
+    const raw = allocator.alloc(u8, raw_size) catch {
+        log.log.err("screenshot: failed to allocate PNG scanlines", .{});
+        return false;
     };
-    defer file.close();
-
-    var header_buf: [64]u8 = undefined;
-    const header = std.fmt.bufPrint(&header_buf, "P6\n{d} {d}\n255\n", .{ width, height }) catch return;
-    file.writeAll(header) catch return;
+    defer allocator.free(raw);
 
     const is_bgra = format == c.VK_FORMAT_B8G8R8A8_UNORM or format == c.VK_FORMAT_B8G8R8A8_SRGB;
 
-    var row_buf: [16384 * 3]u8 = undefined;
-    const row_bytes: usize = @as(usize, width) * 3;
-
     var y: u32 = 0;
     while (y < height) : (y += 1) {
+        const row_start = @as(usize, y) * (row_bytes + 1);
+        raw[row_start] = 0;
         var x: u32 = 0;
         while (x < width) : (x += 1) {
             const src_offset: usize = (@as(usize, y) * width + x) * 4;
-            const dst_offset: usize = @as(usize, x) * 3;
+            const dst_offset: usize = row_start + 1 + @as(usize, x) * 3;
             if (is_bgra) {
-                row_buf[dst_offset] = data[src_offset + 2];
-                row_buf[dst_offset + 1] = data[src_offset + 1];
-                row_buf[dst_offset + 2] = data[src_offset];
+                raw[dst_offset] = data[src_offset + 2];
+                raw[dst_offset + 1] = data[src_offset + 1];
+                raw[dst_offset + 2] = data[src_offset];
             } else {
-                row_buf[dst_offset] = data[src_offset];
-                row_buf[dst_offset + 1] = data[src_offset + 1];
-                row_buf[dst_offset + 2] = data[src_offset + 2];
+                raw[dst_offset] = data[src_offset];
+                raw[dst_offset + 1] = data[src_offset + 1];
+                raw[dst_offset + 2] = data[src_offset + 2];
             }
         }
-        file.writeAll(row_buf[0..row_bytes]) catch return;
     }
 
-    log.log.info("screenshot: saved {}x{} to '{s}'", .{ width, height, path });
+    const block_count = (raw_size + 65534) / 65535;
+    const zlib_capacity = 2 + raw_size + block_count * 5 + 4;
+    const zlib = allocator.alloc(u8, zlib_capacity) catch {
+        log.log.err("screenshot: failed to allocate PNG zlib stream", .{});
+        return false;
+    };
+    defer allocator.free(zlib);
+
+    const zlib_len = writeStoredZlib(zlib, raw);
+
+    const file = fs.cwd().createFile(path, .{}) catch {
+        log.log.err("screenshot: failed to create file '{s}'", .{path});
+        return false;
+    };
+    defer file.close();
+
+    file.writeAll(&.{ 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' }) catch return false;
+
+    var ihdr: [13]u8 = undefined;
+    std.mem.writeInt(u32, ihdr[0..4], width, .big);
+    std.mem.writeInt(u32, ihdr[4..8], height, .big);
+    ihdr[8] = 8;
+    ihdr[9] = 2;
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+
+    writePngChunk(file, "IHDR", &ihdr) catch return false;
+    writePngChunk(file, "IDAT", zlib[0..zlib_len]) catch return false;
+    writePngChunk(file, "IEND", &.{}) catch return false;
+
+    log.log.info("screenshot: saved {}x{} PNG to '{s}'", .{ width, height, path });
+    return true;
+}
+
+fn writeStoredZlib(dest: []u8, raw: []const u8) usize {
+    var out: usize = 0;
+    dest[out] = 0x78;
+    out += 1;
+    dest[out] = 0x01;
+    out += 1;
+
+    var offset: usize = 0;
+    while (offset < raw.len) {
+        const remaining = raw.len - offset;
+        const len: u16 = @intCast(@min(remaining, 65535));
+        const block_len: usize = @intCast(len);
+        const final_block = offset + block_len == raw.len;
+        dest[out] = if (final_block) 0x01 else 0x00;
+        out += 1;
+        std.mem.writeInt(u16, dest[out..][0..2], len, .little);
+        out += 2;
+        std.mem.writeInt(u16, dest[out..][0..2], ~len, .little);
+        out += 2;
+        @memcpy(dest[out..][0..block_len], raw[offset..][0..block_len]);
+        out += block_len;
+        offset += block_len;
+    }
+
+    std.mem.writeInt(u32, dest[out..][0..4], adler32(raw), .big);
+    out += 4;
+    return out;
+}
+
+fn writePngChunk(file: anytype, chunk_type: []const u8, payload: []const u8) !void {
+    std.debug.assert(chunk_type.len == 4);
+    var len_buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len_buf, @intCast(payload.len), .big);
+    try file.writeAll(&len_buf);
+    try file.writeAll(chunk_type);
+    try file.writeAll(payload);
+
+    var crc_buf: [4]u8 = undefined;
+    const crc = pngCrc(chunk_type, payload);
+    std.mem.writeInt(u32, &crc_buf, crc, .big);
+    try file.writeAll(&crc_buf);
+}
+
+fn pngCrc(chunk_type: []const u8, payload: []const u8) u32 {
+    var crc: u32 = 0xFFFF_FFFF;
+    crc = updateCrc(crc, chunk_type);
+    crc = updateCrc(crc, payload);
+    return crc ^ 0xFFFF_FFFF;
+}
+
+fn updateCrc(initial: u32, bytes: []const u8) u32 {
+    var crc = initial;
+    for (bytes) |byte| {
+        crc ^= byte;
+        var i: u8 = 0;
+        while (i < 8) : (i += 1) {
+            const mask: u32 = if ((crc & 1) != 0) 0xEDB8_8320 else 0;
+            crc = (crc >> 1) ^ mask;
+        }
+    }
+    return crc;
+}
+
+fn adler32(bytes: []const u8) u32 {
+    var a: u32 = 1;
+    var b: u32 = 0;
+    for (bytes) |byte| {
+        a = (a + byte) % 65521;
+        b = (b + a) % 65521;
+    }
+    return (b << 16) | a;
 }

@@ -77,6 +77,16 @@ pub const LODMesh = struct {
         self.ready = false;
     }
 
+    pub fn clearPendingVertices(self: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.pending_vertices) |p| {
+            self.allocator.free(p);
+            self.pending_vertices = null;
+        }
+    }
+
     /// Build mesh from simplified LOD data (heightmap-based)
     pub fn buildFromSimplifiedData(self: *LODMesh, data: *const LODSimplifiedData, _: i32, _: i32, _: *const TextureAtlas) !void {
         const cell_size = getCellSize(self.lod_level);
@@ -557,6 +567,7 @@ fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id: u1
         .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
         .packed_meta = encodeMeta(tile_id, 1.0, 1.0),
         .blocklight = 0,
+        .entrance_dir = 0,
     };
 }
 

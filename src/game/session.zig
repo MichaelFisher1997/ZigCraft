@@ -208,6 +208,15 @@ pub const GameSession = struct {
 
         var atmosphere = Atmosphere.init();
         atmosphere.setTimeOfDay(0.5);
+        if (build_options.shadow_test_scene) {
+            atmosphere.time.time_scale = 0.0;
+            player.position = if (std.ascii.eqlIgnoreCase(build_options.shadow_test_variant, "bend"))
+                Vec3.init(5.5, 65.0, -14.0)
+            else
+                Vec3.init(0.0, 65.0, -16.0);
+            player.camera.position = player.getEyePosition();
+            player.camera.setYawPitch(std.math.pi / 2.0, if (std.ascii.eqlIgnoreCase(build_options.shadow_test_variant, "bend")) -std.math.degreesToRadians(8.0) else -std.math.degreesToRadians(5.0));
+        }
 
         session.* = .{
             .allocator = allocator,

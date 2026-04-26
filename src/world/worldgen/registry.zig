@@ -5,6 +5,7 @@ const Generator = gen_interface.Generator;
 const overworld = @import("overworld_generator.zig");
 const OverworldGenerator = overworld.OverworldGenerator;
 const FlatWorldGenerator = @import("flat_world.zig").FlatWorldGenerator;
+const ShadowTestWorldGenerator = @import("shadow_test_world.zig").ShadowTestWorldGenerator;
 const deco_registry = @import("decoration_registry.zig");
 const build_options = @import("build_options");
 
@@ -26,6 +27,10 @@ pub const GENERATORS = [_]GeneratorType{
     .{
         .info = FlatWorldGenerator.INFO,
         .initFn = initFlatWorld,
+    },
+    .{
+        .info = ShadowTestWorldGenerator.INFO,
+        .initFn = initShadowTestWorld,
     },
 };
 
@@ -51,6 +56,12 @@ fn initOverworld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generato
 fn initFlatWorld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
     const gen = allocator.create(FlatWorldGenerator) catch return error.OutOfMemory;
     gen.* = FlatWorldGenerator.init(seed, allocator);
+    return gen.generator();
+}
+
+fn initShadowTestWorld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
+    const gen = allocator.create(ShadowTestWorldGenerator) catch return error.OutOfMemory;
+    gen.* = ShadowTestWorldGenerator.init(seed, allocator);
     return gen.generator();
 }
 

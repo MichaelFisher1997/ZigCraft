@@ -44,7 +44,9 @@ pub fn meshCrossBlocks(
                 if (def.render_shape != .cross) continue;
 
                 const light = chunk.getLightSafe(@intCast(x), y, @intCast(z));
-                const norm_light = lighting_sampler.normalizeLightValues(light);
+                const entrance_bounce = chunk.getEntranceBounceSafe(@intCast(x), y, @intCast(z));
+                const entrance_dir = chunk.getEntranceDirSafe(@intCast(x), y, @intCast(z));
+                const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
 
                 const tint: [3]f32 = if (def.is_tintable) blk: {
                     const biome_id = chunk.getBiome(x, z);
@@ -102,7 +104,6 @@ fn emitCrossQuad(
     const n_front = [6][3]f32{ nf_front, nf_front, nf_front, nf_front, nf_front, nf_front };
 
     for (0..6) |i| {
-        try verts.append(allocator, Vertex.init(v[i], col, n_front[i], u[i], tile_id, light.skylight, light.blocklight, ao));
+        try verts.append(allocator, Vertex.initWithEntrance(v[i], col, n_front[i], u[i], tile_id, light.skylight, light.blocklight, ao, light.entrance_bounce, light.entrance_dir));
     }
-
 }

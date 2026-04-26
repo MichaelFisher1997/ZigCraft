@@ -385,21 +385,25 @@ pub const World = struct {
         // This ensures their meshes update to show/hide faces correctly
         if (local.x == 0) {
             if (self.getChunk(cp.chunk_x - 1, cp.chunk_z)) |neighbor| {
+                try LightingComputer.computeSkylight(&neighbor.chunk, self.allocator);
                 neighbor.chunk.dirty = true;
             }
         }
         if (local.x == CHUNK_SIZE_X - 1) {
             if (self.getChunk(cp.chunk_x + 1, cp.chunk_z)) |neighbor| {
+                try LightingComputer.computeSkylight(&neighbor.chunk, self.allocator);
                 neighbor.chunk.dirty = true;
             }
         }
         if (local.z == 0) {
             if (self.getChunk(cp.chunk_x, cp.chunk_z - 1)) |neighbor| {
+                try LightingComputer.computeSkylight(&neighbor.chunk, self.allocator);
                 neighbor.chunk.dirty = true;
             }
         }
         if (local.z == CHUNK_SIZE_Z - 1) {
             if (self.getChunk(cp.chunk_x, cp.chunk_z + 1)) |neighbor| {
+                try LightingComputer.computeSkylight(&neighbor.chunk, self.allocator);
                 neighbor.chunk.dirty = true;
             }
         }

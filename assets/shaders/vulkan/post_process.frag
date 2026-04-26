@@ -165,6 +165,52 @@ vec3 applyFilmGrain(vec3 color, vec2 uv, float intensity, float time) {
     return color + grain * intensity * 0.05;
 }
 
+vec2 sunScreenUV() {
+    vec4 clip = global.view_proj * vec4(normalize(global.sun_dir.xyz) * 256.0, 1.0);
+    vec2 ndc = clip.xy / max(abs(clip.w), 0.001);
+    return ndc * vec2(0.5, -0.5) + vec2(0.5);
+}
+
+float brightMask(vec3 color) {
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float greenBias = smoothstep(0.04, 0.24, color.g - max(color.r, color.b) * 0.45);
+    return smoothstep(0.16, 0.85, luma) * (0.45 + 0.55 * greenBias);
+}
+
+vec3 computeScreenSunShafts(vec2 uv) {
+    if (global.volumetric_params.x < 0.5 || global.cloud_params.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
+
+    vec3 currentColor = texture(uHDRBuffer, uv).rgb;
+    float currentLuma = dot(currentColor, vec3(0.2126, 0.7152, 0.0722));
+    float darkReceiver = 1.0 - smoothstep(0.03, 0.32, currentLuma);
+    if (darkReceiver <= 0.001) return vec3(0.0);
+
+    vec2 sourceUV = mix(vec2(0.5), sunScreenUV(), 0.18);
+    vec2 toSource = sourceUV - uv;
+    float centerFade = 1.0 - smoothstep(0.15, 1.45, length(uv * 2.0 - 1.0));
+    float shaft = 0.0;
+    float weightSum = 0.0;
+
+    const int samples = 24;
+    for (int i = 0; i < samples; i++) {
+        float t = (float(i) + 0.5) / float(samples);
+        vec2 sampleUV = uv + toSource * t;
+        if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) continue;
+
+        vec3 sampleColor = texture(uHDRBuffer, sampleUV).rgb;
+        float weight = pow(t, 1.2);
+        shaft += brightMask(sampleColor) * weight;
+        weightSum += weight;
+    }
+
+    shaft /= max(weightSum, 0.001);
+    shaft *= centerFade * darkReceiver;
+    shaft = pow(clamp(shaft, 0.0, 1.0), 1.15);
+
+    vec3 warmSun = mix(global.sun_color.rgb, vec3(1.0, 0.84, 0.52), 0.40);
+    return warmSun * shaft * global.volumetric_params.y * 1.15;
+}
+
 void main() {
     vec3 color = texture(uHDRBuffer, inUV).rgb;
 

@@ -39,6 +39,8 @@ const FaceKey = struct {
     block: BlockType,
     side: bool,
     light: PackedLight,
+    entrance_bounce: u4,
+    entrance_dir: u8,
     color: [3]f32,
 };
 
@@ -87,12 +89,16 @@ pub fn meshSlice(
 
             if (boundary.isEmittingSubchunk(axis, s - 1, u, v, y_min, y_max) and b1_emits and !b1_cross and !b2_def.occludes(b1_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
+                const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
+                const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s - 1, u, v, b1);
-                mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .color = color };
+                mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
             } else if (boundary.isEmittingSubchunk(axis, s, u, v, y_min, y_max) and b2_emits and !b2_cross and !b1_def.occludes(b2_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
+                const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
+                const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s, u, v, b2);
-                mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .color = color };
+                mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
             }
         }
     }
@@ -116,7 +122,8 @@ pub fn meshSlice(
                 const r_diff = @as(i8, @intCast(nxt.light.getBlockLightR())) - @as(i8, @intCast(k.light.getBlockLightR()));
                 const g_diff = @as(i8, @intCast(nxt.light.getBlockLightG())) - @as(i8, @intCast(k.light.getBlockLightG()));
                 const b_diff = @as(i8, @intCast(nxt.light.getBlockLightB())) - @as(i8, @intCast(k.light.getBlockLightB()));
-                if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE) break;
+                const bounce_diff = @as(i8, @intCast(nxt.entrance_bounce)) - @as(i8, @intCast(k.entrance_bounce));
+                if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or nxt.entrance_dir != k.entrance_dir) break;
 
                 const diff_r = @abs(nxt.color[0] - k.color[0]);
                 const diff_g = @abs(nxt.color[1] - k.color[1]);
@@ -136,7 +143,8 @@ pub fn meshSlice(
                     const r_diff = @as(i8, @intCast(nxt.light.getBlockLightR())) - @as(i8, @intCast(k.light.getBlockLightR()));
                     const g_diff = @as(i8, @intCast(nxt.light.getBlockLightG())) - @as(i8, @intCast(k.light.getBlockLightG()));
                     const b_diff = @as(i8, @intCast(nxt.light.getBlockLightB())) - @as(i8, @intCast(k.light.getBlockLightB()));
-                    if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE) break :outer;
+                    const bounce_diff = @as(i8, @intCast(nxt.entrance_bounce)) - @as(i8, @intCast(k.entrance_bounce));
+                    if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(b_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or nxt.entrance_dir != k.entrance_dir) break :outer;
 
                     const diff_r = @abs(nxt.color[0] - k.color[0]);
                     const diff_g = @abs(nxt.color[1] - k.color[1]);
@@ -152,7 +160,7 @@ pub fn meshSlice(
                 .cutout => cutout_list,
                 else => solid_list,
             };
-            try addGreedyFace(allocator, target, axis, s, su, sv, width, height, k_def, k.side, si, k.light, k.color, chunk, neighbors, atlas);
+            try addGreedyFace(allocator, target, axis, s, su, sv, width, height, k_def, k.side, si, k.light, k.entrance_bounce, k.entrance_dir, k.color, chunk, neighbors, atlas);
 
             var dy: u32 = 0;
             while (dy < height) : (dy += 1) {
@@ -181,6 +189,8 @@ fn addGreedyFace(
     forward: bool,
     si: u32,
     light: PackedLight,
+    entrance_bounce: u4,
+    entrance_dir: u8,
     tint: [3]f32,
     chunk: *const Chunk,
     neighbors: NeighborChunks,
@@ -273,10 +283,10 @@ fn addGreedyFace(
     }
 
     // Normalize light values
-    const norm_light = lighting_sampler.normalizeLightValues(light);
+    const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
 
     for (idxs) |i| {
-        try verts.append(allocator, Vertex.init(
+        try verts.append(allocator, Vertex.initWithEntrance(
             p[i],
             col,
             nf,
@@ -285,6 +295,8 @@ fn addGreedyFace(
             norm_light.skylight,
             norm_light.blocklight,
             ao[i],
+            norm_light.entrance_bounce,
+            norm_light.entrance_dir,
         ));
     }
 }

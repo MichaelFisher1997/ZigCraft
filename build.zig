@@ -26,8 +26,20 @@ pub fn build(b: *std.Build) void {
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
 
-    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PPM screenshot after N frames and exit (menu mode)") orelse "";
+    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
     options.addOption([]const u8, "screenshot_path", screenshot_path);
+
+    const screenshot_frame = b.option(u32, "screenshot-frame", "Frame number to capture when screenshot-path is set") orelse 120;
+    options.addOption(u32, "screenshot_frame", screenshot_frame);
+
+    const screenshot_delay_seconds = b.option(u32, "screenshot-delay-seconds", "Seconds to wait after screenshot target is ready before capture") orelse 0;
+    options.addOption(u32, "screenshot_delay_seconds", screenshot_delay_seconds);
+
+    const shadow_test_scene = b.option(bool, "shadow-test-scene", "Launch the deterministic shadow/cave lighting test scene") orelse false;
+    options.addOption(bool, "shadow_test_scene", shadow_test_scene);
+
+    const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
+    options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
 
     const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
     options.addOption(bool, "benchmark", benchmark);
@@ -116,6 +128,10 @@ pub fn build(b: *std.Build) void {
     benchmark_options.addOption(u32, "startup_diagnostic_seconds", 0);
     benchmark_options.addOption(bool, "skip_present", true);
     benchmark_options.addOption([]const u8, "screenshot_path", "");
+    benchmark_options.addOption(u32, "screenshot_frame", 120);
+    benchmark_options.addOption(u32, "screenshot_delay_seconds", 0);
+    benchmark_options.addOption(bool, "shadow_test_scene", false);
+    benchmark_options.addOption([]const u8, "shadow_test_variant", "dug-cave");
     benchmark_options.addOption(bool, "benchmark", true);
     benchmark_options.addOption([]const u8, "benchmark_preset", benchmark_preset);
     benchmark_options.addOption(u32, "benchmark_duration", benchmark_duration);

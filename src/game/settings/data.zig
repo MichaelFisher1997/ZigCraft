@@ -126,6 +126,8 @@ pub const Settings = struct {
 
     // Volumetric Lighting Settings (Phase 4)
     volumetric_lighting_enabled: bool = true,
+    sun_shafts_enabled: bool = false,
+    sun_shafts_intensity: f32 = 0.45,
     volumetric_density: f32 = 0.05, // Fog density
     volumetric_steps: u32 = 16, // Raymarching steps
     volumetric_scattering: f32 = 0.8, // Mie scattering anisotropy (G)

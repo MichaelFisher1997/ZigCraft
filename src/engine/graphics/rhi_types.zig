@@ -99,6 +99,7 @@ pub const Vertex = extern struct {
     uv: [2]f16,
     packed_meta: u32,
     blocklight: u32,
+    entrance_dir: u32,
 
     pub const LOD_TILE_ID: u16 = 0xFFFF;
 
@@ -111,6 +112,7 @@ pub const Vertex = extern struct {
         skylight: f32,
         blocklight: [3]f32,
         ao: f32,
+        entrance_bounce: f32,
     ) Vertex {
         return .{
             .pos = pos,
@@ -118,7 +120,31 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(tile_id, skylight, ao),
-            .blocklight = encodeBlocklight(blocklight),
+            .blocklight = encodeBlocklight(blocklight, entrance_bounce),
+            .entrance_dir = encodeEntranceDirection(.{ 0.0, 0.0 }),
+        };
+    }
+
+    pub fn initWithEntrance(
+        pos: [3]f32,
+        color: [3]f32,
+        normal: [3]f32,
+        uv: [2]f32,
+        tile_id: u16,
+        skylight: f32,
+        blocklight: [3]f32,
+        ao: f32,
+        entrance_bounce: f32,
+        entrance_dir: [2]f32,
+    ) Vertex {
+        return .{
+            .pos = pos,
+            .color = encodeColor(color),
+            .normal = encodeNormal(normal),
+            .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
+            .packed_meta = encodeMeta(tile_id, skylight, ao),
+            .blocklight = encodeBlocklight(blocklight, entrance_bounce),
+            .entrance_dir = encodeEntranceDirection(entrance_dir),
         };
     }
 
@@ -134,7 +160,8 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(LOD_TILE_ID, 1.0, 1.0),
-            .blocklight = 0,
+            .blocklight = encodeBlocklight(.{ 0.0, 0.0, 0.0 }, 0.0),
+            .entrance_dir = encodeEntranceDirection(.{ 0.0, 0.0 }),
         };
     }
 };
@@ -181,13 +208,22 @@ pub fn encodeMeta(tile_id: u16, skylight: f32, ao: f32) u32 {
     return @as(u32, tile_id) | (@as(u32, sl) << 16) | (@as(u32, ao_u8) << 24);
 }
 
-/// Encode RGB blocklight float values to RGB8 u32 (upper 8 bits unused).
+/// Encode RGB blocklight plus entrance bounce float values to RGBA8 u32.
 /// Precision: 1/255 per channel. Sufficient for per-vertex lighting where values blend smoothly.
-pub fn encodeBlocklight(bl: [3]f32) u32 {
+pub fn encodeBlocklight(bl: [3]f32, entrance_bounce: f32) u32 {
     const r: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[0])) * 255.0));
     const g: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[1])) * 255.0));
     const b: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[2])) * 255.0));
-    return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16);
+    const a: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, entrance_bounce)) * 255.0));
+    return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16) | (@as(u32, a) << 24);
+}
+
+/// Encode horizontal entrance direction to two UNORM8 channels in a u32.
+/// Decoded in shaders back to [-1, 1]. Remaining bytes are reserved.
+pub fn encodeEntranceDirection(dir: [2]f32) u32 {
+    const x: u8 = @intFromFloat(@round((@max(-1.0, @min(1.0, dir[0])) * 0.5 + 0.5) * 255.0));
+    const z: u8 = @intFromFloat(@round((@max(-1.0, @min(1.0, dir[1])) * 0.5 + 0.5) * 255.0));
+    return @as(u32, x) | (@as(u32, z) << 8);
 }
 
 pub const DrawMode = enum {
@@ -288,6 +324,8 @@ pub const CloudParams = struct {
     cloud_shadows: bool = true,
     pbr_quality: u8 = 2,
     volumetric_enabled: bool = true,
+    sun_shafts_enabled: bool = false,
+    sun_shafts_intensity: f32 = 0.0,
     volumetric_density: f32 = 0.05,
     volumetric_steps: u32 = 16,
     volumetric_scattering: f32 = 0.8,

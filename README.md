@@ -117,6 +117,7 @@ To bypass in emergencies: `git push --no-verify`
 - **Auto-open a world**: `nix develop --command zig build run -Dauto-world=normal`
 - **Startup diagnostic**: `nix develop --command zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
 - **Chunk-only debug mode**: `nix develop --command zig build run -Dchunk-debug-mode -Dauto-world=normal`
+- **Shadow/cave lighting capture**: `./scripts/capture_shadow_test.sh screenshots/shadow-test.png`
 
 `-Dchunk-debug-mode` strips the overworld down to basic chunks for isolation work:
 - LOD off by default
@@ -146,6 +147,8 @@ nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,
 # Headless startup comparison after 5 seconds
 nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,water,caves -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present
 ```
+
+The shadow/cave lighting capture launches a deterministic low-block test scene, applies a small shadow-focused graphics preset, waits 5 seconds after the target is ready, captures a PNG, and exits. It defaults to a `dug-cave` variant that matches a player-dug dirt/grass cave mouth. Use `ZIGCRAFT_SHADOW_TEST_VARIANT=bend ./scripts/capture_shadow_test.sh screenshots/shadow-bend.png` to check the older bend/deep-black regression. Override the wait with `ZIGCRAFT_SCREENSHOT_DELAY_SECONDS=8 ./scripts/capture_shadow_test.sh screenshots/shadow-test.png`. Screenshot paths are restricted to image extensions from `image/png`, `image/jpeg`, `image/gif`, and `image/webp`; the built-in encoder currently writes PNG.
 
 ### 🧪 Running Tests
 - **All Tests**: `nix develop --command zig build test`
