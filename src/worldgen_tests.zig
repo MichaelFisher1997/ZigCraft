@@ -29,7 +29,9 @@ test "WorldGen same seed produces identical blocks at origin" {
     const allocator = testing.allocator;
 
     var gen1 = OverworldGenerator.init(12345, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen1.deinit();
     var gen2 = OverworldGenerator.init(12345, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen2.deinit();
 
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
@@ -44,7 +46,9 @@ test "WorldGen same seed produces identical biomes at origin" {
     const allocator = testing.allocator;
 
     var gen1 = OverworldGenerator.init(12345, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen1.deinit();
     var gen2 = OverworldGenerator.init(12345, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen2.deinit();
 
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
@@ -61,6 +65,7 @@ test "WorldGen same seed produces identical blocks at different positions" {
     const seed: u64 = 54321;
 
     var gen1 = OverworldGenerator.init(seed, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen1.deinit();
     var chunk1a = Chunk.init(0, 0);
     var chunk1b = Chunk.init(1, 0);
     var chunk1c = Chunk.init(0, 1);
@@ -70,6 +75,7 @@ test "WorldGen same seed produces identical blocks at different positions" {
     gen1.generate(&chunk1c, null);
 
     var gen2 = OverworldGenerator.init(seed, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen2.deinit();
     var chunk2a = Chunk.init(0, 0);
     var chunk2b = Chunk.init(1, 0);
     var chunk2c = Chunk.init(0, 1);
@@ -90,7 +96,9 @@ test "WorldGen different seeds produce different blocks" {
     const allocator = testing.allocator;
 
     var gen1 = OverworldGenerator.init(11111, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen1.deinit();
     var gen2 = OverworldGenerator.init(99999, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen2.deinit();
 
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
@@ -106,7 +114,9 @@ test "WorldGen different seeds produce different biomes" {
     const allocator = testing.allocator;
 
     var gen1 = OverworldGenerator.init(11111, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen1.deinit();
     var gen2 = OverworldGenerator.init(99999, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen2.deinit();
 
     const test_locations = [_][2]i32{
         .{ -300, 200 },
@@ -142,6 +152,7 @@ test "WorldGen determinism across multiple chunks with same seed" {
         OverworldGenerator.init(seed, allocator, deco_registry.StandardDecorationProvider.provider()),
         OverworldGenerator.init(seed, allocator, deco_registry.StandardDecorationProvider.provider()),
     };
+    defer for (&gens) |*gen| gen.deinit();
 
     var chunks1 = [_]Chunk{
         Chunk.init(0, 0),
@@ -173,6 +184,7 @@ test "WorldGen golden output for known seed at origin" {
     const allocator = testing.allocator;
 
     var gen = OverworldGenerator.init(42, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen.deinit();
     var chunk = Chunk.init(0, 0);
 
     gen.generate(&chunk, null);
@@ -195,6 +207,7 @@ test "WorldGen stable chunk fingerprints for known seed" {
     const allocator = testing.allocator;
     const seed: u64 = 424242;
     var gen = OverworldGenerator.init(seed, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen.deinit();
 
     const positions = [_][2]i32{
         .{ 0, 0 },
@@ -219,6 +232,7 @@ test "WorldGen stable chunk fingerprints for known seed" {
 test "WorldGen populates heightmap and biomes" {
     const allocator = testing.allocator;
     var gen = OverworldGenerator.init(42, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen.deinit();
     var chunk = Chunk.init(0, 0);
 
     gen.generate(&chunk, null);
@@ -237,8 +251,8 @@ test "WorldGen populates heightmap and biomes" {
 
 test "Decoration placement" {
     const allocator = testing.allocator;
-    const gen = OverworldGenerator.init(42, allocator, deco_registry.StandardDecorationProvider.provider());
-    _ = gen;
+    var gen = OverworldGenerator.init(42, allocator, deco_registry.StandardDecorationProvider.provider());
+    defer gen.deinit();
 }
 
 test "OverworldGenerator with mock decoration provider" {
@@ -269,6 +283,7 @@ test "OverworldGenerator with mock decoration provider" {
 
     var called_count: usize = 0;
     var gen = OverworldGenerator.init(42, allocator, MockProvider.provider(&called_count));
+    defer gen.deinit();
 
     var chunk = try allocator.create(Chunk);
     defer allocator.destroy(chunk);

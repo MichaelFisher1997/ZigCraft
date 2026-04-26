@@ -469,8 +469,3 @@ test "TextureAtlas mapping correctness" {
     const stone_tiles = atlas.getTilesForBlock(@intFromEnum(BlockType.stone));
     try testing.expectEqual(@as(u16, 5), stone_tiles.top);
 }
-
-test "TextureAtlas initialization and fallback" {
-    // This test ensures init runs without crashing even with no pack manager
-    // It will use fallback colors for all textures
-}

@@ -90,4 +90,5 @@ test {
     _ = @import("world/world_coord_tests.zig");
     _ = @import("world/world_block_fill_tests.zig");
     _ = @import("world/world_interface_vtable_tests.zig");
+    _ = @import("world/world_mutation.zig");
 }

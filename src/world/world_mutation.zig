@@ -57,14 +57,12 @@ pub const WorldMutationCoordinator = struct {
         if (self.gpu_mesher_active) {
             if (self.gpu_block_buffer) |buf| {
                 buf.updateBlock(cp.chunk_x, cp.chunk_z, local.x, @intCast(world_y), local.z, @intFromEnum(block)) catch |err| {
-                    log.log.debug("GPU block buffer update failed: {}", .{err});
+                    log.log.warn("GPU block buffer update failed: {}", .{err});
                 };
             }
         }
 
-        LightingComputer.computeSkylight(&data.chunk, self.allocator) catch |err| {
-            log.log.debug("Skylight recompute failed for chunk ({}, {}): {}", .{ cp.chunk_x, cp.chunk_z, err });
-        };
+        try LightingComputer.computeSkylight(&data.chunk, self.allocator);
 
         self.invalidateNeighbors(cp.chunk_x, cp.chunk_z, local.x, local.z);
 
@@ -101,3 +99,74 @@ pub const WorldMutationCoordinator = struct {
         }
     }
 };
+
+test "WorldMutationCoordinator places block within bounds" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
+    const result = (try mutation.applyBlockMutation(1, 64, 2, .stone)).?;
+
+    try testing.expectEqual(@as(i32, 0), result.chunk_x);
+    try testing.expectEqual(@as(i32, 0), result.chunk_z);
+    try testing.expectEqual(@as(u32, 1), result.local_x);
+    try testing.expectEqual(@as(u32, 64), result.local_y);
+    try testing.expectEqual(@as(u32, 2), result.local_z);
+    try testing.expectEqual(BlockType.stone, result.chunk_data.chunk.getBlock(1, 64, 2));
+}
+
+test "WorldMutationCoordinator ignores out-of-bounds y" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
+    try testing.expect((try mutation.applyBlockMutation(1, -1, 2, .stone)) == null);
+    try testing.expect((try mutation.applyBlockMutation(1, 256, 2, .stone)) == null);
+    try testing.expectEqual(@as(usize, 0), storage.count());
+}
+
+test "WorldMutationCoordinator marks boundary neighbors dirty" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const center = try storage.getOrCreate(0, 0);
+    const west = try storage.getOrCreate(-1, 0);
+    const east = try storage.getOrCreate(1, 0);
+    const north = try storage.getOrCreate(0, -1);
+    const south = try storage.getOrCreate(0, 1);
+    center.chunk.dirty = false;
+    west.chunk.dirty = false;
+    east.chunk.dirty = false;
+    north.chunk.dirty = false;
+    south.chunk.dirty = false;
+
+    var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
+    _ = try mutation.applyBlockMutation(0, 64, 0, .stone);
+    try testing.expect(west.chunk.dirty);
+    try testing.expect(north.chunk.dirty);
+    try testing.expect(!east.chunk.dirty);
+    try testing.expect(!south.chunk.dirty);
+
+    west.chunk.dirty = false;
+    north.chunk.dirty = false;
+    _ = try mutation.applyBlockMutation(CHUNK_SIZE_X - 1, 64, CHUNK_SIZE_Z - 1, .dirt);
+    try testing.expect(east.chunk.dirty);
+    try testing.expect(south.chunk.dirty);
+}
+
+test "WorldMutationCoordinator propagates allocation failure" {
+    const testing = std.testing;
+
+    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    var storage = ChunkStorage.init(failing.allocator());
+    defer storage.deinitWithoutRHI();
+
+    var mutation = WorldMutationCoordinator.init(&storage, failing.allocator(), null, false);
+    try testing.expectError(error.OutOfMemory, mutation.applyBlockMutation(1, 64, 2, .stone));
+}
