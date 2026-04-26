@@ -132,3 +132,43 @@ pub const Generator = struct {
         self.vtable.deinit(self.ptr, allocator);
     }
 };
+
+pub const IChunkGenerator = struct {
+    generator: Generator,
+
+    pub fn generate(self: IChunkGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
+        self.generator.generate(chunk, stop_flag);
+    }
+};
+
+pub const ILODHeightmapGenerator = struct {
+    generator: Generator,
+
+    pub fn generateHeightmapOnly(self: ILODHeightmapGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
+        self.generator.generateHeightmapOnly(data, region_x, region_z, lod_level);
+    }
+};
+
+pub const IGeneratorInfoProvider = struct {
+    generator: Generator,
+
+    pub fn getSeed(self: IGeneratorInfoProvider) u64 {
+        return self.generator.getSeed();
+    }
+
+    pub fn getRegionInfo(self: IGeneratorInfoProvider, world_x: i32, world_z: i32) RegionInfo {
+        return self.generator.getRegionInfo(world_x, world_z);
+    }
+
+    pub fn getColumnInfo(self: IGeneratorInfoProvider, wx: f32, wz: f32) ColumnInfo {
+        return self.generator.getColumnInfo(wx, wz);
+    }
+};
+
+pub const ICacheRecenterable = struct {
+    generator: Generator,
+
+    pub fn maybeRecenterCache(self: ICacheRecenterable, player_x: i32, player_z: i32) bool {
+        return self.generator.maybeRecenterCache(player_x, player_z);
+    }
+};

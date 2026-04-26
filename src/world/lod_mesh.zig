@@ -20,9 +20,11 @@ const BiomeId = @import("worldgen/biome.zig").BiomeId;
 const biome_mod = @import("worldgen/biome.zig");
 const BlockType = @import("block.zig").BlockType;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
+const rhi_pkg = @import("../engine/graphics/rhi.zig");
 const rhi_types = @import("../engine/graphics/rhi_types.zig");
 const Vertex = rhi_types.Vertex;
 const BufferHandle = rhi_types.BufferHandle;
+const BufferUsage = rhi_types.BufferUsage;
 const RhiError = rhi_types.RhiError;
 const encodeColor = rhi_types.encodeColor;
 const encodeNormal = rhi_types.encodeNormal;
@@ -30,6 +32,105 @@ const encodeMeta = rhi_types.encodeMeta;
 const encodeBlocklight = rhi_types.encodeBlocklight;
 const QuadricSimplifier = @import("meshing/quadric_simplifier.zig").QuadricSimplifier;
 const log = @import("../engine/core/log.zig");
+const lod_seam = @import("lod_seam.zig");
+
+pub const EdgeDir = lod_seam.EdgeDir;
+pub const SeamConfig = lod_seam.SeamConfig;
+pub const stitchEdge = lod_seam.stitchEdge;
+
+pub const LODMeshResources = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        createBuffer: *const fn (ptr: *anyopaque, size: usize, usage: BufferUsage) RhiError!BufferHandle,
+        uploadBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle, data: []const u8) RhiError!void,
+        destroyBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+    };
+
+    pub fn fromRHI(rhi: *rhi_pkg.RHI) LODMeshResources {
+        return .{ .ptr = rhi, .vtable = &rhi_vtable };
+    }
+
+    pub fn fromProvider(comptime Provider: type, provider: *Provider) LODMeshResources {
+        const Adapter = struct {
+            fn createBuffer(ptr: *anyopaque, size: usize, usage: BufferUsage) RhiError!BufferHandle {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    return typed.resourceManager().createBuffer(size, usage);
+                }
+                return typed.createBuffer(size, usage);
+            }
+
+            fn uploadBuffer(ptr: *anyopaque, handle: BufferHandle, data: []const u8) RhiError!void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    return typed.resourceManager().uploadBuffer(handle, data);
+                }
+                return typed.uploadBuffer(handle, data);
+            }
+
+            fn destroyBuffer(ptr: *anyopaque, handle: BufferHandle) void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    typed.resourceManager().destroyBuffer(handle);
+                    return;
+                }
+                typed.destroyBuffer(handle);
+            }
+
+            const vtable = VTable{
+                .createBuffer = @This().createBuffer,
+                .uploadBuffer = @This().uploadBuffer,
+                .destroyBuffer = @This().destroyBuffer,
+            };
+        };
+
+        return .{ .ptr = provider, .vtable = &Adapter.vtable };
+    }
+
+    pub fn createBuffer(self: LODMeshResources, size: usize, usage: BufferUsage) RhiError!BufferHandle {
+        return self.vtable.createBuffer(self.ptr, size, usage);
+    }
+
+    pub fn uploadBuffer(self: LODMeshResources, handle: BufferHandle, data: []const u8) RhiError!void {
+        return self.vtable.uploadBuffer(self.ptr, handle, data);
+    }
+
+    pub fn destroyBuffer(self: LODMeshResources, handle: BufferHandle) void {
+        self.vtable.destroyBuffer(self.ptr, handle);
+    }
+
+    const rhi_vtable = VTable{
+        .createBuffer = struct {
+            fn f(ptr: *anyopaque, size: usize, usage: BufferUsage) RhiError!BufferHandle {
+                const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
+                return rhi.resourceManager().createBuffer(size, usage);
+            }
+        }.f,
+        .uploadBuffer = struct {
+            fn f(ptr: *anyopaque, handle: BufferHandle, data: []const u8) RhiError!void {
+                const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
+                return rhi.resourceManager().uploadBuffer(handle, data);
+            }
+        }.f,
+        .destroyBuffer = struct {
+            fn f(ptr: *anyopaque, handle: BufferHandle) void {
+                const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
+                rhi.resourceManager().destroyBuffer(handle);
+            }
+        }.f,
+    };
+};
+
+pub const LODMeshRenderContext = struct {
+    ptr: *anyopaque,
+    draw_fn: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, mode: rhi_types.DrawMode) void,
+
+    pub fn draw(self: LODMeshRenderContext, handle: BufferHandle, count: u32, mode: rhi_types.DrawMode) void {
+        self.draw_fn(self.ptr, handle, count, mode);
+    }
+};
 
 /// Size of each LOD mesh grid cell in blocks
 pub fn getCellSize(lod: LODLevel) u32 {
@@ -62,7 +163,7 @@ pub const LODMesh = struct {
         };
     }
 
-    pub fn deinit(self: *LODMesh, resources: anytype) void {
+    pub fn deinit(self: *LODMesh, resources: LODMeshResources) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -307,7 +408,7 @@ pub const LODMesh = struct {
     }
 
     /// Upload pending vertices to GPU
-    pub fn upload(self: *LODMesh, resources: anytype) RhiError!void {
+    pub fn upload(self: *LODMesh, resources: LODMeshResources) RhiError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
@@ -344,7 +445,7 @@ pub const LODMesh = struct {
     }
 
     /// Draw the LOD mesh
-    pub fn draw(self: *const LODMesh, render_ctx: anytype) void {
+    pub fn draw(self: *const LODMesh, render_ctx: LODMeshRenderContext) void {
         if (!self.ready or self.buffer_handle == 0 or self.vertex_count == 0) return;
         render_ctx.draw(self.buffer_handle, self.vertex_count, .triangles);
     }
@@ -857,13 +958,27 @@ pub const LODMeshBuilder = struct {
 };
 
 // Tests
+fn testResources() LODMeshResources {
+    const Mock = struct {
+        fn createBuffer(_: *anyopaque, _: usize, _: BufferUsage) RhiError!BufferHandle {
+            return 1;
+        }
+        fn uploadBuffer(_: *anyopaque, _: BufferHandle, _: []const u8) RhiError!void {}
+        fn destroyBuffer(_: *anyopaque, _: BufferHandle) void {}
+
+        const vtable = LODMeshResources.VTable{
+            .createBuffer = createBuffer,
+            .uploadBuffer = uploadBuffer,
+            .destroyBuffer = destroyBuffer,
+        };
+    };
+    return .{ .ptr = undefined, .vtable = &Mock.vtable };
+}
+
 test "LODMesh initialization" {
     const allocator = std.testing.allocator;
     var mesh = LODMesh.init(allocator, .lod1);
-    const MockRHI = struct {
-        pub fn destroyBuffer(_: @This(), _: BufferHandle) void {}
-    };
-    defer mesh.deinit(MockRHI{});
+    defer mesh.deinit(testResources());
 
     try std.testing.expectEqual(LODLevel.lod1, mesh.lod_level);
     try std.testing.expectEqual(@as(u32, 0), mesh.vertex_count);
@@ -941,10 +1056,7 @@ test "buildFromSimplifiedData marks vertices as LOD" {
     }
 
     var mesh = LODMesh.init(allocator, .lod3);
-    const MockRHI = struct {
-        pub fn destroyBuffer(_: @This(), _: BufferHandle) void {}
-    };
-    defer mesh.deinit(MockRHI{});
+    defer mesh.deinit(testResources());
 
     try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
 
@@ -977,181 +1089,11 @@ test "buildFromHeightmap marks vertices as LOD" {
     const biomes = [_]BiomeId{.plains} ** count;
 
     var mesh = LODMesh.init(allocator, .lod1);
-    const MockRHI = struct {
-        pub fn destroyBuffer(_: @This(), _: BufferHandle) void {}
-    };
-    defer mesh.deinit(MockRHI{});
+    defer mesh.deinit(testResources());
 
     try mesh.buildFromHeightmap(&heightmap, &biomes, width, 0, 0, &atlas);
 
     const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
     try std.testing.expect(verts.len > 0);
     for (verts) |v| try std.testing.expectEqual(@as(u16, Vertex.LOD_TILE_ID), @as(u16, @intCast(v.packed_meta & 0xFFFF)));
-}
-
-// ============================================================================
-// LOD Transition Seam Handling (Issue #114)
-// ============================================================================
-
-/// Edge direction for seam stitching
-pub const EdgeDir = enum {
-    north, // -Z
-    south, // +Z
-    east, // +X
-    west, // -X
-};
-
-/// Seam stitching configuration
-pub const SeamConfig = struct {
-    /// Enable seam stitching
-    enabled: bool = true,
-    /// Number of blend cells at the edge
-    blend_cells: u32 = 2,
-    /// Height interpolation factor (0 = this LOD, 1 = neighbor LOD)
-    blend_factor: f32 = 0.5,
-};
-
-/// Stitch LOD mesh edge to match neighbor LOD level.
-/// This adjusts edge vertices to blend between LOD levels and prevent gaps.
-pub fn stitchEdge(
-    mesh_heightmap: []f32,
-    mesh_width: u32,
-    neighbor_heightmap: []const f32,
-    neighbor_width: u32,
-    edge: EdgeDir,
-    this_lod: LODLevel,
-    neighbor_lod: LODLevel,
-    config: SeamConfig,
-) void {
-    if (!config.enabled) return;
-
-    const this_scale = this_lod.scale();
-    const neighbor_scale = neighbor_lod.scale();
-
-    // Only stitch if neighbor is coarser (higher LOD number)
-    if (neighbor_scale <= this_scale) return;
-
-    const scale_ratio = neighbor_scale / this_scale;
-    const blend_cells = @min(config.blend_cells, mesh_width / 4);
-
-    switch (edge) {
-        .north => {
-            // Blend along Z=0 edge
-            var x: u32 = 0;
-            while (x < mesh_width) : (x += 1) {
-                var z: u32 = 0;
-                while (z < blend_cells) : (z += 1) {
-                    const idx = x + z * mesh_width;
-                    if (idx >= mesh_heightmap.len) continue;
-
-                    // Sample neighbor height (lower resolution)
-                    const nx = x / scale_ratio;
-                    const nz: u32 = 0; // Edge of neighbor
-                    const nidx = @min(nx + nz * neighbor_width, neighbor_width * neighbor_width - 1);
-                    if (nidx >= neighbor_heightmap.len) continue;
-
-                    const this_h = mesh_heightmap[idx];
-                    const neighbor_h = neighbor_heightmap[nidx];
-
-                    // Interpolate based on distance from edge
-                    const t = @as(f32, @floatFromInt(z)) / @as(f32, @floatFromInt(blend_cells));
-                    const blend = 1.0 - t; // 1.0 at edge, 0.0 at blend distance
-                    mesh_heightmap[idx] = this_h * (1.0 - blend * config.blend_factor) +
-                        neighbor_h * blend * config.blend_factor;
-                }
-            }
-        },
-        .south => {
-            var x: u32 = 0;
-            while (x < mesh_width) : (x += 1) {
-                var z: u32 = 0;
-                while (z < blend_cells) : (z += 1) {
-                    const actual_z = mesh_width - 1 - z;
-                    const idx = x + actual_z * mesh_width;
-                    if (idx >= mesh_heightmap.len) continue;
-
-                    const nx = x / scale_ratio;
-                    const nz = neighbor_width - 1;
-                    const nidx = @min(nx + nz * neighbor_width, neighbor_width * neighbor_width - 1);
-                    if (nidx >= neighbor_heightmap.len) continue;
-
-                    const this_h = mesh_heightmap[idx];
-                    const neighbor_h = neighbor_heightmap[nidx];
-
-                    const t = @as(f32, @floatFromInt(z)) / @as(f32, @floatFromInt(blend_cells));
-                    const blend = 1.0 - t;
-                    mesh_heightmap[idx] = this_h * (1.0 - blend * config.blend_factor) +
-                        neighbor_h * blend * config.blend_factor;
-                }
-            }
-        },
-        .west => {
-            var z: u32 = 0;
-            while (z < mesh_width) : (z += 1) {
-                var x: u32 = 0;
-                while (x < blend_cells) : (x += 1) {
-                    const idx = x + z * mesh_width;
-                    if (idx >= mesh_heightmap.len) continue;
-
-                    const nx: u32 = 0;
-                    const nz = z / scale_ratio;
-                    const nidx = @min(nx + nz * neighbor_width, neighbor_width * neighbor_width - 1);
-                    if (nidx >= neighbor_heightmap.len) continue;
-
-                    const this_h = mesh_heightmap[idx];
-                    const neighbor_h = neighbor_heightmap[nidx];
-
-                    const t = @as(f32, @floatFromInt(x)) / @as(f32, @floatFromInt(blend_cells));
-                    const blend = 1.0 - t;
-                    mesh_heightmap[idx] = this_h * (1.0 - blend * config.blend_factor) +
-                        neighbor_h * blend * config.blend_factor;
-                }
-            }
-        },
-        .east => {
-            var z: u32 = 0;
-            while (z < mesh_width) : (z += 1) {
-                var x: u32 = 0;
-                while (x < blend_cells) : (x += 1) {
-                    const actual_x = mesh_width - 1 - x;
-                    const idx = actual_x + z * mesh_width;
-                    if (idx >= mesh_heightmap.len) continue;
-
-                    const nx = neighbor_width - 1;
-                    const nz = z / scale_ratio;
-                    const nidx = @min(nx + nz * neighbor_width, neighbor_width * neighbor_width - 1);
-                    if (nidx >= neighbor_heightmap.len) continue;
-
-                    const this_h = mesh_heightmap[idx];
-                    const neighbor_h = neighbor_heightmap[nidx];
-
-                    const t = @as(f32, @floatFromInt(x)) / @as(f32, @floatFromInt(blend_cells));
-                    const blend = 1.0 - t;
-                    mesh_heightmap[idx] = this_h * (1.0 - blend * config.blend_factor) +
-                        neighbor_h * blend * config.blend_factor;
-                }
-            }
-        },
-    }
-}
-
-test "stitchEdge basic" {
-    var mesh_hm = [_]f32{ 100, 100, 100, 100, 90, 90, 90, 90, 80, 80, 80, 80, 70, 70, 70, 70 };
-    const neighbor_hm = [_]f32{ 50, 50, 50, 50 };
-
-    stitchEdge(
-        &mesh_hm,
-        4,
-        &neighbor_hm,
-        2,
-        .north,
-        .lod1,
-        .lod2,
-        .{ .blend_cells = 2 },
-    );
-
-    // First row should be blended toward 50
-    try std.testing.expect(mesh_hm[0] < 100);
-    // Last row should be unchanged
-    try std.testing.expectEqual(@as(f32, 70), mesh_hm[12]);
 }

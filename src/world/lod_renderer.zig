@@ -36,6 +36,7 @@ const ILODConfig = lod_chunk.ILODConfig;
 const LODRegionKey = lod_chunk.LODRegionKey;
 const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
+const LODMeshResources = @import("lod_mesh.zig").LODMeshResources;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const worldToChunkFromFloat = @import("chunk.zig").worldToChunkFromFloat;
@@ -362,13 +363,11 @@ pub fn LODRenderer(comptime RHI: type) type {
             const Wrapper = struct {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi.*;
-                    return mesh.upload(resources);
+                    return mesh.upload(LODMeshResources.fromProvider(RHI, rhi));
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi.*;
-                    mesh.deinit(resources);
+                    mesh.deinit(LODMeshResources.fromProvider(RHI, rhi));
                 }
                 fn onWaitIdle(ctx: *anyopaque) void {
                     const rhi: *RHI = @ptrCast(@alignCast(ctx));

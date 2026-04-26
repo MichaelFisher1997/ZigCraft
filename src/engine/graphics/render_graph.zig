@@ -53,6 +53,7 @@ const CSM = @import("csm.zig");
 pub const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
 pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
+const LPVBackend = @import("lpv_backend.zig").LPVBackend;
 const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
 
 pub const LPVConfig = struct {
@@ -146,6 +147,7 @@ pub const RenderGraph = struct {
         const lpv_system = try LPVSystem.init(
             allocator,
             rhi,
+            LPVBackend.fromVulkanRHI(rhi),
             lpv_config.grid_size,
             lpv_config.cell_size,
             lpv_config.intensity,

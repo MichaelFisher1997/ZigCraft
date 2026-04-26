@@ -59,7 +59,8 @@ test {
     _ = @import("world/worldgen/biome_selector_tests.zig");
     _ = @import("world/worldgen/height_sampler_tests.zig");
     _ = @import("world/worldgen/terrain_shape_generator_tests.zig");
-    _ = @import("world/lod_manager.zig");
+    _ = @import("world/lod_manager_tests.zig");
+    _ = @import("world/lod_seam.zig");
     _ = @import("world/lod_renderer.zig");
     _ = @import("engine/atmosphere/tests.zig");
     _ = @import("game/settings/tests.zig");

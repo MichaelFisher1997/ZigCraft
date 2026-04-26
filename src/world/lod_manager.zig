@@ -24,6 +24,7 @@ const LODConfig = lod_chunk.LODConfig;
 const ILODConfig = lod_chunk.ILODConfig;
 const LODState = lod_chunk.LODState;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
+pub const LODStats = @import("lod_stats.zig").LODStats;
 
 const Chunk = @import("chunk.zig").Chunk;
 const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
@@ -56,8 +57,9 @@ const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
+const lod_scheduler = @import("lod_scheduler.zig");
 
-const MAX_LOD_REGIONS = 2048;
+pub const MAX_LOD_REGIONS = 2048;
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 const LOD_UPDATE_DIVISOR: u32 = 2;
 const MIN_LOD_WORKERS: usize = 4;
@@ -68,63 +70,6 @@ comptime {
         @compileError("LOD system requires at least two levels (LOD0 and at least one simplified level)");
     }
 }
-
-/// Statistics for LOD system monitoring
-pub const LODStats = struct {
-    loaded: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
-    generating: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
-    generated: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
-    meshing: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
-    mesh_ready: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
-    uploading: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
-
-    memory_used_mb: u32 = 0,
-    upgrades_pending: u32 = 0,
-    downgrades_pending: u32 = 0,
-    upload_failures: u32 = 0,
-
-    pub fn totalLoaded(self: *const LODStats) u32 {
-        var total: u32 = 0;
-        for (self.loaded) |count| total += count;
-        return total;
-    }
-
-    pub fn totalGenerating(self: *const LODStats) u32 {
-        var total: u32 = 0;
-        for (self.generating) |count| total += count;
-        return total;
-    }
-
-    pub fn reset(self: *LODStats) void {
-        self.loaded = [_]u32{0} ** LODLevel.count;
-        self.generating = [_]u32{0} ** LODLevel.count;
-        self.generated = [_]u32{0} ** LODLevel.count;
-        self.meshing = [_]u32{0} ** LODLevel.count;
-        self.mesh_ready = [_]u32{0} ** LODLevel.count;
-        self.uploading = [_]u32{0} ** LODLevel.count;
-        self.memory_used_mb = 0;
-        self.upgrades_pending = 0;
-        self.downgrades_pending = 0;
-        self.upload_failures = 0;
-    }
-
-    pub fn recordState(self: *LODStats, lod_idx: usize, state: LODState) void {
-        switch (state) {
-            .renderable => self.loaded[lod_idx] += 1,
-            .generating => self.generating[lod_idx] += 1,
-            .generated => self.generated[lod_idx] += 1,
-            .meshing => self.meshing[lod_idx] += 1,
-            .mesh_ready => self.mesh_ready[lod_idx] += 1,
-            .uploading => self.uploading[lod_idx] += 1,
-            else => {},
-        }
-    }
-
-    pub fn addMemory(self: *LODStats, bytes: usize) void {
-        const mb = bytes / (1024 * 1024);
-        self.memory_used_mb += @intCast(mb);
-    }
-};
 
 /// LOD transition request
 const LODTransition = struct {
@@ -421,100 +366,25 @@ pub const LODManager = struct {
 
     /// Queue LOD regions that need generation
     fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
-        const radii = self.config.getRadii();
-        const radius = radii[@intFromEnum(lod)];
-
-        // Skip LOD0 - handled by existing World system
-        if (lod == .lod0) return;
-
-        var queued_count: u32 = 0;
-
-        const scale: i32 = @intCast(lod.chunksPerSide());
-        const region_radius = @divFloor(radius, scale) + 1;
-
-        const player_rx = @divFloor(self.player_cx, scale);
-        const player_rz = @divFloor(self.player_cz, scale);
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const storage = &self.regions[@intFromEnum(lod)];
-
-        // All LOD jobs go to LOD3 queue (worker pool processes from there)
-        // We encode the actual LOD level in the dist_sq high bits
-        const queue = self.gen_queues[LODLevel.count - 1];
-        const lod_bits: i32 = @as(i32, @intCast(@intFromEnum(lod))) << 28;
-
-        // Calculate velocity direction for priority
-        _ = velocity;
-
-        var rz = player_rz - region_radius;
-        while (rz <= player_rz + region_radius) : (rz += 1) {
-            var rx = player_rx - region_radius;
-            while (rx <= player_rx + region_radius) : (rx += 1) {
-                const key = LODRegionKey{ .rx = rx, .rz = rz, .lod = lod };
-                const chunk_bounds = key.chunkBounds();
-                if (!chunk_bounds.intersectsRadius(self.player_cx, self.player_cz, radius)) continue;
-
-                if (self.cleanup_covered_regions) {
-                    if (chunk_checker) |checker| {
-                        const temp_chunk = LODChunk.init(rx, rz, lod);
-                        if (self.areAllChunksLoaded(temp_chunk.worldBounds(), checker, checker_ctx.?)) {
-                            continue;
-                        }
-                    }
-                }
-
-                // Check if region exists and what state it's in
-                const existing = storage.get(key);
-                const needs_queue = if (existing) |chunk|
-                    // Re-queue if stuck in missing state
-                    chunk.state == .missing
-                else
-                    // Queue if doesn't exist
-                    true;
-
-                if (needs_queue) {
-                    queued_count += 1;
-
-                    // Reuse existing chunk or create new one
-                    const chunk = if (existing) |c| c else blk: {
-                        const c = try self.allocator.create(LODChunk);
-                        c.* = LODChunk.init(rx, rz, lod);
-                        try storage.put(key, c);
-                        break :blk c;
-                    };
-
-                    chunk.job_token = self.next_job_token;
-                    self.next_job_token += 1;
-
-                    // Prioritize by actual chunk-space distance to the region bounds so
-                    // horizon loading stays symmetric even for large LOD regions.
-                    const dist_sq = chunk_bounds.distanceSquaredToPoint(self.player_cx, self.player_cz);
-                    // Scale priority to match chunk-distance units used by meshing jobs (which are prioritized by chunk dist)
-                    // This ensures generation doesn't starve meshing
-                    const priority_full = dist_sq * @as(i64, scale) * @as(i64, scale);
-                    const priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
-
-                    // Encode LOD level in high bits of dist_sq
-                    const encoded_priority = (priority & 0x0FFFFFFF) | lod_bits;
-
-                    // Queue for generation
-                    try queue.push(.{
-                        .type = .chunk_generation,
-                        .dist_sq = encoded_priority,
-                        .data = .{
-                            .chunk = .{
-                                .x = rx, // Using chunk coords for region coords
-                                .z = rz,
-                                .job_token = chunk.job_token,
-                            },
-                        },
-                    });
-                    chunk.state = .generating; // Mark as generating, not queued_for_generation
-                }
+        const Coverage = struct {
+            fn areAllLoaded(ptr: *anyopaque, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
+                const mgr: *Self = @ptrCast(@alignCast(ptr));
+                return mgr.areAllChunksLoaded(bounds, checker, ctx);
             }
-        }
+        };
+        return lod_scheduler.queueLODRegions(.{
+            .allocator = self.allocator,
+            .config = self.config,
+            .regions = &self.regions,
+            .gen_queues = &self.gen_queues,
+            .mutex = &self.mutex,
+            .player_cx = self.player_cx,
+            .player_cz = self.player_cz,
+            .next_job_token = &self.next_job_token,
+            .cleanup_covered_regions = self.cleanup_covered_regions,
+            .coverage_ptr = self,
+            .are_all_chunks_loaded = Coverage.areAllLoaded,
+        }, lod, velocity, chunk_checker, checker_ctx);
     }
 
     /// Process state transitions (generated -> meshing -> ready)
@@ -1005,274 +875,3 @@ pub const LODManager = struct {
         }
     }
 };
-
-// Tests
-test "LODManager initialization" {
-    const allocator = std.testing.allocator;
-    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
-
-    const MockState = struct {
-        buffer_created: bool = false,
-        buffer_destroyed: bool = false,
-    };
-
-    const MockGenerator = struct {
-        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
-        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel) void {}
-        fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
-            return false;
-        }
-        fn getSeed(_: *anyopaque) u64 {
-            return 0;
-        }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("worldgen/region.zig").RegionInfo {
-            return undefined;
-        }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("worldgen/generator_interface.zig").ColumnInfo {
-            return undefined;
-        }
-        fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
-
-        const vtable = Generator.VTable{
-            .generate = generate,
-            .generateHeightmapOnly = generateHeightmapOnly,
-            .maybeRecenterCache = maybeRecenterCache,
-            .getSeed = getSeed,
-            .getRegionInfo = getRegionInfo,
-            .getColumnInfo = getColumnInfo,
-            .deinit = deinit,
-        };
-    };
-
-    var mock_gen_impl = MockGenerator{};
-    const mock_gen = Generator{
-        .ptr = &mock_gen_impl,
-        .vtable = &MockGenerator.vtable,
-        .info = .{ .name = "Mock", .description = "Mock Generator" },
-    };
-
-    // We can't fully test without RHI, but we can test the config
-    var config = LODConfig{
-        .radii = .{ 8, 16, 32, 64 },
-    };
-
-    // Create mock GPU bridge
-    var mock_state = MockState{};
-    const mock_bridge = LODGPUBridge{
-        .on_upload = struct {
-            fn f(_: *LODMesh, _: *anyopaque) rhi_types.RhiError!void {}
-        }.f,
-        .on_destroy = struct {
-            fn f(_: *LODMesh, ctx: *anyopaque) void {
-                const state: *MockState = @ptrCast(@alignCast(ctx));
-                state.buffer_destroyed = true;
-            }
-        }.f,
-        .on_wait_idle = struct {
-            fn f(_: *anyopaque) void {}
-        }.f,
-        .ctx = @ptrCast(&mock_state),
-    };
-
-    // Create mock render interface
-    const mock_render = LODRenderInterface{
-        .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
-        }.f,
-        .deinit_fn = struct {
-            fn f(_: *anyopaque) void {}
-        }.f,
-        .ptr = @ptrCast(&mock_state),
-    };
-
-    const mock_atlas = TextureAtlas{
-        .texture = undefined,
-        .normal_texture = null,
-        .roughness_texture = null,
-        .displacement_texture = null,
-        .allocator = allocator,
-        .pack_manager = null,
-        .tile_size = 16,
-        .atlas_size = 256,
-        .has_pbr = false,
-        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
-    };
-
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen, &mock_atlas);
-    mgr.cleanup_covered_regions = false;
-
-    // Verify initial state
-    const stats = mgr.getStats();
-    try std.testing.expectEqual(@as(u32, 0), stats.totalLoaded());
-    try std.testing.expectEqual(@as(u32, 0), stats.totalGenerating());
-
-    mgr.deinit();
-
-    // NOTE: LODManager does NOT call renderer.deinit() - renderer lifetime is
-    // owned by the caller (World). This is tested in the integration test below.
-
-    // Check config values
-    try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(5));
-    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(12));
-    try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(24));
-    try std.testing.expectEqual(LODLevel.lod3, config.getLODForDistance(50));
-}
-
-test "LODManager end-to-end covered cleanup" {
-    const allocator = std.testing.allocator;
-    const MAX_BLOCK_TYPES = @import("chunk.zig").MAX_BLOCK_TYPES;
-
-    const MockGenerator = struct {
-        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
-        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel) void {}
-        fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
-            return false;
-        }
-        fn getSeed(_: *anyopaque) u64 {
-            return 0;
-        }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("worldgen/region.zig").RegionInfo {
-            return undefined;
-        }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("worldgen/generator_interface.zig").ColumnInfo {
-            return .{ .height = 0, .biome = .plains, .is_ocean = false, .temperature = 0, .humidity = 0, .continentalness = 0 };
-        }
-        fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
-
-        const vtable = Generator.VTable{
-            .generate = generate,
-            .generateHeightmapOnly = generateHeightmapOnly,
-            .maybeRecenterCache = maybeRecenterCache,
-            .getSeed = getSeed,
-            .getRegionInfo = getRegionInfo,
-            .getColumnInfo = getColumnInfo,
-            .deinit = deinit,
-        };
-    };
-
-    var mock_gen_impl = MockGenerator{};
-    const mock_gen = Generator{
-        .ptr = &mock_gen_impl,
-        .vtable = &MockGenerator.vtable,
-        .info = .{ .name = "Mock", .description = "Mock Generator" },
-    };
-
-    var config = LODConfig{
-        .radii = .{ 2, 4, 8, 16 },
-    };
-
-    // Create mock GPU bridge (no-op). Use a real pointer to satisfy debug assertions.
-    var noop_ctx: u8 = 0;
-    const mock_bridge = LODGPUBridge{
-        .on_upload = struct {
-            fn f(_: *LODMesh, _: *anyopaque) rhi_types.RhiError!void {}
-        }.f,
-        .on_destroy = struct {
-            fn f(_: *LODMesh, _: *anyopaque) void {}
-        }.f,
-        .on_wait_idle = struct {
-            fn f(_: *anyopaque) void {}
-        }.f,
-        .ctx = @ptrCast(&noop_ctx),
-    };
-
-    // Create mock render interface (no-op). Use a real pointer.
-    const mock_render = LODRenderInterface{
-        .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
-        }.f,
-        .deinit_fn = struct {
-            fn f(_: *anyopaque) void {}
-        }.f,
-        .ptr = @ptrCast(&noop_ctx),
-    };
-
-    const mock_atlas = TextureAtlas{
-        .texture = undefined,
-        .normal_texture = null,
-        .roughness_texture = null,
-        .displacement_texture = null,
-        .allocator = allocator,
-        .pack_manager = null,
-        .tile_size = 16,
-        .atlas_size = 256,
-        .has_pbr = false,
-        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
-    };
-
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen, &mock_atlas);
-    mgr.cleanup_covered_regions = false;
-    defer mgr.deinit();
-
-    // 1. Initial position at origin
-    try mgr.update(Vec3.zero, Vec3.zero, null, null);
-
-    // 2. Mock a chunk checker that says NO chunks are loaded
-    const Checker = struct {
-        pub fn isLoaded(_: i32, _: i32, _: *anyopaque) bool {
-            return false;
-        }
-    };
-
-    // Force some regions to be renderable for testing cleanup
-    const key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod1 }; // radii[1]=4, scale=4. rx=1 covers chunks 4..7.
-    // This region touches the radius exactly at chunk 4, so it should remain in range
-    // under the shared radial bounds test used by queueing, rendering, and unloading.
-
-    const chunk = try allocator.create(LODChunk);
-    chunk.* = LODChunk.init(1, 0, .lod1);
-    chunk.state = .renderable;
-    try mgr.regions[1].put(key, chunk);
-
-    const mesh = try allocator.create(LODMesh);
-    mesh.* = LODMesh.init(allocator, .lod1);
-    mesh.ready = true;
-    mesh.vertex_count = 100;
-    try mgr.meshes[1].put(key, mesh);
-
-    var dummy: u8 = 0;
-    // Update - should NOT unload because checker says not loaded
-    try mgr.update(Vec3.zero, Vec3.zero, Checker.isLoaded, &dummy);
-    try std.testing.expect(mgr.regions[1].contains(key));
-
-    // 3. Mock a chunk checker that says ALL chunks are loaded
-    const FullChecker = struct {
-        pub fn isLoaded(_: i32, _: i32, _: *anyopaque) bool {
-            return true;
-        }
-    };
-
-    // Update - cleanup is disabled in live world, so regions should stay resident
-    // Need to trigger the throttle (every 4 frames)
-    try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
-    try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
-    try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
-    // 4th update triggers throttled logic
-    try mgr.update(Vec3.zero, Vec3.zero, FullChecker.isLoaded, &dummy);
-
-    try std.testing.expect(mgr.regions[1].contains(key));
-}
-
-test "LODStats aggregation" {
-    var stats = LODStats{};
-    stats.recordState(1, .renderable);
-    stats.recordState(1, .renderable);
-    stats.recordState(2, .generating);
-
-    try std.testing.expectEqual(@as(u32, 2), stats.loaded[1]);
-    try std.testing.expectEqual(@as(u32, 1), stats.generating[2]);
-    try std.testing.expectEqual(@as(u32, 2), stats.totalLoaded());
-    try std.testing.expectEqual(@as(u32, 1), stats.totalGenerating());
-
-    stats.addMemory(2 * 1024 * 1024);
-    try std.testing.expectEqual(@as(u32, 2), stats.memory_used_mb);
-
-    stats.reset();
-    try std.testing.expectEqual(@as(u32, 0), stats.totalLoaded());
-    try std.testing.expectEqual(@as(u32, 0), stats.memory_used_mb);
-}
-
-test "LODManager constants" {
-    try std.testing.expect(MAX_LOD_REGIONS > 0);
-    try std.testing.expect(LODLevel.count >= 2);
-}
