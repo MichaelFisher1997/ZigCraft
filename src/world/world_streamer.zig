@@ -104,15 +104,25 @@ pub const WorldStreamer = struct {
     const MAX_MESH_WORKERS = 3;
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
+        errdefer allocator.destroy(streamer);
+
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
         const gen_worker_count = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
         const mesh_worker_count = std.math.clamp(cpu_count / 4, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
 
         const gen_queue = try allocator.create(JobQueue);
         gen_queue.* = JobQueue.init(allocator);
+        errdefer {
+            gen_queue.deinit();
+            allocator.destroy(gen_queue);
+        }
 
         const mesh_queue = try allocator.create(JobQueue);
         mesh_queue.* = JobQueue.init(allocator);
+        errdefer {
+            mesh_queue.deinit();
+            allocator.destroy(mesh_queue);
+        }
 
         streamer.* = .{
             .allocator = allocator,
@@ -133,12 +143,15 @@ pub const WorldStreamer = struct {
         };
 
         streamer.queue_coordinator = try ChunkQueueCoordinator.init(allocator, storage, generator, atlas, gen_queue, mesh_queue, vertex_allocator, max_uploads_per_frame, &streamer.gpu_acceleration);
+        errdefer streamer.queue_coordinator.deinit();
 
         try streamer.warmupInitialChunks();
 
         log.log.info("WorldStreamer workers: gen={} mesh={} (cpu={})", .{ gen_worker_count, mesh_worker_count, cpu_count });
 
         streamer.gen_pool = try WorkerPool.init(allocator, gen_worker_count, gen_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processGenJob);
+        errdefer streamer.gen_pool.deinit();
+
         streamer.mesh_pool = try WorkerPool.init(allocator, mesh_worker_count, mesh_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processMeshJob);
 
         return streamer;
@@ -255,7 +268,6 @@ pub const WorldStreamer = struct {
             log.log.warn("updateStreaming error (non-fatal): {}", .{err});
         };
         self.queue_coordinator.processUploads();
-        self.gpu_acceleration.process(self.vertex_allocator, self.storage);
         self.processUnloads(player_pos) catch |err| {
             log.log.warn("processUnloads error (non-fatal): {}", .{err});
         };

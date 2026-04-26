@@ -4,7 +4,6 @@ const std = @import("std");
 const log = @import("../engine/core/log.zig");
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
 const ChunkData = @import("chunk_storage.zig").ChunkData;
-const GlobalVertexAllocator = @import("chunk_allocator.zig").GlobalVertexAllocator;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 
@@ -91,16 +90,6 @@ pub const GpuAccelerationCoordinator = struct {
             data.chunk.state = .mesh_ready;
         }
         return true;
-    }
-
-    pub fn process(self: *GpuAccelerationCoordinator, vertex_allocator: *GlobalVertexAllocator, storage: *ChunkStorage) void {
-        if (self.gpu_mesher) |mesher| {
-            if (!self.force_cpu_meshing) {
-                if (self.gpu_block_buffer) |buf| {
-                    mesher.process(vertex_allocator, storage, buf);
-                }
-            }
-        }
     }
 
     pub fn freeChunk(self: *GpuAccelerationCoordinator, cx: i32, cz: i32) void {

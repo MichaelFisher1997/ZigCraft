@@ -173,6 +173,8 @@ pub const ChunkQueueCoordinator = struct {
             if (self.storage.get(key.x, key.z)) |data| {
                 if (data.chunk.state != .uploading) continue;
 
+                // Main-thread invariant: only this upload path mutates `.uploading`
+                // chunks until GPU meshing finalization runs from the render graph.
                 if (!self.gpu.queueGpuMesh(data)) {
                     data.mesh.upload(self.vertex_allocator);
 
