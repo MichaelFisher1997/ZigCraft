@@ -170,6 +170,18 @@ const MockContext = struct {
         return self.resolution_scale;
     }
 
+    fn createCullingSystem(ptr: *anyopaque, allocator: std.mem.Allocator, max_chunks: usize) anyerror!?rhi.ICullingSystem {
+        _ = ptr;
+        _ = allocator;
+        _ = max_chunks;
+        return null;
+    }
+
+    fn getRenderResolution(ptr: *anyopaque) rhi.RenderResolution {
+        _ = ptr;
+        return .{ .width = 1920, .height = 1080 };
+    }
+
     fn getShadowMapHandle(ptr: *anyopaque, cascade_index: u32) rhi.TextureHandle {
         _ = ptr;
         _ = cascade_index;
@@ -339,6 +351,7 @@ const MockContext = struct {
         .getValidationErrorCount = undefined,
         .getDrawCallCount = undefined,
         .getDeviceLocalVramBytes = undefined,
+        .getRenderResolution = getRenderResolution,
         .waitIdle = undefined,
     };
 
@@ -398,6 +411,7 @@ const MockContext = struct {
         .setTAAVelocityRejection = undefined,
         .setDynamicResolution = MockContext.setDynamicResolution,
         .getResolutionScale = MockContext.getResolutionScale,
+        .createCullingSystem = MockContext.createCullingSystem,
         .captureFrame = undefined,
     };
 

@@ -57,6 +57,7 @@ const Allocator = std.mem.Allocator;
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
 const RenderDevice = @import("render_device.zig").RenderDevice;
+const culling = @import("culling.zig");
 
 const rhi_types = @import("rhi_types.zig");
 
@@ -93,6 +94,12 @@ pub const ShadowParams = rhi_types.ShadowParams;
 pub const Color = rhi_types.Color;
 pub const Rect = rhi_types.Rect;
 pub const GpuTimingResults = rhi_types.GpuTimingResults;
+pub const ICullingSystem = culling.ICullingSystem;
+
+pub const RenderResolution = struct {
+    width: u32,
+    height: u32,
+};
 
 // --- Segregated Interfaces ---
 
@@ -787,6 +794,7 @@ pub const IDeviceQuery = struct {
         getValidationErrorCount: *const fn (ptr: *anyopaque) u32,
         getDrawCallCount: *const fn (ptr: *anyopaque) u32,
         getDeviceLocalVramBytes: *const fn (ptr: *anyopaque) u64,
+        getRenderResolution: *const fn (ptr: *anyopaque) RenderResolution,
         waitIdle: *const fn (ptr: *anyopaque) void,
     };
 
@@ -809,6 +817,10 @@ pub const IDeviceQuery = struct {
 
     pub fn getDeviceLocalVramBytes(self: IDeviceQuery) u64 {
         return self.vtable.getDeviceLocalVramBytes(self.ptr);
+    }
+
+    pub fn getRenderResolution(self: IDeviceQuery) RenderResolution {
+        return self.vtable.getRenderResolution(self.ptr);
     }
 };
 
@@ -896,6 +908,7 @@ pub const RHI = struct {
         setTAAVelocityRejection: *const fn (ctx: *anyopaque, value: f32) void,
         setDynamicResolution: *const fn (ctx: *anyopaque, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void,
         getResolutionScale: *const fn (ctx: *anyopaque) f32,
+        createCullingSystem: *const fn (ctx: *anyopaque, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem,
         captureFrame: *const fn (ctx: *anyopaque, path: []const u8) bool,
     };
 
@@ -951,6 +964,9 @@ pub const RHI = struct {
     }
     pub fn timing(self: RHI) IDeviceTiming {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.timing };
+    }
+    pub fn createCullingSystem(self: RHI, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
+        return self.vtable.createCullingSystem(self.ptr, allocator, max_chunks);
     }
 
     // -------------------------------------------------------------------------
@@ -1209,6 +1225,10 @@ pub const RHI = struct {
     }
     pub fn getResolutionScale(self: RHI) f32 {
         return self.vtable.getResolutionScale(self.ptr);
+    }
+
+    pub fn getRenderResolution(self: RHI) RenderResolution {
+        return self.vtable.query.getRenderResolution(self.ptr);
     }
     pub fn captureFrame(self: RHI, path: []const u8) bool {
         return self.vtable.captureFrame(self.ptr, path);

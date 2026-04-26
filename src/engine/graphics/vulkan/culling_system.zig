@@ -2,6 +2,7 @@ const std = @import("std");
 const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi_pkg = @import("../rhi.zig");
+const culling = @import("../culling.zig");
 const log = @import("../../core/log.zig");
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const VulkanContext = @import("rhi_context_types.zig").VulkanContext;
@@ -12,10 +13,7 @@ pub const MAX_CULLABLE_CHUNKS: usize = 16384;
 pub const WORKGROUP_SIZE: u32 = 64;
 const MAX_FRAMES_IN_FLIGHT = rhi_pkg.MAX_FRAMES_IN_FLIGHT;
 
-pub const ChunkCullData = extern struct {
-    min_point: [4]f32,
-    max_point: [4]f32,
-};
+pub const ChunkCullData = culling.ChunkCullData;
 
 const CullingPushConstants = extern struct {
     planes: [6][4]f32,
@@ -27,7 +25,6 @@ const CullingPushConstants = extern struct {
 
 pub const CullingSystem = struct {
     allocator: std.mem.Allocator,
-    rhi: rhi_pkg.RHI,
     vk_ctx: *VulkanContext,
 
     aabb_buffers: [MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer,
@@ -49,18 +46,16 @@ pub const CullingSystem = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        rhi: rhi_pkg.RHI,
+        vk_ctx: *VulkanContext,
         max_chunks: usize,
     ) !*CullingSystem {
         const self = try allocator.create(CullingSystem);
         errdefer allocator.destroy(self);
 
-        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
         const clamped_max = std.math.clamp(max_chunks, 1, MAX_CULLABLE_CHUNKS);
 
         self.* = .{
             .allocator = allocator,
-            .rhi = rhi,
             .vk_ctx = vk_ctx,
             .max_chunks = clamped_max,
             .aabb_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer),
@@ -119,7 +114,14 @@ pub const CullingSystem = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn updateAABBData(self: *CullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
+    pub fn interface(self: *CullingSystem) culling.ICullingSystem {
+        return .{
+            .ptr = self,
+            .vtable = &interface_vtable,
+        };
+    }
+
+    pub fn update_aabb_data(self: *CullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
         const buf = &self.aabb_buffers[frame_index];
         if (buf.mapped_ptr == null) return;
         const copy_len = @min(chunks.len, self.max_chunks) * @sizeOf(ChunkCullData);
@@ -218,14 +220,14 @@ pub const CullingSystem = struct {
         self.copyCounterToReadback(cmd, fi);
     }
 
-    pub fn readVisibleCount(self: *CullingSystem, frame_index: usize) u32 {
+    pub fn read_visible_count(self: *CullingSystem, frame_index: usize) u32 {
         const buf = &self.counter_readback_buffers[frame_index];
         if (buf.mapped_ptr == null) return 0;
         const ptr: *align(1) u32 = @ptrCast(@alignCast(buf.mapped_ptr.?));
         return ptr.*;
     }
 
-    pub fn readVisibleIndices(self: *CullingSystem, frame_index: usize, count: u32, out: []u32) void {
+    pub fn read_visible_indices(self: *CullingSystem, frame_index: usize, count: u32, out: []u32) void {
         if (count == 0) return;
         const buf = &self.visible_index_buffers[frame_index];
         if (buf.mapped_ptr == null) return;
@@ -457,6 +459,39 @@ pub const CullingSystem = struct {
         self.counter_readback_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
     }
 };
+
+const interface_vtable = culling.ICullingSystem.VTable{
+    .deinit = interfaceDeinit,
+    .update_aabb_data = interfaceUpdateAabbData,
+    .read_visible_count = interfaceReadVisibleCount,
+    .read_visible_indices = interfaceReadVisibleIndices,
+    .dispatch = interfaceDispatch,
+};
+
+fn interfaceDeinit(ptr: *anyopaque) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.deinit();
+}
+
+fn interfaceUpdateAabbData(ptr: *anyopaque, frame_index: usize, chunks: []const ChunkCullData) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.update_aabb_data(frame_index, chunks);
+}
+
+fn interfaceReadVisibleCount(ptr: *anyopaque, frame_index: usize) u32 {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    return self.read_visible_count(frame_index);
+}
+
+fn interfaceReadVisibleIndices(ptr: *anyopaque, frame_index: usize, count: u32, out: []u32) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.read_visible_indices(frame_index, count, out);
+}
+
+fn interfaceDispatch(ptr: *anyopaque, config: culling.DispatchConfig) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.dispatch(config.view_proj, config.chunk_count, config.screen_width, config.screen_height, config.previous_frame_valid);
+}
 
 fn mat4Equal(a: Mat4, b: Mat4) bool {
     for (0..4) |col| {

@@ -19,6 +19,7 @@ const render_state = @import("vulkan/rhi_render_state.zig");
 const init_deinit = @import("vulkan/rhi_init_deinit.zig");
 const rhi_timing = @import("vulkan/rhi_timing.zig");
 const screenshot = @import("vulkan/screenshot.zig");
+const CullingSystem = @import("vulkan/culling_system.zig").CullingSystem;
 
 const QUERY_COUNT_PER_FRAME = rhi_timing.QUERY_COUNT_PER_FRAME;
 
@@ -387,6 +388,12 @@ fn getResolutionScale(ctx_ptr: *anyopaque) f32 {
     return ctx.dynamic_resolution.current_scale;
 }
 
+fn createCullingSystem(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, max_chunks: usize) anyerror!?rhi.ICullingSystem {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const system = try CullingSystem.init(allocator, ctx, max_chunks);
+    return system.interface();
+}
+
 fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return screenshot.captureScreenshot(ctx, path);
@@ -634,6 +641,14 @@ fn getValidationErrorCount(ctx_ptr: *anyopaque) u32 {
 fn getDeviceLocalVramBytes(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return ctx.vulkan_device.getDeviceLocalVramBytes();
+}
+
+fn getRenderResolution(ctx_ptr: *anyopaque) rhi.RenderResolution {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return .{
+        .width = ctx.gpass.g_pass_extent.width,
+        .height = ctx.gpass.g_pass_extent.height,
+    };
 }
 
 fn getDrawCallCount(ctx_ptr: *anyopaque) u32 {
@@ -965,6 +980,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getValidationErrorCount = getValidationErrorCount,
         .getDrawCallCount = getDrawCallCount,
         .getDeviceLocalVramBytes = getDeviceLocalVramBytes,
+        .getRenderResolution = getRenderResolution,
         .waitIdle = waitIdle,
     },
     .timing = .{
@@ -996,6 +1012,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     .setTAAVelocityRejection = setTAAVelocityRejection,
     .setDynamicResolution = setDynamicResolution,
     .getResolutionScale = getResolutionScale,
+    .createCullingSystem = createCullingSystem,
     .captureFrame = captureFrame,
 };
 

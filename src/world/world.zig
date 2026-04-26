@@ -32,6 +32,7 @@ const ShadowConfig = @import("../engine/graphics/rhi_types.zig").ShadowConfig;
 const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
+const MAX_MDI_CHUNKS = @import("world_renderer.zig").MAX_MDI_CHUNKS;
 const RenderStats = @import("world_renderer.zig").RenderStats;
 const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
@@ -185,7 +186,16 @@ pub const World = struct {
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
-        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, atlas, rhi);
+        const culling_size = rhi.getRenderResolution();
+        var culling_system = if (!safe_mode) blk: {
+            break :blk rhi.createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
+                log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
+                break :blk null;
+            };
+        } else null;
+        errdefer if (culling_system) |system| system.deinit();
+
+        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, atlas, rhi, &culling_system, culling_size, safe_mode);
         errdefer _ = world.renderer;
 
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
