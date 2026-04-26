@@ -64,14 +64,30 @@ pub const GenRegion = struct {
     pub fn init(region_x: i32, region_z: i32, allocator: std.mem.Allocator) !GenRegion {
         const volume = REGION_SIZE_X * REGION_SIZE_Y * REGION_SIZE_Z;
         const stone_mask = try allocator.alloc(bool, volume);
+        errdefer allocator.free(stone_mask);
         @memset(stone_mask, false);
         const blocks = try allocator.alloc(BlockType, volume);
         @memset(blocks, .air);
+        const default_column = ColumnData{
+            .height = 0,
+            .slope = 0,
+            .is_ocean = false,
+            .continentalness = 0,
+            .erosion = 0,
+            .peaks = 0,
+            .temperature = 0,
+            .humidity = 0,
+            .biome_a = .plains,
+            .biome_b = .plains,
+            .blend_t = 0,
+            .shore_dist = 0,
+            .is_beach = false,
+        };
 
         return .{
             .region_x = region_x,
             .region_z = region_z,
-            .columns = undefined,
+            .columns = [_]ColumnData{default_column} ** (REGION_SIZE_X * REGION_SIZE_Z),
             .stone_mask = stone_mask,
             .blocks = blocks,
             .allocator = allocator,

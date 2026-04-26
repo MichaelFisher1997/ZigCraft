@@ -488,7 +488,7 @@ pub const WorldScreen = struct {
                 .spacing = 10.0 * ctx.settings.ui_scale,
             };
             const r = DebugLPVOverlay.rect(screen_h, cfg);
-            DebugLPVOverlay.draw(rhi.ui(), lpv_system.getDebugOverlayTextureHandle(), screen_w, screen_h, cfg);
+            DebugLPVOverlay.draw(ui, lpv_system.getDebugOverlayTextureHandle(), screen_h, cfg);
 
             const stats = lpv_system.getStats();
             const timing_results = rhi.timing().getTimingResults();

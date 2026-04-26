@@ -181,7 +181,7 @@ pub const Input = struct {
     }
 
     /// Capture/release mouse for FPS-style controls
-    pub fn setMouseCapture(self: *Input, window: anytype, captured: bool) void {
+    pub fn setMouseCapture(self: *Input, window: *c.SDL_Window, captured: bool) void {
         self.mouse_captured = captured;
         _ = c.SDL_SetWindowRelativeMouseMode(window, captured);
     }
@@ -302,6 +302,8 @@ pub const Input = struct {
         const self: *Input = @ptrCast(@alignCast(ptr));
         if (window) |w| {
             self.setMouseCapture(@as(*c.SDL_Window, @ptrCast(@alignCast(w))), captured);
+        } else {
+            self.mouse_captured = false;
         }
     }
 };

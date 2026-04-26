@@ -19,11 +19,17 @@ pub inline fn getAOAt(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y:
     if (y < 0 or y >= CHUNK_SIZE_Y) return 0;
 
     const b: BlockType = blk: {
-        if (x < 0) {
-            if (z < 0 or z >= CHUNK_SIZE_Z) break :blk .air; // Lack of diagonal neighbors
+        if (x < 0 and z < 0) {
+            break :blk if (neighbors.west) |w| w.getBlock(CHUNK_SIZE_X - 1, @intCast(y), 0) else .air;
+        } else if (x < 0 and z >= CHUNK_SIZE_Z) {
+            break :blk if (neighbors.west) |w| w.getBlock(CHUNK_SIZE_X - 1, @intCast(y), CHUNK_SIZE_Z - 1) else .air;
+        } else if (x >= CHUNK_SIZE_X and z < 0) {
+            break :blk if (neighbors.east) |e| e.getBlock(0, @intCast(y), 0) else .air;
+        } else if (x >= CHUNK_SIZE_X and z >= CHUNK_SIZE_Z) {
+            break :blk if (neighbors.east) |e| e.getBlock(0, @intCast(y), CHUNK_SIZE_Z - 1) else .air;
+        } else if (x < 0) {
             break :blk if (neighbors.west) |w| w.getBlock(CHUNK_SIZE_X - 1, @intCast(y), @intCast(z)) else .air;
         } else if (x >= CHUNK_SIZE_X) {
-            if (z < 0 or z >= CHUNK_SIZE_Z) break :blk .air;
             break :blk if (neighbors.east) |e| e.getBlock(0, @intCast(y), @intCast(z)) else .air;
         } else if (z < 0) {
             // x is already checked to be [0, CHUNK_SIZE_X-1]
@@ -37,6 +43,15 @@ pub inline fn getAOAt(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y:
 
     const b_def = block_registry.getBlockDefinition(b);
     return if (b_def.is_solid and !b_def.is_transparent) 1.0 else 0.0;
+}
+
+test "getAOAt samples available neighbor for diagonal chunk corner" {
+    var chunk = Chunk.init(0, 0);
+    var west = Chunk.init(-1, 0);
+    west.setBlock(CHUNK_SIZE_X - 1, 10, 0, .stone);
+
+    const ao = getAOAt(&chunk, .{ .west = &west }, -1, 10, -1);
+    try @import("std").testing.expectEqual(@as(f32, 1.0), ao);
 }
 
 /// Compute AO for a single vertex from three neighbor samples.
