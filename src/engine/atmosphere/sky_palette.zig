@@ -64,11 +64,16 @@ pub const SkyColorPalette = struct {
             colors.sky = self.day_sky;
             colors.horizon = self.day_horizon;
             colors.sun = self.day_sun;
-        } else if (t < Config.DUSK_END) {
-            const blend = utils.smoothstep(Config.DUSK_START, Config.DUSK_END, t);
+        } else if (t < Config.NIGHT_TRANSITION) {
+            const blend = utils.smoothstep(Config.DUSK_START, Config.NIGHT_TRANSITION, t);
             colors.sky = utils.lerpVec3(self.day_sky, self.dusk_sky, blend);
             colors.horizon = utils.lerpVec3(self.day_horizon, self.dusk_horizon, blend);
             colors.sun = utils.lerpVec3(self.day_sun, self.dusk_sun, blend);
+        } else if (t < Config.DUSK_END) {
+            const blend = utils.smoothstep(Config.NIGHT_TRANSITION, Config.DUSK_END, t);
+            colors.sky = utils.lerpVec3(self.dusk_sky, self.night_sky, blend);
+            colors.horizon = utils.lerpVec3(self.dusk_horizon, self.night_horizon, blend);
+            colors.sun = utils.lerpVec3(self.dusk_sun, self.night_sun, blend);
         } else {
             colors.sky = self.night_sky;
             colors.horizon = self.night_horizon;

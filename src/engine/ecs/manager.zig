@@ -87,7 +87,7 @@ pub const Registry = struct {
             };
 
             pub fn next(self: *Self) ?Row {
-                std.debug.assert(self.expected_epoch == self.registry.mutation_epoch);
+                if (self.expected_epoch != self.registry.mutation_epoch) return null;
                 // Use the first component storage as the primary source of entities.
                 const PrimaryType = component_types[0];
                 const primary_storage = self.registry.getStorage(PrimaryType);
