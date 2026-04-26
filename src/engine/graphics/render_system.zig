@@ -13,7 +13,6 @@ const render_graph_pkg = @import("render_graph.zig");
 const RenderGraph = render_graph_pkg.RenderGraph;
 const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const MaterialSystem = @import("material_system.zig").MaterialSystem;
-const LPVSystem = @import("lpv_system.zig").LPVSystem;
 const ResourcePackManager = @import("resource_pack.zig").ResourcePackManager;
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -37,7 +36,6 @@ pub const RenderSystem = struct {
     render_graph: RenderGraph,
     atmosphere_system: *AtmosphereSystem,
     material_system: *MaterialSystem,
-    lpv_system: *LPVSystem,
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
     ssao_pass: render_graph_pkg.SSAOPass,
@@ -198,7 +196,14 @@ pub const RenderSystem = struct {
         const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
         errdefer atmosphere_system.deinit();
 
-        var render_graph = RenderGraph.init(allocator);
+        log.log.info("RenderSystem.init: initializing graph LPVSystem (grid_size={}, cell_size={})", .{ settings.lpv_grid_size, settings.lpv_cell_size });
+        var render_graph = try RenderGraph.init(allocator, rhi, .{
+            .grid_size = settings.lpv_grid_size,
+            .cell_size = settings.lpv_cell_size,
+            .intensity = settings.lpv_intensity,
+            .propagation_iterations = settings.lpv_propagation_iterations,
+            .enabled = settings.lpv_enabled,
+        });
         errdefer render_graph.deinit();
 
         const self = try allocator.create(RenderSystem);
@@ -214,7 +219,6 @@ pub const RenderSystem = struct {
             .render_graph = render_graph,
             .atmosphere_system = atmosphere_system,
             .material_system = undefined,
-            .lpv_system = undefined,
             .shadow_passes = .{
                 render_graph_pkg.ShadowPass.init(0),
                 render_graph_pkg.ShadowPass.init(1),
@@ -248,17 +252,6 @@ pub const RenderSystem = struct {
         log.log.info("RenderSystem.init: initializing MaterialSystem", .{});
         self.material_system = try MaterialSystem.init(allocator, &self.atlas);
         errdefer self.material_system.deinit();
-        log.log.info("RenderSystem.init: initializing LPVSystem (grid_size={}, cell_size={})", .{ settings.lpv_grid_size, settings.lpv_cell_size });
-        self.lpv_system = try LPVSystem.init(
-            allocator,
-            rhi,
-            settings.lpv_grid_size,
-            settings.lpv_cell_size,
-            settings.lpv_intensity,
-            settings.lpv_propagation_iterations,
-            settings.lpv_enabled,
-        );
-        errdefer self.lpv_system.deinit();
 
         self.rhi.setFXAA((settings.fxaa_enabled and !settings.taa_enabled) and !disable_fxaa);
         self.rhi.setBloom(settings.bloom_enabled and !disable_bloom);
@@ -308,7 +301,6 @@ pub const RenderSystem = struct {
         self.render_graph.deinit();
         self.atmosphere_system.deinit();
         self.material_system.deinit();
-        self.lpv_system.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
         self.resource_pack_manager.deinit();
@@ -375,8 +367,8 @@ pub const RenderSystem = struct {
         return self.material_system;
     }
 
-    pub fn getLPVSystem(self: *RenderSystem) *LPVSystem {
-        return self.lpv_system;
+    pub fn getLPVSystem(self: *RenderSystem) *render_graph_pkg.LPVSystem {
+        return self.render_graph.getLPVSystem();
     }
 
     pub fn getAtlas(self: *RenderSystem) *TextureAtlas {
