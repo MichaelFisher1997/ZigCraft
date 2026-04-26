@@ -40,7 +40,7 @@ pub const LightingComputer = struct {
     };
 
     const ENTRANCE_SOURCE_SKY_OFFSET: u32 = 0;
-    const ENTRANCE_MAX_SEED: u32 = 14;
+    const ENTRANCE_MAX_SEED: u32 = 15;
     const ENTRANCE_MIN_EDGE_CONTRAST: u4 = 1;
     const ENTRANCE_PORTAL_SEED_SKY: u4 = 15;
     const ENTRANCE_PORTAL_PROBE_STEPS = 3;
@@ -153,7 +153,7 @@ pub const LightingComputer = struct {
                         continue;
                     }
 
-                    if (!covered) continue;
+                    if (!covered and !touchesOpaqueNeighbor(chunk, local_x, uy, local_z)) continue;
 
                     const sky = chunk.getSkyLight(local_x, uy, local_z);
                     if (sky >= MAX_LIGHT) continue;
@@ -185,9 +185,17 @@ pub const LightingComputer = struct {
                 const block = chunk.getBlock(ux, uy, uz);
                 if (block_registry.getBlockDefinition(block).isOpaque()) continue;
 
-                const continues_from_aperture = offset[1] == 0 and offset[0] == -@as(i32, node.dir_x) and offset[2] == -@as(i32, node.dir_z);
-                const attenuation: u4 = if (continues_from_aperture)
-                    (if (node.light >= 11) 1 else 2)
+                const offset_x = offset[0];
+                const offset_z = offset[2];
+                const away_from_aperture = offset[1] == 0 and offset_x == -@as(i32, node.dir_x) and offset_z == -@as(i32, node.dir_z);
+                const toward_aperture = offset[1] == 0 and offset_x == @as(i32, node.dir_x) and offset_z == @as(i32, node.dir_z);
+                const horizontal_turn = offset[1] == 0 and !away_from_aperture and !toward_aperture;
+                const attenuation: u4 = if (away_from_aperture)
+                    1
+                else if (horizontal_turn)
+                    2
+                else if (toward_aperture)
+                    4
                 else
                     3;
                 if (node.light <= attenuation) continue;
@@ -359,4 +367,71 @@ test "computeSkylight propagates sideways from an open shaft" {
 
     try std.testing.expectEqual(@as(u4, MAX_LIGHT), chunk.getSkyLight(8, 3, 8));
     try std.testing.expect(chunk.getSkyLight(9, 3, 8) > 0);
+}
+
+test "entrance bounce carries around tunnel corners" {
+    var chunk = Chunk.init(0, 0);
+
+    for (0..CHUNK_SIZE_Z) |z| {
+        for (0..CHUNK_SIZE_X) |x| {
+            chunk.setBlock(@intCast(x), 4, @intCast(z), .stone);
+        }
+    }
+
+    // Open shaft to the sky and a one-block-high tunnel that turns a corner.
+    chunk.setBlock(4, 4, 4, .air);
+    for (5..11) |x| {
+        chunk.setBlock(@intCast(x), 3, 4, .air);
+    }
+    for (5..10) |z| {
+        chunk.setBlock(10, 3, @intCast(z), .air);
+    }
+
+    try LightingComputer.computeSkylight(&chunk, std.testing.allocator);
+
+    try std.testing.expect(chunk.getEntranceBounce(8, 3, 4) >= chunk.getEntranceBounce(10, 3, 8));
+    try std.testing.expect(chunk.getEntranceBounce(10, 3, 8) > 0);
+}
+
+test "entrance bounce seeds side openings without vertical cover" {
+    var chunk = Chunk.init(0, 0);
+
+    // Build a vertical wall with a one-block recess at y=4. The recess column
+    // itself has open sky above, so old covered-column-only seeding missed it.
+    var y: u32 = 0;
+    while (y <= 8) : (y += 1) {
+        var z: u32 = 6;
+        while (z <= 10) : (z += 1) {
+            chunk.setBlock(8, y, z, .stone);
+        }
+    }
+    chunk.setBlock(8, 4, 8, .air);
+
+    try LightingComputer.computeSkylight(&chunk, std.testing.allocator);
+
+    try std.testing.expect(chunk.getEntranceBounce(8, 4, 8) > 0);
+}
+
+test "entrance bounce fills a three-deep side tunnel" {
+    var chunk = Chunk.init(0, 0);
+
+    var z: u32 = 4;
+    while (z <= 9) : (z += 1) {
+        var y: u32 = 3;
+        while (y <= 5) : (y += 1) {
+            var x: u32 = 7;
+            while (x <= 9) : (x += 1) {
+                chunk.setBlock(x, y, z, .stone);
+            }
+        }
+    }
+
+    z = 4;
+    while (z <= 8) : (z += 1) {
+        chunk.setBlock(8, 4, z, .air);
+    }
+
+    try LightingComputer.computeSkylight(&chunk, std.testing.allocator);
+
+    try std.testing.expect(chunk.getEntranceBounce(8, 4, 8) > 0);
 }

@@ -21,19 +21,19 @@ pub const SkyColorPalette = struct {
 
     pub fn init() SkyColorPalette {
         return .{
-            .day_sky = Vec3.init(0.34, 0.56, 0.94).toLinear(),
-            .day_horizon = Vec3.init(0.78, 0.86, 0.98).toLinear(),
-            .night_sky = Vec3.init(0.01, 0.015, 0.06).toLinear(),
-            .night_horizon = Vec3.init(0.03, 0.04, 0.12).toLinear(),
-            .dawn_sky = Vec3.init(0.18, 0.24, 0.44).toLinear(),
-            .dawn_horizon = Vec3.init(1.0, 0.62, 0.28).toLinear(),
-            .dusk_sky = Vec3.init(0.22, 0.18, 0.32).toLinear(),
-            .dusk_horizon = Vec3.init(0.98, 0.52, 0.22).toLinear(),
+            .day_sky = Vec3.init(97.0 / 255.0, 181.0 / 255.0, 245.0 / 255.0).toLinear(),
+            .day_horizon = Vec3.init(144.0 / 255.0, 211.0 / 255.0, 246.0 / 255.0).toLinear(),
+            .night_sky = Vec3.init(0.015, 0.055, 0.12).toLinear(),
+            .night_horizon = Vec3.init(0.06, 0.12, 0.24).toLinear(),
+            .dawn_sky = Vec3.init(180.0 / 255.0, 186.0 / 255.0, 250.0 / 255.0).toLinear(),
+            .dawn_horizon = Vec3.init(186.0 / 255.0, 193.0 / 255.0, 240.0 / 255.0).toLinear(),
+            .dusk_sky = Vec3.init(180.0 / 255.0, 172.0 / 255.0, 230.0 / 255.0).toLinear(),
+            .dusk_horizon = Vec3.init(230.0 / 255.0, 172.0 / 255.0, 125.0 / 255.0).toLinear(),
 
-            .day_sun = Vec3.init(1.0, 0.97, 0.92).toLinear(),
-            .dawn_sun = Vec3.init(1.0, 0.86, 0.62).toLinear(),
-            .dusk_sun = Vec3.init(1.0, 0.78, 0.52).toLinear(),
-            .night_sun = Vec3.init(0.08, 0.10, 0.18).toLinear(),
+            .day_sun = Vec3.init(1.0, 0.96, 0.86).toLinear(),
+            .dawn_sun = Vec3.init(1.0, 0.82, 0.56).toLinear(),
+            .dusk_sun = Vec3.init(1.0, 0.72, 0.42).toLinear(),
+            .night_sun = Vec3.init(0.10, 0.13, 0.22).toLinear(),
         };
     }
 

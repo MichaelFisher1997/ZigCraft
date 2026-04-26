@@ -63,7 +63,7 @@ test "Atmosphere color interpolation at noon" {
     try testing.expectEqual(@as(f32, 1.0), atmosphere.sun_intensity);
 
     // Check colors match day palette
-    const day_sky = Vec3.init(0.34, 0.56, 0.94).toLinear();
+    const day_sky = Vec3.init(97.0 / 255.0, 181.0 / 255.0, 245.0 / 255.0).toLinear();
 
     try testing.expectApproxEqAbs(day_sky.x, atmosphere.sky_color.x, 0.001);
     try testing.expectApproxEqAbs(day_sky.y, atmosphere.sky_color.y, 0.001);
