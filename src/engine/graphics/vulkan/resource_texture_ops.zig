@@ -229,7 +229,7 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
 pub fn createTexture3D(self: anytype, width: u32, height: u32, depth: u32, format: rhi.TextureFormat, config: rhi.TextureConfig, data_opt: ?[]const u8) rhi.RhiError!rhi.TextureHandle {
     var texture_config = config;
     if (texture_config.generate_mipmaps) {
-        log.log.warn("3D texture mipmaps are not supported yet; disabling generate_mipmaps", .{});
+        log.log.info("3D texture mipmaps are not supported yet; disabling generate_mipmaps", .{});
         texture_config.generate_mipmaps = false;
     }
 

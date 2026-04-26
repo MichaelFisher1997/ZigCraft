@@ -11,7 +11,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
+const fs = @import("fs");
 const runtime_env = @import("runtime_env.zig");
+const sync = @import("sync");
+
+const DEFAULT_LOG_PATH = "logs/zigcraft.log";
+const MAX_LOG_LINE_BYTES = 32 * 1024;
 
 pub const LogLevel = enum {
     trace,
@@ -24,9 +29,37 @@ pub const LogLevel = enum {
 
 pub const Logger = struct {
     min_level: LogLevel = .info,
+    file: ?fs.File = null,
+    mutex: sync.Mutex = .{},
 
     pub fn init(min_level: LogLevel) Logger {
         return .{ .min_level = min_level };
+    }
+
+    pub fn initFile(self: *Logger, path: []const u8) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (fs.path.dirname(path)) |dir| {
+            try fs.cwd().makePath(dir);
+        }
+
+        if (self.file) |file| {
+            file.close();
+            self.file = null;
+        }
+
+        self.file = try fs.cwd().createFile(path, .{ .truncate = true });
+    }
+
+    pub fn deinit(self: *Logger) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.file) |file| {
+            file.close();
+            self.file = null;
+        }
     }
 
     pub fn trace(self: *const Logger, comptime fmt: []const u8, args: anytype) void {
@@ -73,9 +106,34 @@ pub const Logger = struct {
             .fatal => "[FATAL]",
         };
 
-        std.debug.print("{s} " ++ fmt ++ "\n", .{level_str} ++ args);
+        const mutable_self: *Logger = @constCast(self);
+        mutable_self.mutex.lock();
+        defer mutable_self.mutex.unlock();
+
+        if (mutable_self.file) |file| {
+            var buffer: [MAX_LOG_LINE_BYTES]u8 = undefined;
+            const line = std.fmt.bufPrint(&buffer, "{s} " ++ fmt ++ "\n", .{level_str} ++ args) catch blk: {
+                const truncation_msg = "[WARN] previous log line exceeded buffer and was truncated\n";
+                file.writeAll(truncation_msg) catch {};
+                break :blk std.fmt.bufPrint(buffer[0 .. buffer.len - 1], "{s} " ++ fmt, .{level_str} ++ args) catch return;
+            };
+            file.writeAll(line) catch {};
+        }
+
+        if (mutable_self.file == null or shouldMirrorToConsole(level)) {
+            std.debug.print("{s} " ++ fmt ++ "\n", .{level_str} ++ args);
+        }
     }
 };
+
+pub fn initDefaultFile() !void {
+    try log.initFile(DEFAULT_LOG_PATH);
+    log.info("Logging to {s}", .{DEFAULT_LOG_PATH});
+}
+
+pub fn deinit() void {
+    log.deinit();
+}
 
 fn parseLogLevel(value: []const u8) ?LogLevel {
     if (std.ascii.eqlIgnoreCase(value, "trace")) return .trace;
@@ -98,6 +156,11 @@ fn resolveRuntimeLogLevel(default_level: LogLevel) LogLevel {
         return parseLogLevel(value) orelse default_level;
     }
     return default_level;
+}
+
+fn shouldMirrorToConsole(level: LogLevel) bool {
+    if (runtime_env.envFlag("ZIGCRAFT_LOG_CONSOLE", false)) return true;
+    return @intFromEnum(level) >= @intFromEnum(LogLevel.err);
 }
 
 pub var log = Logger.init(resolveStaticDefaultLogLevel());
