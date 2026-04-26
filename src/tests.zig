@@ -69,21 +69,28 @@ test {
     _ = @import("ecs_tests.zig");
     _ = @import("engine/graphics/vulkan_device.zig");
     _ = @import("engine/graphics/vulkan_device_tests.zig");
+    _ = @import("engine/graphics/vulkan_device_internal_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_state_control_tests.zig");
     _ = @import("engine/graphics/vulkan/ssao_system_tests.zig");
     _ = @import("engine/graphics/vulkan/pipeline_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/pipeline_manager_edge_tests.zig");
     _ = @import("engine/graphics/vulkan/pipeline_specialized_tests.zig");
+    _ = @import("engine/graphics/vulkan/pipeline_specialized_edge_tests.zig");
     _ = @import("engine/graphics/vulkan/descriptor_bindings_tests.zig");
-    _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
+    _ = @import("engine/graphics/vulkan/descriptor_bindings_edge_tests.zig");
     _ = @import("engine/graphics/vulkan/descriptor_manager_tests.zig");
+    _ = @import("engine/graphics/vulkan/descriptor_manager_error_tests.zig");
+    _ = @import("engine/graphics/vulkan/shader_registry_tests.zig");
     _ = @import("engine/graphics/vulkan/frame_manager_tests.zig");
     _ = @import("engine/graphics/vulkan/render_pass_manager_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_frame_orchestration_tests.zig");
     _ = @import("engine/graphics/vulkan/rhi_pass_orchestration_tests.zig");
     _ = @import("engine/graphics/vulkan/vulkan_frame_tests.zig");
+    _ = @import("engine/graphics/vulkan/utils_tests.zig");
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/graphics/shadow_tests.zig");
+    _ = @import("engine/graphics/shadow_system_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
     _ = @import("engine/math/frustum_tests.zig");
     _ = @import("engine/math/mat4_tests.zig");
@@ -124,6 +131,9 @@ test {
     _ = @import("world/biome_and_block_tests.zig");
     _ = @import("world/packed_light_tests.zig");
     _ = @import("world/meshing/boundary_tests.zig");
+    _ = @import("world/world_coord_tests.zig");
+    _ = @import("world/world_block_fill_tests.zig");
+    _ = @import("world/world_interface_vtable_tests.zig");
 }
 
 test "Vec3 addition" {

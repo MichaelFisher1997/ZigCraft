@@ -36,19 +36,21 @@ pub const ShadowSystem = struct {
     }
 
     pub fn deinit(self: *ShadowSystem, device: c.VkDevice) void {
-        if (self.shadow_pipeline != null) c.vkDestroyPipeline(device, self.shadow_pipeline, null);
-        if (self.shadow_render_pass != null) c.vkDestroyRenderPass(device, self.shadow_render_pass, null);
-        if (self.shadow_sampler != null) c.vkDestroySampler(device, self.shadow_sampler, null);
-        if (self.shadow_sampler_regular != null) c.vkDestroySampler(device, self.shadow_sampler_regular, null);
+        if (device != null) {
+            if (self.shadow_pipeline != null) c.vkDestroyPipeline(device, self.shadow_pipeline, null);
+            if (self.shadow_render_pass != null) c.vkDestroyRenderPass(device, self.shadow_render_pass, null);
+            if (self.shadow_sampler != null) c.vkDestroySampler(device, self.shadow_sampler, null);
+            if (self.shadow_sampler_regular != null) c.vkDestroySampler(device, self.shadow_sampler_regular, null);
 
-        for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
-            if (self.shadow_framebuffers[i] != null) c.vkDestroyFramebuffer(device, self.shadow_framebuffers[i], null);
-            if (self.shadow_image_views[i] != null) c.vkDestroyImageView(device, self.shadow_image_views[i], null);
+            for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
+                if (self.shadow_framebuffers[i] != null) c.vkDestroyFramebuffer(device, self.shadow_framebuffers[i], null);
+                if (self.shadow_image_views[i] != null) c.vkDestroyImageView(device, self.shadow_image_views[i], null);
+            }
+
+            if (self.shadow_image_view != null) c.vkDestroyImageView(device, self.shadow_image_view, null);
+            if (self.shadow_image != null) c.vkDestroyImage(device, self.shadow_image, null);
+            if (self.shadow_image_memory != null) c.vkFreeMemory(device, self.shadow_image_memory, null);
         }
-
-        if (self.shadow_image_view != null) c.vkDestroyImageView(device, self.shadow_image_view, null);
-        if (self.shadow_image != null) c.vkDestroyImage(device, self.shadow_image, null);
-        if (self.shadow_image_memory != null) c.vkFreeMemory(device, self.shadow_image_memory, null);
 
         // Reset to safe defaults rather than using zeroes on a struct with non-nullable pointers
         self.shadow_image = null;
@@ -92,6 +94,8 @@ pub const ShadowSystem = struct {
         // Render pass handles transition from UNDEFINED to DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         self.shadow_image_layouts[cascade_index] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+        if (command_buffer == null) return;
+
         var render_pass_info: c.VkRenderPassBeginInfo = undefined;
         @memset(std.mem.asBytes(&render_pass_info), 0);
         render_pass_info.sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -133,7 +137,7 @@ pub const ShadowSystem = struct {
     pub fn endPass(self: *ShadowSystem, command_buffer: c.VkCommandBuffer) void {
         if (!self.pass_active) return;
 
-        c.vkCmdEndRenderPass(command_buffer);
+        if (command_buffer != null) c.vkCmdEndRenderPass(command_buffer);
         const cascade_index = self.pass_index;
         self.pass_active = false;
 

@@ -4,7 +4,7 @@ name: opencode-test-writer
 # - OPENCODE_PAT: Classic PAT with `repo` scope OR fine-grained PAT with:
 #     Contents: Read & Write, Pull requests: Read & Write, Metadata: Read
 #   Without `repo` scope, git push will fail with 403 permission denied.
-# - MINIMAX_API_KEY: API key for the MiniMax M2.7 model
+# - ZHIPU_API_KEY: API key for the Zhipu AI GLM-5.1 model
 
 on:
   schedule:
@@ -215,17 +215,16 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         uses: ./.github/actions/setup-nix
 
-      # XDG_CACHE_HOME=/tmp — non-persistent but avoids permission issues (see opencode-audit.yml)
       - name: Run opencode test writer
         if: steps.check-existing.outputs.skip != 'true'
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
-          model: minimax-coding-plan/MiniMax-M2.7
+          model: zhipuai-coding-plan/glm-5.1
           use_github_token: true
           prompt: |
             Load the `test-writer` skill first — it contains the full codebase context, testing patterns, and workflow rules.
