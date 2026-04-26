@@ -207,7 +207,7 @@ pub const LODStreamingCoordinator = struct {
 
                 total_in_radius += 1;
                 if (storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
-                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                    if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
                         ready_in_radius += 1;
                     }
                 }

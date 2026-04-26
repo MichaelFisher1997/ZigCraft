@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
-const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
 const NeighborChunks = @import("chunk_mesh.zig").NeighborChunks;
 const BlockType = @import("block.zig").BlockType;
 const ChunkStorage = @import("chunk_storage.zig").ChunkStorage;
@@ -10,12 +9,9 @@ const ChunkData = @import("chunk_storage.zig").ChunkData;
 const ChunkKey = @import("chunk_storage.zig").ChunkKey;
 const worldToChunk = @import("chunk.zig").worldToChunk;
 const worldToLocal = @import("chunk.zig").worldToLocal;
-const CHUNK_SIZE_X = @import("chunk.zig").CHUNK_SIZE_X;
-const CHUNK_SIZE_Z = @import("chunk.zig").CHUNK_SIZE_Z;
 const gen_interface = @import("worldgen/generator_interface.zig");
 const Generator = gen_interface.Generator;
 const registry = @import("worldgen/registry.zig");
-const LightingComputer = @import("worldgen/lighting_computer.zig").LightingComputer;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RHI = rhi_mod.RHI;
 const WorldLOD = @import("world_lod.zig").WorldLOD(RHI);
@@ -51,6 +47,7 @@ const CHUNK_UNLOAD_BUFFER = @import("chunk.zig").CHUNK_UNLOAD_BUFFER;
 const SaveManager = @import("persistence/save_manager.zig").SaveManager;
 const LoadResult = @import("persistence/save_manager.zig").LoadResult;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
+const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -157,6 +154,9 @@ pub const World = struct {
     // GPU Block Buffer (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
 
+    // Mutation coordinator (Issue #550)
+    mutation: WorldMutationCoordinator,
+
     pub fn init(options: InitOptions) !*World {
         const allocator = options.allocator;
         const world = try allocator.create(World);
@@ -191,6 +191,7 @@ pub const World = struct {
             .lod_enabled = false,
             .save_manager = null,
             .gpu_block_buffer = null,
+            .mutation = undefined,
         };
         errdefer world.generator.deinit(allocator);
 
@@ -208,6 +209,13 @@ pub const World = struct {
         errdefer world.renderer.deinit();
 
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();
+
+        world.mutation = WorldMutationCoordinator.init(
+            &world.storage,
+            allocator,
+            world.gpu_block_buffer,
+            world.renderer.getGpuMesher() != null,
+        );
 
         log.log.info("World.init: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
         world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
@@ -367,44 +375,7 @@ pub const World = struct {
     }
 
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
-        if (world_y < 0 or world_y >= 256) return;
-        const cp = worldToChunk(world_x, world_z);
-        const data = try self.getOrCreateChunk(cp.chunk_x, cp.chunk_z);
-        const local = worldToLocal(world_x, world_z);
-        data.chunk.setBlock(local.x, @intCast(world_y), local.z, block);
-
-        if (self.renderer.getGpuMesher() != null) {
-            if (self.gpu_block_buffer) |buf| {
-                buf.updateBlock(cp.chunk_x, cp.chunk_z, local.x, @intCast(world_y), local.z, @intFromEnum(block)) catch |err| {
-                    log.log.debug("GPU block buffer update failed: {}", .{err});
-                };
-            }
-        }
-
-        try LightingComputer.computeSkylight(&data.chunk, self.allocator);
-
-        // Mark neighbor chunks dirty if block is on a chunk boundary so their meshes
-        // update faces and cross-chunk light samples without recomputing full skylight.
-        if (local.x == 0) {
-            if (self.getChunk(cp.chunk_x - 1, cp.chunk_z)) |neighbor| {
-                neighbor.chunk.dirty = true;
-            }
-        }
-        if (local.x == CHUNK_SIZE_X - 1) {
-            if (self.getChunk(cp.chunk_x + 1, cp.chunk_z)) |neighbor| {
-                neighbor.chunk.dirty = true;
-            }
-        }
-        if (local.z == 0) {
-            if (self.getChunk(cp.chunk_x, cp.chunk_z - 1)) |neighbor| {
-                neighbor.chunk.dirty = true;
-            }
-        }
-        if (local.z == CHUNK_SIZE_Z - 1) {
-            if (self.getChunk(cp.chunk_x, cp.chunk_z + 1)) |neighbor| {
-                neighbor.chunk.dirty = true;
-            }
-        }
+        _ = try self.mutation.applyBlockMutation(world_x, world_y, world_z, block);
     }
 
     /// Get chunk data at chunk coordinates.

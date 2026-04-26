@@ -136,7 +136,7 @@ pub const ChunkQueueCoordinator = struct {
                 if (data.chunk.dirty) {
                     data.chunk.dirty = false;
                     data.chunk.state = .generated;
-                } else if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null and data.chunk.mesh_attempts < 3) {
+                } else if (data.render.mesh.solid_allocation == null and data.render.mesh.cutout_allocation == null and data.render.mesh.fluid_allocation == null and data.chunk.mesh_attempts < 3) {
                     data.chunk.mesh_attempts += 1;
                     log.log.warn("CHUNK_RECOVERY: ({},{}) renderable with no allocations, re-meshing (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
                     data.chunk.state = .generated;
@@ -176,24 +176,24 @@ pub const ChunkQueueCoordinator = struct {
                 // Main-thread invariant: only this upload path mutates `.uploading`
                 // chunks until GPU meshing finalization runs from the render graph.
                 if (!self.gpu.queueGpuMesh(data)) {
-                    data.mesh.upload(self.vertex_allocator);
+                    data.render.mesh.upload(self.vertex_allocator);
 
-                    if (data.mesh.diag_tile0_count > 0) {
+                    if (data.render.mesh.diag_tile0_count > 0) {
                         log.log.warn("TILE0_MESH: chunk ({},{}) has {}/{} vertices with tile_id=0 (WHITE)", .{
-                            data.chunk.chunk_x,         data.chunk.chunk_z,
-                            data.mesh.diag_tile0_count, data.mesh.diag_total_verts,
+                            data.chunk.chunk_x,                data.chunk.chunk_z,
+                            data.render.mesh.diag_tile0_count, data.render.mesh.diag_total_verts,
                         });
                     }
 
-                    if (data.mesh.ready) {
+                    if (data.render.mesh.ready) {
                         data.chunk.state = .renderable;
                         data.chunk.dirty = false;
                         _ = self.chunks_uploaded_total.fetchAdd(1, .monotonic);
                     } else {
                         log.log.warn("CHUNK_UPLOAD: ({},{}) upload FAILED (ready=false), reverting to mesh_ready | solid={} cutout={} fluid={}", .{
-                            key.x,                              key.z,
-                            data.mesh.solid_allocation != null, data.mesh.cutout_allocation != null,
-                            data.mesh.fluid_allocation != null,
+                            key.x,                                     key.z,
+                            data.render.mesh.solid_allocation != null, data.render.mesh.cutout_allocation != null,
+                            data.render.mesh.fluid_allocation != null,
                         });
                         data.chunk.state = .mesh_ready;
                     }
@@ -371,7 +371,7 @@ pub const ChunkQueueCoordinator = struct {
                 _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
                 return;
             }
-            chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
+            chunk_data.render.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
                 log.log.errWithTrace("Mesh build failed for chunk ({}, {}): {}", .{ cx, cz, err });
                 self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .generated;

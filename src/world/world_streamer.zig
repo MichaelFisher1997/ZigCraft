@@ -231,15 +231,15 @@ pub const WorldStreamer = struct {
                     .west = if (self.storage.get(cx - 1, cz)) |w| &w.chunk else null,
                 };
 
-                data.mesh.buildWithNeighbors(&data.chunk, neighbors, self.atlas) catch |err| {
+                data.render.mesh.buildWithNeighbors(&data.chunk, neighbors, self.atlas) catch |err| {
                     log.log.warn("STARTUP_WARMUP_MESH_FAILED: ({},{}) {}", .{ cx, cz, err });
                     data.chunk.state = .generated;
                     continue;
                 };
 
                 data.chunk.state = .mesh_ready;
-                data.mesh.upload(self.vertex_allocator);
-                if (data.mesh.ready) {
+                data.render.mesh.upload(self.vertex_allocator);
+                if (data.render.mesh.ready) {
                     data.chunk.state = .renderable;
                     data.chunk.dirty = false;
                     _ = self.queue_coordinator.chunks_uploaded_total.fetchAdd(1, .monotonic);
@@ -300,10 +300,10 @@ pub const WorldStreamer = struct {
                 .uploading => counts[7] += 1,
                 .renderable => {
                     counts[8] += 1;
-                    if (data.mesh.solid_allocation == null and data.mesh.cutout_allocation == null and data.mesh.fluid_allocation == null) {
+                    if (data.render.mesh.solid_allocation == null and data.render.mesh.cutout_allocation == null and data.render.mesh.fluid_allocation == null) {
                         renderable_no_alloc += 1;
                     }
-                    if (!data.mesh.ready) {
+                    if (!data.render.mesh.ready) {
                         renderable_not_ready += 1;
                     }
                 },
@@ -338,7 +338,7 @@ pub const WorldStreamer = struct {
                     const cx = pc_x + dir[0];
                     const cz = pc_z + dir[1];
                     if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
-                        if (data.chunk.state == .renderable or data.mesh.solid_allocation != null) {
+                        if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null) {
                             renderable_at_boundary += 1;
                         } else {
                             if (missing_at_boundary == 0) {
@@ -436,11 +436,11 @@ pub const WorldStreamer = struct {
             if (neighbors.west) |w| @constCast(w).unpin();
         }
 
-        chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
+        chunk_data.render.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
             log.log.warn("STARTUP_FINALIZE_MESH_FAILED: ({},{}) {}", .{ cx, cz, err });
             return;
         };
-        chunk_data.mesh.upload(self.vertex_allocator);
+        chunk_data.render.mesh.upload(self.vertex_allocator);
 
         self.storage.chunks_mutex.lock();
         if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {

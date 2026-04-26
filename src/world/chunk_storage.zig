@@ -60,9 +60,21 @@ const ChunkKeyContext = struct {
     }
 };
 
+pub const RenderPayload = struct {
+    mesh: ChunkMesh,
+};
+
 pub const ChunkData = struct {
     chunk: Chunk,
-    mesh: ChunkMesh,
+    render: RenderPayload,
+
+    pub fn getMesh(self: *ChunkData) *ChunkMesh {
+        return &self.render.mesh;
+    }
+
+    pub fn getMeshConst(self: *const ChunkData) *const ChunkMesh {
+        return &self.render.mesh;
+    }
 };
 
 pub const ChunkStorage = struct {
@@ -113,7 +125,7 @@ pub const ChunkStorage = struct {
     pub fn deinit(self: *ChunkStorage, vertex_allocator: anytype) void {
         var iter = self.chunks.iterator();
         while (iter.next()) |entry| {
-            entry.value_ptr.*.mesh.deinit(vertex_allocator);
+            entry.value_ptr.*.render.mesh.deinit(vertex_allocator);
             self.allocator.destroy(entry.value_ptr.*);
         }
         self.chunks.deinit();
@@ -122,7 +134,7 @@ pub const ChunkStorage = struct {
     pub fn deinitWithoutRHI(self: *ChunkStorage) void {
         var iter = self.chunks.iterator();
         while (iter.next()) |entry| {
-            entry.value_ptr.*.mesh.deinitWithoutRHI();
+            entry.value_ptr.*.render.mesh.deinitWithoutRHI();
             self.allocator.destroy(entry.value_ptr.*);
         }
         self.chunks.deinit();
@@ -141,9 +153,10 @@ pub const ChunkStorage = struct {
         var total: u64 = 0;
         var iter = self.chunks.iterator();
         while (iter.next()) |entry| {
-            if (entry.value_ptr.*.mesh.solid_allocation) |alloc| total += alloc.count;
-            if (entry.value_ptr.*.mesh.cutout_allocation) |alloc| total += alloc.count;
-            if (entry.value_ptr.*.mesh.fluid_allocation) |alloc| total += alloc.count;
+            const mesh = &entry.value_ptr.*.render.mesh;
+            if (mesh.solid_allocation) |alloc| total += alloc.count;
+            if (mesh.cutout_allocation) |alloc| total += alloc.count;
+            if (mesh.fluid_allocation) |alloc| total += alloc.count;
         }
         return total;
     }
@@ -172,7 +185,9 @@ pub const ChunkStorage = struct {
         const data = try self.allocator.create(ChunkData);
         data.* = .{
             .chunk = Chunk.init(cx, cz),
-            .mesh = ChunkMesh.init(self.allocator),
+            .render = .{
+                .mesh = ChunkMesh.init(self.allocator),
+            },
         };
         data.chunk.job_token = self.next_job_token;
         self.next_job_token += 1;
@@ -191,7 +206,7 @@ pub const ChunkStorage = struct {
     pub fn removeUnlocked(self: *ChunkStorage, cx: i32, cz: i32, vertex_allocator: anytype) bool {
         const key = ChunkKey{ .x = cx, .z = cz };
         if (self.chunks.fetchRemove(key)) |entry| {
-            entry.value.*.mesh.deinit(vertex_allocator);
+            entry.value.*.render.mesh.deinit(vertex_allocator);
             self.allocator.destroy(entry.value);
             return true;
         }
@@ -210,7 +225,7 @@ pub const ChunkStorage = struct {
         defer self.chunks_mutex.unlockShared();
 
         if (self.chunks.get(.{ .x = cx, .z = cz })) |data| {
-            return data.chunk.state == .renderable and data.mesh.ready;
+            return data.chunk.state == .renderable and data.render.mesh.ready;
         }
         return false;
     }
