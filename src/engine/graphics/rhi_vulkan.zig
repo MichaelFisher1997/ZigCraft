@@ -946,7 +946,6 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getNativeSwapchainExtent = getNativeSwapchainExtent,
         .getNativeDevice = getNativeDevice,
         .setClearColor = setClearColor,
-        .computeSSAO = computeSSAO,
         .drawDebugShadowMap = drawDebugShadowMap,
     },
     .ssao = VULKAN_SSAO_VTABLE,

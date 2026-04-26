@@ -277,9 +277,6 @@ pub const RenderContext = struct {
     pub fn setClearColor(self: RenderContext, color: Vec3) void {
         self.render.vtable.setClearColor(self.render.ptr, color);
     }
-    pub fn computeSSAO(self: RenderContext, proj: Mat4, inv_proj: Mat4) void {
-        self.render.vtable.computeSSAO(self.render.ptr, proj, inv_proj);
-    }
     pub fn drawDebugShadowMap(self: RenderContext, cascade_index: usize, depth_map_handle: TextureHandle) void {
         self.render.vtable.drawDebugShadowMap(self.render.ptr, cascade_index, depth_map_handle);
     }
@@ -683,8 +680,6 @@ pub const IRenderContext = struct {
         setClearColor: *const fn (ptr: *anyopaque, color: Vec3) void,
 
         // Specific rendering passes/techniques (Tracked for refactoring)
-        // TODO (#225): Relocate computeSSAO to dedicated SSAOSystem
-        computeSSAO: *const fn (ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void,
         /// @deprecated TODO (#226): Relocate drawDebugShadowMap to a debug overlay system.
         drawDebugShadowMap: *const fn (ptr: *anyopaque, cascade_index: usize, depth_map_handle: TextureHandle) void,
 
