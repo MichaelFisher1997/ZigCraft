@@ -277,9 +277,6 @@ pub const RenderContext = struct {
     pub fn setClearColor(self: RenderContext, color: Vec3) void {
         self.render.vtable.setClearColor(self.render.ptr, color);
     }
-    pub fn computeSSAO(self: RenderContext, proj: Mat4, inv_proj: Mat4) void {
-        self.render.vtable.computeSSAO(self.render.ptr, proj, inv_proj);
-    }
     pub fn getNativeSkyPipeline(self: RenderContext) u64 {
         return self.render.vtable.getNativeSkyPipeline(self.render.ptr);
     }
@@ -678,10 +675,6 @@ pub const IRenderContext = struct {
 
         // High-level context state
         setClearColor: *const fn (ptr: *anyopaque, color: Vec3) void,
-
-        // Specific rendering passes/techniques (Tracked for refactoring)
-        // TODO (#225): Relocate computeSSAO to dedicated SSAOSystem
-        computeSSAO: *const fn (ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void,
 
         // Resource Accessors for Systems
         // Note: All accessors return backend-specific handles (e.g., Vulkan handles as u64).

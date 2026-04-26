@@ -228,7 +228,6 @@ const MockContext = struct {
         .getNativeCommandBuffer = getNativeCommandBuffer,
         .getNativeSwapchainExtent = getNativeSwapchainExtent,
         .getNativeDevice = getNativeDevice,
-        .computeSSAO = computeSSAO,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
