@@ -66,3 +66,67 @@ test "writeLevelDat overwrites existing" {
     try testing.expectEqual(@as(u64, 200), result.?.seed);
     try testing.expectEqual(@as(usize, 1), result.?.generator_index);
 }
+
+test "scanWorlds reads level.dat from each world directory" {
+    const allocator = testing.allocator;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+
+    var home_path_buf: [fs.max_path_bytes]u8 = undefined;
+    const home_path = try dir.realpath(".", &home_path_buf);
+
+    try dir.makePath(world_list.SAVE_DIR ++ "/world_a");
+    try dir.makePath(world_list.SAVE_DIR ++ "/world_b");
+
+    var world_a = try dir.openDir(world_list.SAVE_DIR ++ "/world_a", .{});
+    defer world_a.close();
+    var world_b = try dir.openDir(world_list.SAVE_DIR ++ "/world_b", .{});
+    defer world_b.close();
+
+    try world_list.writeLevelDat(allocator, world_a, "Alpha", 111, 1, 1000);
+    try world_list.writeLevelDat(allocator, world_b, "Beta", 222, 2, 2000);
+
+    const worlds = try world_list.scanWorldsInHome(allocator, home_path);
+    defer {
+        for (worlds) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.dir_path);
+        }
+        allocator.free(worlds);
+    }
+
+    try testing.expectEqual(@as(usize, 2), worlds.len);
+    try testing.expectEqualStrings("Beta", worlds[0].name);
+    try testing.expectEqual(@as(u64, 222), worlds[0].seed);
+    try testing.expectEqual(@as(usize, 2), worlds[0].generator_index);
+    try testing.expectEqualStrings("Alpha", worlds[1].name);
+    try testing.expectEqual(@as(u64, 111), worlds[1].seed);
+    try testing.expectEqual(@as(usize, 1), worlds[1].generator_index);
+}
+
+test "scanWorlds keeps directory fallback when level.dat is missing" {
+    const allocator = testing.allocator;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+
+    var home_path_buf: [fs.max_path_bytes]u8 = undefined;
+    const home_path = try dir.realpath(".", &home_path_buf);
+
+    try dir.makePath(world_list.SAVE_DIR ++ "/missing_level");
+
+    const worlds = try world_list.scanWorldsInHome(allocator, home_path);
+    defer {
+        for (worlds) |entry| {
+            allocator.free(entry.name);
+            allocator.free(entry.dir_path);
+        }
+        allocator.free(worlds);
+    }
+
+    try testing.expectEqual(@as(usize, 1), worlds.len);
+    try testing.expectEqualStrings("missing_level", worlds[0].name);
+    try testing.expectEqual(@as(u64, 0), worlds[0].seed);
+    try testing.expectEqual(@as(usize, 0), worlds[0].generator_index);
+}

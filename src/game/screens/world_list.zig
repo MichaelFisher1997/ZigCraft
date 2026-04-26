@@ -100,6 +100,10 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
 
 pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
     const home = getenv("HOME") orelse return &[_]WorldEntry{};
+    return scanWorldsInHome(allocator, home);
+}
+
+pub fn scanWorldsInHome(allocator: std.mem.Allocator, home: []const u8) ![]const WorldEntry {
     var home_dir = fs.openDirAbsolute(home, .{}) catch return &[_]WorldEntry{};
     defer home_dir.close();
     home_dir.makePath(SAVE_DIR) catch {};
@@ -118,7 +122,11 @@ pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
         if (entry.kind != .directory) continue;
         const name_alloc = allocator.dupe(u8, entry.name) catch continue;
         errdefer allocator.free(name_alloc);
-        const level = readLevelDat(allocator, saves_dir);
+        const level = blk: {
+            var world_dir = saves_dir.openDir(entry.name, .{}) catch break :blk null;
+            defer world_dir.close();
+            break :blk readLevelDat(allocator, world_dir);
+        };
         const dir_buf = std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ home, SAVE_DIR, entry.name }) catch {
             allocator.free(name_alloc);
             continue;
