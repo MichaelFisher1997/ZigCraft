@@ -315,6 +315,7 @@ pub const WorldScreen = struct {
             .time = self.session.atmosphere.time.time_of_day,
         };
 
+        // TODO: Replace this stabilization toggle with a user-facing simple lighting setting.
         const simple_lighting_mode = true;
         const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode and !startup_light_render and !simple_lighting_mode;
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);

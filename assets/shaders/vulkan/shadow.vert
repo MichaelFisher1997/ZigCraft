@@ -35,6 +35,7 @@ void main() {
 
     vTexCoord = aTexCoord;
     vTileID = (tile_id_u16 == 0xFFFFu) ? -1 : int(tile_id_u16);
+    // Skip shadows for diagonal billboard faces, such as cross-meshed vegetation.
     vSkipShadow = (abs(worldNormal.y) < 0.001 && abs(worldNormal.x) > 0.1 && abs(worldNormal.z) > 0.1) ? 1 : 0;
     
     gl_Position = pc.mvp * vec4(biasedPos, 1.0);

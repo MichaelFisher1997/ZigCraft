@@ -104,6 +104,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
         const current_frame = ctx.frames.current_frame;
         const command_buffer = ctx.frames.command_buffers[current_frame];
         if (ctx.timing.query_pool != null) {
+            rhi_timing.resetFrameTiming(ctx, current_frame);
             c.vkCmdResetQueryPool(command_buffer, ctx.timing.query_pool, @intCast(current_frame * QUERY_COUNT_PER_FRAME), QUERY_COUNT_PER_FRAME);
         }
     }

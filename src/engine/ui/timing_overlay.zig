@@ -53,6 +53,7 @@ pub const TimingOverlay = struct {
         drawGpuLine(ui, "SHADOW 0:", data.gpu.shadow_pass_ms[0], label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "SHADOW 1:", data.gpu.shadow_pass_ms[1], label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "SHADOW 2:", data.gpu.shadow_pass_ms[2], label_x, value_x, &y, scale, Color.gray);
+        drawGpuLine(ui, "SHADOW 3:", data.gpu.shadow_pass_ms[3], label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "G-PASS:", data.gpu.g_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "SSAO:", data.gpu.ssao_pass_ms, label_x, value_x, &y, scale, Color.gray);
         drawGpuLine(ui, "LPV:", data.gpu.lpv_pass_ms, label_x, value_x, &y, scale, Color.gray);

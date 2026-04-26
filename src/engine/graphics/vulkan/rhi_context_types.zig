@@ -24,6 +24,7 @@ const DepthPyramidSystem = @import("depth_pyramid.zig").DepthPyramidSystem;
 const WaterSystem = @import("water_system.zig").WaterSystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 const DynamicResolutionState = @import("dynamic_resolution.zig").DynamicResolutionState;
+const rhi_timing = @import("rhi_timing.zig");
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 
@@ -181,6 +182,7 @@ const TimingState = struct {
     query_pool: c.VkQueryPool = null,
     timing_enabled: bool = true,
     timing_results: rhi.GpuTimingResults = undefined,
+    pass_written: [MAX_FRAMES_IN_FLIGHT][rhi_timing.PASS_COUNT]bool = .{.{false} ** rhi_timing.PASS_COUNT} ** MAX_FRAMES_IN_FLIGHT,
 };
 
 pub const VulkanContext = struct {
