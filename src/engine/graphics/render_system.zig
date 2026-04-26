@@ -12,7 +12,6 @@ const Texture = @import("texture.zig").Texture;
 const render_graph_pkg = @import("render_graph.zig");
 const RenderGraph = render_graph_pkg.RenderGraph;
 const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
-const MaterialSystem = @import("material_system.zig").MaterialSystem;
 const LPVSystem = @import("lpv_system.zig").LPVSystem;
 const ResourcePackManager = @import("resource_pack.zig").ResourcePackManager;
 const Mat4 = @import("../math/mat4.zig").Mat4;
@@ -36,7 +35,6 @@ pub const RenderSystem = struct {
     env_map: ?Texture,
     render_graph: RenderGraph,
     atmosphere_system: *AtmosphereSystem,
-    material_system: *MaterialSystem,
     lpv_system: *LPVSystem,
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
@@ -213,26 +211,20 @@ pub const RenderSystem = struct {
             .env_map = env_map,
             .render_graph = render_graph,
             .atmosphere_system = atmosphere_system,
-            .material_system = undefined,
             .lpv_system = undefined,
-            .shadow_passes = .{
-                render_graph_pkg.ShadowPass.init(0),
-                render_graph_pkg.ShadowPass.init(1),
-                render_graph_pkg.ShadowPass.init(2),
-                render_graph_pkg.ShadowPass.init(3),
-            },
-            .g_pass = .{},
+            .shadow_passes = undefined,
+            .g_pass = undefined,
             .ssao_pass = .{},
             .depth_pyramid_pass = .{},
             .mesh_build_pass = .{},
             .sky_pass = .{},
-            .opaque_pass = .{},
+            .opaque_pass = undefined,
             .entity_pass = .{},
             .taa_pass = .{ .enabled = !disable_taa and settings.taa_enabled },
             .bloom_pass = .{ .enabled = !disable_bloom and settings.bloom_enabled },
             .post_process_pass = .{},
             .fxaa_pass = .{ .enabled = !disable_fxaa and settings.fxaa_enabled },
-            .water_reflection_pass = .{},
+            .water_reflection_pass = undefined,
             .water_pass = .{ .enabled = true },
             .safe_mode = safe_mode,
             .safe_render_mode = safe_render_mode,
@@ -244,10 +236,21 @@ pub const RenderSystem = struct {
             .disable_fxaa = disable_fxaa,
             .disable_bloom = disable_bloom,
         };
+        errdefer self.render_graph.deinit();
 
-        log.log.info("RenderSystem.init: initializing MaterialSystem", .{});
-        self.material_system = try MaterialSystem.init(allocator, &self.atlas);
-        errdefer self.material_system.deinit();
+        log.log.info("RenderSystem.init: initializing render graph materials", .{});
+        try self.render_graph.initMaterials(&self.atlas);
+        const material_system = self.render_graph.materials();
+        self.shadow_passes = .{
+            render_graph_pkg.ShadowPass.init(0, material_system),
+            render_graph_pkg.ShadowPass.init(1, material_system),
+            render_graph_pkg.ShadowPass.init(2, material_system),
+            render_graph_pkg.ShadowPass.init(3, material_system),
+        };
+        self.g_pass = render_graph_pkg.GPass.init(material_system);
+        self.opaque_pass = render_graph_pkg.OpaquePass.init(material_system);
+        self.water_reflection_pass = render_graph_pkg.WaterReflectionPass.init(material_system);
+
         log.log.info("RenderSystem.init: initializing LPVSystem (grid_size={}, cell_size={})", .{ settings.lpv_grid_size, settings.lpv_cell_size });
         self.lpv_system = try LPVSystem.init(
             allocator,
@@ -307,7 +310,6 @@ pub const RenderSystem = struct {
 
         self.render_graph.deinit();
         self.atmosphere_system.deinit();
-        self.material_system.deinit();
         self.lpv_system.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
@@ -369,10 +371,6 @@ pub const RenderSystem = struct {
 
     pub fn getAtmosphereSystem(self: *RenderSystem) *AtmosphereSystem {
         return self.atmosphere_system;
-    }
-
-    pub fn getMaterialSystem(self: *RenderSystem) *MaterialSystem {
-        return self.material_system;
     }
 
     pub fn getLPVSystem(self: *RenderSystem) *LPVSystem {
