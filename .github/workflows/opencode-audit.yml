@@ -4,7 +4,7 @@ name: opencode-audit
 # - OPENCODE_PAT: Classic PAT with `repo` scope OR fine-grained PAT with:
 #     Contents: Read, Issues: Read & Write, Pull requests: Read & Write
 #   Without proper scopes, gh issue create and label operations will fail.
-# - MINIMAX_API_KEY: API key for the MiniMax M2.7 model
+# - ZHIPU_API_KEY: API key for the Zhipu AI GLM-5.1 model
 
 on:
   schedule:
@@ -107,7 +107,6 @@ jobs:
 
       - name: Ensure opencode cache dir exists
         run: |
-          # Nix installer may restrict ~/.cache permissions; restore and use /tmp for non-persistent cache
           sudo chmod u+w ~/.cache 2>/dev/null || true
           mkdir -p /tmp/opencode-cache ~/.local/share/opencode
 
@@ -116,10 +115,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
-          model: minimax-coding-plan/MiniMax-M2.7
+          model: zhipuai-coding-plan/glm-5.1
           use_github_token: true
           prompt: |
             You are a senior Zig systems programming auditor performing a deep code audit.

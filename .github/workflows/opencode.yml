@@ -18,6 +18,7 @@ jobs:
       contains(github.event.comment.body, ' /opencode') ||
       startsWith(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       id-token: write
       contents: write
@@ -49,7 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         with:
-          model: minimax-coding-plan/MiniMax-M2.7
+          model: zhipuai-coding-plan/glm-5.1
           use_github_token: true
