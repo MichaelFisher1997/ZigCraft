@@ -354,8 +354,10 @@ pub const SDLAudioBackend = struct {
             log.log.err("Failed to open audio stream: {s}", .{c.SDL_GetError()});
             return SDLAudioError.SDLStreamFailed;
         }
+        errdefer _ = c.SDL_DestroyAudioStream(stream);
 
         const mixer = try allocator.create(Mixer);
+        errdefer allocator.destroy(mixer);
         mixer.* = Mixer.init();
 
         const self = try allocator.create(SDLAudioBackend);
@@ -413,6 +415,7 @@ pub const SDLAudioBackend = struct {
         self.mixer.listener_pos = pos;
         self.mixer.listener_fwd = fwd;
         self.mixer.listener_up = up;
+        self.mixer.listener_right = fwd.cross(up).normalize();
     }
 
     fn playSound(ptr: *anyopaque, sound: *const types.SoundData, config: types.PlayConfig) types.VoiceHandle {

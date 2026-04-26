@@ -13,6 +13,7 @@ pub const Registry = struct {
     transforms: ComponentStorage(components.Transform),
     physics: ComponentStorage(components.Physics),
     meshes: ComponentStorage(components.Mesh),
+    mutation_epoch: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator) Registry {
         return .{
@@ -36,6 +37,7 @@ pub const Registry = struct {
             @panic("Entity ID overflow");
         }
         self.next_entity_id += 1;
+        self.mutation_epoch += 1;
         return id;
     }
 
@@ -43,6 +45,7 @@ pub const Registry = struct {
         _ = self.transforms.remove(entity);
         _ = self.physics.remove(entity);
         _ = self.meshes.remove(entity);
+        self.mutation_epoch += 1;
     }
 
     pub fn clear(self: *Registry) void {
@@ -50,6 +53,7 @@ pub const Registry = struct {
         self.physics.clear();
         self.meshes.clear();
         self.next_entity_id = 1;
+        self.mutation_epoch += 1;
     }
 
     /// Returns a query iterator for the given component types.
@@ -63,9 +67,10 @@ pub const Registry = struct {
             const Self = @This();
             registry: *Registry,
             index: usize = 0,
+            expected_epoch: u64,
 
             pub fn init(registry: *Registry) Self {
-                return .{ .registry = registry };
+                return .{ .registry = registry, .expected_epoch = registry.mutation_epoch };
             }
 
             pub const Row = struct {
@@ -82,6 +87,7 @@ pub const Registry = struct {
             };
 
             pub fn next(self: *Self) ?Row {
+                std.debug.assert(self.expected_epoch == self.registry.mutation_epoch);
                 // Use the first component storage as the primary source of entities.
                 const PrimaryType = component_types[0];
                 const primary_storage = self.registry.getStorage(PrimaryType);
@@ -148,6 +154,7 @@ pub const Registry = struct {
         for (self.meshes.entities.items) |id| try entities_map.put(id, {});
 
         const entities = try allocator.alloc(EntityId, entities_map.count());
+        errdefer allocator.free(entities);
         var it = entities_map.keyIterator();
         var i: usize = 0;
         while (it.next()) |id| {
@@ -156,8 +163,11 @@ pub const Registry = struct {
         }
 
         const transforms = try allocator.alloc(?components.Transform, entities.len);
+        errdefer allocator.free(transforms);
         const physics = try allocator.alloc(?components.Physics, entities.len);
+        errdefer allocator.free(physics);
         const meshes = try allocator.alloc(?components.Mesh, entities.len);
+        errdefer allocator.free(meshes);
 
         for (entities, 0..) |id, idx| {
             transforms[idx] = self.transforms.get(id);

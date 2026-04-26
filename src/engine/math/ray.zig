@@ -186,7 +186,7 @@ pub fn castThroughVoxels(
     // Main DDA loop
     while (distance < max_distance) {
         // Check current voxel
-        if (isSolid(context, x, y, z)) {
+        if (distance <= max_distance and isSolid(context, x, y, z)) {
             return VoxelHit{
                 .x = x,
                 .y = y,
@@ -197,30 +197,21 @@ pub fn castThroughVoxels(
         }
 
         // Step to next voxel boundary
-        if (t_max_x < t_max_y) {
-            if (t_max_x < t_max_z) {
-                x += step_x;
-                distance = t_max_x;
-                t_max_x += t_delta_x;
-                last_face = if (step_x > 0) .west else .east;
-            } else {
-                z += step_z;
-                distance = t_max_z;
-                t_max_z += t_delta_z;
-                last_face = if (step_z > 0) .north else .south;
-            }
+        if (t_max_x <= t_max_y and t_max_x <= t_max_z) {
+            x += step_x;
+            distance = t_max_x;
+            t_max_x += t_delta_x;
+            last_face = if (step_x > 0) .west else .east;
+        } else if (t_max_y <= t_max_z) {
+            y += step_y;
+            distance = t_max_y;
+            t_max_y += t_delta_y;
+            last_face = if (step_y > 0) .bottom else .top;
         } else {
-            if (t_max_y < t_max_z) {
-                y += step_y;
-                distance = t_max_y;
-                t_max_y += t_delta_y;
-                last_face = if (step_y > 0) .bottom else .top;
-            } else {
-                z += step_z;
-                distance = t_max_z;
-                t_max_z += t_delta_z;
-                last_face = if (step_z > 0) .north else .south;
-            }
+            z += step_z;
+            distance = t_max_z;
+            t_max_z += t_delta_z;
+            last_face = if (step_z > 0) .north else .south;
         }
     }
 
@@ -285,4 +276,27 @@ test "DDA voxel traversal" {
     try std.testing.expectEqual(@as(i32, 0), result.?.y);
     try std.testing.expectEqual(@as(i32, 0), result.?.z);
     try std.testing.expectEqual(Face.west, result.?.face);
+}
+
+test "DDA voxel traversal prefers deterministic face on tied boundaries" {
+    const Context = struct {
+        pub fn isSolid(_: @This(), x: i32, y: i32, z: i32) bool {
+            return x == 1 and y == 0 and z == 1;
+        }
+    };
+
+    const result = castThroughVoxels(
+        Vec3.init(0.5, 0.5, 0.5),
+        Vec3.init(1, 0, 1),
+        10.0,
+        Context,
+        Context{},
+        Context.isSolid,
+    );
+
+    try std.testing.expect(result != null);
+    try std.testing.expectEqual(@as(i32, 1), result.?.x);
+    try std.testing.expectEqual(@as(i32, 0), result.?.y);
+    try std.testing.expectEqual(@as(i32, 1), result.?.z);
+    try std.testing.expectEqual(Face.north, result.?.face);
 }

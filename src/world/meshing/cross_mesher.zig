@@ -7,6 +7,7 @@
 const std = @import("std");
 
 const Chunk = @import("../chunk.zig").Chunk;
+const PackedLight = @import("../chunk.zig").PackedLight;
 const CHUNK_SIZE_X = @import("../chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("../chunk.zig").CHUNK_SIZE_Z;
 const BlockType = @import("../block.zig").BlockType;
@@ -29,7 +30,6 @@ pub fn meshCrossBlocks(
     cutout_list: *std.ArrayListUnmanaged(Vertex),
     atlas: *const TextureAtlas,
 ) !void {
-    _ = neighbors;
     const y0: i32 = @intCast(si * SUBCHUNK_SIZE);
     const y1: i32 = y0 + SUBCHUNK_SIZE;
 
@@ -43,15 +43,31 @@ pub fn meshCrossBlocks(
                 const def = block_registry.getBlockDefinition(block);
                 if (def.render_shape != .cross) continue;
 
-                const light = chunk.getLightSafe(@intCast(x), y, @intCast(z));
-                const entrance_bounce = chunk.getEntranceBounceSafe(@intCast(x), y, @intCast(z));
-                const entrance_dir = chunk.getEntranceDirSafe(@intCast(x), y, @intCast(z));
+                const xi: i32 = @intCast(x);
+                const zi: i32 = @intCast(z);
+                const light = sampleCrossLight(chunk, neighbors, xi, y, zi);
+                const entrance_bounce = sampleCrossEntranceBounce(chunk, neighbors, xi, y, zi);
+                const entrance_dir = boundary.getEntranceDirCross(chunk, neighbors, xi, y, zi);
                 const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
 
                 const tint: [3]f32 = if (def.is_tintable) blk: {
-                    const biome_id = chunk.getBiome(x, z);
-                    const biome_def = biome_mod.getBiomeDefinition(biome_id);
-                    break :blk biome_def.colors.grass;
+                    var r: f32 = 0;
+                    var g: f32 = 0;
+                    var b: f32 = 0;
+                    var count: f32 = 0;
+                    var ox: i32 = -1;
+                    while (ox <= 1) : (ox += 1) {
+                        var oz: i32 = -1;
+                        while (oz <= 1) : (oz += 1) {
+                            const biome_id = boundary.getBiomeAt(chunk, neighbors, xi + ox, zi + oz);
+                            const biome_def = biome_mod.getBiomeDefinition(biome_id);
+                            r += biome_def.colors.grass[0];
+                            g += biome_def.colors.grass[1];
+                            b += biome_def.colors.grass[2];
+                            count += 1.0;
+                        }
+                    }
+                    break :blk .{ r / count, g / count, b / count };
                 } else .{ 1.0, 1.0, 1.0 };
 
                 const base_col = def.default_color;
@@ -73,6 +89,34 @@ pub fn meshCrossBlocks(
             }
         }
     }
+}
+
+fn sampleCrossLight(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) PackedLight {
+    var result = PackedLight.init(0, 0);
+    var ox: i32 = -1;
+    while (ox <= 1) : (ox += 1) {
+        var oz: i32 = -1;
+        while (oz <= 1) : (oz += 1) {
+            const light = boundary.getLightCross(chunk, neighbors, x + ox, y, z + oz);
+            result.sky_light = @max(result.sky_light, light.getSkyLight());
+            result.block_light_r = @max(result.block_light_r, light.getBlockLightR());
+            result.block_light_g = @max(result.block_light_g, light.getBlockLightG());
+            result.block_light_b = @max(result.block_light_b, light.getBlockLightB());
+        }
+    }
+    return result;
+}
+
+fn sampleCrossEntranceBounce(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) u4 {
+    var result: u4 = 0;
+    var ox: i32 = -1;
+    while (ox <= 1) : (ox += 1) {
+        var oz: i32 = -1;
+        while (oz <= 1) : (oz += 1) {
+            result = @max(result, boundary.getEntranceBounceCross(chunk, neighbors, x + ox, y, z + oz));
+        }
+    }
+    return result;
 }
 
 fn emitCrossQuad(
