@@ -271,8 +271,6 @@ pub const WorldStreamer = struct {
         self.processUnloads(player_pos) catch |err| {
             log.log.warn("processUnloads error (non-fatal): {}", .{err});
         };
-        self.checkAutoSave();
-
         if (self.frame_counter % 300 == 0) {
             self.logChunkStateSummary();
         }
@@ -570,42 +568,6 @@ pub const WorldStreamer = struct {
                 counts[3], counts[6], counts[7],
             });
         }
-    }
-
-    fn checkAutoSave(self: *WorldStreamer) void {
-        const sm = self.save_manager orelse return;
-        if (!sm.shouldAutoSave()) return;
-
-        var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
-        defer dirty_keys.deinit(self.allocator);
-
-        self.storage.chunks_mutex.lockShared();
-        var iter = self.storage.iteratorUnsafe();
-        while (iter.next()) |entry| {
-            const chunk = &entry.value_ptr.*.chunk;
-            if (chunk.modified and chunk.generated) {
-                chunk.pin();
-                sm.enqueueSave(chunk);
-                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
-
-        sm.markAutoSaved();
-
-        const failed = sm.flush();
-
-        self.storage.chunks_mutex.lockShared();
-        for (dirty_keys.items) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                const should_remark = for (failed) |f| {
-                    if (f.x == key.x and f.z == key.z) break true;
-                } else false;
-                if (!should_remark) data.chunk.modified = false;
-                data.chunk.unpin();
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
     }
 
     pub fn getStats(self: *WorldStreamer) QueueStats {
