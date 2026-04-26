@@ -85,6 +85,10 @@ pub const ShadowSystem = struct {
             @import("../core/log.zig").log.err("ShadowSystem: framebuffer for cascade {} is null", .{cascade_index});
             return;
         }
+        if (command_buffer == null) {
+            @import("../core/log.zig").log.err("ShadowSystem: cannot begin pass, command_buffer is null", .{});
+            return;
+        }
 
         self.pass_active = true;
         self.pass_index = cascade_index;
@@ -93,8 +97,6 @@ pub const ShadowSystem = struct {
 
         // Render pass handles transition from UNDEFINED to DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         self.shadow_image_layouts[cascade_index] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
-        if (command_buffer == null) return;
 
         var render_pass_info: c.VkRenderPassBeginInfo = undefined;
         @memset(std.mem.asBytes(&render_pass_info), 0);
@@ -161,4 +163,17 @@ test "ShadowSystem initialization and state" {
     sys.pass_index = 1;
     try testing.expect(sys.pass_active);
     try testing.expectEqual(@as(u32, 1), sys.pass_index);
+}
+
+test "ShadowSystem beginPass leaves state inactive for null command buffer" {
+    const testing = std.testing;
+    var sys = try ShadowSystem.init(testing.allocator, 1024);
+    sys.shadow_render_pass = @ptrFromInt(1);
+    sys.shadow_framebuffers[0] = @ptrFromInt(1);
+
+    sys.beginPass(null, 0, Mat4.identity);
+
+    try testing.expect(!sys.pass_active);
+    try testing.expectEqual(@as(u32, 0), sys.pass_index);
+    try testing.expect(!sys.pipeline_bound);
 }

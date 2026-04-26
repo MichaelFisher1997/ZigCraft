@@ -43,7 +43,7 @@ test "ShadowSystem beginPass rejects null framebuffer" {
     try testing.expectEqual(@as(bool, false), sys.pass_active);
 }
 
-test "ShadowSystem beginPass sets correct pass state" {
+test "ShadowSystem beginPass rejects null command buffer before setting pass state" {
     var sys = try ShadowSystem.init(testing.allocator, 1024);
     defer sys.deinit(null);
 
@@ -58,13 +58,13 @@ test "ShadowSystem beginPass sets correct pass state" {
 
     sys.beginPass(null, 2, light_matrix);
 
-    try testing.expect(sys.pass_active);
-    try testing.expectEqual(@as(u32, 2), sys.pass_index);
-    try testing.expectEqual(@as(f32, 5.0), sys.pass_matrix.data[0][0]);
+    try testing.expect(!sys.pass_active);
+    try testing.expectEqual(@as(u32, 0), sys.pass_index);
+    try testing.expectEqual(@as(f32, 1.0), sys.pass_matrix.data[0][0]);
     try testing.expect(!sys.pipeline_bound);
 }
 
-test "ShadowSystem beginPass updates image layout to depth stencil" {
+test "ShadowSystem beginPass leaves image layout unchanged for null command buffer" {
     var sys = try ShadowSystem.init(testing.allocator, 1024);
     defer sys.deinit(null);
 
@@ -78,7 +78,7 @@ test "ShadowSystem beginPass updates image layout to depth stencil" {
 
     sys.beginPass(null, 1, Mat4.identity);
 
-    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL), sys.shadow_image_layouts[1]);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_UNDEFINED), sys.shadow_image_layouts[1]);
 }
 
 test "ShadowConfig default field values" {
@@ -381,7 +381,8 @@ test "ShadowSystem endPass resets pass_active to false" {
     sys.shadow_framebuffers[2] = @ptrFromInt(3);
     sys.shadow_framebuffers[3] = @ptrFromInt(4);
 
-    sys.beginPass(null, 1, Mat4.identity);
+    sys.pass_active = true;
+    sys.pass_index = 1;
     try testing.expect(sys.pass_active);
 
     sys.endPass(null);
@@ -398,7 +399,8 @@ test "ShadowSystem endPass does not modify pass_index" {
     sys.shadow_framebuffers[2] = @ptrFromInt(3);
     sys.shadow_framebuffers[3] = @ptrFromInt(4);
 
-    sys.beginPass(null, 2, Mat4.identity);
+    sys.pass_active = true;
+    sys.pass_index = 2;
     try testing.expectEqual(@as(u32, 2), sys.pass_index);
 
     sys.endPass(null);
@@ -415,7 +417,9 @@ test "ShadowSystem endPass updates image layout to depth stencil read only optim
     sys.shadow_framebuffers[2] = @ptrFromInt(3);
     sys.shadow_framebuffers[3] = @ptrFromInt(4);
 
-    sys.beginPass(null, 3, Mat4.identity);
+    sys.pass_active = true;
+    sys.pass_index = 3;
+    sys.shadow_image_layouts[3] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL), sys.shadow_image_layouts[3]);
 
     sys.endPass(null);

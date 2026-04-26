@@ -21,7 +21,10 @@ pub fn drawIndexed(ctx: anytype, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.B
 
     if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) return;
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) {
+        log.log.warn("drawIndexed: no active render pass after implicit main pass begin", .{});
+        return;
+    }
 
     const vbo_opt = ctx.resources.buffers.get(vbo_handle);
     const ebo_opt = ctx.resources.buffers.get(ebo_handle);
@@ -41,7 +44,10 @@ pub fn drawIndexed(ctx: anytype, vbo_handle: rhi.BufferHandle, ebo_handle: rhi.B
                     ctx.pipeline_manager.wireframe_pipeline
                 else
                     ctx.pipeline_manager.terrain_pipeline;
-                if (selected_pipeline == null) return;
+                if (selected_pipeline == null) {
+                    log.log.warn("drawIndexed: selected terrain pipeline is null", .{});
+                    return;
+                }
                 c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, selected_pipeline);
                 ctx.draw.terrain_pipeline_bound = !ctx.water_system.pass_active;
             }
@@ -62,7 +68,10 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
 
     if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
-    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) return;
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) {
+        log.log.warn("drawIndirect: no active render pass after implicit main pass begin", .{});
+        return;
+    }
 
     const use_shadow = ctx.shadow_system.pass_active;
     const use_g_pass = ctx.runtime.g_pass_active;
@@ -77,12 +86,18 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
 
             if (use_shadow) {
                 if (!ctx.shadow_system.pipeline_bound) {
-                    if (ctx.shadow_system.shadow_pipeline == null) return;
+                    if (ctx.shadow_system.shadow_pipeline == null) {
+                        log.log.warn("drawIndirect: shadow pipeline is null", .{});
+                        return;
+                    }
                     c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.shadow_system.shadow_pipeline);
                     ctx.shadow_system.pipeline_bound = true;
                 }
             } else if (use_g_pass) {
-                if (ctx.pipeline_manager.g_pipeline == null) return;
+                if (ctx.pipeline_manager.g_pipeline == null) {
+                    log.log.warn("drawIndirect: g-pass pipeline is null", .{});
+                    return;
+                }
                 c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.g_pipeline);
             } else {
                 if (!ctx.draw.terrain_pipeline_bound) {
