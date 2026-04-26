@@ -19,6 +19,7 @@ const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
 
 pub const EnvironmentScreen = struct {
     context: EngineContext,
+    environment_maps: std.ArrayListUnmanaged([]const u8),
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -29,14 +30,18 @@ pub const EnvironmentScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*EnvironmentScreen {
         const self = try allocator.create(EnvironmentScreen);
+        errdefer allocator.destroy(self);
         self.* = .{
             .context = context,
+            .environment_maps = .empty,
         };
+        try self.refreshEnvironmentMaps();
         return self;
     }
 
     pub fn deinit(ptr: *anyopaque) void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.clearEnvironmentMaps();
         self.context.allocator.destroy(self);
     }
 
@@ -100,27 +105,15 @@ pub const EnvironmentScreen = struct {
         }
         sy += btn_height + 10.0 * ui_scale;
 
-        // Scan for files
-        var dir = fs.cwd().openDir(".", .{ .iterate = true }) catch return;
-        defer dir.close();
-
-        var iterator = dir.iterate();
         var buffer: [128]u8 = undefined;
 
-        while (try iterator.next()) |entry| {
-            if (entry.kind != .file) continue;
-            const is_exr = std.mem.endsWith(u8, entry.name, ".exr");
-            const is_hdr = std.mem.endsWith(u8, entry.name, ".hdr");
-            if (!is_exr and !is_hdr) continue;
-
-            if (is_hdr and std.mem.endsWith(u8, entry.name, ".exr.hdr")) continue;
-
-            const is_selected = std.mem.eql(u8, settings.environment_map, entry.name);
-            const label = try std.fmt.bufPrint(&buffer, "{s}{s}", .{ entry.name, if (is_selected) " [SELECTED]" else "" });
+        for (self.environment_maps.items) |environment_map| {
+            const is_selected = std.mem.eql(u8, settings.environment_map, environment_map);
+            const label = try std.fmt.bufPrint(&buffer, "{s}{s}", .{ environment_map, if (is_selected) " [SELECTED]" else "" });
 
             if (Widgets.drawButton(ui, .{ .x = btn_x, .y = sy, .width = btn_width, .height = btn_height }, label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
                 if (!is_selected) {
-                    try settings_pkg.persistence.setEnvironmentMap(settings, ctx.allocator, entry.name);
+                    try settings_pkg.persistence.setEnvironmentMap(settings, ctx.allocator, environment_map);
                     try self.reloadEnvMap();
                 }
             }
@@ -139,6 +132,28 @@ pub const EnvironmentScreen = struct {
     pub fn onEnter(ptr: *anyopaque) void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         self.context.input.setMouseCapture(self.context.window_manager.window, false);
+        self.refreshEnvironmentMaps() catch |err| log.log.warn("Failed to refresh environment map list: {}", .{err});
+    }
+
+    fn clearEnvironmentMaps(self: *@This()) void {
+        for (self.environment_maps.items) |name| self.context.allocator.free(name);
+        self.environment_maps.clearRetainingCapacity();
+    }
+
+    fn refreshEnvironmentMaps(self: *@This()) !void {
+        self.clearEnvironmentMaps();
+        var dir = fs.cwd().openDir(".", .{ .iterate = true }) catch return;
+        defer dir.close();
+
+        var iterator = dir.iterate();
+        while (try iterator.next()) |entry| {
+            if (entry.kind != .file) continue;
+            const is_exr = std.mem.endsWith(u8, entry.name, ".exr");
+            const is_hdr = std.mem.endsWith(u8, entry.name, ".hdr");
+            if (!is_exr and !is_hdr) continue;
+            if (is_hdr and std.mem.endsWith(u8, entry.name, ".exr.hdr")) continue;
+            try self.environment_maps.append(self.context.allocator, try self.context.allocator.dupe(u8, entry.name));
+        }
     }
 
     fn reloadEnvMap(self: *@This()) !void {

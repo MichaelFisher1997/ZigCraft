@@ -28,6 +28,8 @@ const CSM = @import("../../engine/graphics/csm.zig");
 const WorldRenderer = @import("../../world/world_renderer.zig").WorldRenderer;
 const settings_data = @import("../settings/data.zig");
 const build_options = @import("build_options");
+const world_debug = @import("world_debug.zig");
+const world_frame_params = @import("world_frame_params.zig");
 
 const ShadowProbeInfo = struct {
     block_x: i32,
@@ -282,11 +284,6 @@ pub const WorldScreen = struct {
 
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
-        const aspect = screen_w / screen_h;
-
-        const taa_enabled = ctx.settings.taa_enabled;
-        const view_proj_render = camera.getJitteredProjectionMatrixReverseZ(aspect, screen_w, screen_h, taa_enabled).multiply(camera.getViewMatrixOriginCentered());
-
         const safe_mode = render_system.getSafeMode();
         const startup_busy = self.session.world.isStartupBusy();
         const startup_loading = build_options.auto_world.len > 0 and startup_busy;
@@ -300,24 +297,8 @@ pub const WorldScreen = struct {
         const shadow_sun_dir = if (shadow_sandbox_active) self.resolveStableShadowSunDir(render_sun_dir) else render_sun_dir;
         if (!shadow_sandbox_active) self.stable_shadow_sun_initialized = false;
 
-        const sky_params = rhi_pkg.SkyParams{
-            .cam_pos = camera.position,
-            .cam_forward = camera.forward,
-            .cam_right = camera.right,
-            .cam_up = camera.up,
-            .aspect = aspect,
-            .tan_half_fov = @tan(camera.fov / 2.0),
-            .sun_dir = render_sun_dir,
-            .sky_color = self.session.atmosphere.sky_color,
-            .horizon_color = self.session.atmosphere.horizon_color,
-            .sun_intensity = self.session.atmosphere.sun_intensity,
-            .moon_intensity = self.session.atmosphere.moon_intensity,
-            .time = self.session.atmosphere.time.time_of_day,
-        };
-
         // TODO: Replace this stabilization toggle with a user-facing simple lighting setting.
         const simple_lighting_mode = true;
-        const ssao_enabled = ctx.settings.ssao_enabled and !render_system.getDisableSSAO() and !render_system.getDisableGPassDraw() and !safe_mode and !startup_light_render and !simple_lighting_mode;
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
@@ -335,40 +316,36 @@ pub const WorldScreen = struct {
         }
 
         const lpv_origin = lpv_system.getOrigin();
-        const frame_params = rhi_pkg.FrameRenderParams{
-            .cam_pos = camera.position,
-            .view_proj = view_proj_render,
-            .sun_dir = render_sun_dir,
+        const built_params = world_frame_params.build(.{
+            .camera = camera,
+            .settings = ctx.settings,
+            .render_system = render_system,
+            .screen_w = screen_w,
+            .screen_h = screen_h,
+            .render_sun_dir = render_sun_dir,
+            .sky_color = self.session.atmosphere.sky_color,
+            .horizon_color = self.session.atmosphere.horizon_color,
             .sun_intensity = self.session.atmosphere.sun_intensity,
+            .moon_intensity = self.session.atmosphere.moon_intensity,
+            .time_of_day = self.session.atmosphere.time.time_of_day,
             .fog_color = self.session.atmosphere.fog_color,
             .fog_density = self.session.atmosphere.fog_density,
-            .pbr_enabled = ctx.settings.pbr_enabled and render_system.getAtlas().has_pbr and !safe_mode and !simple_lighting_mode,
-            .simple_lighting_enabled = simple_lighting_mode,
-            .shadow_apply_to_beauty = shadow_beauty_active,
-            .shadow = .{
-                .distance = shadow_distance_active,
-                .resolution = ctx.settings.getShadowResolution(),
-                .pcf_samples = if (shadow_sandbox_active) @as(u8, 1) else ctx.settings.shadow_pcf_samples,
-                .cascade_blend = false,
-                .caster_distance = shadow_caster_distance_active,
-                .strength = if (safe_mode or !shadow_sandbox_active) 0.0 else 0.35,
-            },
-            .pbr_quality = ctx.settings.pbr_quality,
-            .exposure = ctx.settings.exposure,
-            .saturation = ctx.settings.saturation,
-            .volumetric_enabled = ctx.settings.volumetric_lighting_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
-            .sun_shafts_enabled = ctx.settings.sun_shafts_enabled and shadow_sandbox_active and !safe_mode,
-            .sun_shafts_intensity = ctx.settings.sun_shafts_intensity,
-            .volumetric_density = ctx.settings.volumetric_density,
-            .volumetric_steps = ctx.settings.volumetric_steps,
-            .volumetric_scattering = ctx.settings.volumetric_scattering,
-            .ssao_enabled = ssao_enabled,
-            .lpv_enabled = ctx.settings.lpv_enabled and !startup_light_render and !simple_lighting_mode,
-            .lpv_intensity = ctx.settings.lpv_intensity,
+            .safe_mode = safe_mode,
+            .startup_light_render = startup_light_render,
+            .shadow_sandbox_active = shadow_sandbox_active,
+            .shadow_beauty_active = shadow_beauty_active,
+            .shadow_distance_active = shadow_distance_active,
+            .shadow_caster_distance_active = shadow_caster_distance_active,
+            .simple_lighting_mode = simple_lighting_mode,
             .lpv_cell_size = lpv_system.getCellSize(),
             .lpv_grid_size = lpv_system.getGridSize(),
             .lpv_origin = lpv_origin,
-        };
+        });
+        const aspect = built_params.aspect;
+        const taa_enabled = built_params.taa_enabled;
+        const view_proj_render = built_params.view_proj_render;
+        const frame_params = built_params.frame;
+        const ssao_enabled = built_params.ssao_enabled;
 
         const skip_world_render = render_system.getSafeRenderMode();
         if (!skip_world_render and !startup_loading) {
@@ -404,7 +381,7 @@ pub const WorldScreen = struct {
                 .taa_enabled = taa_enabled,
                 .viewport_width = render_w,
                 .viewport_height = render_h,
-                .sky_params = sky_params,
+                .sky_params = built_params.sky,
                 .shadow_sun_dir = shadow_sun_dir,
                 .main_shader = render_system.getShader(),
                 .env_map_handle = env_map_handle,
@@ -539,10 +516,10 @@ pub const WorldScreen = struct {
         }
 
         if (self.debug_menu.enabled) {
-            const feature_states = self.collectDebugStates(ctx, render_system);
+            const feature_states = world_debug.collectStates(self, ctx, render_system);
             const scroll_delta = ctx.input.getScrollDelta();
             if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale, scroll_delta.y)) |click| {
-                self.applyDebugFeatureToggle(click.feature, ctx, render_system, rhi, ctx.time.elapsed);
+                world_debug.applyToggle(self, click.feature, ctx, render_system, rhi, ctx.time.elapsed);
             }
         }
     }
