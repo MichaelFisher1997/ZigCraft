@@ -18,8 +18,6 @@ const registry = @import("worldgen/registry.zig");
 const LightingComputer = @import("worldgen/lighting_computer.zig").LightingComputer;
 const rhi_mod = @import("../engine/graphics/rhi.zig");
 const RHI = rhi_mod.RHI;
-const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").CullingSystem;
-const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig").VulkanContext;
 const WorldLOD = @import("world_lod.zig").WorldLOD(RHI);
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
@@ -35,7 +33,6 @@ const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const WorldRenderer = @import("world_renderer.zig").WorldRenderer;
 const MAX_MDI_CHUNKS = @import("world_renderer.zig").MAX_MDI_CHUNKS;
-const CullingScreenSize = @import("world_renderer.zig").CullingScreenSize;
 const RenderStats = @import("world_renderer.zig").RenderStats;
 const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
@@ -189,22 +186,16 @@ pub const World = struct {
         };
 
         log.log.info("World.initGen: initializing WorldRenderer", .{});
-        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
-        const culling_size = CullingScreenSize{
-            .width = vk_ctx.gpass.g_pass_extent.width,
-            .height = vk_ctx.gpass.g_pass_extent.height,
-        };
+        const culling_size = rhi.getRenderResolution();
         var culling_system = if (!safe_mode) blk: {
-            const system = CullingSystem.init(allocator, rhi, MAX_MDI_CHUNKS) catch |err| {
+            break :blk rhi.createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
                 log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
                 break :blk null;
             };
-            break :blk system.interface();
         } else null;
         errdefer if (culling_system) |system| system.deinit();
 
-        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, atlas, rhi, culling_system, culling_size, safe_mode);
-        culling_system = null;
+        world.renderer = try WorldRenderer.init(allocator, rhi.resourceManager(), rhi.renderContext(), rhi.query(), &world.storage, atlas, rhi, &culling_system, culling_size, safe_mode);
         errdefer _ = world.renderer;
 
         world.gpu_block_buffer = world.renderer.getGpuBlockBuffer();

@@ -49,18 +49,13 @@ pub const RenderLayer = enum {
     fluid,
 };
 
-pub const CullingScreenSize = struct {
-    width: u32,
-    height: u32,
-};
-
 pub const WorldRenderer = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
     rm: ResourceManager,
     render_ctx: RenderContext,
     query: IDeviceQuery,
-    culling_screen_size: CullingScreenSize,
+    culling_screen_size: rhi_mod.RenderResolution,
 
     vertex_allocator: *GlobalVertexAllocator,
     visible_chunks: std.ArrayListUnmanaged(*ChunkData),
@@ -90,10 +85,9 @@ pub const WorldRenderer = struct {
     // Diagnostic frame counter
     render_frame_count: u64 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI, culling_system: ?ICullingSystem, culling_screen_size: CullingScreenSize, safe_mode_enabled: bool) !*WorldRenderer {
+    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI, culling_system: *?ICullingSystem, culling_screen_size: rhi_mod.RenderResolution, safe_mode_enabled: bool) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
-        const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
 
         const vram_bytes = query.getDeviceLocalVramBytes();
@@ -119,7 +113,7 @@ pub const WorldRenderer = struct {
 
         if (strict_safe_mode) {
             log.log.warn("ZIGCRAFT_SAFE_MODE enabled: reduced GPU buffer sizes", .{});
-        } else if (safe_mode) {
+        } else if (safe_mode_enabled) {
             log.log.warn("Wayland stability profile active: keeping normal GPU buffer budgets while using CPU chunk path", .{});
         }
 
@@ -141,7 +135,8 @@ pub const WorldRenderer = struct {
         }
 
         const use_gpu = false;
-        if (!safe_mode_enabled and culling_system != null) {
+        const owned_culling_system = culling_system.*;
+        if (!safe_mode_enabled and owned_culling_system != null) {
             log.log.info("GPU chunk culling initialized but kept disabled due unstable visibility", .{});
         } else if (safe_mode_enabled) {
             log.log.info("Safe mode: GPU frustum culling disabled, using CPU culling", .{});
@@ -196,7 +191,7 @@ pub const WorldRenderer = struct {
             .instance_buffers = instance_buffers,
             .indirect_buffers = indirect_buffers,
             .force_mdi_fallback = force_mdi_fallback,
-            .culling_system = culling_system,
+            .culling_system = owned_culling_system,
             .aabb_data = .empty,
             .chunk_lookup = undefined,
             .gpu_visible_indices = .empty,
@@ -204,6 +199,7 @@ pub const WorldRenderer = struct {
             .gpu_block_buffer = gpu_block_buffer,
             .gpu_mesher = gpu_mesher,
         };
+        culling_system.* = null;
 
         for (&renderer.chunk_lookup) |*lookup| lookup.* = .empty;
 
@@ -659,11 +655,11 @@ pub const WorldRenderer = struct {
         const fi = self.query.getFrameIndex();
         const prev_fi = (fi + rhi_mod.MAX_FRAMES_IN_FLIGHT - 1) % rhi_mod.MAX_FRAMES_IN_FLIGHT;
 
-        const prev_visible_count = cs.readVisibleCount(prev_fi);
+        const prev_visible_count = cs.read_visible_count(prev_fi);
         self.gpu_visible_indices.clearRetainingCapacity();
         if (prev_visible_count > 0) {
             self.gpu_visible_indices.resize(self.allocator, prev_visible_count) catch return;
-            cs.readVisibleIndices(prev_fi, prev_visible_count, self.gpu_visible_indices.items);
+            cs.read_visible_indices(prev_fi, prev_visible_count, self.gpu_visible_indices.items);
 
             const limit = @min(@as(usize, @intCast(prev_visible_count)), self.gpu_visible_indices.items.len);
             for (self.gpu_visible_indices.items[0..limit]) |idx| {
@@ -698,7 +694,7 @@ pub const WorldRenderer = struct {
             self.last_render_stats.chunks_culled += chunk_count - @min(prev_rendered, chunk_count);
         }
 
-        cs.updateAABBData(fi, self.aabb_data.items);
+        cs.update_aabb_data(fi, self.aabb_data.items);
         // The previous-frame depth pyramid is currently too unstable during camera
         // rotation and causes chunks to be wrongly occluded. Keep GPU frustum
         // culling, but disable temporal occlusion until the reprojection path is fixed.
