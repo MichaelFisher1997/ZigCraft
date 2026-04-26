@@ -6,6 +6,17 @@ const std = @import("std");
 const testing = std.testing;
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
+const frame_orchestration = @import("rhi_frame_orchestration.zig");
+
+const MockSwapchainRuntime = struct {
+    swapchain_recreate_failed: bool = false,
+    framebuffer_resized: bool = false,
+    pipeline_rebuild_needed: bool = false,
+};
+
+const MockSwapchainContext = struct {
+    runtime: MockSwapchainRuntime = .{},
+};
 
 test "prepareFrameState texture binding needs_update detection" {
     const bound_texture: u32 = 0;
@@ -14,6 +25,44 @@ test "prepareFrameState texture binding needs_update detection" {
 
     if (bound_texture != current_texture) needs_update = true;
     try testing.expect(needs_update);
+}
+
+test "markSwapchainRecreateFailed sets explicit retry state" {
+    var ctx = MockSwapchainContext{};
+
+    const logged = frame_orchestration.markSwapchainRecreateFailed(&ctx, "test stage", error.OutOfMemory);
+
+    try testing.expect(logged);
+    try testing.expect(ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+}
+
+test "markSwapchainRecreateFailed logs only first failure" {
+    var ctx = MockSwapchainContext{};
+
+    const first_logged = frame_orchestration.markSwapchainRecreateFailed(&ctx, "first", error.OutOfMemory);
+    const second_logged = frame_orchestration.markSwapchainRecreateFailed(&ctx, "second", error.OutOfMemory);
+
+    try testing.expect(first_logged);
+    try testing.expect(!second_logged);
+    try testing.expect(ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+}
+
+test "markSwapchainRecreateSucceeded clears failure state" {
+    var ctx = MockSwapchainContext{ .runtime = .{
+        .swapchain_recreate_failed = true,
+        .framebuffer_resized = true,
+        .pipeline_rebuild_needed = true,
+    } };
+
+    frame_orchestration.markSwapchainRecreateSucceeded(&ctx);
+
+    try testing.expect(!ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(!ctx.runtime.framebuffer_resized);
+    try testing.expect(!ctx.runtime.pipeline_rebuild_needed);
 }
 
 test "prepareFrameState texture binding no update when same" {

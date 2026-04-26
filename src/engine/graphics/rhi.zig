@@ -246,7 +246,7 @@ pub const RenderContext = struct {
         self.render.endFrame();
     }
     pub fn abortFrame(self: RenderContext) void {
-        self.render.vtable.abortFrame(self.render.ptr);
+        self.render.abortFrame();
     }
     pub fn beginMainPass(self: RenderContext) void {
         self.passes.beginMainPass();
