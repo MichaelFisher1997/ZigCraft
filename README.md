@@ -161,6 +161,12 @@ The shadow/cave lighting capture launches a deterministic low-block test scene, 
 
 ## 🛠️ Texture Pipeline
 
+### Temporary Asset Notice
+
+Some textures in `assets/textures/default/` are temporary development placeholders imported from external Minecraft-compatible resource packs, including Classic Faithful 64x Jappa, while the engine art pipeline is being built out. They are included only to make local development and visual iteration easier, and should be replaced with original or clearly licensed project assets before any public release or redistribution.
+
+ZigCraft does not claim ownership of third-party placeholder textures. Keep attribution and licensing requirements with any external resource pack assets you use.
+
 The engine supports HD texture packs with full PBR maps. To standardize high-resolution source imagery (4k JPEGs, EXRs) into engine-ready 512px PNGs, use the provided helper script:
 
 ```bash

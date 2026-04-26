@@ -169,7 +169,7 @@ pub const Player = struct {
         const move_dir = self.getMovementDirection(input, mapper);
 
         if (self.fly_mode) {
-            self.updateFlying(input, mapper, move_dir, delta_time);
+            self.updateFlying(input, mapper, move_dir, world, delta_time);
         } else {
             self.updateWalking(input, mapper, move_dir, world, delta_time);
         }
@@ -257,7 +257,7 @@ pub const Player = struct {
     }
 
     /// Update player when flying (creative mode)
-    fn updateFlying(self: *Player, input: IRawInputProvider, mapper: IInputMapper, move_dir: Vec3, delta_time: f32) void {
+    fn updateFlying(self: *Player, input: IRawInputProvider, mapper: IInputMapper, move_dir: Vec3, world: *World, delta_time: f32) void {
         var vel = move_dir.scale(FLY_SPEED);
 
         // Vertical movement
@@ -269,8 +269,21 @@ pub const Player = struct {
 
         self.velocity = vel;
 
-        // Apply movement directly (noclip is implied in fly mode for now)
-        self.position = self.position.add(vel.scale(delta_time));
+        if (self.noclip) {
+            self.position = self.position.add(vel.scale(delta_time));
+        } else {
+            const aabb = self.getAABB();
+            const result = collision.moveAndCollide(
+                world,
+                aabb,
+                self.velocity,
+                delta_time,
+                .{},
+            );
+
+            self.position = result.position.sub(Vec3.init(0, HEIGHT / 2.0, 0));
+            self.velocity = result.velocity;
+        }
         self.is_grounded = false;
     }
 
@@ -334,9 +347,10 @@ pub const Player = struct {
         const Context = struct {
             world: *World,
 
-            pub fn isSolid(ctx: @This(), x: i32, y: i32, z: i32) bool {
+            pub fn isTargetable(ctx: @This(), x: i32, y: i32, z: i32) bool {
                 const blk = ctx.world.getBlock(x, y, z);
-                return block_registry.getBlockDefinition(blk).is_solid;
+                const def = block_registry.getBlockDefinition(blk);
+                return blk != .air and !def.is_fluid;
             }
         };
 
@@ -346,7 +360,7 @@ pub const Player = struct {
             REACH_DISTANCE,
             Context,
             Context{ .world = world },
-            Context.isSolid,
+            Context.isTargetable,
         );
 
         if (result) |hit| {
