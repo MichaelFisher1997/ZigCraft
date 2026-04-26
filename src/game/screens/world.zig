@@ -3,6 +3,7 @@ const UISystem = @import("../../engine/ui/ui_system.zig").UISystem;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
+const WorldContext = Screen.WorldContext;
 const GameSession = @import("../session.zig").GameSession;
 const IWorld = @import("../../world/world.zig").IWorld;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
@@ -51,7 +52,8 @@ const ShadowProbeInfo = struct {
 };
 
 pub const WorldScreen = struct {
-    context: EngineContext,
+    context: WorldContext,
+    parent_context: EngineContext,
     session: *GameSession,
     world: IWorld,
     last_debug_toggle_time: f32 = 0,
@@ -80,7 +82,8 @@ pub const WorldScreen = struct {
 
         const self = try allocator.create(WorldScreen);
         self.* = .{
-            .context = context,
+            .context = context.worldContext(),
+            .parent_context = context,
             .session = session,
             .world = world,
             .last_debug_toggle_time = 0,
@@ -125,7 +128,7 @@ pub const WorldScreen = struct {
             }
 
             if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
-                const paused_screen = try PausedScreen.init(ctx.allocator, ctx);
+                const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
                 errdefer paused_screen.deinit(paused_screen);
                 ctx.screen_manager.pushScreen(paused_screen.screen());
                 return;
@@ -516,10 +519,15 @@ pub const WorldScreen = struct {
         }
 
         if (self.debug_menu.enabled) {
-            const feature_states = world_debug.collectStates(self, ctx, render_system);
+            const debug_state = world_debug.ScreenDebugState{
+                .session = self.session,
+                .last_debug_toggle_time = &self.last_debug_toggle_time,
+                .chunk_inspector_overlay = &self.chunk_inspector_overlay,
+            };
+            const feature_states = world_debug.collectStates(debug_state, ctx, render_system);
             const scroll_delta = ctx.input.getScrollDelta();
             if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale, scroll_delta.y)) |click| {
-                world_debug.applyToggle(self, click.feature, ctx, render_system, rhi, ctx.time.elapsed);
+                world_debug.applyToggle(debug_state, click.feature, ctx, render_system, rhi, ctx.time.elapsed);
             }
         }
     }

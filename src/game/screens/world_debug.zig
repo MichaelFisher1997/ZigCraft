@@ -3,8 +3,17 @@ const RenderSystem = @import("../../engine/graphics/render_system.zig").RenderSy
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
 const settings_data = @import("../settings/data.zig");
 const log = @import("../../engine/core/log.zig");
+const GameSession = @import("../session.zig").GameSession;
+const ChunkInspectorOverlay = @import("../../engine/ui/chunk_inspector_overlay.zig").ChunkInspectorOverlay;
+const WorldContext = @import("../screen.zig").WorldContext;
 
-pub fn collectStates(screen: anytype, ctx: anytype, render_system: *RenderSystem) [DebugFeature.count]bool {
+pub const ScreenDebugState = struct {
+    session: *GameSession,
+    last_debug_toggle_time: *f32,
+    chunk_inspector_overlay: *ChunkInspectorOverlay,
+};
+
+pub fn collectStates(screen: ScreenDebugState, ctx: WorldContext, render_system: *RenderSystem) [DebugFeature.count]bool {
     var states: [DebugFeature.count]bool = @splat(false);
     states[@intFromEnum(DebugFeature.wireframe)] = ctx.settings.wireframe_enabled;
     states[@intFromEnum(DebugFeature.textures)] = ctx.settings.textures_enabled;
@@ -36,8 +45,8 @@ pub fn collectStates(screen: anytype, ctx: anytype, render_system: *RenderSystem
     return states;
 }
 
-pub fn applyToggle(screen: anytype, feature: DebugFeature, ctx: anytype, render_system: *RenderSystem, rhi: *rhi_pkg.RHI, now: f32) void {
-    screen.last_debug_toggle_time = now;
+pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI, now: f32) void {
+    screen.last_debug_toggle_time.* = now;
     switch (feature) {
         .wireframe => {
             ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
@@ -95,7 +104,7 @@ pub fn applyToggle(screen: anytype, feature: DebugFeature, ctx: anytype, render_
     }
 }
 
-fn applyShadowDebugToggle(feature: DebugFeature, ctx: anytype, render_system: *RenderSystem, rhi: *rhi_pkg.RHI) void {
+fn applyShadowDebugToggle(feature: DebugFeature, ctx: WorldContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI) void {
     const enable = switch (feature) {
         .shadow_debug => !ctx.settings.debug_shadows_active,
         .shadow_cascade_index => !ctx.settings.debug_shadow_cascade_index,
@@ -116,7 +125,7 @@ fn applyShadowDebugToggle(feature: DebugFeature, ctx: anytype, render_system: *R
     rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
 }
 
-fn applyTerrainDebugToggle(feature: DebugFeature, ctx: anytype, rhi: *rhi_pkg.RHI) void {
+fn applyTerrainDebugToggle(feature: DebugFeature, ctx: WorldContext, rhi: *rhi_pkg.RHI) void {
     const enable = switch (feature) {
         .direct_key_debug => !ctx.settings.debug_direct_key_active,
         .sky_fill_debug => !ctx.settings.debug_sky_fill_active,
