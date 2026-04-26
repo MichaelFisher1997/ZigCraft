@@ -55,6 +55,7 @@ const MaterialSystem = @import("material_system.zig").MaterialSystem;
 pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
 const LPVBackend = @import("lpv_backend.zig").LPVBackend;
 const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
+const CloudSystem = @import("cloud_system.zig").CloudSystem;
 
 pub const LPVConfig = struct {
     grid_size: u32,
@@ -108,6 +109,7 @@ pub const SceneContext = struct {
     cached_cascades: *?CSM.ShadowCascades,
     gpu_mesh_dispatch_fn: ?*const fn (*anyopaque) void = null,
     gpu_mesh_dispatch_ctx: ?*anyopaque = null,
+    cloud_system: ?*CloudSystem = null,
 };
 
 pub const IRenderPass = struct {
@@ -405,6 +407,29 @@ pub const SkyPass = struct {
                 log.log.errWithTrace("SkyPass: rendering failed: {}", .{err});
             }
         };
+    }
+};
+
+pub const CloudPass = struct {
+    const VTABLE = IRenderPass.VTable{
+        .name = "CloudPass",
+        .needs_main_pass = true,
+        .execute = execute,
+    };
+    pub fn pass(self: *CloudPass) IRenderPass {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
+        _ = ptr;
+        if (ctx.cloud_system) |clouds| {
+            clouds.render(ctx.render_ctx, ctx.camera.position) catch |err| {
+                log.log.errWithTrace("CloudPass: rendering failed: {}", .{err});
+            };
+        }
     }
 };
 

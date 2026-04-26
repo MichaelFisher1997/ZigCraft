@@ -128,6 +128,7 @@ pub const WorldScreen = struct {
         ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
 
         try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture);
+        render_system.getCloudSystem().step(dt);
 
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
@@ -405,6 +406,7 @@ pub const WorldScreen = struct {
                 .lpv_textures = render_graph_pkg.LPVTextureHandles.fromSystem(lpv_system),
                 .gpu_mesh_dispatch_fn = if (self.session.world.renderer.getGpuMesher() != null) WorldRenderer.processGpuMeshing else null,
                 .gpu_mesh_dispatch_ctx = @ptrCast(self.session.world.renderer),
+                .cloud_system = render_system.getCloudSystem(),
             };
             try render_system.getRenderGraph().execute(render_ctx);
         }

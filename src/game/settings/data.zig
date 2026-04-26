@@ -162,6 +162,16 @@ pub const Settings = struct {
     // Water Settings (Issue #390)
     water_quality: u8 = 2, // 0=Low, 1=Medium, 2=High
 
+    // Cloud Settings (Luanti-style CPU mesh clouds)
+    clouds_enabled: bool = true,
+    clouds_3d_enabled: bool = true,
+    cloud_radius: u16 = 25,
+    cloud_density: f32 = 0.42,
+    cloud_height: f32 = 192.0,
+    cloud_thickness: f32 = 16.0,
+    cloud_speed_x: f32 = 0.0,
+    cloud_speed_z: f32 = -2.0,
+
     // Dynamic Resolution Settings (Issue #392)
     dynamic_resolution_enabled: bool = false,
     dynamic_resolution_min_scale: f32 = 0.5,
