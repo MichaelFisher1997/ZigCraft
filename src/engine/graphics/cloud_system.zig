@@ -7,6 +7,8 @@ const Vec3 = @import("../math/vec3.zig").Vec3;
 const CLOUD_SIZE: f32 = 32.0;
 const MESH_REBUILD_DISTANCE: f32 = 2.5;
 const NOISE_BOUND: f32 = 1.0 + 0.5 + 0.25;
+const MAX_FLAT_RADIUS: u16 = 62;
+const MAX_3D_RADIUS: u16 = 25;
 
 pub const CloudConfig = struct {
     enabled: bool = true,
@@ -42,6 +44,10 @@ pub const CloudSystem = struct {
     pub fn init(allocator: std.mem.Allocator, resources: rhi.ResourceManager, config: CloudConfig) !*CloudSystem {
         const self = try allocator.create(CloudSystem);
         self.* = .{ .allocator = allocator, .resources = resources, .config = normalizedConfig(config) };
+        errdefer allocator.destroy(self);
+        const capacity = maxCloudVertexBytes();
+        self.vertex_buffer = try resources.createBuffer(capacity, .vertex);
+        self.vertex_buffer_capacity = capacity;
         return self;
     }
 
@@ -91,18 +97,13 @@ pub const CloudSystem = struct {
         const moved = @sqrt(dx * dx + dz * dz) >= MESH_REBUILD_DISTANCE;
         if (self.mesh_valid and !moved and center_x == self.last_noise_center_x and center_z == self.last_noise_center_z) return;
 
-        self.mesh_origin_x = self.origin_x;
-        self.mesh_origin_z = self.origin_z;
-        self.mesh_camera_pos = camera_pos;
-        self.last_noise_center_x = center_x;
-        self.last_noise_center_z = center_z;
-        self.mesh_valid = true;
-        self.gpu_valid = false;
-        self.vertices.clearRetainingCapacity();
-
         const radius = self.config.radius;
         const side = @as(usize, radius) * 2;
         try self.grid.resize(self.allocator, side * side);
+
+        var next_vertices: std.ArrayListUnmanaged(rhi.Vertex) = .empty;
+        errdefer next_vertices.deinit(self.allocator);
+
         const radius_i: i32 = @intCast(radius);
         var z: i32 = -radius_i;
         while (z < radius_i) : (z += 1) {
@@ -128,35 +129,45 @@ pub const CloudSystem = struct {
                 const cx = world_center_x + @as(f32, @floatFromInt(draw_x)) * CLOUD_SIZE - camera_pos.x;
                 const cz = world_center_z + @as(f32, @floatFromInt(draw_z)) * CLOUD_SIZE - camera_pos.z;
                 const cy = -camera_pos.y;
-                try self.emitCell(cx, cy, cz, draw_x, draw_z);
+                try self.emitCell(&next_vertices, cx, cy, cz, draw_x, draw_z);
             }
         }
+
+        self.vertices.deinit(self.allocator);
+        self.vertices = next_vertices;
+        self.mesh_origin_x = self.origin_x;
+        self.mesh_origin_z = self.origin_z;
+        self.mesh_camera_pos = camera_pos;
+        self.last_noise_center_x = center_x;
+        self.last_noise_center_z = center_z;
+        self.mesh_valid = true;
+        self.gpu_valid = false;
         self.vertex_count = @intCast(self.vertices.items.len);
     }
 
-    fn emitCell(self: *CloudSystem, cx: f32, cy: f32, cz: f32, grid_x: i32, grid_z: i32) !void {
+    fn emitCell(self: *CloudSystem, vertices: *std.ArrayListUnmanaged(rhi.Vertex), cx: f32, cy: f32, cz: f32, grid_x: i32, grid_z: i32) !void {
         const r = CLOUD_SIZE * 0.5;
         const y0 = self.config.height + cy;
         const y1 = self.config.height + cy + if (self.is3D()) self.config.thickness else 0.0;
-        try self.emitQuad(.{ cx - r, y1, cz - r }, .{ cx - r, y1, cz + r }, .{ cx + r, y1, cz + r }, .{ cx + r, y1, cz - r }, .{ 1.0, 1.0, 1.0 }, .{ 0.0, 1.0, 0.0 });
+        try self.emitQuad(vertices, .{ cx - r, y1, cz - r }, .{ cx - r, y1, cz + r }, .{ cx + r, y1, cz + r }, .{ cx + r, y1, cz - r }, .{ 1.0, 1.0, 1.0 }, .{ 0.0, 1.0, 0.0 });
         if (!self.is3D()) return;
         const side1 = [_]f32{ 0.82, 0.82, 0.82 };
         const side2 = [_]f32{ 0.72, 0.72, 0.72 };
         const bottom = [_]f32{ 0.55, 0.55, 0.55 };
-        if (!self.neighborFilled(grid_x, grid_z - 1)) try self.emitQuad(.{ cx - r, y1, cz - r }, .{ cx + r, y1, cz - r }, .{ cx + r, y0, cz - r }, .{ cx - r, y0, cz - r }, side1, .{ 0.0, 0.0, -1.0 });
-        if (!self.neighborFilled(grid_x + 1, grid_z)) try self.emitQuad(.{ cx + r, y1, cz - r }, .{ cx + r, y1, cz + r }, .{ cx + r, y0, cz + r }, .{ cx + r, y0, cz - r }, side2, .{ 1.0, 0.0, 0.0 });
-        if (!self.neighborFilled(grid_x, grid_z + 1)) try self.emitQuad(.{ cx + r, y1, cz + r }, .{ cx - r, y1, cz + r }, .{ cx - r, y0, cz + r }, .{ cx + r, y0, cz + r }, side1, .{ 0.0, 0.0, 1.0 });
-        if (!self.neighborFilled(grid_x - 1, grid_z)) try self.emitQuad(.{ cx - r, y1, cz + r }, .{ cx - r, y1, cz - r }, .{ cx - r, y0, cz - r }, .{ cx - r, y0, cz + r }, side2, .{ -1.0, 0.0, 0.0 });
-        try self.emitQuad(.{ cx + r, y0, cz + r }, .{ cx - r, y0, cz + r }, .{ cx - r, y0, cz - r }, .{ cx + r, y0, cz - r }, bottom, .{ 0.0, -1.0, 0.0 });
+        if (!self.neighborFilled(grid_x, grid_z - 1)) try self.emitQuad(vertices, .{ cx - r, y1, cz - r }, .{ cx + r, y1, cz - r }, .{ cx + r, y0, cz - r }, .{ cx - r, y0, cz - r }, side1, .{ 0.0, 0.0, -1.0 });
+        if (!self.neighborFilled(grid_x + 1, grid_z)) try self.emitQuad(vertices, .{ cx + r, y1, cz - r }, .{ cx + r, y1, cz + r }, .{ cx + r, y0, cz + r }, .{ cx + r, y0, cz - r }, side2, .{ 1.0, 0.0, 0.0 });
+        if (!self.neighborFilled(grid_x, grid_z + 1)) try self.emitQuad(vertices, .{ cx + r, y1, cz + r }, .{ cx - r, y1, cz + r }, .{ cx - r, y0, cz + r }, .{ cx + r, y0, cz + r }, side1, .{ 0.0, 0.0, 1.0 });
+        if (!self.neighborFilled(grid_x - 1, grid_z)) try self.emitQuad(vertices, .{ cx - r, y1, cz + r }, .{ cx - r, y1, cz - r }, .{ cx - r, y0, cz - r }, .{ cx - r, y0, cz + r }, side2, .{ -1.0, 0.0, 0.0 });
+        try self.emitQuad(vertices, .{ cx + r, y0, cz + r }, .{ cx - r, y0, cz + r }, .{ cx - r, y0, cz - r }, .{ cx + r, y0, cz - r }, bottom, .{ 0.0, -1.0, 0.0 });
     }
 
-    fn emitQuad(self: *CloudSystem, a: [3]f32, b: [3]f32, c: [3]f32, d: [3]f32, color: [3]f32, normal: [3]f32) !void {
-        try self.vertices.append(self.allocator, rhi.Vertex.init(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
-        try self.vertices.append(self.allocator, rhi.Vertex.init(b, color, normal, .{ 1.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
-        try self.vertices.append(self.allocator, rhi.Vertex.init(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
-        try self.vertices.append(self.allocator, rhi.Vertex.init(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
-        try self.vertices.append(self.allocator, rhi.Vertex.init(d, color, normal, .{ 0.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
-        try self.vertices.append(self.allocator, rhi.Vertex.init(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
+    fn emitQuad(self: *CloudSystem, vertices: *std.ArrayListUnmanaged(rhi.Vertex), a: [3]f32, b: [3]f32, c: [3]f32, d: [3]f32, color: [3]f32, normal: [3]f32) !void {
+        try vertices.append(self.allocator, rhi.Vertex.init(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
+        try vertices.append(self.allocator, rhi.Vertex.init(b, color, normal, .{ 1.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
+        try vertices.append(self.allocator, rhi.Vertex.init(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
+        try vertices.append(self.allocator, rhi.Vertex.init(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
+        try vertices.append(self.allocator, rhi.Vertex.init(d, color, normal, .{ 0.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
+        try vertices.append(self.allocator, rhi.Vertex.init(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0));
     }
 
     fn uploadMesh(self: *CloudSystem) !void {
@@ -164,19 +175,8 @@ pub const CloudSystem = struct {
         if (self.vertices.items.len == 0) return;
         const vertex_bytes = std.mem.sliceAsBytes(self.vertices.items);
 
-        if (self.vertex_buffer != rhi.InvalidBufferHandle and vertex_bytes.len <= self.vertex_buffer_capacity) {
-            try self.resources.updateBuffer(self.vertex_buffer, 0, vertex_bytes);
-            self.gpu_valid = true;
-            return;
-        }
-
-        const new_buffer = try self.resources.createBuffer(vertex_bytes.len, .vertex);
-        errdefer self.resources.destroyBuffer(new_buffer);
-        try self.resources.uploadBuffer(new_buffer, vertex_bytes);
-
-        if (self.vertex_buffer != rhi.InvalidBufferHandle) self.resources.destroyBuffer(self.vertex_buffer);
-        self.vertex_buffer = new_buffer;
-        self.vertex_buffer_capacity = vertex_bytes.len;
+        if (vertex_bytes.len > self.vertex_buffer_capacity) return error.CloudVertexBufferTooSmall;
+        try self.resources.updateBuffer(self.vertex_buffer, 0, vertex_bytes);
         self.gpu_valid = true;
     }
 
@@ -206,11 +206,19 @@ pub const CloudSystem = struct {
 
 fn normalizedConfig(config: CloudConfig) CloudConfig {
     var out = config;
-    const max_radius: u16 = if (out.enable_3d) 25 else 62;
+    const max_radius: u16 = if (out.enable_3d) MAX_3D_RADIUS else MAX_FLAT_RADIUS;
     out.radius = @min(max_radius, @max(@as(u16, 8), out.radius));
     out.density = @max(0.0, @min(1.0, out.density));
     out.thickness = @max(0.0, out.thickness);
     return out;
+}
+
+fn maxCloudVertexBytes() usize {
+    const flat_side = @as(usize, MAX_FLAT_RADIUS) * 2;
+    const flat_vertices = flat_side * flat_side * 6;
+    const cloud_3d_side = @as(usize, MAX_3D_RADIUS) * 2;
+    const cloud_3d_vertices = cloud_3d_side * cloud_3d_side * 6 * 6;
+    return @as(usize, @max(flat_vertices, cloud_3d_vertices)) * @sizeOf(rhi.Vertex);
 }
 
 fn fbm(x: f32, z: f32, seed: u32) f32 {
