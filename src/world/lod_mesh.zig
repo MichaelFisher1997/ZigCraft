@@ -94,44 +94,31 @@ pub const LODMesh = struct {
         var vertices = std.ArrayListUnmanaged(Vertex).empty;
         defer vertices.deinit(self.allocator);
 
-        // Keep distant terrain blocky. Interpolating corner heights creates
-        // large sloped sheets through cliffs when LOD overlaps loaded chunks.
         var gz: u32 = 0;
         while (gz < data.width) : (gz += 1) {
             var gx: u32 = 0;
             while (gx < data.width) : (gx += 1) {
-                const idx = gx + gz * data.width;
-                const height = data.heightmap[idx];
-                const color = data.colors[idx];
+                const h00 = data.heightmap[gx + gz * data.width];
+                const h10 = if (gx + 1 < data.width) data.heightmap[(gx + 1) + gz * data.width] else h00;
+                const h01 = if (gz + 1 < data.width) data.heightmap[gx + (gz + 1) * data.width] else h00;
+                const h11 = if (gx + 1 < data.width and gz + 1 < data.width) data.heightmap[(gx + 1) + (gz + 1) * data.width] else h00;
 
+                const c00 = data.colors[gx + gz * data.width];
+                const c10 = if (gx + 1 < data.width) data.colors[(gx + 1) + gz * data.width] else c00;
+                const c01 = if (gz + 1 < data.width) data.colors[gx + (gz + 1) * data.width] else c00;
+                const c11 = if (gx + 1 < data.width and gz + 1 < data.width) data.colors[(gx + 1) + (gz + 1) * data.width] else c00;
+                const avg_color = averageColor(c00, c10, c01, c11);
                 const wx: f32 = @floatFromInt(gx * cell_size);
                 const wz: f32 = @floatFromInt(gz * cell_size);
                 const size: f32 = @floatFromInt(cell_size);
-                const r = unpackR(color);
-                const g = unpackG(color);
-                const b = unpackB(color);
 
-                try addTopFaceQuad(self.allocator, &vertices, wx, height, wz, size, r, g, b, Vertex.LOD_TILE_ID);
+                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, avg_color, avg_color, avg_color, avg_color, Vertex.LOD_TILE_ID);
 
                 const skirt_depth: f32 = size * 4.0;
-                const side_epsilon = 0.5;
-
-                if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, height - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID) else {
-                    const neighbor_h = data.heightmap[(gx - 1) + gz * data.width];
-                    if (neighbor_h + side_epsilon < height) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, neighbor_h, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
-                }
-                if (gx == data.width - 1) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, height - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID) else {
-                    const neighbor_h = data.heightmap[(gx + 1) + gz * data.width];
-                    if (neighbor_h + side_epsilon < height) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, neighbor_h, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
-                }
-                if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, height - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID) else {
-                    const neighbor_h = data.heightmap[gx + (gz - 1) * data.width];
-                    if (neighbor_h + side_epsilon < height) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, neighbor_h, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
-                }
-                if (gz == data.width - 1) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, height - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID) else {
-                    const neighbor_h = data.heightmap[gx + (gz + 1) * data.width];
-                    if (neighbor_h + side_epsilon < height) try addSideFaceQuad(self.allocator, &vertices, wx, height, wz, size, neighbor_h, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
-                }
+                if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .west, Vertex.LOD_TILE_ID);
+                if (gx == data.width - 1) try addSideFaceQuad(self.allocator, &vertices, wx, (h10 + h11) * 0.5, wz, size, (h10 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .east, Vertex.LOD_TILE_ID);
+                if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .north, Vertex.LOD_TILE_ID);
+                if (gz == data.width - 1) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .south, Vertex.LOD_TILE_ID);
             }
         }
 
