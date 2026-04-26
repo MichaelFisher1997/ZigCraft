@@ -15,16 +15,16 @@ const LODManager = @import("lod_manager.zig").LODManager;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Frustum = @import("../engine/math/frustum.zig").Frustum;
-const CullingSystem = @import("../engine/graphics/vulkan/culling_system.zig").CullingSystem;
-const ChunkCullData = @import("../engine/graphics/vulkan/culling_system.zig").ChunkCullData;
-const VulkanContext = @import("../engine/graphics/vulkan/rhi_context_types.zig").VulkanContext;
+const culling = @import("../engine/graphics/culling.zig");
+const ICullingSystem = culling.ICullingSystem;
+const ChunkCullData = culling.ChunkCullData;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
 const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 const build_options = @import("build_options");
 const runtime_env = @import("../engine/core/runtime_env.zig");
 
-const MAX_MDI_CHUNKS: usize = 16384;
+pub const MAX_MDI_CHUNKS: usize = 16384;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     return runtime_env.getenv(name);
@@ -49,13 +49,18 @@ pub const RenderLayer = enum {
     fluid,
 };
 
+pub const CullingScreenSize = struct {
+    width: u32,
+    height: u32,
+};
+
 pub const WorldRenderer = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
     rm: ResourceManager,
     render_ctx: RenderContext,
     query: IDeviceQuery,
-    vk_ctx: *VulkanContext,
+    culling_screen_size: CullingScreenSize,
 
     vertex_allocator: *GlobalVertexAllocator,
     visible_chunks: std.ArrayListUnmanaged(*ChunkData),
@@ -70,7 +75,7 @@ pub const WorldRenderer = struct {
     force_mdi_fallback: bool,
 
     // GPU Culling
-    culling_system: ?*CullingSystem,
+    culling_system: ?ICullingSystem,
     aabb_data: std.ArrayListUnmanaged(ChunkCullData),
     chunk_lookup: [rhi_mod.MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(*ChunkData),
     gpu_visible_indices: std.ArrayListUnmanaged(u32),
@@ -85,7 +90,7 @@ pub const WorldRenderer = struct {
     // Diagnostic frame counter
     render_frame_count: u64 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI) !*WorldRenderer {
+    pub fn init(allocator: std.mem.Allocator, rm: ResourceManager, render_ctx: RenderContext, query: IDeviceQuery, storage: *ChunkStorage, atlas: *const TextureAtlas, rhi: rhi_mod.RHI, culling_system: ?ICullingSystem, culling_screen_size: CullingScreenSize, safe_mode_enabled: bool) !*WorldRenderer {
         const renderer = try allocator.create(WorldRenderer);
 
         const safe_mode = runtime_env.safeModeEnabled();
@@ -121,9 +126,6 @@ pub const WorldRenderer = struct {
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
-        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
-
-        const safe_mode_enabled = vk_ctx.options.safe_mode;
         const gpu_meshing_env = getenv("ZIGCRAFT_ENABLE_GPU_MESHING");
         const gpu_meshing_enabled = if (gpu_meshing_env) |val|
             !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
@@ -138,16 +140,10 @@ pub const WorldRenderer = struct {
             indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 3, .indirect);
         }
 
-        var culling_system: ?*CullingSystem = null;
         const use_gpu = false;
-        if (!safe_mode_enabled) {
-            if (CullingSystem.init(allocator, rhi, max_chunks)) |cs| {
-                culling_system = cs;
-                log.log.info("GPU chunk culling initialized but kept disabled due unstable visibility", .{});
-            } else |err| {
-                log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
-            }
-        } else {
+        if (!safe_mode_enabled and culling_system != null) {
+            log.log.info("GPU chunk culling initialized but kept disabled due unstable visibility", .{});
+        } else if (safe_mode_enabled) {
             log.log.info("Safe mode: GPU frustum culling disabled, using CPU culling", .{});
         }
 
@@ -190,7 +186,7 @@ pub const WorldRenderer = struct {
             .rm = rm,
             .render_ctx = render_ctx,
             .query = query,
-            .vk_ctx = vk_ctx,
+            .culling_screen_size = culling_screen_size,
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
             .last_render_stats = .{},
@@ -703,12 +699,16 @@ pub const WorldRenderer = struct {
         }
 
         cs.updateAABBData(fi, self.aabb_data.items);
-        const screen_w = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.width));
-        const screen_h = @as(f32, @floatFromInt(self.vk_ctx.gpass.g_pass_extent.height));
         // The previous-frame depth pyramid is currently too unstable during camera
         // rotation and causes chunks to be wrongly occluded. Keep GPU frustum
         // culling, but disable temporal occlusion until the reprojection path is fixed.
-        cs.dispatch(view_proj, chunk_count, screen_w, screen_h, false);
+        cs.dispatch(.{
+            .view_proj = view_proj,
+            .chunk_count = chunk_count,
+            .screen_width = @floatFromInt(self.culling_screen_size.width),
+            .screen_height = @floatFromInt(self.culling_screen_size.height),
+            .previous_frame_valid = false,
+        });
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {

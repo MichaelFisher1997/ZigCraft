@@ -2,6 +2,7 @@ const std = @import("std");
 const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi_pkg = @import("../rhi.zig");
+const culling = @import("../culling.zig");
 const log = @import("../../core/log.zig");
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const VulkanContext = @import("rhi_context_types.zig").VulkanContext;
@@ -12,10 +13,7 @@ pub const MAX_CULLABLE_CHUNKS: usize = 16384;
 pub const WORKGROUP_SIZE: u32 = 64;
 const MAX_FRAMES_IN_FLIGHT = rhi_pkg.MAX_FRAMES_IN_FLIGHT;
 
-pub const ChunkCullData = extern struct {
-    min_point: [4]f32,
-    max_point: [4]f32,
-};
+pub const ChunkCullData = culling.ChunkCullData;
 
 const CullingPushConstants = extern struct {
     planes: [6][4]f32,
@@ -117,6 +115,13 @@ pub const CullingSystem = struct {
         self.deinitComputeResources();
         self.destroyAllBuffers();
         self.allocator.destroy(self);
+    }
+
+    pub fn interface(self: *CullingSystem) culling.ICullingSystem {
+        return .{
+            .ptr = self,
+            .vtable = &interface_vtable,
+        };
     }
 
     pub fn updateAABBData(self: *CullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
@@ -457,6 +462,39 @@ pub const CullingSystem = struct {
         self.counter_readback_buffers = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]Utils.VulkanBuffer);
     }
 };
+
+const interface_vtable = culling.ICullingSystem.VTable{
+    .deinit = interfaceDeinit,
+    .updateAABBData = interfaceUpdateAABBData,
+    .readVisibleCount = interfaceReadVisibleCount,
+    .readVisibleIndices = interfaceReadVisibleIndices,
+    .dispatch = interfaceDispatch,
+};
+
+fn interfaceDeinit(ptr: *anyopaque) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.deinit();
+}
+
+fn interfaceUpdateAABBData(ptr: *anyopaque, frame_index: usize, chunks: []const ChunkCullData) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.updateAABBData(frame_index, chunks);
+}
+
+fn interfaceReadVisibleCount(ptr: *anyopaque, frame_index: usize) u32 {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    return self.readVisibleCount(frame_index);
+}
+
+fn interfaceReadVisibleIndices(ptr: *anyopaque, frame_index: usize, count: u32, out: []u32) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.readVisibleIndices(frame_index, count, out);
+}
+
+fn interfaceDispatch(ptr: *anyopaque, config: culling.DispatchConfig) void {
+    const self: *CullingSystem = @ptrCast(@alignCast(ptr));
+    self.dispatch(config.view_proj, config.chunk_count, config.screen_width, config.screen_height, config.previous_frame_valid);
+}
 
 fn mat4Equal(a: Mat4, b: Mat4) bool {
     for (0..4) |col| {
