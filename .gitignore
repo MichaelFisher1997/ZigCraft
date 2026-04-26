@@ -28,3 +28,4 @@ wiki/
 # Exclude large 4k source textures
 *_4k.*
 shader
+CODEBASE_REPORT.md
