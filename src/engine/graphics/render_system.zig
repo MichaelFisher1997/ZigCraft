@@ -11,7 +11,6 @@ const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
 const Texture = @import("texture.zig").Texture;
 const render_graph_pkg = @import("render_graph.zig");
 const RenderGraph = render_graph_pkg.RenderGraph;
-const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
 const ResourcePackManager = @import("resource_pack.zig").ResourcePackManager;
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
@@ -33,7 +32,6 @@ pub const RenderSystem = struct {
     atlas: TextureAtlas,
     env_map: ?Texture,
     render_graph: RenderGraph,
-    atmosphere_system: *AtmosphereSystem,
     shadow_passes: [4]render_graph_pkg.ShadowPass,
     g_pass: render_graph_pkg.GPass,
     ssao_pass: render_graph_pkg.SSAOPass,
@@ -190,11 +188,7 @@ pub const RenderSystem = struct {
         }
         errdefer if (env_map) |*t| t.deinit();
 
-        log.log.info("RenderSystem.init: initializing AtmosphereSystem", .{});
-        const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
-        errdefer atmosphere_system.deinit();
-
-        log.log.info("RenderSystem.init: initializing graph LPVSystem (grid_size={}, cell_size={})", .{ settings.lpv_grid_size, settings.lpv_cell_size });
+        log.log.info("RenderSystem.init: initializing graph systems (LPV grid_size={}, cell_size={})", .{ settings.lpv_grid_size, settings.lpv_cell_size });
         var render_graph = try RenderGraph.init(allocator, rhi, .{
             .grid_size = settings.lpv_grid_size,
             .cell_size = settings.lpv_cell_size,
@@ -216,7 +210,6 @@ pub const RenderSystem = struct {
             .atlas = atlas,
             .env_map = env_map,
             .render_graph = render_graph,
-            .atmosphere_system = atmosphere_system,
             .shadow_passes = undefined,
             .g_pass = undefined,
             .ssao_pass = .{},
@@ -303,7 +296,6 @@ pub const RenderSystem = struct {
         self.rhi.waitIdle();
 
         self.render_graph.deinit();
-        self.atmosphere_system.deinit();
         self.atlas.deinit();
         if (self.env_map) |*t| t.deinit();
         self.resource_pack_manager.deinit();
@@ -362,8 +354,8 @@ pub const RenderSystem = struct {
         return &self.render_graph;
     }
 
-    pub fn getAtmosphereSystem(self: *RenderSystem) *AtmosphereSystem {
-        return self.atmosphere_system;
+    pub fn getAtmosphereSystem(self: *RenderSystem) *render_graph_pkg.AtmosphereSystem {
+        return self.render_graph.getAtmosphereSystem();
     }
 
     pub fn getLPVSystem(self: *RenderSystem) *render_graph_pkg.LPVSystem {
