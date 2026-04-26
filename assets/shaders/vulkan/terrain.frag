@@ -15,6 +15,8 @@ layout(location = 11) in float vAO;
 layout(location = 12) in vec4 vClipPosCurrent;
 layout(location = 13) in vec4 vClipPosPrev;
 layout(location = 14) in float vMaskRadius;
+layout(location = 15) in float vEntranceBounce;
+layout(location = 16) in vec2 vEntranceDir;
 
 layout(location = 0) out vec4 FragColor;
 
@@ -25,20 +27,24 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset; // xy = offset, z = scale, w = coverage
+    vec4 reserved0;
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
-    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
-    vec4 cloud_params; // x = cloud_height, y = cloud_shadows_enabled, z/w reserved
+    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = reserved
+    vec4 render_flags; // z = pbr_enabled, w = simple_lighting_enabled
     vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
-    vec4 viewport_size; // xy = width/height, z = shadow debug active, w = shadow debug channel (0=off, 1=shadow_factor, 2=cascade_index, 3=caster_coverage, 4=seam_diag)
+    vec4 viewport_size; // xy = width/height, z = terrain debug active, w = terrain debug channel
     vec4 lpv_params; // x = enabled, y = intensity, z = cell_size, w = grid_size
     vec4 lpv_origin; // xyz = world origin
 } global;
 
 // Constants
 const float PI = 3.14159265359;
+
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
+}
 
 const int DEBUG_OFF = 0;
 const int DEBUG_SHADOW_FACTOR = 1;
@@ -47,62 +53,26 @@ const int DEBUG_CASTER_COVERAGE = 3;
 const int DEBUG_SEAM_DIAG = 4;
 const int DEBUG_TILE_ID = 5;
 const int DEBUG_TEX_COLOR = 6;
+const int DEBUG_DIRECT_KEY = 7;
+const int DEBUG_SKY_FILL = 8;
+const int DEBUG_BLOCK_LIGHT = 9;
+const int DEBUG_OUTDOOR_FACTOR = 10;
 
-// Cloud shadow noise functions
-float cloudHash(vec2 p) {
-    p = fract(p * vec2(234.34, 435.345));
-    p += dot(p, p + 34.23);
-    return fract(p.x * p.y);
+// World-space hash for LOD transition masking.
+// Using world-space noise avoids a fixed screen-space dot pattern.
+float lodTransitionNoise(vec2 worldXZ) {
+    vec2 p = floor(worldXZ * 0.25);
+    p = fract(p * vec2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return fract((p.x + p.y) * p.x);
 }
 
-float cloudNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = cloudHash(i);
-    float b = cloudHash(i + vec2(1.0, 0.0));
-    float c = cloudHash(i + vec2(0.0, 1.0));
-    float d = cloudHash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+float skyVisibilityFactor(float skyLight) {
+    return smoothstep(0.05, 0.25, clamp(skyLight, 0.0, 1.0));
 }
 
-float cloudFbm(vec2 p, int octaves) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    for (int i = 0; i < octaves; i++) {
-        value += amplitude * cloudNoise(p * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    return value;
-}
-
-// 4x4 Bayer matrix for dithered LOD transitions
-float bayerDither4x4(vec2 position) {
-    const float bayerMatrix[16] = float[](
-        0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
-        12.0/16.0, 4.0/16.0, 14.0/16.0,  6.0/16.0,
-        3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
-        15.0/16.0, 7.0/16.0, 13.0/16.0,  5.0/16.0
-    );
-    int x = int(mod(position.x, 4.0));
-    int y = int(mod(position.y, 4.0));
-    return bayerMatrix[x + y * 4];
-}
-
-float getCloudShadow(vec3 worldPos, vec3 sunDir) {
-    const float cloudBlockSize = 12.0;
-    vec3 actualWorldPos = worldPos + global.cam_pos.xyz;
-    vec2 shadowOffset = sunDir.xz * (global.cloud_params.x - actualWorldPos.y) / max(sunDir.y, 0.1);
-    vec2 worldXZ = actualWorldPos.xz + shadowOffset + global.cloud_wind_offset.xy;
-    // Apply block quantization to match cloud rendering
-    vec2 pixelPos = floor(worldXZ / cloudBlockSize) * cloudBlockSize;
-    vec2 samplePos = pixelPos * global.cloud_wind_offset.z;
-    float cloudValue = cloudFbm(samplePos, 3);
-    float threshold = 1.0 - global.cloud_wind_offset.w;
-    float cloudMask = smoothstep(threshold - 0.1, threshold + 0.1, cloudValue);
-    return cloudMask * global.lighting.w;
+vec3 absoluteWorldPos(vec3 cameraRelativePos) {
+    return cameraRelativePos + global.cam_pos.xyz;
 }
 
 layout(set = 0, binding = 1) uniform sampler2D uTexture;         // Diffuse/albedo
@@ -183,101 +153,161 @@ float findBlocker(vec2 uv, float zReceiver, int layer, float searchRadius, mat2 
     return blockerDepthSum / float(numBlockers);
 }
 
-float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
+vec3 shadowProjCoords(vec3 fragPosWorld, int layer) {
     vec4 fragPosLightSpace = shadows.light_space_matrices[layer] * vec4(fragPosWorld, 1.0);
     vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    return projCoords;
+}
+
+bool shadowProjInBounds(vec3 projCoords, float margin) {
+    return projCoords.x >= margin && projCoords.x <= 1.0 - margin &&
+           projCoords.y >= margin && projCoords.y <= 1.0 - margin &&
+           projCoords.z >= 0.0 && projCoords.z <= 1.0;
+}
+
+int shadowResolution() {
+    float invResolution = max(shadows.shadow_params.y, 1.0 / 4096.0);
+    return max(1, int(round(1.0 / invResolution)));
+}
+
+ivec2 shadowTexelCoord(vec2 uv) {
+    int resolution = shadowResolution();
+    vec2 maxTexel = vec2(float(resolution - 1));
+    return ivec2(clamp(floor(uv * float(resolution)), vec2(0.0), maxTexel));
+}
+
+float fetchShadowDepthNearest(vec2 uv, int layer) {
+    ivec2 texel = shadowTexelCoord(uv);
+    return texelFetch(uShadowMapsRegular, ivec3(texel, layer), 0).r;
+}
+
+float fetchShadowDepthTexel(ivec2 texel, int layer) {
+    int resolution = shadowResolution();
+    ivec2 clampedTexel = clamp(texel, ivec2(0), ivec2(resolution - 1));
+    return texelFetch(uShadowMapsRegular, ivec3(clampedTexel, layer), 0).r;
+}
+
+float hardShadowCompareTexel(ivec2 texel, int layer, float compareDepth) {
+    float mapDepth = fetchShadowDepthTexel(texel, layer);
+    return compareDepth >= mapDepth ? 0.0 : 1.0;
+}
+
+float manualShadowCompareLinear(vec2 uv, int layer, float compareDepth) {
+    int resolution = shadowResolution();
+    vec2 texelPos = clamp(uv, vec2(0.0), vec2(1.0)) * float(resolution) - vec2(0.5);
+    ivec2 baseTexel = ivec2(floor(texelPos));
+    vec2 blend = fract(texelPos);
+
+    float s00 = hardShadowCompareTexel(baseTexel, layer, compareDepth);
+    float s10 = hardShadowCompareTexel(baseTexel + ivec2(1, 0), layer, compareDepth);
+    float s01 = hardShadowCompareTexel(baseTexel + ivec2(0, 1), layer, compareDepth);
+    float s11 = hardShadowCompareTexel(baseTexel + ivec2(1, 1), layer, compareDepth);
+
+    return mix(mix(s00, s10, blend.x), mix(s01, s11, blend.x), blend.y);
+}
+
+float manualShadowPcfStable(vec2 uv, int layer, float compareDepth) {
+    return manualShadowCompareLinear(uv, layer, compareDepth);
+}
+
+float hardShadowCompare(vec2 uv, int layer, float compareDepth) {
+    ivec2 texel = shadowTexelCoord(uv);
+    return hardShadowCompareTexel(texel, layer, compareDepth);
+}
+
+int selectShadowCascade(vec3 fragPosWorld, float cascadeDistance) {
+    int preferred = cascadeDistance < shadows.cascade_splits[0] ? 0
+                  : (cascadeDistance < shadows.cascade_splits[1] ? 1
+                  : (cascadeDistance < shadows.cascade_splits[2] ? 2 : 3));
+    float margin = max(shadows.shadow_params.y * 2.0, 2.0 / 4096.0);
+
+    if (shadowProjInBounds(shadowProjCoords(fragPosWorld, preferred), margin)) return preferred;
+
+    for (int offset = 1; offset < 4; offset++) {
+        int layer = preferred + offset;
+        if (layer < 4 && shadowProjInBounds(shadowProjCoords(fragPosWorld, layer), margin)) return layer;
+    }
+
+    for (int layer = preferred - 1; layer >= 0; layer--) {
+        if (shadowProjInBounds(shadowProjCoords(fragPosWorld, layer), margin)) return layer;
+    }
+    return preferred;
+}
+
+float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
+    vec3 projCoords = shadowProjCoords(fragPosWorld, layer);
     
     // Bounds check: if outside current cascade, return lit (0.0 shadow factor)
     if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0 || projCoords.z < 0.0 || projCoords.z > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float texelSize = shadows.shadow_texel_sizes[layer];
-    float baseTexelSize = shadows.shadow_texel_sizes[0];
-    float cascadeScale = texelSize / max(baseTexelSize, 0.0001);
+    float worldTexelSize = shadows.shadow_texel_sizes[layer];
+    float baseWorldTexelSize = shadows.shadow_texel_sizes[0];
+    float cascadeScale = worldTexelSize / max(baseWorldTexelSize, 0.0001);
+    float uvTexelSize = max(shadows.shadow_params.y, 1.0 / 4096.0);
     
     float NdotL = max(dot(N, L), 0.001);
     float sinTheta = sqrt(1.0 - NdotL * NdotL);
     float tanTheta = sinTheta / NdotL;
     
-    // Reverse-Z Bias: push fragment CLOSER to light (towards Near=1.0)
-    const float BASE_BIAS = 0.0025;
-    const float SLOPE_BIAS = 0.003;
-    const float MAX_BIAS = 0.015;
+    // Reverse-Z receiver bias. The shadow sampler uses GREATER_OR_EQUAL, so the
+    // receiver reference moves slightly closer to the light (higher depth) to
+    // avoid self-shadowing on coplanar surfaces.
+    const float BASE_BIAS = 0.00035;
+    const float SLOPE_BIAS = 0.00020;
+    const float MAX_BIAS = 0.0012;
     
     float bias = BASE_BIAS * cascadeScale + SLOPE_BIAS * min(tanTheta, 5.0) * cascadeScale;
     bias = min(bias, MAX_BIAS);
-    if (vTileID < 0) bias = max(bias, 0.006 * cascadeScale);
+    if (vTileID < 0) bias = max(bias, 0.00045 * cascadeScale);
+    float compareDepth = min(currentDepth + bias, 1.0);
 
     int pcfSamples = int(global.shadow_params.x);
 
+    if (pcfSamples <= 1) {
+        return manualShadowPcfStable(projCoords.xy, layer, compareDepth);
+    }
+
     if (pcfSamples <= 4) {
-        // LOW preset: simple 4-sample cross PCF, no PCSS, no temporal noise.
-        // Stable because there is no TAA to accumulate noise on LOW.
-        float radius = texelSize * 1.5;
-        float shadow = 0.0;
+        float shadow = texture(uShadowMaps, vec4(projCoords.xy, float(layer), compareDepth));
+        float radius = uvTexelSize * 0.75;
         for (int i = 0; i < 4; i++) {
-            vec2 offset = pcfCross4[i] * radius;
-            shadow += texture(uShadowMaps, vec4(projCoords.xy + offset, float(layer), currentDepth + bias));
+            shadow += texture(uShadowMaps, vec4(projCoords.xy + pcfCross4[i] * radius, float(layer), compareDepth));
         }
-        return 1.0 - (shadow / 4.0);
+        return 1.0 - (shadow / 5.0);
     }
 
-    // HIGH/ULTRA: PCSS with temporal noise rotation
-    float angle = interleavedGradientNoise(gl_FragCoord.xy) * PI * 0.25;
-    float s = sin(angle);
-    float co = cos(angle);
-    mat2 rot = mat2(co, s, -s, co);
-
-    // PCSS: Percentage-Closer Soft Shadows
-    // lightSize in shadow-map UV space, scaled per cascade
-    float lightSize = shadows.shadow_params.x * texelSize;
-    const float MIN_RADIUS = 0.0005;
-    const float MAX_RADIUS = 0.008;
-
-    // Step 1: Blocker search with light-size-proportional search radius
-    float searchRadius = lightSize * 2.0 * cascadeScale;
-    searchRadius = clamp(searchRadius, MIN_RADIUS, MAX_RADIUS);
-    float avgBlockerDepth = findBlocker(projCoords.xy, currentDepth, layer, searchRadius, rot);
-
-    float radius;
-    if (avgBlockerDepth < 0.0) {
-        // No blockers found — use minimum PCF radius for contact hardening
-        radius = MIN_RADIUS * cascadeScale;
-    } else {
-        // Step 2: Penumbra estimation
-        // Reverse-Z: blocker depth > receiver depth means blocker is closer to light
-        float penumbraWidth = (avgBlockerDepth - currentDepth) / max(avgBlockerDepth, 0.0001) * lightSize;
-        radius = clamp(penumbraWidth * cascadeScale, MIN_RADIUS * cascadeScale, MAX_RADIUS * cascadeScale);
-    }
-
-    // Step 3: Variable-radius PCF filtering
+    // Fixed-radius PCF while stabilizing shadows. PCSS blocker search made voxel
+    // shadow edges breathe/smear during motion and hid real projection bugs.
+    float radius = uvTexelSize;
     float shadow = 0.0;
-    for (int i = 0; i < 16; i++) {
-        vec2 offset = (rot * poissonDisk16[i]) * radius;
-        shadow += texture(uShadowMaps, vec4(projCoords.xy + offset, float(layer), currentDepth + bias));
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 offset = vec2(float(x), float(y)) * radius;
+            shadow += texture(uShadowMaps, vec4(projCoords.xy + offset, float(layer), compareDepth));
+        }
     }
-    // shadow factor: 1.0 (Shadowed) to 0.0 (Lit)
-    return 1.0 - (shadow / 16.0);
+    return 1.0 - (shadow / 9.0);
 }
 
-float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float viewDepth, int layer) {
+float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float cascadeDistance, int layer) {
     if (global.shadow_params.z <= 0.0) return 0.0;
 
     float shadow = computeShadowFactor(fragPosWorld, N, L, layer);
     
     // Cascade blending transition (only when enabled).
     // shadow_params.y is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
-    if (global.shadow_params.y > 0.0 && layer < 2) {
+    if (global.shadow_params.y > 0.0 && layer < 3) {
         float nextSplit = shadows.cascade_splits[layer];
         float blendThreshold = nextSplit * 0.8;
-        if (viewDepth > blendThreshold) {
-            float blend = (viewDepth - blendThreshold) / (nextSplit - blendThreshold);
+        if (cascadeDistance > blendThreshold) {
+            float blend = (cascadeDistance - blendThreshold) / (nextSplit - blendThreshold);
             float nextShadow = computeShadowFactor(fragPosWorld, N, L, layer + 1);
             shadow = mix(shadow, nextShadow, clamp(blend, 0.0, 1.0));
         }
     }
-    return shadow * clamp(global.shadow_params.z, 0.0, 1.0);
+    return shadow;
 }
 
 // PBR functions
@@ -390,42 +420,155 @@ vec3 computeBRDF(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness) {
     return (kD * albedo / PI + specular);
 }
 
-vec3 computeLegacyDirect(vec3 albedo, float nDotL, float totalShadow, float skyLightIn, vec3 blockLightIn, float intensityFactor) {
-    float directLight = nDotL * global.params.w * (1.0 - totalShadow) * intensityFactor;
-    float skyLight = skyLightIn * (global.lighting.x + directLight * 1.0);
-    float lightLevel = max(skyLight, max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b)));
-    lightLevel = max(lightLevel, global.lighting.x * 0.8);
-    float shadowFactor = mix(1.0, 0.8, totalShadow);
-    lightLevel = clamp(lightLevel * shadowFactor, 0.0, 1.0);
-    return albedo * lightLevel;
+float baselineOutdoorFactor(float skyLight) {
+    return smoothstep(0.42, 0.92, clamp(skyLight, 0.0, 1.0));
 }
 
-vec3 computePBR(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness, float totalShadow, float skyLight, vec3 blockLight, float ao, float ssao) {
+float debugOutdoorFactor(float skyLight) {
+    return baselineOutdoorFactor(skyLight);
+}
+
+vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float entranceBounceIn, vec2 entranceDirIn, vec3 blockLightIn, float ao, float shadowAmount, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
+    float outdoor = baselineOutdoorFactor(skyLightIn);
+    float diagonalDelta = abs(abs(N.x) - abs(N.z));
+    float isBillboard = (abs(N.y) < 0.01 && diagonalDelta < 0.05) ? 1.0 : 0.0;
+    float baseSunFacing = dot(N, L);
+    float baseMoonFacing = dot(N, -L);
+    float billboardSunFacing = max(baseSunFacing, 0.0) * 0.42 + abs(baseSunFacing) * 0.10;
+    float billboardMoonFacing = max(baseMoonFacing, 0.0) * 0.40 + abs(baseMoonFacing) * 0.08;
+    float sunFacing = mix(baseSunFacing, billboardSunFacing, isBillboard);
+    float moonFacing = mix(baseMoonFacing, billboardMoonFacing, isBillboard);
+    float sideFactor = 1.0 - abs(N.y);
+
+    float sunWrap = mix(0.08 * outdoor * sideFactor, 0.10 + 0.06 * outdoor, isBillboard);
+    float moonWrap = 0.18;
+    float sunDiffuse = clamp((sunFacing + sunWrap) / (1.0 + sunWrap), 0.0, 1.0);
+    float moonDiffuse = clamp((moonFacing + moonWrap) / (1.0 + moonWrap), 0.0, 1.0);
+
+    float sunAmount = clamp(global.params.w, 0.0, 1.0);
+    float moonAmount = (1.0 - sunAmount) * 0.12;
+    float shadowVis = smoothstep(0.08, 0.75, clamp(shadowAmount, 0.0, 1.0));
+    float sunAccess = max(outdoor, smoothstep(0.30, 0.88, skyLightIn) * (1.0 - shadowVis));
+    float rawSkyIndirect = pow(clamp(skyLightIn, 0.0, 1.0), 1.55);
+    float aperture = smoothstep(0.08, 0.72, entranceBounceIn);
+    float caveAmbientGate = max(outdoor, max(aperture, rawSkyIndirect));
+    float skyIndirect = rawSkyIndirect * mix(0.48, 1.0, caveAmbientGate);
+
+    vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.88, 0.70), 0.20);
+    vec3 moonKeyTint = vec3(0.16, 0.20, 0.30);
+    float hemi = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    float twilight = (1.0 - smoothstep(0.10, 0.38, abs(L.y))) * outdoor;
+    vec3 zenithTint = mix(vec3(0.05, 0.06, 0.08), global.fog_color.rgb, 0.60);
+    vec3 horizonTint = mix(vec3(0.08, 0.06, 0.05), global.fog_color.rgb, 0.35);
+    vec3 skyFillTint = mix(horizonTint, zenithTint, pow(hemi, 0.7));
+    vec3 twilightTint = mix(horizonTint, sunKeyTint, 0.35);
+
+    vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * (0.08 + 0.92 * sunAccess) * 1.05;
+    keyLight += moonKeyTint * moonDiffuse * moonAmount * outdoor;
+
+    float sideFill = 0.16 * outdoor * sideFactor * mix(1.0, 0.10, isBillboard);
+    float twilightLift = twilight * (0.07 + 0.11 * sideFactor * mix(1.0, 0.10, isBillboard));
+    float ambientFloor = 0.030 * smoothstep(0.02, 0.30, caveAmbientGate);
+    float fillStrength = ambientFloor + skyIndirect * mix(0.18, 0.28, hemi) + 0.080 * outdoor + sideFill + twilightLift;
+    vec3 skyFill = skyFillTint * global.lighting.x * fillStrength;
+    vec3 twilightBounce = twilightTint * twilight * (0.08 + 0.15 * sideFactor) * mix(1.0, 0.16, isBillboard);
+    vec3 blockFill = blockLightIn;
+    float billboardKeyScale = mix(0.88, 0.68, 1.0 - sunAmount);
+    float billboardFillScale = mix(0.78, 0.50, 1.0 - sunAmount);
+    float fillShadowStrength = mix(0.24, 0.36, 1.0 - sunAmount);
+    keyLight *= mix(1.0, billboardKeyScale, isBillboard);
+    skyFill *= mix(1.15, billboardFillScale, isBillboard);
+    skyFill += twilightBounce;
+    keyLight *= (1.0 - shadowVis);
+    skyFill *= (1.0 - fillShadowStrength * shadowVis * outdoor);
+    float coveredCave = 1.0 - outdoor;
+    float skylitMouth = smoothstep(0.02, 0.24, skyLightIn) * (1.0 - smoothstep(0.32, 0.58, skyLightIn));
+    float apertureRim = max(smoothstep(0.001, 0.055, skyLightIn), smoothstep(0.001, 0.075, entranceBounceIn)) * coveredCave;
+    float mouthCore = max(smoothstep(0.16, 0.62, entranceBounceIn), smoothstep(0.055, 0.22, skyLightIn)) * coveredCave;
+    float caveMouth = max(aperture, skylitMouth * 0.62) * coveredCave;
+    float mouthWallGate = max(mouthCore, max(apertureRim, max(smoothstep(0.035, 0.38, entranceBounceIn), smoothstep(0.01, 0.14, skylitMouth))));
+    float surfaceCaveMouth = caveMouth * mix(1.0, mouthWallGate, sideFactor);
+    float sunAltitude = smoothstep(0.03, 0.62, L.y) * sunAmount;
+    float nXZLen = max(length(N.xz), 0.001);
+    vec2 nXZ = N.xz / nXZLen;
+    float sunXZLen = max(length(L.xz), 0.001);
+    vec2 sunXZ = L.xz / sunXZLen;
+    vec2 entranceDir = length(entranceDirIn) > 0.05 ? normalize(entranceDirIn) : sunXZ;
+    float portalSunAlignment = max(dot(entranceDir, sunXZ), 0.0);
+    float directPortalSun = sunAltitude * smoothstep(0.08, 0.82, portalSunAlignment);
+    float facesAperture = max(dot(nXZ, entranceDir), 0.0);
+    float facesSun = max(dot(nXZ, sunXZ), 0.0);
+    float awayFromAperture = max(dot(nXZ, -entranceDir), 0.0);
+    float directionalWall = 0.18 + 0.50 * facesAperture + 0.28 * facesSun - 0.16 * awayFromAperture;
+    float bounceFacing = clamp(mix(0.30, 0.86, hemi) + sideFactor * directionalWall, 0.10, 1.25);
+    vec3 caveBounceTint = mix(vec3(0.46, 0.52, 0.60), vec3(1.0, 0.86, 0.62), directPortalSun * 0.35);
+    float portalEnergy = 0.078 + 0.085 * sunAltitude + 0.075 * directPortalSun + entranceBounceIn * 0.16;
+    vec3 caveBounce = caveBounceTint * surfaceCaveMouth * bounceFacing * portalEnergy;
+    caveBounce += caveBounceTint * surfaceCaveMouth * hemi * directPortalSun * 0.035;
+    skyFill += caveBounce;
+    float nearPortal = max(smoothstep(0.0, 0.18, entranceBounceIn), smoothstep(0.01, 0.16, skylitMouth) * 0.75) * coveredCave;
+    float surfaceNearPortal = nearPortal * mix(1.0, mouthWallGate, sideFactor);
+    vec3 neutralPortalFloor = vec3(0.088, 0.098, 0.114) * surfaceCaveMouth * (0.70 + 0.14 * hemi + 0.28 * sideFactor);
+    neutralPortalFloor += vec3(0.042, 0.047, 0.056) * surfaceNearPortal * (0.58 + 0.42 * sideFactor);
+    neutralPortalFloor += vec3(0.026, 0.030, 0.037) * apertureRim * (0.45 + 0.35 * sideFactor + 0.20 * hemi);
+    neutralPortalFloor += vec3(0.038, 0.043, 0.052) * mouthCore * (0.28 + 0.54 * sideFactor + 0.18 * hemi);
+    skyFill += neutralPortalFloor;
+    float caveExposure = max(skyIndirect, aperture * 0.74);
+    float deepCave = 1.0 - smoothstep(0.02, 0.32, caveExposure);
+    float dyingCaveLight = smoothstep(0.006, 0.18, caveExposure);
+    vec3 darkAdaptedAmbient = vec3(0.060, 0.067, 0.082) * deepCave * dyingCaveLight * (0.54 + 0.46 * hemi);
+    skyFill += darkAdaptedAmbient;
+    vec3 lightColor = keyLight + skyFill + blockFill;
+
+    directKeyOut = clamp(max(max(keyLight.r, keyLight.g), keyLight.b), 0.0, 1.0);
+    skyFillOut = clamp(max(max(skyFill.r, skyFill.g), skyFill.b), 0.0, 1.0);
+    blockLightOut = clamp(max(blockFill.r, max(blockFill.g, blockFill.b)), 0.0, 1.0);
+    outdoorOut = debugOutdoorFactor(skyLightIn);
+
+    float aoFactor = mix(1.0, ao, 0.14);
+    return albedo * clamp(lightColor * aoFactor, 0.0, 1.0);
+}
+
+vec3 computeLegacyDirect(vec3 albedo, float nDotL, float totalShadow, float skyLightIn, vec3 blockLightIn, float intensityFactor) {
+    float directLight = nDotL * global.params.w * (1.0 - totalShadow) * intensityFactor;
+    float skyAmbient = max(skyLightIn * global.lighting.x, global.lighting.x * 0.08);
+    float blockLight = max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b));
+    float ambientShadowFactor = mix(1.0, 0.5, totalShadow);
+    float lightLevel = skyAmbient * ambientShadowFactor + blockLight + directLight;
+    return albedo * clamp(lightLevel, 0.0, 1.0);
+}
+
+vec3 computePBR(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness, float totalShadow, float skyLight, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+    float atmosphere = skyVisibilityFactor(skyVisibility);
     vec3 brdf = computeBRDF(albedo, N, V, L, roughness);
     float NdotL_final = max(dot(N, L), 0.0);
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_RADIANCE_TO_IRRADIANCE / PI;
     vec3 Lo = brdf * sunColor * NdotL_final * (1.0 - totalShadow);
     vec3 envColor = computeIBLAmbient(N, roughness);
-    float shadowAmbientFactor = mix(1.0, 0.65, totalShadow);
-    vec3 indirect = sampleLPVAtlas(vFragPosWorld, N);
-    vec3 ambientColor = albedo * (max(min(envColor, IBL_CLAMP) * skyLight * 0.8, vec3(global.lighting.x * 0.8)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
+    float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), N);
+    vec3 skyAmbient = max(min(envColor, IBL_CLAMP) * skyLight * 0.8 * atmosphere, vec3(global.lighting.x * 0.08));
+    vec3 ambientColor = albedo * (skyAmbient + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     return ambientColor + Lo;
 }
 
-vec3 computeNonPBR(vec3 albedo, vec3 N, float nDotL, float totalShadow, float skyLight, vec3 blockLight, float ao, float ssao) {
+vec3 computeNonPBR(vec3 albedo, vec3 N, float nDotL, float totalShadow, float skyLight, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+    float atmosphere = skyVisibilityFactor(skyVisibility);
     vec3 envColor = computeIBLAmbient(N, NON_PBR_ROUGHNESS);
-    float shadowAmbientFactor = mix(1.0, 0.65, totalShadow);
-    vec3 indirect = sampleLPVAtlas(vFragPosWorld, N);
-    vec3 ambientColor = albedo * (max(min(envColor, IBL_CLAMP) * skyLight * 0.8, vec3(global.lighting.x * 0.8)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
+    float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), N);
+    vec3 skyAmbient = max(min(envColor, IBL_CLAMP) * skyLight * 0.8 * atmosphere, vec3(global.lighting.x * 0.08));
+    vec3 ambientColor = albedo * (skyAmbient + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_RADIANCE_TO_IRRADIANCE / PI;
     vec3 directColor = albedo * sunColor * nDotL * (1.0 - totalShadow);
     return ambientColor + directColor;
 }
 
-vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, vec3 blockLight, float ao, float ssao) {
-    float shadowAmbientFactor = mix(1.0, 0.65, totalShadow);
-    vec3 indirect = sampleLPVAtlas(vFragPosWorld, vec3(0.0, 1.0, 0.0)); // LOD uses up-facing normal
-    vec3 ambientColor = albedo * (max(vec3(skyLightVal * 0.8), vec3(global.lighting.x * 0.4)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
+vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+    float atmosphere = skyVisibilityFactor(skyVisibility);
+    float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), vec3(0.0, 1.0, 0.0)); // LOD uses up-facing normal
+    vec3 ambientColor = albedo * (max(vec3(skyLightVal * 0.8 * atmosphere), vec3(global.lighting.x * 0.08)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_VOLUMETRIC_INTENSITY / PI;
     vec3 directColor = albedo * sunColor * nDotL * (1.0 - totalShadow);
     return ambientColor + directColor;
@@ -433,13 +576,14 @@ vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, 
 
 // Simple shadow sampler for volumetric points, optimized
 float getVolShadow(vec3 p, float viewDepth) {
-    int layer = 2;
+    int layer = 3;
     if (viewDepth < shadows.cascade_splits[0]) layer = 0;
     else if (viewDepth < shadows.cascade_splits[1]) layer = 1;
+    else if (viewDepth < shadows.cascade_splits[2]) layer = 2;
     vec4 lightSpacePos = shadows.light_space_matrices[layer] * vec4(p, 1.0);
     vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
     proj.xy = proj.xy * 0.5 + 0.5;
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0) return 1.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z < 0.0 || proj.z > 1.0) return 1.0;
     return texture(uShadowMaps, vec4(proj.xy, float(layer), proj.z + 0.002));
 }
 
@@ -466,7 +610,8 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
     for (int i = 0; i < steps; i++) {
         float d = (float(i) + dither) * stepSize;
         vec3 p = rayStart + rayDir * d;
-        float heightFactor = exp(-max(p.y, 0.0) * 0.05);
+        float worldY = p.y + global.cam_pos.y;
+        float heightFactor = exp(-max(worldY, 0.0) * 0.05);
         float stepDensity = density * heightFactor;
         if (stepDensity > 0.0001) {
             float shadow = getVolShadow(p, d);
@@ -479,17 +624,80 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
     return vec4(accumulatedScattering, transmittance);
 }
 
+vec3 computeSunShafts(vec3 rayStart, vec3 rayEnd, vec3 receiverNormal, float receiverSkyLight, float receiverShadow, float dither) {
+    if (global.volumetric_params.x < 0.5 || global.shadow_params.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
+
+    vec3 rayDir = rayEnd - rayStart;
+    float totalDist = length(rayDir);
+    if (totalDist <= 0.001) return vec3(0.0);
+    rayDir /= totalDist;
+
+    vec3 L = normalize(global.sun_dir.xyz);
+    float viewScatter = pow(clamp(dot(rayDir, L) * 0.5 + 0.5, 0.0, 1.0), 2.0);
+    float caveGate = 1.0 - smoothstep(0.08, 0.55, clamp(receiverSkyLight, 0.0, 1.0));
+    float shadowGate = smoothstep(0.06, 0.70, receiverShadow);
+    float visibilityGate = caveGate * mix(0.70, 1.0, shadowGate);
+    float receiverGate = smoothstep(-0.10, 0.55, receiverNormal.y);
+    visibilityGate *= receiverGate;
+    if (visibilityGate <= 0.001) return vec3(0.0);
+
+    const int steps = 8;
+    float maxDist = min(totalDist, 80.0);
+    float stepSize = maxDist / float(steps);
+    float litAccum = 0.0;
+    float weightAccum = 0.0;
+
+    for (int i = 0; i < steps; i++) {
+        float t = (float(i) + dither) * stepSize;
+        vec3 p = rayStart + rayDir * t;
+        float depth = length(p);
+        float lit = getVolShadow(p, depth);
+        float distanceFade = 1.0 - smoothstep(0.0, maxDist, t);
+        float weight = mix(0.35, 1.0, distanceFade);
+        litAccum += lit * weight;
+        weightAccum += weight;
+    }
+
+    float viewBeam = litAccum / max(weightAccum, 0.001);
+    viewBeam *= mix(0.45, 1.0, viewScatter);
+
+    float sunSpill = 0.0;
+    const int spillSteps = 6;
+    for (int i = 0; i < spillSteps; i++) {
+        float t = (float(i) + 0.5 + dither * 0.25) * 2.25;
+        vec3 p = rayEnd + L * t;
+        float lit = getVolShadow(p, length(p));
+        float weight = 1.0 - float(i) / float(spillSteps);
+        sunSpill += lit * weight;
+    }
+    sunSpill /= 3.5;
+
+    float beam = viewBeam * 0.65 + sunSpill * 0.18;
+    beam *= visibilityGate;
+    beam *= smoothstep(0.03, 0.40, maxDist / 80.0);
+
+    vec3 warmSun = mix(global.sun_color.rgb, vec3(1.0, 0.84, 0.52), 0.35);
+    return warmSun * beam * global.volumetric_params.y * 1.35;
+}
+
 void main() {
     vec3 color;
+    float outputAlpha = 1.0;
+    float debugDirectKey = 0.0;
+    float debugSkyFill = 0.0;
+    float debugBlockLight = clamp(max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)), 0.0, 1.0);
+    float debugOutdoor = baselineOutdoorFactor(vSkyLight);
     const float LOD_TRANSITION_WIDTH = 24.0;
     const float AO_FADE_DISTANCE = 128.0;
     float viewDistance = length(vFragPosWorld);
 
     if (vMaskRadius > 0.0) {
-        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
-        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
-        float ditherThreshold = bayerDither4x4(gl_FragCoord.xy);
-        if (fade < ditherThreshold) discard;
+        const float CHUNK_SIZE = 16.0;
+        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
+        vec2 fragChunk = floor(worldXZ / CHUNK_SIZE);
+        vec2 cameraChunk = floor(global.cam_pos.xz / CHUNK_SIZE);
+        float maskChunks = floor(vMaskRadius / CHUNK_SIZE + 0.5);
+        if (length(fragChunk - cameraChunk) <= maskChunks) discard;
     }
     
     vec2 tiledUV = fract(vTexCoord);
@@ -509,75 +717,97 @@ void main() {
 
     vec3 L = normalize(global.sun_dir.xyz);
     float nDotL = max(dot(N, L), 0.0);
-    int layer = vViewDepth < shadows.cascade_splits[0] ? 0
-              : (vViewDepth < shadows.cascade_splits[1] ? 1 : 2);
-    float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, vViewDepth, layer);
+    float skyVisibility = clamp(vSkyLight, 0.0, 1.0);
+    float atmosphericVisibility = skyVisibilityFactor(skyVisibility);
+    float cascadeDistance = length(vFragPosWorld);
+    int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
+    float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
     
-    float cloudShadow = (global.cloud_params.y > 0.5 && global.params.w > 0.05 && global.sun_dir.y > 0.05) ? getCloudShadow(vFragPosWorld, global.sun_dir.xyz) : 0.0;
-    float totalShadow = min(shadowFactor + cloudShadow, 1.0);
+    float totalShadow = shadowFactor;
 
     float ssao = mix(1.0, texture(uSSAOMap, gl_FragCoord.xy / global.viewport_size.xy).r, global.pbr_params.w);
     if (vTileID < 0) {
         ssao = 1.0;
     }
     float ao = mix(1.0, vAO, mix(0.4, 0.05, clamp(viewDistance / AO_FADE_DISTANCE, 0.0, 1.0)));
-    
-    if (global.lighting.y > 0.5 && vTileID >= 0) {
-        if (global.cloud_params.z <= 0.5) {
-            vec4 texColor = texture(uTexture, uv);
-            if (texColor.a < 0.1) discard;
-            color = texColor.rgb * vColor;
-        } else {
-            vec4 texColor = texture(uTexture, uv);
-            if (texColor.a < 0.1) discard;
-            vec3 albedo = texColor.rgb * vColor;
 
-            if (global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
+    if (global.render_flags.w > 0.5) {
+        vec3 albedo = vColor;
+        if (global.lighting.y > 0.5 && vTileID >= 0) {
+            vec4 texColor = texture(uTexture, uv);
+            if (texColor.a < 0.1) discard;
+            outputAlpha = texColor.a;
+            // In simple-lighting mode, ignore the baked per-face shade encoded in vColor.
+            // Preserve biome hue from vColor for tintable textures like grass/leaves,
+            // but normalize away the per-face darkening baked into the mesh color.
+            float maxChannel = max(max(vColor.r, vColor.g), max(vColor.b, 1e-4));
+            vec3 normalizedTint = clamp(vColor / maxChannel, 0.0, 1.0);
+            float chroma = max(max(normalizedTint.r, normalizedTint.g), normalizedTint.b) - min(min(normalizedTint.r, normalizedTint.g), normalizedTint.b);
+            float tintStrength = smoothstep(0.05, 0.2, chroma);
+            vec3 tint = mix(vec3(1.0), normalizedTint, tintStrength);
+            albedo = texColor.rgb * tint;
+        }
+        float beautyShadowAmount = (global.shadow_params.w > 0.5) ? shadowFactor : 0.0;
+        color = computeSimpleLighting(albedo, N, L, vSkyLight, vEntranceBounce, vEntranceDir, vBlockLight, ao, beautyShadowAmount, debugDirectKey, debugSkyFill, debugBlockLight, debugOutdoor);
+    } else if (global.lighting.y > 0.5 && vTileID >= 0) {
+        vec4 texColor = texture(uTexture, uv);
+        if (texColor.a < 0.1) discard;
+        outputAlpha = texColor.a;
+        vec3 albedo = texColor.rgb * vColor;
+
+        if (global.render_flags.z > 0.5 && global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
             float roughness = texture(uRoughnessMap, uv).r;
             if (normalMapSample.a > 0.5 || roughness < 0.99) {
                 vec3 V = normalize(global.cam_pos.xyz - vFragPosWorld);
-                color = computePBR(albedo, N, V, L, clamp(roughness, 0.05, 1.0), totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+                color = computePBR(albedo, N, V, L, clamp(roughness, 0.05, 1.0), totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
             } else {
-                color = computeNonPBR(albedo, N, nDotL, totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+                color = computeNonPBR(albedo, N, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
             }
-            } else {
-                color = albedo;
-            }
+        } else {
+            color = computeLegacyDirect(albedo, nDotL, totalShadow, vSkyLight, vBlockLight, LEGACY_LIGHTING_INTENSITY) * ao * ssao;
         }
     } else if (vTileID < 0) {
-        color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, vBlockLight, ao, ssao);
+        color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
     } else {
-        color = vColor;
+        color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
     }
 
-    if (global.volumetric_params.x > 0.5) {
-        vec4 volumetric = computeVolumetric(vec3(0.0), vFragPosWorld, cloudHash(gl_FragCoord.xy + vec2(global.params.x)));
-        color = color * volumetric.a + volumetric.rgb;
+    if (global.volumetric_params.x > 0.5 && global.render_flags.w <= 0.5) {
+        float shaftDither = lodTransitionNoise(gl_FragCoord.xy + vec2(global.params.x));
+        if (atmosphericVisibility > 0.01) {
+            vec4 volumetric = computeVolumetric(vec3(0.0), vFragPosWorld, shaftDither);
+            volumetric.rgb *= atmosphericVisibility;
+            color = color * volumetric.a + volumetric.rgb;
+        }
     }
 
     if (global.params.z > 0.5) {
-        color = mix(color, global.fog_color.rgb, clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0));
+        float fogFactor = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0) * atmosphericVisibility;
+        color = mix(color, global.fog_color.rgb, fogFactor);
     }
 
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
         if (debugChannel < DEBUG_SHADOW_FACTOR + 0.5) {
-            color = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), totalShadow);
+            vec3 debugShadow = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), shadowFactor);
+            color = mix(vec3(0.02, 0.02, 0.02), debugShadow, atmosphericVisibility);
         } else if (debugChannel < DEBUG_CASCADE_INDEX + 0.5) {
-            color = (layer == 0) ? vec3(1.0, 0.2, 0.2) : (layer == 1) ? vec3(0.2, 1.0, 0.2) : vec3(0.2, 0.4, 1.0);
+            color = (layer == 0) ? vec3(1.0, 0.2, 0.2)
+                  : (layer == 1) ? vec3(0.2, 1.0, 0.2)
+                  : (layer == 2) ? vec3(0.2, 0.4, 1.0)
+                  : vec3(0.8, 0.3, 1.0);
         } else if (debugChannel < DEBUG_CASTER_COVERAGE + 0.5) {
-            vec4 shadowCoord = shadows.light_space_matrices[layer] * vec4(vFragPosWorld, 1.0);
-            vec3 projCoords = shadowCoord.xyz / shadowCoord.w * 0.5 + 0.5;
-            float mapDepth = texture(uShadowMapsRegular, vec3(projCoords.xy, float(layer))).r;
+            vec3 projCoords = shadowProjCoords(vFragPosWorld, layer);
+            float mapDepth = fetchShadowDepthNearest(projCoords.xy, layer);
             float fragDepth = projCoords.z;
-            float hasCaster = (mapDepth < 0.999) ? 1.0 : 0.0;
-            float isInShadow = (fragDepth > mapDepth + 0.001) ? 1.0 : 0.0;
+            float hasCaster = (mapDepth > 0.001) ? 1.0 : 0.0;
+            float isInShadow = (mapDepth > fragDepth + 0.0001) ? 1.0 : 0.0;
             color = vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth);
         } else if (debugChannel < DEBUG_SEAM_DIAG + 0.5) {
             float nextSplit = shadows.cascade_splits[layer];
             float blendStart = nextSplit * 0.8;
-            float distToSplit = abs(vViewDepth - nextSplit) / max(nextSplit, 0.01);
-            float inBlend = (vViewDepth > blendStart && layer < 2) ? (vViewDepth - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
+            float distToSplit = abs(cascadeDistance - nextSplit) / max(nextSplit, 0.01);
+            float inBlend = (cascadeDistance > blendStart && layer < 3) ? (cascadeDistance - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
             float splitLine = 1.0 - smoothstep(0.0, 0.05, distToSplit);
             color = vec3(splitLine, distToSplit * 2.0, clamp(inBlend, 0.0, 1.0));
         } else if (debugChannel < DEBUG_TILE_ID + 0.5) {
@@ -592,8 +822,16 @@ void main() {
         } else if (debugChannel < DEBUG_TEX_COLOR + 0.5) {
             vec4 texColor = texture(uTexture, uv);
             color = texColor.rgb;
+        } else if (debugChannel < DEBUG_DIRECT_KEY + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 0.80, 0.28), debugDirectKey);
+        } else if (debugChannel < DEBUG_SKY_FILL + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(0.30, 0.70, 1.0), debugSkyFill);
+        } else if (debugChannel < DEBUG_BLOCK_LIGHT + 0.5) {
+            color = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 0.45, 0.12), debugBlockLight);
+        } else if (debugChannel < DEBUG_OUTDOOR_FACTOR + 0.5) {
+            color = vec3(debugOutdoor);
         }
     }
 
-    FragColor = vec4(color, 1.0);
+    FragColor = vec4(color, outputAlpha);
 }

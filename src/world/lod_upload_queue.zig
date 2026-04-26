@@ -52,6 +52,7 @@ pub const LODGPUBridge = struct {
         }
         self.assertValidCtx();
         self.on_destroy(mesh, self.ctx);
+        mesh.clearPendingVertices();
     }
 
     pub fn waitIdle(self: LODGPUBridge) void {

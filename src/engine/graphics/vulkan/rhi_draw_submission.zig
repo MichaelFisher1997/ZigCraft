@@ -112,7 +112,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                 const texel_size = ctx.shadow_runtime.shadow_texel_sizes[cascade_index];
                 const shadow_uniforms = ShadowModelUniforms{
                     .mvp = ctx.shadow_system.pass_matrix,
-                    .bias_params = .{ 2.0, 1.0, @floatFromInt(cascade_index), texel_size },
+                    .bias_params = .{ 0.0, 1.0, @floatFromInt(cascade_index), texel_size },
                 };
                 c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ShadowModelUniforms), &shadow_uniforms);
             } else {
@@ -211,7 +211,7 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
             const texel_size = ctx.shadow_runtime.shadow_texel_sizes[cascade_index];
             const shadow_uniforms = ShadowModelUniforms{
                 .mvp = ctx.shadow_system.pass_matrix.multiply(ctx.draw.current_model),
-                .bias_params = .{ 2.0, 1.0, @floatFromInt(cascade_index), texel_size },
+                .bias_params = .{ 0.0, 1.0, @floatFromInt(cascade_index), texel_size },
             };
             c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ShadowModelUniforms), &shadow_uniforms);
         } else {
@@ -322,7 +322,7 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
             const texel_size = ctx.shadow_runtime.shadow_texel_sizes[cascade_index];
             const shadow_uniforms = ShadowModelUniforms{
                 .mvp = ctx.shadow_system.pass_matrix.multiply(ctx.draw.current_model),
-                .bias_params = .{ 2.0, 1.0, @floatFromInt(cascade_index), texel_size },
+                .bias_params = .{ 0.0, 1.0, @floatFromInt(cascade_index), texel_size },
             };
             c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ShadowModelUniforms), &shadow_uniforms);
         } else {

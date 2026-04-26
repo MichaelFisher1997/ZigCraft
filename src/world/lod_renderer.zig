@@ -28,6 +28,7 @@
 
 const std = @import("std");
 const lod_chunk = @import("lod_chunk.zig");
+const ChunkBounds = lod_chunk.ChunkBounds;
 const LODLevel = lod_chunk.LODLevel;
 const LODChunk = lod_chunk.LODChunk;
 const LODConfig = lod_chunk.LODConfig;
@@ -133,7 +134,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             const frustum = Frustum.fromViewProj(view_proj);
             // Keep LOD terrain slightly below full chunks so the handoff zone does not
             // z-fight when both representations overlap during the transition.
-            const lod_y_offset: f32 = -0.5;
+            const lod_y_offset: f32 = -1.0;
 
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
@@ -142,7 +143,8 @@ pub fn LODRenderer(comptime RHI: type) type {
             // Process from highest LOD down
             var i: usize = LODLevel.count - 1;
             while (i > 0) : (i -= 1) {
-                self.collectVisibleMeshes(&meshes[i], &regions[i], config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks) catch |err| {
+                const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
+                self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks) catch |err| {
                     log.log.errWithTrace("Failed to collect visible meshes for LOD{}: {}", .{ i, err });
                 };
             }
@@ -158,8 +160,9 @@ pub fn LODRenderer(comptime RHI: type) type {
 
         fn collectVisibleMeshes(
             self: *Self,
-            meshes: *const MeshMap,
-            regions: *const RegionMap,
+            all_meshes: *const [LODLevel.count]MeshMap,
+            all_regions: *const [LODLevel.count]RegionMap,
+            lod: LODLevel,
             config: ILODConfig,
             _: Mat4,
             camera_pos: Vec3,
@@ -170,6 +173,8 @@ pub fn LODRenderer(comptime RHI: type) type {
             use_frustum: bool,
             max_distance_chunks: ?i32,
         ) !void {
+            const meshes = &all_meshes[@intFromEnum(lod)];
+            const regions = &all_regions[@intFromEnum(lod)];
             var lod_rendered: u32 = 0;
             var lod_covered: u32 = 0;
             var first_missing_cx: i32 = 0;
@@ -186,13 +191,15 @@ pub fn LODRenderer(comptime RHI: type) type {
                 if (!mesh.ready or mesh.vertex_count == 0) continue;
                 if (regions.get(entry.key_ptr.*)) |chunk| {
                     if (chunk.state != .renderable) continue;
+                    if (self.isCoveredByFinerLOD(entry.key_ptr.*, all_meshes, all_regions)) continue;
+
                     const bounds = chunk.worldBounds();
+                    const chunk_bounds = chunk.chunkBounds();
 
                     if (max_distance_chunks) |max_dist| {
-                        if (!isRegionInRange(bounds, camera_pos, max_dist)) continue;
+                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) continue;
                     }
 
-                    var disable_mask = false;
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
                             const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
@@ -204,7 +211,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                                 lod_covered += 1;
                                 continue;
                             }
-                            disable_mask = cov.missing_chunk_in_radius;
                             if (lod_rendered == 0) {
                                 first_missing_cx = cov.missing_cx;
                                 first_missing_cz = cov.missing_cz;
@@ -224,7 +230,10 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
-                    const mask_radius = if (disable_mask) 0.0 else config.calculateMaskRadius();
+                    // Keep coarser LODs visible until full-detail chunks cover them.
+                    // Culling against inner LOD bands creates visible holes while finer
+                    // LOD regions are still streaming in.
+                    const mask_radius = config.calculateMaskRadius();
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
@@ -256,6 +265,39 @@ pub fn LODRenderer(comptime RHI: type) type {
                     }
                 }
             }
+        }
+
+        fn isCoveredByFinerLOD(
+            _: *Self,
+            key: LODRegionKey,
+            all_meshes: *const [LODLevel.count]MeshMap,
+            all_regions: *const [LODLevel.count]RegionMap,
+        ) bool {
+            if (key.lod == .lod1) return false;
+
+            const finer_lod: LODLevel = @enumFromInt(@as(u3, @intCast(@intFromEnum(key.lod) - 1)));
+            const finer_index = @intFromEnum(finer_lod);
+            const finer_scale: i32 = @intCast(finer_lod.chunksPerSide());
+            const bounds = key.chunkBounds();
+            const finer_min_rx = @divFloor(bounds.min_x, finer_scale);
+            const finer_max_rx = @divFloor(bounds.max_x, finer_scale);
+            const finer_min_rz = @divFloor(bounds.min_z, finer_scale);
+            const finer_max_rz = @divFloor(bounds.max_z, finer_scale);
+
+            var rz = finer_min_rz;
+            while (rz <= finer_max_rz) : (rz += 1) {
+                var rx = finer_min_rx;
+                while (rx <= finer_max_rx) : (rx += 1) {
+                    const finer_key = LODRegionKey{ .rx = rx, .rz = rz, .lod = finer_lod };
+                    const finer_chunk = all_regions[finer_index].get(finer_key) orelse return false;
+                    if (finer_chunk.state != .renderable) return false;
+
+                    const finer_mesh = all_meshes[finer_index].get(finer_key) orelse return false;
+                    if (!finer_mesh.ready or finer_mesh.vertex_count == 0) return false;
+                }
+            }
+
+            return true;
         }
 
         const CoverageResult = struct {
@@ -367,31 +409,9 @@ pub fn LODRenderer(comptime RHI: type) type {
     };
 }
 
-fn isRegionInRange(bounds: LODChunk.WorldBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
+fn isRegionInRange(bounds: ChunkBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
     const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
-    const cam_cx = camera_chunk.chunk_x;
-    const cam_cz = camera_chunk.chunk_z;
-
-    const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X);
-    const max_cx = @divFloor(bounds.max_x - 1, CHUNK_SIZE_X);
-    const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z);
-    const max_cz = @divFloor(bounds.max_z - 1, CHUNK_SIZE_Z);
-
-    const dx: i32 = if (cam_cx < min_cx)
-        min_cx - cam_cx
-    else if (cam_cx > max_cx)
-        cam_cx - max_cx
-    else
-        0;
-
-    const dz: i32 = if (cam_cz < min_cz)
-        min_cz - cam_cz
-    else if (cam_cz > max_cz)
-        cam_cz - max_cz
-    else
-        0;
-
-    return @max(dx, dz) <= max_distance_chunks;
+    return bounds.intersectsRadius(camera_chunk.chunk_x, camera_chunk.chunk_z, max_distance_chunks);
 }
 
 // Tests
@@ -482,7 +502,7 @@ test "LODRenderer render draw path" {
     mesh.ready = true;
 
     // Create mock LODChunk in renderable state
-    var chunk = LODChunk.init(0, 0, .lod1);
+    var chunk = LODChunk.init(5, 0, .lod1);
     chunk.state = .renderable;
 
     var meshes: [LODLevel.count]MeshMap = undefined;
@@ -499,7 +519,7 @@ test "LODRenderer render draw path" {
     }
 
     // Add mesh and region at LOD1
-    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const key = LODRegionKey{ .rx = 5, .rz = 0, .lod = .lod1 };
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
@@ -511,13 +531,169 @@ test "LODRenderer render draw path" {
     const camera_pos = Vec3.zero;
 
     // Call render with explicit parameters
-    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, true, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null);
 
     // Verify draw was called with correct parameters
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 1), mock_state.set_matrix_calls);
     try std.testing.expectEqual(@as(u32, 42), mock_state.last_buffer_handle);
     try std.testing.expectEqual(@as(u32, 100), mock_state.last_vertex_count);
+}
+
+test "LODRenderer keeps coarse LOD visible while finer bands stream" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+        set_matrix_calls: u32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, _: f32) void {
+            self.state.set_matrix_calls += 1;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    mesh.buffer_handle = 7;
+    mesh.vertex_count = 12;
+    mesh.ready = true;
+
+    // Region (2,0) at LOD2 covers chunks 16..23. It sits inside the LOD1 radius,
+    // so inner-band culling would incorrectly suppress it if no finer LOD exists yet.
+    var chunk = LODChunk.init(2, 0, .lod2);
+    chunk.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    const key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod2 };
+    try meshes[2].put(key, &mesh);
+    try regions[2].put(key, &chunk);
+
+    var mock_config = LODConfig{
+        .radii = .{ 16, 32, 64, 100 },
+    };
+
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null);
+
+    try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
+    try std.testing.expectEqual(@as(u32, 1), mock_state.set_matrix_calls);
+}
+
+test "LODRenderer skips coarse LOD when finer coverage is ready" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var coarse_mesh = LODMesh.init(allocator, .lod2);
+    coarse_mesh.buffer_handle = 7;
+    coarse_mesh.vertex_count = 12;
+    coarse_mesh.ready = true;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    var coarse_chunk = LODChunk.init(2, 0, .lod2);
+    coarse_chunk.state = .renderable;
+    const coarse_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod2 };
+    try meshes[2].put(coarse_key, &coarse_mesh);
+    try regions[2].put(coarse_key, &coarse_chunk);
+
+    const finer_keys = [_]LODRegionKey{
+        .{ .rx = 4, .rz = 0, .lod = .lod1 },
+        .{ .rx = 5, .rz = 0, .lod = .lod1 },
+        .{ .rx = 4, .rz = 1, .lod = .lod1 },
+        .{ .rx = 5, .rz = 1, .lod = .lod1 },
+    };
+    var finer_chunks: [4]LODChunk = undefined;
+    var finer_meshes: [4]LODMesh = undefined;
+    for (finer_keys, 0..) |finer_key, idx| {
+        finer_chunks[idx] = LODChunk.init(finer_key.rx, finer_key.rz, .lod1);
+        finer_chunks[idx].state = .renderable;
+        finer_meshes[idx] = LODMesh.init(allocator, .lod1);
+        finer_meshes[idx].buffer_handle = @as(u32, @intCast(10 + idx));
+        finer_meshes[idx].vertex_count = 24;
+        finer_meshes[idx].ready = true;
+        try meshes[1].put(finer_key, &finer_meshes[idx]);
+        try regions[1].put(finer_key, &finer_chunks[idx]);
+    }
+
+    var mock_config = LODConfig{
+        .radii = .{ 16, 32, 64, 100 },
+    };
+
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null);
+
+    try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
 }
 
 test "LODRenderer createGPUBridge and toInterface round-trip" {
@@ -602,17 +778,17 @@ test "LODRenderer createGPUBridge and toInterface round-trip" {
     mesh.vertex_count = 50;
     mesh.ready = true;
 
-    var chunk = LODChunk.init(0, 0, .lod1);
+    var chunk = LODChunk.init(5, 0, .lod1);
     chunk.state = .renderable;
 
-    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const key = LODRegionKey{ .rx = 5, .rz = 0, .lod = .lod1 };
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
     var mock_config = LODConfig{};
 
     // Render through the type-erased interface
-    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, true, null);
+    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null);
 
     // Verify the real renderer's draw was invoked through the interface
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);

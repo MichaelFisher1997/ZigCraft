@@ -11,7 +11,7 @@ const log = @import("engine/core/log.zig");
 pub fn main() !void {
     std.debug.print("\n=== GPU Robustness Demo ===\n\n", .{});
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

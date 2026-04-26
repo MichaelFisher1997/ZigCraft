@@ -6,6 +6,7 @@ layout(location = 2) in uint aNormal;
 layout(location = 3) in vec2 aTexCoord;
 layout(location = 4) in uint aPackedMeta;
 layout(location = 5) in uint aBlockLight;
+layout(location = 6) in uint aEntranceDir;
 
 layout(location = 0) out vec3 vColor;
 layout(location = 1) flat out vec3 vNormal;
@@ -22,6 +23,8 @@ layout(location = 11) out float vAO;
 layout(location = 12) out vec4 vClipPosCurrent;
 layout(location = 13) out vec4 vClipPosPrev;
 layout(location = 14) out float vMaskRadius;
+layout(location = 15) out float vEntranceBounce;
+layout(location = 16) out vec2 vEntranceDir;
 
 layout(set = 0, binding = 0) uniform GlobalUniforms {
     mat4 view_proj;
@@ -30,10 +33,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params;
     vec4 lighting;
-    vec4 cloud_params;
+    vec4 render_flags;
     vec4 shadow_params;
     vec4 pbr_params;
     vec4 volumetric_params;
@@ -119,6 +122,12 @@ void main() {
         float((aBlockLight >> 8u) & 0xFFu) / 255.0,
         float((aBlockLight >> 16u) & 0xFFu) / 255.0
     );
+    float entranceBounce = float((aBlockLight >> 24u) & 0xFFu) / 255.0;
+    vec2 entranceDir = vec2(
+        float(aEntranceDir & 0xFFu) / 255.0,
+        float((aEntranceDir >> 8u) & 0xFFu) / 255.0
+    ) * 2.0 - 1.0;
+    if (dot(entranceDir, entranceDir) < 0.02) entranceDir = vec2(0.0);
 
     vColor = decodedColor * color_override;
     vNormal = decodedNormal;
@@ -127,9 +136,12 @@ void main() {
     vDistance = length(worldPos.xyz);
     vSkyLight = skylight;
     vBlockLight = blocklight;
+    vEntranceBounce = entranceBounce;
+    vEntranceDir = entranceDir;
 
     vFragPosWorld = worldPos.xyz;
-    vViewDepth = -clipPos.w;
+    // clipPos.w is the positive forward view distance with our reverse-Z projection.
+    vViewDepth = clipPos.w;
     vAO = ao;
     vMaskRadius = mask_radius;
 

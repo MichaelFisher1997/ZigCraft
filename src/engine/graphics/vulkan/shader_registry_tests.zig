@@ -38,8 +38,6 @@ test "all shader paths follow SPIR-V naming convention" {
         shader_registry.UI_TEX_FRAG,
         shader_registry.DEBUG_SHADOW_VERT,
         shader_registry.DEBUG_SHADOW_FRAG,
-        shader_registry.CLOUD_VERT,
-        shader_registry.CLOUD_FRAG,
     };
 
     for (paths) |path| {
@@ -96,10 +94,6 @@ test "vertex and fragment shader pairs exist for complete pipelines" {
     // Debug Shadow
     try testing.expect(std.mem.endsWith(u8, shader_registry.DEBUG_SHADOW_VERT, ".vert.spv"));
     try testing.expect(std.mem.endsWith(u8, shader_registry.DEBUG_SHADOW_FRAG, ".frag.spv"));
-
-    // Cloud
-    try testing.expect(std.mem.endsWith(u8, shader_registry.CLOUD_VERT, ".vert.spv"));
-    try testing.expect(std.mem.endsWith(u8, shader_registry.CLOUD_FRAG, ".frag.spv"));
 }
 
 test "compute shaders are not present in registry" {
@@ -231,7 +225,6 @@ test "shader directory structure is consistent" {
         shader_registry.TERRAIN_VERT,
         shader_registry.SKY_VERT,
         shader_registry.UI_VERT,
-        shader_registry.CLOUD_VERT,
     };
 
     for (paths) |path| {
@@ -329,8 +322,6 @@ test "all shader paths have unique base names" {
         shader_registry.UI_TEX_FRAG,
         shader_registry.DEBUG_SHADOW_VERT,
         shader_registry.DEBUG_SHADOW_FRAG,
-        shader_registry.CLOUD_VERT,
-        shader_registry.CLOUD_FRAG,
         shader_registry.CULLING_COMP,
         shader_registry.WATER_VERT,
         shader_registry.WATER_FRAG,

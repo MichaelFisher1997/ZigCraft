@@ -67,6 +67,11 @@ const GpuBlockBuffer = @import("gpu_block_buffer.zig").GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
 const build_options = @import("build_options");
 
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return std.mem.span(value);
+}
+
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
 // const CHUNK_UNLOAD_BUFFER: i32 = 1;
@@ -158,21 +163,31 @@ pub const WorldStreamer = struct {
 
     frame_counter: u64 = 0,
     effective_render_dist: i32 = 0,
+    startup_stream_radius: i32 = 0,
+    startup_mesh_finalized: bool = false,
 
     /// When true, forces CPU meshing even if GPU mesher is available.
     /// Set via ZIGCRAFT_FORCE_CPU_MESHING=1 env var at runtime.
     force_cpu_meshing: bool = false,
+    chunks_generated_total: std.atomic.Value(u64) = .init(0),
+    chunks_meshed_total: std.atomic.Value(u64) = .init(0),
+    chunks_uploaded_total: std.atomic.Value(u64) = .init(0),
+    last_diag_generated: u64 = 0,
+    last_diag_meshed: u64 = 0,
+    last_diag_uploaded: u64 = 0,
 
-    const MIN_GEN_WORKERS = 6;
-    const MAX_GEN_WORKERS = 10;
-    const MIN_MESH_WORKERS = 4;
-    const MAX_MESH_WORKERS = 6;
+    const MIN_GEN_WORKERS = 2;
+    const MAX_GEN_WORKERS = 4;
+    const MIN_MESH_WORKERS = 1;
+    const MAX_MESH_WORKERS = 3;
+    const STARTUP_RADIUS_INITIAL = 3;
+    const STARTUP_RADIUS_STEP = 2;
 
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
-        const gen_worker_count = std.math.clamp((cpu_count * 2) / 3, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
-        const mesh_worker_count = std.math.clamp(cpu_count / 3, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
+        const gen_worker_count = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
+        const mesh_worker_count = std.math.clamp(cpu_count / 4, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
 
         const gen_queue = try allocator.create(JobQueue);
         gen_queue.* = JobQueue.init(allocator);
@@ -198,7 +213,17 @@ pub const WorldStreamer = struct {
             .max_uploads_per_frame = max_uploads_per_frame,
             .gpu_block_buffer = gpu_block_buffer,
             .gpu_mesher = gpu_mesher,
+            .startup_stream_radius = @min(render_distance, STARTUP_RADIUS_INITIAL),
+            .startup_mesh_finalized = false,
+            .chunks_generated_total = .init(0),
+            .chunks_meshed_total = .init(0),
+            .chunks_uploaded_total = .init(0),
+            .last_diag_generated = 0,
+            .last_diag_meshed = 0,
+            .last_diag_uploaded = 0,
         };
+
+        try streamer.warmupInitialChunks();
 
         log.log.info("WorldStreamer workers: gen={} mesh={} (cpu={})", .{ gen_worker_count, mesh_worker_count, cpu_count });
 
@@ -251,13 +276,89 @@ pub const WorldStreamer = struct {
     pub fn setRenderDistance(self: *WorldStreamer, distance: i32) void {
         if (self.render_distance != distance) {
             self.render_distance = distance;
+            self.startup_stream_radius = @min(distance, STARTUP_RADIUS_INITIAL);
+            self.effective_render_dist = 0;
+            self.startup_mesh_finalized = false;
             // Force chunk rescan on next update
             self.last_pc = .{ .x = 9999, .z = 9999 };
         }
     }
 
+    pub fn getActiveRenderDistance(self: *const WorldStreamer) i32 {
+        return if (self.effective_render_dist > 0) self.effective_render_dist else self.render_distance;
+    }
+
+    pub fn isStartupBusy(self: *WorldStreamer, target_render_dist: i32) bool {
+        const startup_target = if (self.lod_manager) |mgr|
+            @min(target_render_dist, mgr.config.getRadii()[0])
+        else
+            target_render_dist;
+
+        if (self.getActiveRenderDistance() < startup_target) return true;
+
+        const stats = self.getStats();
+        return stats.gen_queue > 0 or stats.mesh_queue > 0 or stats.upload_queue > 0;
+    }
+
+    fn warmupInitialChunks(self: *WorldStreamer) !void {
+        const warmup_radius: i32 = 2;
+
+        var cz: i32 = -warmup_radius;
+        while (cz <= warmup_radius) : (cz += 1) {
+            var cx: i32 = -warmup_radius;
+            while (cx <= warmup_radius) : (cx += 1) {
+                const data = try self.storage.getOrCreate(cx, cz);
+                if (data.chunk.generated) continue;
+
+                data.chunk.state = .generating;
+                self.generator.generate(&data.chunk, null);
+                if (!data.chunk.generated) {
+                    data.chunk.state = .missing;
+                    continue;
+                }
+                data.chunk.state = .generated;
+            }
+        }
+
+        cz = -warmup_radius;
+        while (cz <= warmup_radius) : (cz += 1) {
+            var cx: i32 = -warmup_radius;
+            while (cx <= warmup_radius) : (cx += 1) {
+                const data = self.storage.get(cx, cz) orelse continue;
+                if (!data.chunk.generated) continue;
+
+                const neighbors = NeighborChunks{
+                    .north = if (self.storage.get(cx, cz - 1)) |n| &n.chunk else null,
+                    .south = if (self.storage.get(cx, cz + 1)) |s| &s.chunk else null,
+                    .east = if (self.storage.get(cx + 1, cz)) |e| &e.chunk else null,
+                    .west = if (self.storage.get(cx - 1, cz)) |w| &w.chunk else null,
+                };
+
+                data.mesh.buildWithNeighbors(&data.chunk, neighbors, self.atlas) catch |err| {
+                    log.log.warn("STARTUP_WARMUP_MESH_FAILED: ({},{}) {}", .{ cx, cz, err });
+                    data.chunk.state = .generated;
+                    continue;
+                };
+
+                data.chunk.state = .mesh_ready;
+                data.mesh.upload(self.vertex_allocator);
+                if (data.mesh.ready) {
+                    data.chunk.state = .renderable;
+                    data.chunk.dirty = false;
+                    _ = self.chunks_uploaded_total.fetchAdd(1, .monotonic);
+                } else {
+                    data.chunk.state = .generated;
+                }
+            }
+        }
+    }
+
     pub fn setLODManager(self: *WorldStreamer, lod_manager: ?*LODManager) void {
         self.lod_manager = lod_manager;
+        if (lod_manager != null) {
+            self.startup_stream_radius = @min(self.render_distance, STARTUP_RADIUS_INITIAL);
+            self.effective_render_dist = 0;
+        }
     }
 
     pub fn setSaveManager(self: *WorldStreamer, sm: ?*SaveManager) void {
@@ -372,7 +473,7 @@ pub const WorldStreamer = struct {
 
         // Check for runtime GPU mesher disable
         if (self.gpu_mesher != null and self.frame_counter % 30 == 0) {
-            const env_val = std.posix.getenv("ZIGCRAFT_FORCE_CPU_MESHING");
+            const env_val = getenv("ZIGCRAFT_FORCE_CPU_MESHING");
             const new_force_cpu = if (env_val) |val|
                 !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
             else
@@ -402,7 +503,9 @@ pub const WorldStreamer = struct {
             self.logMissingChunkDiagnostic(pc.chunk_x, pc.chunk_z);
         }
 
-        const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        const target_render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        self.updateStartupRadius(pc.chunk_x, pc.chunk_z, target_render_dist);
+        const render_dist = if (self.startup_stream_radius > 0) self.startup_stream_radius else target_render_dist;
         self.effective_render_dist = render_dist;
 
         if (moved) {
@@ -459,7 +562,7 @@ pub const WorldStreamer = struct {
                     log.log.warn("CHUNK_RECOVERY: ({},{}) renderable with no allocations, re-meshing (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
                     data.chunk.state = .generated;
                 }
-            } else if (data.chunk.state == .generating and self.frame_counter % 120 == 0) {
+            } else if (data.chunk.state == .generating and !data.chunk.isPinned() and self.frame_counter % 120 == 0) {
                 const dx = data.chunk.chunk_x - pc.chunk_x;
                 const dz = data.chunk.chunk_z - pc.chunk_z;
                 const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
@@ -494,6 +597,77 @@ pub const WorldStreamer = struct {
                 log.log.warn("LOD update error (non-fatal): {}", .{err});
             };
         }
+
+        if (!self.startup_mesh_finalized and !self.isStartupBusy(self.render_distance)) {
+            self.finalizeStartupArea(pc.chunk_x, pc.chunk_z, 1);
+            self.startup_mesh_finalized = true;
+        }
+    }
+
+    fn finalizeStartupArea(self: *WorldStreamer, pc_x: i32, pc_z: i32, radius: i32) void {
+        var cz = pc_z - radius;
+        while (cz <= pc_z + radius) : (cz += 1) {
+            var cx = pc_x - radius;
+            while (cx <= pc_x + radius) : (cx += 1) {
+                self.finalizeChunkMesh(cx, cz);
+            }
+        }
+    }
+
+    fn finalizeChunkMesh(self: *WorldStreamer, cx: i32, cz: i32) void {
+        self.storage.chunks_mutex.lockShared();
+        const chunk_data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse {
+            self.storage.chunks_mutex.unlockShared();
+            return;
+        };
+
+        if (!chunk_data.chunk.generated and chunk_data.chunk.state != .renderable) {
+            self.storage.chunks_mutex.unlockShared();
+            return;
+        }
+
+        chunk_data.chunk.pin();
+        const neighbors = NeighborChunks{
+            .north = if (self.storage.chunks.get(.{ .x = cx, .z = cz - 1 })) |d| d: {
+                d.chunk.pin();
+                break :d &d.chunk;
+            } else null,
+            .south = if (self.storage.chunks.get(.{ .x = cx, .z = cz + 1 })) |d| d: {
+                d.chunk.pin();
+                break :d &d.chunk;
+            } else null,
+            .east = if (self.storage.chunks.get(.{ .x = cx + 1, .z = cz })) |d| d: {
+                d.chunk.pin();
+                break :d &d.chunk;
+            } else null,
+            .west = if (self.storage.chunks.get(.{ .x = cx - 1, .z = cz })) |d| d: {
+                d.chunk.pin();
+                break :d &d.chunk;
+            } else null,
+        };
+        self.storage.chunks_mutex.unlockShared();
+
+        defer {
+            chunk_data.chunk.unpin();
+            if (neighbors.north) |n| @constCast(n).unpin();
+            if (neighbors.south) |s| @constCast(s).unpin();
+            if (neighbors.east) |e| @constCast(e).unpin();
+            if (neighbors.west) |w| @constCast(w).unpin();
+        }
+
+        chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
+            log.log.warn("STARTUP_FINALIZE_MESH_FAILED: ({},{}) {}", .{ cx, cz, err });
+            return;
+        };
+        chunk_data.mesh.upload(self.vertex_allocator);
+
+        self.storage.chunks_mutex.lock();
+        if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+            data.chunk.state = .renderable;
+            data.chunk.dirty = false;
+            data.chunk.mesh_attempts = 0;
+        }
+        self.storage.chunks_mutex.unlock();
     }
 
     fn scanForMissingChunks(self: *WorldStreamer, pc_x: i32, pc_z: i32, render_dist: i32) !void {
@@ -528,6 +702,54 @@ pub const WorldStreamer = struct {
                 }
             }
         }
+    }
+
+    fn updateStartupRadius(self: *WorldStreamer, pc_x: i32, pc_z: i32, target_render_dist: i32) void {
+        if (target_render_dist <= 0) {
+            self.startup_stream_radius = 0;
+            return;
+        }
+
+        if (self.startup_stream_radius <= 0) {
+            self.startup_stream_radius = @min(target_render_dist, STARTUP_RADIUS_INITIAL);
+            return;
+        }
+
+        if (self.startup_stream_radius >= target_render_dist) {
+            self.startup_stream_radius = target_render_dist;
+            return;
+        }
+
+        if (self.frame_counter % 30 != 0) return;
+
+        var total_in_radius: u32 = 0;
+        var ready_in_radius: u32 = 0;
+
+        self.storage.chunks_mutex.lockShared();
+        defer self.storage.chunks_mutex.unlockShared();
+
+        var cz = pc_z - self.startup_stream_radius;
+        while (cz <= pc_z + self.startup_stream_radius) : (cz += 1) {
+            var cx = pc_x - self.startup_stream_radius;
+            while (cx <= pc_x + self.startup_stream_radius) : (cx += 1) {
+                const dx = cx - pc_x;
+                const dz = cz - pc_z;
+                if (dx * dx + dz * dz > self.startup_stream_radius * self.startup_stream_radius) continue;
+
+                total_in_radius += 1;
+                if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+                    if (data.chunk.state == .renderable or data.mesh.solid_allocation != null or data.mesh.cutout_allocation != null or data.mesh.fluid_allocation != null) {
+                        ready_in_radius += 1;
+                    }
+                }
+            }
+        }
+
+        if (total_in_radius == 0) return;
+        if (ready_in_radius * 100 < total_in_radius * 85) return;
+
+        self.startup_stream_radius = @min(target_render_dist, self.startup_stream_radius + STARTUP_RADIUS_STEP);
+        log.log.info("STARTUP_STREAM_RADIUS: expanded to {} / {}", .{ self.startup_stream_radius, target_render_dist });
     }
 
     fn processUploads(self: *WorldStreamer) void {
@@ -577,6 +799,7 @@ pub const WorldStreamer = struct {
                     if (data.mesh.ready) {
                         data.chunk.state = .renderable;
                         data.chunk.dirty = false;
+                        _ = self.chunks_uploaded_total.fetchAdd(1, .monotonic);
                     } else {
                         log.log.warn("CHUNK_UPLOAD: ({},{}) upload FAILED (ready=false), reverting to mesh_ready | solid={} cutout={} fluid={}", .{
                             key.x,                              key.z,
@@ -669,7 +892,21 @@ pub const WorldStreamer = struct {
 
         defer chunk_data.chunk.unpin();
 
-        if ((chunk_data.chunk.state == .queued_for_generation or chunk_data.chunk.state == .generating) and chunk_data.chunk.job_token == job.data.chunk.job_token) {
+        self.storage.chunks_mutex.lock();
+        if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
+            if (data.chunk.state == .queued_for_generation and data.chunk.job_token == job.data.chunk.job_token) {
+                data.chunk.state = .generating;
+            } else if (data.chunk.state != .generating or data.chunk.job_token != job.data.chunk.job_token) {
+                self.storage.chunks_mutex.unlock();
+                return;
+            }
+        } else {
+            self.storage.chunks_mutex.unlock();
+            return;
+        }
+        self.storage.chunks_mutex.unlock();
+
+        if (chunk_data.chunk.state == .generating and chunk_data.chunk.job_token == job.data.chunk.job_token) {
             const load_result = blk: {
                 const sm = self.save_manager orelse break :blk LoadResult.not_found;
                 break :blk sm.loadChunk(cx, cz, &chunk_data.chunk);
@@ -704,6 +941,7 @@ pub const WorldStreamer = struct {
                     chunk_data.chunk.state = .missing;
                 } else {
                     chunk_data.chunk.state = .generated;
+                    _ = self.chunks_generated_total.fetchAdd(1, .monotonic);
                 }
             }
             self.storage.chunks_mutex.unlock();
@@ -769,11 +1007,26 @@ pub const WorldStreamer = struct {
             if (neighbors.west) |w| @as(*Chunk, @constCast(w)).unpin();
         }
 
-        if ((chunk_data.chunk.state == .queued_for_mesh or chunk_data.chunk.state == .meshing) and chunk_data.chunk.job_token == job.data.chunk.job_token) {
+        self.storage.chunks_mutex.lock();
+        if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
+            if (data.chunk.state == .queued_for_mesh and data.chunk.job_token == job.data.chunk.job_token) {
+                data.chunk.state = .meshing;
+            } else if (data.chunk.state != .meshing or data.chunk.job_token != job.data.chunk.job_token) {
+                self.storage.chunks_mutex.unlock();
+                return;
+            }
+        } else {
+            self.storage.chunks_mutex.unlock();
+            return;
+        }
+        self.storage.chunks_mutex.unlock();
+
+        if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
             if (self.gpu_mesher != null and !self.force_cpu_meshing) {
                 self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .mesh_ready;
                 self.storage.chunks_mutex.unlock();
+                _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
                 return;
             }
             chunk_data.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
@@ -792,6 +1045,7 @@ pub const WorldStreamer = struct {
             self.storage.chunks_mutex.lock();
             chunk_data.chunk.state = .mesh_ready;
             self.storage.chunks_mutex.unlock();
+            _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
         }
     }
 
@@ -821,7 +1075,8 @@ pub const WorldStreamer = struct {
     }
 
     fn logMissingChunkDiagnostic(self: *WorldStreamer, pc_x: i32, pc_z: i32) void {
-        const render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        const target_render_dist = if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        const render_dist = @min(self.getActiveRenderDistance(), target_render_dist);
 
         var counts = [_]u32{0} ** 10;
         var missing_keys = std.ArrayListUnmanaged(ChunkKey).empty;
@@ -857,11 +1112,22 @@ pub const WorldStreamer = struct {
         }
         self.storage.chunks_mutex.unlockShared();
 
-        log.log.info("CHUNK_DIAG [frame={}] pc=({},{}) rd={} | missing={} qgen={} gen={} gentd={} qmesh={} mesh={} mready={} upload={} render={} unload={} | not_in_storage={}", .{
-            self.frame_counter, pc_x,      pc_z,                   render_dist,
-            counts[0],          counts[1], counts[2],              counts[3],
-            counts[4],          counts[5], counts[6],              counts[7],
-            counts[8],          counts[9], missing_keys.items.len,
+        const generated_total = self.chunks_generated_total.load(.monotonic);
+        const meshed_total = self.chunks_meshed_total.load(.monotonic);
+        const uploaded_total = self.chunks_uploaded_total.load(.monotonic);
+        const generated_delta = generated_total - self.last_diag_generated;
+        const meshed_delta = meshed_total - self.last_diag_meshed;
+        const uploaded_delta = uploaded_total - self.last_diag_uploaded;
+        self.last_diag_generated = generated_total;
+        self.last_diag_meshed = meshed_total;
+        self.last_diag_uploaded = uploaded_total;
+
+        log.log.info("CHUNK_DIAG [frame={}] pc=({},{}) rd={}/{} | missing={} qgen={} gen={} gentd={} qmesh={} mesh={} mready={} upload={} render={} unload={} | not_in_storage={} | throughput gen={}/{} mesh={}/{} upload={}/{}", .{
+            self.frame_counter,     pc_x,            pc_z,            render_dist,  target_render_dist,
+            counts[0],              counts[1],       counts[2],       counts[3],    counts[4],
+            counts[5],              counts[6],       counts[7],       counts[8],    counts[9],
+            missing_keys.items.len, generated_delta, generated_total, meshed_delta, meshed_total,
+            uploaded_delta,         uploaded_total,
         });
 
         if (missing_keys.items.len > 0 and missing_keys.items.len <= 20) {
@@ -877,7 +1143,8 @@ pub const WorldStreamer = struct {
             log.log.info("{s}", .{buf[0..len]});
         }
 
-        if (counts[3] > 0 or counts[6] > 0 or counts[7] > 0) {
+        const pipeline_busy = counts[1] > 0 or counts[2] > 0 or counts[4] > 0 or counts[5] > 0;
+        if (!pipeline_busy and (counts[3] > 0 or counts[6] > 0 or counts[7] > 0)) {
             log.log.warn("  stalled chunks: generated={} mesh_ready={} uploading={} (should be 0 at steady state)", .{
                 counts[3], counts[6], counts[7],
             });

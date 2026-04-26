@@ -405,7 +405,7 @@ test "ShadowSystem endPass does not modify pass_index" {
     try testing.expectEqual(@as(u32, 2), sys.pass_index);
 }
 
-test "ShadowSystem endPass updates image layout to shader read only optimal" {
+test "ShadowSystem endPass updates image layout to depth stencil read only optimal" {
     var sys = try ShadowSystem.init(testing.allocator, 1024);
     defer sys.deinit(null);
 
@@ -419,7 +419,7 @@ test "ShadowSystem endPass updates image layout to shader read only optimal" {
     try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL), sys.shadow_image_layouts[3]);
 
     sys.endPass(null);
-    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL), sys.shadow_image_layouts[3]);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL), sys.shadow_image_layouts[3]);
 }
 
 test "ShadowSystem endPass with inactive pass is no-op" {

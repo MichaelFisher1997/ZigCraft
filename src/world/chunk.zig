@@ -90,6 +90,20 @@ pub const PackedLight = packed struct {
     }
 };
 
+pub fn packEntranceDir(x: i4, z: i4) u8 {
+    const ux: u8 = @as(u4, @bitCast(x));
+    const uz: u8 = @as(u4, @bitCast(z));
+    return ux | (uz << 4);
+}
+
+pub fn unpackEntranceDirX(encoded: u8) i4 {
+    return @bitCast(@as(u4, @intCast(encoded & 0x0F)));
+}
+
+pub fn unpackEntranceDirZ(encoded: u8) i4 {
+    return @bitCast(@as(u4, @intCast((encoded >> 4) & 0x0F)));
+}
+
 pub const Chunk = struct {
     /// Chunk state for streaming
     pub const State = enum {
@@ -115,6 +129,14 @@ pub const Chunk = struct {
 
     /// Light data: packed skylight (4 bits) + blocklight (4 bits) per block
     light: [CHUNK_VOLUME]PackedLight,
+
+    /// Short-range indirect skylight seeded near cave/opening transitions.
+    /// Separate from skylight so deep caves can stay dark while entrances stay readable.
+    entrance_bounce: [CHUNK_VOLUME]u4,
+
+    /// Packed horizontal direction toward the nearest entrance aperture.
+    /// Used by shading to make cave spill directional instead of a flat fill.
+    entrance_dir: [CHUNK_VOLUME]u8,
 
     /// Biome data for each column (X, Z)
     biomes: [CHUNK_SIZE_X * CHUNK_SIZE_Z]BiomeId,
@@ -152,6 +174,8 @@ pub const Chunk = struct {
             .chunk_z = chunk_z,
             .blocks = [_]BlockType{.air} ** CHUNK_VOLUME,
             .light = [_]PackedLight{PackedLight.init(0, 0)} ** CHUNK_VOLUME,
+            .entrance_bounce = [_]u4{0} ** CHUNK_VOLUME,
+            .entrance_dir = [_]u8{packEntranceDir(0, 0)} ** CHUNK_VOLUME,
             .biomes = [_]BiomeId{.plains} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
             .heightmap = [_]i16{0} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
             .state = .missing,
@@ -221,6 +245,22 @@ pub const Chunk = struct {
         self.light[getIndex(x, y, z)].setSkyLight(val);
     }
 
+    pub fn getEntranceBounce(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
+        return self.entrance_bounce[getIndex(x, y, z)];
+    }
+
+    pub fn setEntranceBounce(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
+        self.entrance_bounce[getIndex(x, y, z)] = val;
+    }
+
+    pub fn getEntranceDir(self: *const Chunk, x: u32, y: u32, z: u32) u8 {
+        return self.entrance_dir[getIndex(x, y, z)];
+    }
+
+    pub fn setEntranceDir(self: *Chunk, x: u32, y: u32, z: u32, val: u8) void {
+        self.entrance_dir[getIndex(x, y, z)] = val;
+    }
+
     /// Get blocklight at local coordinates
     pub fn getBlockLight(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         const idx = x + z * CHUNK_SIZE_X + y * CHUNK_SIZE_X * CHUNK_SIZE_Z;
@@ -259,6 +299,16 @@ pub const Chunk = struct {
             return PackedLight.init(0, 0);
         }
         return self.getLight(@intCast(x), @intCast(y), @intCast(z));
+    }
+
+    pub fn getEntranceBounceSafe(self: *const Chunk, x: i32, y: i32, z: i32) u4 {
+        if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return 0;
+        return self.getEntranceBounce(@intCast(x), @intCast(y), @intCast(z));
+    }
+
+    pub fn getEntranceDirSafe(self: *const Chunk, x: i32, y: i32, z: i32) u8 {
+        if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return packEntranceDir(0, 0);
+        return self.getEntranceDir(@intCast(x), @intCast(y), @intCast(z));
     }
 
     /// Get world X coordinate of this chunk's origin

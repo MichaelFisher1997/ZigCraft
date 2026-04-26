@@ -20,10 +20,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params;
     vec4 lighting;
-    vec4 cloud_params;
+    vec4 render_flags;
     vec4 shadow_params;
     vec4 pbr_params;
     vec4 volumetric_params;
@@ -162,7 +162,7 @@ void main() {
     if (global.params.z > 0.5) {
         waterColor = mix(waterColor, global.fog_color.rgb, clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0));
     }
-    
+
     float alpha = mix(0.8, 0.98, depth_factor);
     alpha = mix(alpha, 1.0, fresnel * 0.35);
     alpha = clamp(alpha, 0.75, 1.0);

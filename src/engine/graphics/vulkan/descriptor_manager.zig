@@ -16,10 +16,10 @@ const GlobalUniforms = extern struct {
     sun_dir: [4]f32,
     sun_color: [4]f32,
     fog_color: [4]f32,
-    cloud_wind_offset: [4]f32,
+    reserved0: [4]f32,
     params: [4]f32,
     lighting: [4]f32,
-    cloud_params: [4]f32,
+    render_flags: [4]f32,
     shadow_params: [4]f32,
     pbr_params: [4]f32,
     volumetric_params: [4]f32,
@@ -32,7 +32,7 @@ pub const ShadowUniforms = extern struct {
     light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
     cascade_splits: [4]f32,
     shadow_texel_sizes: [4]f32,
-    shadow_params: [4]f32, // x = light_size (PCSS), y/z/w reserved
+    shadow_params: [4]f32, // x = light_size (PCSS), y = 1 / shadow resolution
 };
 
 pub const DescriptorManager = struct {

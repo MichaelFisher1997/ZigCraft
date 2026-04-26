@@ -194,7 +194,7 @@ test "FXAA all guards pass allows begin" {
     fxaa.pipeline = @as(?*anyopaque, @ptrFromInt(1));
     fxaa.render_pass = @as(?*anyopaque, @ptrFromInt(2));
 
-    var framebuffers = std.ArrayListUnmanaged(?*anyopaque){};
+    var framebuffers = std.ArrayListUnmanaged(?*anyopaque).empty;
     defer framebuffers.deinit(testing.allocator);
     try framebuffers.append(testing.allocator, @as(?*anyopaque, @ptrFromInt(100)));
 
@@ -479,7 +479,7 @@ test "RenderPassManager createMainRenderPass MSAA use_msaa flag" {
 }
 
 test "post-process framebuffer list management" {
-    var framebuffers = std.ArrayListUnmanaged(?*anyopaque){};
+    var framebuffers = std.ArrayListUnmanaged(?*anyopaque).empty;
     defer framebuffers.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), framebuffers.items.len);
@@ -499,7 +499,7 @@ test "post-process framebuffer list management" {
 }
 
 test "ui_swapchain framebuffer list management" {
-    var framebuffers = std.ArrayListUnmanaged(?*anyopaque){};
+    var framebuffers = std.ArrayListUnmanaged(?*anyopaque).empty;
     defer framebuffers.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 0), framebuffers.items.len);

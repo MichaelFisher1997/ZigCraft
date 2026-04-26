@@ -141,7 +141,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         if (ctx.shadow_system.shadow_image != null) {
             lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true) catch |err| log.log.warn("Failed to transition Shadow image: {}", .{err});
             for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
-                ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
             }
         }
     }
@@ -191,6 +191,10 @@ pub fn prepareFrameState(ctx: anytype) void {
         ctx.debug_shadow.descriptor_next[ctx.frames.current_frame] = 0;
     }
 
+    refreshTextureDescriptors(ctx);
+}
+
+pub fn refreshTextureDescriptors(ctx: anytype) void {
     const cur_tex = ctx.draw.current_texture;
     const cur_nor = ctx.draw.current_normal_texture;
     const cur_rou = ctx.draw.current_roughness_texture;
@@ -288,7 +292,7 @@ pub fn prepareFrameState(ctx: anytype) void {
             image_infos[info_count] = .{
                 .sampler = ctx.shadow_system.shadow_sampler,
                 .imageView = ctx.shadow_system.shadow_image_view,
-                .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                .imageLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
             };
             writes[write_count] = std.mem.zeroes(c.VkWriteDescriptorSet);
             writes[write_count].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -305,7 +309,7 @@ pub fn prepareFrameState(ctx: anytype) void {
                 image_infos[info_count] = .{
                     .sampler = regular_shadow_sampler,
                     .imageView = ctx.shadow_system.shadow_image_view,
-                    .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .imageLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
                 };
                 writes[write_count] = std.mem.zeroes(c.VkWriteDescriptorSet);
                 writes[write_count].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

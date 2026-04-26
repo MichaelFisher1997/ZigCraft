@@ -104,6 +104,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
         const current_frame = ctx.frames.current_frame;
         const command_buffer = ctx.frames.command_buffers[current_frame];
         if (ctx.timing.query_pool != null) {
+            rhi_timing.resetFrameTiming(ctx, current_frame);
             c.vkCmdResetQueryPool(command_buffer, ctx.timing.query_pool, @intCast(current_frame * QUERY_COUNT_PER_FRAME), QUERY_COUNT_PER_FRAME);
         }
     }
@@ -440,9 +441,9 @@ fn waitIdle(ctx_ptr: *anyopaque) void {
     state_control.waitIdle(ctx);
 }
 
-fn updateGlobalUniforms(ctx_ptr: *anyopaque, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time_val: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, cloud_params: rhi.CloudParams) anyerror!void {
+fn updateGlobalUniforms(ctx_ptr: *anyopaque, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time_val: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: rhi.FrameRenderParams) anyerror!void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    try render_state.updateGlobalUniforms(ctx, view_proj, cam_pos, sun_dir, sun_color, time_val, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, cloud_params);
+    try render_state.updateGlobalUniforms(ctx, view_proj, cam_pos, sun_dir, sun_color, time_val, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
 }
 
 fn setModelMatrix(ctx_ptr: *anyopaque, model: Mat4, color: Vec3, mask_radius: f32) void {
@@ -474,13 +475,6 @@ fn setTextureUniforms(ctx_ptr: *anyopaque, texture_enabled: bool, shadow_map_han
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     _ = shadow_map_handles;
     state_control.setTextureUniforms(ctx, texture_enabled);
-}
-
-fn beginCloudPass(ctx_ptr: *anyopaque, params: rhi.CloudParams) void {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    ctx.mutex.lock();
-    defer ctx.mutex.unlock();
-    render_state.beginCloudPass(ctx, params);
 }
 
 fn drawDepthTexture(ctx_ptr: *anyopaque, texture: rhi.TextureHandle, rect: rhi.Rect) void {
@@ -533,6 +527,10 @@ fn bindTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         12 => ctx.draw.current_lpv_texture_g = resolved,
         13 => ctx.draw.current_lpv_texture_b = resolved,
         else => {},
+    }
+
+    if (ctx.frames.frame_in_progress) {
+        frame_orchestration.refreshTextureDescriptors(ctx);
     }
 }
 
@@ -818,14 +816,6 @@ fn getNativeSkyPipelineLayout(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeSkyPipelineLayout(ctx);
 }
-fn getNativeCloudPipeline(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeCloudPipeline(ctx);
-}
-fn getNativeCloudPipelineLayout(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeCloudPipelineLayout(ctx);
-}
 fn getNativeWaterPipeline(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeWaterPipeline(ctx);
@@ -949,8 +939,6 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getStateContext = getStateContext,
         .getNativeSkyPipeline = getNativeSkyPipeline,
         .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getNativeCloudPipeline = getNativeCloudPipeline,
-        .getNativeCloudPipelineLayout = getNativeCloudPipelineLayout,
         .getNativeWaterPipeline = getNativeWaterPipeline,
         .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
         .getNativeMainDescriptorSet = getNativeMainDescriptorSet,

@@ -14,15 +14,21 @@ pub const DebugFeature = enum(u8) {
     vsync,
     fps_counter,
     block_info,
+    shadow_sandbox,
+    shadow_beauty,
+    shadow_probe,
     shadow_debug,
     shadow_cascade_index,
     shadow_caster_coverage,
     shadow_seam_diag,
+    direct_key_debug,
+    sky_fill_debug,
+    block_light_debug,
+    outdoor_factor_debug,
     timing_overlay,
     lod_render,
     gpass_render,
     ssao,
-    clouds,
     fog,
     lpv_overlay,
     frustum_debug,
@@ -47,15 +53,21 @@ pub const FEATURE_INFOS = [DebugFeature.count]FeatureInfo{
     .{ .label = "VSYNC", .hotkey = "V" },
     .{ .label = "FPS COUNTER", .hotkey = "F2" },
     .{ .label = "BLOCK INFO", .hotkey = "F5" },
+    .{ .label = "SHADOW SANDBOX", .hotkey = "MENU" },
+    .{ .label = "SHADOW BEAUTY", .hotkey = "MENU" },
+    .{ .label = "SHADOW PROBE", .hotkey = "MENU" },
     .{ .label = "SHADOW DEBUG", .hotkey = "G" },
     .{ .label = "CASCADE INDEX", .hotkey = "F3" },
     .{ .label = "CASTER COVERAGE", .hotkey = "F3" },
     .{ .label = "SEAM DIAG", .hotkey = "F3" },
+    .{ .label = "DIRECT KEY", .hotkey = "MENU" },
+    .{ .label = "SKY FILL", .hotkey = "MENU" },
+    .{ .label = "BLOCK LIGHT", .hotkey = "MENU" },
+    .{ .label = "OUTDOOR FACTOR", .hotkey = "MENU" },
     .{ .label = "TIMING OVERLAY", .hotkey = "F4" },
     .{ .label = "LOD RENDER", .hotkey = "F6" },
     .{ .label = "G-PASS RENDER", .hotkey = "F7" },
     .{ .label = "SSAO", .hotkey = "F8" },
-    .{ .label = "CLOUDS", .hotkey = "F9" },
     .{ .label = "FOG", .hotkey = "F10" },
     .{ .label = "LPV OVERLAY", .hotkey = "F11" },
     .{ .label = "FRUSTUM DEBUG", .hotkey = "J" },
@@ -92,9 +104,10 @@ pub const DebugMenuOverlay = struct {
     pub fn draw(self: *DebugMenuOverlay, ui: *UISystem, feature_states: [DebugFeature.count]bool, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, ui_scale: f32, scroll_delta_y: f32) ?ClickResult {
         if (!self.enabled) return null;
 
-        const panel_x = BASE_PANEL_X * ui_scale;
-        const panel_y = BASE_PANEL_Y * ui_scale;
         const panel_width = BASE_PANEL_WIDTH * ui_scale;
+        const screen_w: f32 = ui.screen_width;
+        const panel_x = screen_w - (BASE_PANEL_X * ui_scale) - panel_width;
+        const panel_y = BASE_PANEL_Y * ui_scale;
         const line_height = BASE_LINE_HEIGHT * ui_scale;
         const header_height = BASE_HEADER_HEIGHT * ui_scale;
         const padding = BASE_PADDING * ui_scale;
@@ -118,12 +131,14 @@ pub const DebugMenuOverlay = struct {
 
         const panel_height = header_height + padding * 2 + @as(f32, @floatFromInt(max_visible_rows)) * line_height;
         const panel_rect = Rect{ .x = panel_x, .y = panel_y, .width = panel_width, .height = panel_height };
+        const header_rect = Rect{ .x = panel_x, .y = panel_y, .width = panel_width, .height = header_height + padding };
 
-        ui.drawRect(panel_rect, Color.rgba(0.0, 0.0, 0.0, 0.7));
-        ui.drawRectOutline(panel_rect, Color.rgba(0.4, 0.6, 0.8, 0.8), 2.0 * ui_scale);
+        ui.drawRect(panel_rect, Color.rgba(0.03, 0.05, 0.08, 0.88));
+        ui.drawRect(header_rect, Color.rgba(0.10, 0.16, 0.24, 0.94));
+        ui.drawRectOutline(panel_rect, Color.rgba(0.45, 0.66, 0.90, 0.95), 2.0 * ui_scale);
 
         var y = panel_y + padding;
-        Font.drawText(ui, "DEBUG MENU", panel_x + padding, y, title_scale, Color.rgba(0.95, 0.98, 1.0, 1.0));
+        Font.drawText(ui, "DEBUG MENU", panel_x + padding, y, title_scale, Color.rgba(0.98, 0.99, 1.0, 1.0));
         y += header_height;
 
         var result: ?ClickResult = null;
@@ -138,22 +153,25 @@ pub const DebugMenuOverlay = struct {
             const row_rect = Rect{ .x = panel_x + 2 * ui_scale, .y = y - 2 * ui_scale, .width = panel_width - 4 * ui_scale, .height = line_height };
             const hovered = row_rect.contains(mouse_x, mouse_y);
 
+            const stripe_alpha: f32 = if ((feature_idx % 2) == 0) 0.34 else 0.24;
+            ui.drawRect(row_rect, Color.rgba(0.05, 0.07, 0.11, stripe_alpha));
+
             if (hovered) {
-                ui.drawRect(row_rect, Color.rgba(0.2, 0.3, 0.45, 0.5));
+                ui.drawRect(row_rect, Color.rgba(0.23, 0.34, 0.50, 0.72));
                 if (mouse_clicked) {
                     result = .{ .feature = feature };
                 }
             }
 
-            Font.drawText(ui, info.label, panel_x + padding + 4 * ui_scale, y, text_scale, Color.rgba(0.85, 0.88, 0.92, 1.0));
+            Font.drawText(ui, info.label, panel_x + padding + 4 * ui_scale, y, text_scale, Color.rgba(0.92, 0.95, 0.98, 1.0));
 
             const state_text = if (state) "ON" else "OFF";
-            const state_color = if (state) Color.rgba(0.3, 1.0, 0.4, 1.0) else Color.rgba(0.7, 0.35, 0.35, 1.0);
+            const state_color = if (state) Color.rgba(0.42, 1.0, 0.48, 1.0) else Color.rgba(0.92, 0.42, 0.42, 1.0);
             const state_x = panel_x + panel_width - padding - 4 * ui_scale - Font.measureTextWidth(state_text, text_scale) - 50.0 * ui_scale;
             Font.drawText(ui, state_text, state_x, y, text_scale, state_color);
 
             const hotkey_x = panel_x + panel_width - padding - 4 * ui_scale - Font.measureTextWidth(info.hotkey, text_scale);
-            Font.drawText(ui, info.hotkey, hotkey_x, y, text_scale, Color.rgba(0.55, 0.58, 0.65, 1.0));
+            Font.drawText(ui, info.hotkey, hotkey_x, y, text_scale, Color.rgba(0.72, 0.76, 0.84, 1.0));
 
             y += line_height;
         }

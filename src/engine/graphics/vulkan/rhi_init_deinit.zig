@@ -15,6 +15,7 @@ const Utils = @import("utils.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
 const setup = @import("rhi_resource_setup.zig");
 const rhi_timing = @import("rhi_timing.zig");
+const runtime_env = @import("../../core/runtime_env.zig");
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 const TOTAL_QUERY_COUNT = rhi_timing.QUERY_COUNT_PER_FRAME * MAX_FRAMES_IN_FLIGHT;
@@ -67,11 +68,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.options.vsync_enabled = true;
     ctx.options.present_mode = c.VK_PRESENT_MODE_FIFO_KHR;
 
-    const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
-    ctx.options.safe_mode = if (safe_mode_env) |val|
-        !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-    else
-        false;
+    ctx.options.safe_mode = runtime_env.safeModeEnabled();
     if (ctx.options.safe_mode) {
         log.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
     }
@@ -124,19 +121,6 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.draw.current_lpv_texture_g = ctx.draw.dummy_texture_3d;
     ctx.draw.current_lpv_texture_b = ctx.draw.dummy_texture_3d;
 
-    const cloud_vbo_handle = try ctx.resources.createBuffer(8 * @sizeOf(f32), .vertex);
-    log.log.info("Cloud VBO handle: {}, map count: {}", .{ cloud_vbo_handle, ctx.resources.buffers.count() });
-    if (cloud_vbo_handle == 0) {
-        log.log.err("Failed to create cloud VBO", .{});
-        return error.InitializationFailed;
-    }
-    const cloud_buf = ctx.resources.buffers.get(cloud_vbo_handle);
-    if (cloud_buf == null) {
-        log.log.err("Cloud VBO created but not found in map!", .{});
-        return error.InitializationFailed;
-    }
-    ctx.cloud.cloud_vbo = cloud_buf.?;
-
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         ctx.ui.ui_vbos[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, 1024 * 1024, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }
@@ -163,7 +147,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     if (ctx.shadow_system.shadow_image != null) {
         try lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true);
         for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
-            ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         }
     }
 

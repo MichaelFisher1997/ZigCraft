@@ -6,14 +6,6 @@ pub fn getNativeSkyPipelineLayout(ctx: anytype) u64 {
     return @intFromPtr(ctx.pipeline_manager.sky_pipeline_layout);
 }
 
-pub fn getNativeCloudPipeline(ctx: anytype) u64 {
-    return @intFromPtr(ctx.pipeline_manager.cloud_pipeline);
-}
-
-pub fn getNativeCloudPipelineLayout(ctx: anytype) u64 {
-    return @intFromPtr(ctx.pipeline_manager.cloud_pipeline_layout);
-}
-
 pub fn getNativeWaterPipeline(ctx: anytype) u64 {
     return @intFromPtr(ctx.water_system.water_pipeline);
 }

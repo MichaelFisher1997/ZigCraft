@@ -204,7 +204,10 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
         barriers[i] = std.mem.zeroes(c.VkImageMemoryBarrier);
         barriers[i].sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barriers[i].oldLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
-        barriers[i].newLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barriers[i].newLayout = if (is_depth)
+            c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+        else
+            c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         barriers[i].srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
         barriers[i].dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
         barriers[i].image = images[i];

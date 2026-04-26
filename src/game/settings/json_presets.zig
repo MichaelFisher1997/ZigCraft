@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const data = @import("data.zig");
 const Settings = data.Settings;
 const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
@@ -20,10 +21,11 @@ pub const PresetConfig = struct {
     taa_velocity_rejection: f32 = 0.02,
     anisotropic_filtering: u8,
     max_texture_resolution: u32,
-    cloud_shadows_enabled: bool,
     exposure: f32,
     saturation: f32,
     volumetric_lighting_enabled: bool,
+    sun_shafts_enabled: bool = false,
+    sun_shafts_intensity: f32 = 0.45,
     volumetric_density: f32,
     volumetric_steps: u32,
     volumetric_scattering: f32,
@@ -45,10 +47,10 @@ pub const PresetConfig = struct {
 pub var graphics_presets: std.ArrayListUnmanaged(PresetConfig) = .empty;
 
 pub fn initPresets(allocator: std.mem.Allocator) !void {
-    graphics_presets = std.ArrayListUnmanaged(PresetConfig){};
+    graphics_presets = std.ArrayListUnmanaged(PresetConfig).empty;
 
     // Load from assets/config/presets.json
-    const content = std.fs.cwd().readFileAlloc("assets/config/presets.json", allocator, @enumFromInt(1024 * 1024)) catch |err| {
+    const content = fs.cwd().readFileAlloc("assets/config/presets.json", allocator, 1024 * 1024) catch |err| {
         log.log.warn("Failed to open presets.json: {}", .{err});
         return err;
     };
@@ -142,10 +144,11 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.taa_velocity_rejection = config.taa_velocity_rejection;
     settings.anisotropic_filtering = config.anisotropic_filtering;
     settings.max_texture_resolution = config.max_texture_resolution;
-    settings.cloud_shadows_enabled = config.cloud_shadows_enabled;
     settings.exposure = config.exposure;
     settings.saturation = config.saturation;
     settings.volumetric_lighting_enabled = config.volumetric_lighting_enabled;
+    settings.sun_shafts_enabled = config.sun_shafts_enabled;
+    settings.sun_shafts_intensity = config.sun_shafts_intensity;
     settings.volumetric_density = config.volumetric_density;
     settings.volumetric_steps = config.volumetric_steps;
     settings.volumetric_scattering = config.volumetric_scattering;
@@ -185,12 +188,13 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.taa_velocity_rejection, preset.taa_velocity_rejection, epsilon) and
         settings.anisotropic_filtering == preset.anisotropic_filtering and
         settings.max_texture_resolution == preset.max_texture_resolution and
-        settings.cloud_shadows_enabled == preset.cloud_shadows_enabled and
         std.math.approxEqAbs(f32, settings.exposure, preset.exposure, epsilon) and
         std.math.approxEqAbs(f32, settings.saturation, preset.saturation, epsilon) and
         settings.render_distance == preset.render_distance and
         settings.render_distance_preset == preset.render_distance_preset and
         settings.volumetric_lighting_enabled == preset.volumetric_lighting_enabled and
+        settings.sun_shafts_enabled == preset.sun_shafts_enabled and
+        std.math.approxEqAbs(f32, settings.sun_shafts_intensity, preset.sun_shafts_intensity, epsilon) and
         std.math.approxEqAbs(f32, settings.volumetric_density, preset.volumetric_density, epsilon) and
         settings.volumetric_steps == preset.volumetric_steps and
         std.math.approxEqAbs(f32, settings.volumetric_scattering, preset.volumetric_scattering, epsilon) and

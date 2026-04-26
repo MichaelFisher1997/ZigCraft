@@ -1,6 +1,7 @@
 //! SDL3 Audio Backend with Software 3D Mixer.
 
 const std = @import("std");
+const sync = @import("sync");
 const c = @import("../../../c.zig").c;
 const types = @import("../types.zig");
 const backend = @import("../backend.zig");
@@ -51,7 +52,7 @@ const Mixer = struct {
     /// Mutex protecting all mixer state.
     /// Acquired by all public methods: play, stop, update, mix.
     /// Safe to call from any thread (Main or Audio Callback).
-    mutex: std.Thread.Mutex = .{},
+    mutex: sync.Mutex = .{},
     voices: [MAX_VOICES]Voice = undefined,
     voice_generation_counter: u64 = 1,
     master_volume: f32 = 1.0,

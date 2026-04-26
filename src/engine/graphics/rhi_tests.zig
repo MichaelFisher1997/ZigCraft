@@ -11,7 +11,6 @@ const MockContext = struct {
     draw_called: bool = false,
     draw_depth_texture_called: bool = false,
     sky_pipeline_requested: bool = false,
-    cloud_pipeline_requested: bool = false,
     dynamic_resolution_called: bool = false,
     dynamic_resolution_enabled: bool = false,
     dynamic_resolution_min_scale: f32 = 0.0,
@@ -91,16 +90,7 @@ const MockContext = struct {
         _ = ptr;
         return 0;
     }
-    fn getNativeCloudPipeline(ptr: *anyopaque) u64 {
-        const self: *MockContext = @ptrCast(@alignCast(ptr));
-        self.cloud_pipeline_requested = true;
-        return 0;
-    }
     fn getNativeWaterPipeline(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeCloudPipelineLayout(ptr: *anyopaque) u64 {
         _ = ptr;
         return 0;
     }
@@ -232,8 +222,6 @@ const MockContext = struct {
         .setClearColor = undefined,
         .getNativeSkyPipeline = getNativeSkyPipeline,
         .getNativeSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getNativeCloudPipeline = getNativeCloudPipeline,
-        .getNativeCloudPipelineLayout = getNativeCloudPipelineLayout,
         .getNativeWaterPipeline = getNativeWaterPipeline,
         .getNativeWaterPipelineLayout = getNativeWaterPipelineLayout,
         .getNativeMainDescriptorSet = getNativeMainDescriptorSet,
@@ -485,30 +473,6 @@ test "AtmosphereSystem.renderSky with null handles" {
     }));
 
     try testing.expect(mock.sky_pipeline_requested);
-}
-
-test "AtmosphereSystem.renderClouds with null handles" {
-    var mock = MockContext{};
-    const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };
-
-    const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
-    var system = try AtmosphereSystem.init(testing.allocator, rhi_instance.resourceManager());
-    defer system.deinit();
-
-    try testing.expectError(error.CloudPipelineNotReady, system.renderClouds(rhi_instance.renderContext(), .{
-        .cam_pos = Vec3.zero,
-        .sun_dir = Vec3.init(0, -1, 0),
-        .sun_intensity = 1.0,
-        .cloud_coverage = 0.5,
-        .cloud_scale = 1.0,
-        .cloud_height = 100.0,
-        .wind_offset_x = 0.0,
-        .wind_offset_z = 0.0,
-        .fog_color = Vec3.init(0.8, 0.9, 1.0),
-        .fog_density = 0.01,
-    }, Mat4.identity));
-
-    try testing.expect(mock.cloud_pipeline_requested);
 }
 
 test "SSAOSystem params defaults" {

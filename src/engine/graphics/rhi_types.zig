@@ -22,8 +22,6 @@ pub const RhiError = error{
     ResourceNotReady,
     SkyPipelineNotReady,
     SkyPipelineLayoutNotReady,
-    CloudPipelineNotReady,
-    CloudPipelineLayoutNotReady,
     CommandBufferNotReady,
     PendingCopyOverflow,
     Unknown,
@@ -99,6 +97,7 @@ pub const Vertex = extern struct {
     uv: [2]f16,
     packed_meta: u32,
     blocklight: u32,
+    entrance_dir: u32,
 
     pub const LOD_TILE_ID: u16 = 0xFFFF;
 
@@ -111,6 +110,7 @@ pub const Vertex = extern struct {
         skylight: f32,
         blocklight: [3]f32,
         ao: f32,
+        entrance_bounce: f32,
     ) Vertex {
         return .{
             .pos = pos,
@@ -118,7 +118,31 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(tile_id, skylight, ao),
-            .blocklight = encodeBlocklight(blocklight),
+            .blocklight = encodeBlocklight(blocklight, entrance_bounce),
+            .entrance_dir = encodeEntranceDirection(.{ 0.0, 0.0 }),
+        };
+    }
+
+    pub fn initWithEntrance(
+        pos: [3]f32,
+        color: [3]f32,
+        normal: [3]f32,
+        uv: [2]f32,
+        tile_id: u16,
+        skylight: f32,
+        blocklight: [3]f32,
+        ao: f32,
+        entrance_bounce: f32,
+        entrance_dir: [2]f32,
+    ) Vertex {
+        return .{
+            .pos = pos,
+            .color = encodeColor(color),
+            .normal = encodeNormal(normal),
+            .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
+            .packed_meta = encodeMeta(tile_id, skylight, ao),
+            .blocklight = encodeBlocklight(blocklight, entrance_bounce),
+            .entrance_dir = encodeEntranceDirection(entrance_dir),
         };
     }
 
@@ -134,7 +158,8 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(LOD_TILE_ID, 1.0, 1.0),
-            .blocklight = 0,
+            .blocklight = encodeBlocklight(.{ 0.0, 0.0, 0.0 }, 0.0),
+            .entrance_dir = encodeEntranceDirection(.{ 0.0, 0.0 }),
         };
     }
 };
@@ -181,13 +206,22 @@ pub fn encodeMeta(tile_id: u16, skylight: f32, ao: f32) u32 {
     return @as(u32, tile_id) | (@as(u32, sl) << 16) | (@as(u32, ao_u8) << 24);
 }
 
-/// Encode RGB blocklight float values to RGB8 u32 (upper 8 bits unused).
+/// Encode RGB blocklight plus entrance bounce float values to RGBA8 u32.
 /// Precision: 1/255 per channel. Sufficient for per-vertex lighting where values blend smoothly.
-pub fn encodeBlocklight(bl: [3]f32) u32 {
+pub fn encodeBlocklight(bl: [3]f32, entrance_bounce: f32) u32 {
     const r: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[0])) * 255.0));
     const g: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[1])) * 255.0));
     const b: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[2])) * 255.0));
-    return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16);
+    const a: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, entrance_bounce)) * 255.0));
+    return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16) | (@as(u32, a) << 24);
+}
+
+/// Encode horizontal entrance direction to two UNORM8 channels in a u32.
+/// Decoded in shaders back to [-1, 1]. Remaining bytes are reserved.
+pub fn encodeEntranceDirection(dir: [2]f32) u32 {
+    const x: u8 = @intFromFloat(@round((@max(-1.0, @min(1.0, dir[0])) * 0.5 + 0.5) * 255.0));
+    const z: u8 = @intFromFloat(@round((@max(-1.0, @min(1.0, dir[1])) * 0.5 + 0.5) * 255.0));
+    return @as(u32, x) | (@as(u32, z) << 8);
 }
 
 pub const DrawMode = enum {
@@ -242,14 +276,6 @@ pub const SkyPushConstants = extern struct {
     time: [4]f32, // x=time, y=cam_pos.x, z=cam_pos.y, w=cam_pos.z
 };
 
-pub const CloudPushConstants = extern struct {
-    view_proj: [4][4]f32,
-    camera_pos: [4]f32, // xyz = camera position, w = cloud_height
-    cloud_params: [4]f32, // x = coverage, y = scale, z = wind_offset_x, w = wind_offset_z
-    sun_params: [4]f32, // xyz = sun_dir, w = sun_intensity
-    fog_params: [4]f32, // xyz = fog_color, w = fog_density
-};
-
 pub const ShadowConfig = struct {
     distance: f32 = 250.0,
     resolution: u32 = 4096,
@@ -265,26 +291,24 @@ pub const ShadowParams = struct {
     cascade_splits: [SHADOW_CASCADE_COUNT]f32,
     shadow_texel_sizes: [SHADOW_CASCADE_COUNT]f32,
     light_size: f32 = 3.0, // PCSS light source size for penumbra estimation
+    resolution: u32 = 4096,
 };
 
-pub const CloudParams = struct {
+pub const FrameRenderParams = struct {
     cam_pos: Vec3 = Vec3.init(0, 0, 0),
     view_proj: Mat4 = Mat4.identity,
     sun_dir: Vec3 = Vec3.init(0, 1, 0),
     sun_intensity: f32 = 1.0,
     fog_color: Vec3 = Vec3.init(0.7, 0.8, 0.9),
     fog_density: f32 = 0.0,
-    cloud_height: f32 = 160.0,
-    cloud_coverage: f32 = 0.5,
-    cloud_scale: f32 = 1.0 / 64.0,
-    wind_offset_x: f32 = 0.0,
-    wind_offset_z: f32 = 0.0,
-    base_color: Vec3 = Vec3.init(1.0, 1.0, 1.0),
     pbr_enabled: bool = true,
+    simple_lighting_enabled: bool = false,
+    shadow_apply_to_beauty: bool = false,
     shadow: ShadowConfig = .{},
-    cloud_shadows: bool = true,
     pbr_quality: u8 = 2,
     volumetric_enabled: bool = true,
+    sun_shafts_enabled: bool = false,
+    sun_shafts_intensity: f32 = 0.0,
     volumetric_density: f32 = 0.05,
     volumetric_steps: u32 = 16,
     volumetric_scattering: f32 = 0.8,
@@ -333,23 +357,21 @@ pub const GpuTimingResults = struct {
     lpv_pass_ms: f32,
     sky_pass_ms: f32,
     opaque_pass_ms: f32,
-    cloud_pass_ms: f32,
-    main_pass_ms: f32, // Overall main pass time (sum of sky, opaque, clouds)
+    main_pass_ms: f32, // Overall main pass time (sum of sky and opaque)
     bloom_pass_ms: f32,
     fxaa_pass_ms: f32,
     post_process_pass_ms: f32,
     total_gpu_ms: f32,
 
     pub fn validate(self: GpuTimingResults) void {
-        const expected_main = self.sky_pass_ms + self.opaque_pass_ms + self.cloud_pass_ms;
+        const expected_main = self.sky_pass_ms + self.opaque_pass_ms;
         const epsilon = 0.01;
         if (@abs(self.main_pass_ms - expected_main) > epsilon) {
-            std.debug.print("Timing Drift Warning: Main Pass {d:.3}ms != Sum {d:.3}ms (Sky {d:.3} + Opaque {d:.3} + Cloud {d:.3})\n", .{
+            std.debug.print("Timing Drift Warning: Main Pass {d:.3}ms != Sum {d:.3}ms (Sky {d:.3} + Opaque {d:.3})\n", .{
                 self.main_pass_ms,
                 expected_main,
                 self.sky_pass_ms,
                 self.opaque_pass_ms,
-                self.cloud_pass_ms,
             });
         }
     }

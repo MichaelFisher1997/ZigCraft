@@ -1,4 +1,5 @@
 const std = @import("std");
+const sync = @import("sync");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
@@ -23,6 +24,7 @@ const DepthPyramidSystem = @import("depth_pyramid.zig").DepthPyramidSystem;
 const WaterSystem = @import("water_system.zig").WaterSystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 const DynamicResolutionState = @import("dynamic_resolution.zig").DynamicResolutionState;
+const rhi_timing = @import("rhi_timing.zig");
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 
@@ -47,13 +49,6 @@ const GPassResources = struct {
     g_depth_handle: rhi.TextureHandle = 0,
     g_depth_sampler: c.VkSampler = null,
     g_pass_extent: c.VkExtent2D = .{ .width = 0, .height = 0 },
-};
-
-const CloudResources = struct {
-    cloud_vbo: VulkanBuffer = .{},
-    cloud_ebo: VulkanBuffer = .{},
-    cloud_mesh_size: f32 = 0.0,
-    cloud_vao: c.VkBuffer = null,
 };
 
 const HDRResources = struct {
@@ -187,6 +182,7 @@ const TimingState = struct {
     query_pool: c.VkQueryPool = null,
     timing_enabled: bool = true,
     timing_results: rhi.GpuTimingResults = undefined,
+    pass_written: [MAX_FRAMES_IN_FLIGHT][rhi_timing.PASS_COUNT]bool = .{.{false} ** rhi_timing.PASS_COUNT} ** MAX_FRAMES_IN_FLIGHT,
 };
 
 pub const VulkanContext = struct {
@@ -212,10 +208,9 @@ pub const VulkanContext = struct {
     ssao_system: SSAOSystem = .{},
     shadow_runtime: ShadowRuntime,
     runtime: RuntimeState,
-    mutex: std.Thread.Mutex = .{},
+    mutex: sync.Mutex = .{},
 
     ui: UIState = .{},
-    cloud: CloudResources = .{},
     hdr: HDRResources = .{},
     post_process: PostProcessSystem = .{},
     debug_shadow: DebugShadowResources = .{},

@@ -50,13 +50,15 @@ pub const ShadowCascades = struct {
 /// - aspect: viewport aspect ratio.
 /// - near/far: camera depth range for cascade splitting.
 /// - sun_dir: normalized direction to the sun (world space).
-/// - cam_view: camera view matrix (origin-centered).
+/// - cam_view: camera view matrix (origin-centered, retained for API compatibility).
+/// - cam_pos: camera world position used to convert world-space cascades into
+///   the existing camera-relative render space.
 /// - z_range_01: map depth to [0,1] for reverse-Z when true.
 ///
 /// Notes:
 /// - lambda=0.92 biases the split scheme toward logarithmic distribution.
 /// - min/max Z offsets are tuned to avoid clipping during camera motion.
-pub fn computeCascades(resolution: u32, camera_fov: f32, aspect: f32, near: f32, far: f32, sun_dir: Vec3, cam_view: Mat4, z_range_01: bool) ShadowCascades {
+pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, near: f32, far: f32, sun_dir: Vec3, cam_view: Mat4, cam_pos: Vec3, z_range_01: bool) ShadowCascades {
     // Validate inputs to prevent division by zero
     if (resolution == 0 or far <= near or near <= 0.0) {
         return ShadowCascades.initZero();
@@ -66,55 +68,37 @@ pub fn computeCascades(resolution: u32, camera_fov: f32, aspect: f32, near: f32,
 
     var cascades = ShadowCascades.initZero();
 
-    // Smart cascade split strategy based on shadow distance
-    // For large distances (>500), use fixed percentages for better coverage
-    // For smaller distances, use logarithmic distribution for better near-detail
-    const SMART_SPLIT_THRESHOLD: f32 = 500.0;
-    const use_fixed_splits = shadow_dist > SMART_SPLIT_THRESHOLD;
-
-    if (use_fixed_splits) {
-        // Fixed percentage splits optimized for 4 cascades at large distances
-        // Splits at: 8%, 25%, 60%, 100% of shadow distance
-        // Gives cascade 0 more coverage for close-up detail (cave walls, etc.)
-        const split_ratios = [4]f32{ 0.08, 0.25, 0.60, 1.0 };
-        for (0..CASCADE_COUNT) |i| {
-            cascades.cascade_splits[i] = shadow_dist * split_ratios[i];
-        }
-    } else {
-        // Logarithmic splits for smaller distances (better near-detail)
-        const lambda = 0.92;
-        for (0..CASCADE_COUNT) |i| {
-            const p = @as(f32, @floatFromInt(i + 1)) / @as(f32, @floatFromInt(CASCADE_COUNT));
-            const log_split = near * std.math.pow(f32, shadow_dist / near, p);
-            const lin_split = near + (shadow_dist - near) * p;
-            cascades.cascade_splits[i] = std.math.lerp(lin_split, log_split, lambda);
-        }
+    // Practical fixed splits avoid the old logarithmic layout's huge final
+    // cascade, which made medium-distance voxel shadows visibly stair-step and
+    // pulse as soon as they crossed out of the tiny near cascades.
+    const split_ratios = [4]f32{ 0.25, 0.50, 0.75, 1.0 };
+    for (0..CASCADE_COUNT) |i| {
+        cascades.cascade_splits[i] = shadow_dist * split_ratios[i];
     }
 
-    // Calculate matrices for each cascade
-    var last_split = near;
-    const inv_cam_view = cam_view.inverse();
+    // Calculate matrices for each cascade.
+    // Keep cascade centers tied to camera position rather than camera forward.
+    // Frustum-slice centering has better texel density, but it makes the entire
+    // shadow projection slide during yaw/pitch-only camera rotation, which causes
+    // shadows to visibly morph even when caster and receiver are stationary.
+    _ = cam_view;
     for (0..CASCADE_COUNT) |i| {
         const split = cascades.cascade_splits[i];
 
-        // 1. Compute bounding sphere of frustum slice (STABLE CSM approach)
+        // 1. Compute a rotation-invariant bounding sphere from the camera origin
+        // to the far plane of this cascade.
         const tan_fov_half = std.math.tan(camera_fov / 2.0);
         const tan_fov_h_half = tan_fov_half * aspect;
 
-        const near_v = last_split;
         const far_v = split;
-        const center_z = (near_v + far_v) / 2.0;
-        const center_view = Vec3.init(0, 0, -center_z);
-
         const xf = far_v * tan_fov_h_half;
         const yf = far_v * tan_fov_half;
-        const zf = -far_v;
-        const far_corner = Vec3.init(xf, yf, zf);
-        var radius = far_corner.sub(center_view).length();
+        var radius = std.math.sqrt(xf * xf + yf * yf + far_v * far_v);
         radius = @ceil(radius * 16.0) / 16.0;
 
-        // 2. Transform center to World Space
-        const center_world = inv_cam_view.transformPoint(center_view);
+        // 2. Use camera world position as the cascade center. This intentionally
+        // sacrifices some texel density for rotation stability.
+        const center_world = cam_pos;
 
         // 3. Build Light Rotation Matrix (Looking FROM sun TO scene)
         var up = Vec3.init(0, 1, 0);
@@ -128,23 +112,13 @@ pub fn computeCascades(resolution: u32, camera_fov: f32, aspect: f32, near: f32,
         const texel_size = (2.0 * radius) / @as(f32, @floatFromInt(resolution));
         cascades.texel_sizes[i] = texel_size;
 
-        // Stabilize ortho bounds by snapping center to texel grid
-        // ONLY snap X and Y. Snapping Z causes depth range shifts and flickering.
-        //
-        // Use relative-to-integer-origin snapping to maintain float32 precision
-        // at large world coordinates. Without this, @floor(large_value / small_texel)
-        // produces a huge integer that loses precision when multiplied back.
-        //
-        // Decompose: center = integer_origin + fractional_offset
-        // Snap the fractional part to the texel grid (where float32 has full precision),
-        // then reconstruct: snapped = integer_origin + round_to_grid(fractional_offset)
-        const origin_x = @as(f32, @floatFromInt(@as(i32, @intFromFloat(center_ls.x))));
-        const origin_y = @as(f32, @floatFromInt(@as(i32, @intFromFloat(center_ls.y))));
-        const frac_x = center_ls.x - origin_x;
-        const frac_y = center_ls.y - origin_y;
+        // Stabilize ortho bounds by snapping center to the nearest texel grid
+        // in light-space. Snapping Z would shift depth ranges, so only X/Y are
+        // quantized. Round-to-nearest avoids the one-direction crawl caused by
+        // floor snapping when the camera crosses texel boundaries.
         const center_snapped = Vec3.init(
-            origin_x + @floor(frac_x / texel_size) * texel_size,
-            origin_y + @floor(frac_y / texel_size) * texel_size,
+            @round(center_ls.x / texel_size) * texel_size,
+            @round(center_ls.y / texel_size) * texel_size,
             center_ls.z,
         );
 
@@ -182,8 +156,9 @@ pub fn computeCascades(resolution: u32, camera_fov: f32, aspect: f32, near: f32,
             light_ortho.data[3][2] = B;
         }
 
-        cascades.light_space_matrices[i] = light_ortho.multiply(light_rot);
-        last_split = split;
+        const world_to_shadow = light_ortho.multiply(light_rot);
+        const relative_to_world = Mat4.translate(cam_pos);
+        cascades.light_space_matrices[i] = world_to_shadow.multiply(relative_to_world);
     }
 
     // Validate results before returning - use runtime check instead of
@@ -193,6 +168,10 @@ pub fn computeCascades(resolution: u32, camera_fov: f32, aspect: f32, near: f32,
     }
 
     return cascades;
+}
+
+pub fn computeCascades(resolution: u32, camera_fov: f32, aspect: f32, near: f32, far: f32, sun_dir: Vec3, cam_view: Mat4, z_range_01: bool) ShadowCascades {
+    return computeCascadesWithCamera(resolution, camera_fov, aspect, near, far, sun_dir, cam_view, Vec3.zero, z_range_01);
 }
 
 /// Validates cascade data and logs warnings if invalid

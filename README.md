@@ -15,7 +15,7 @@
 
   # ⚡ ZigCraft ⚡
 
-  [![Zig](https://img.shields.io/badge/Zig-0.14.0--dev-orange.svg?logo=zig)](https://ziglang.org/)
+  [![Zig](https://img.shields.io/badge/Zig-0.16.0-orange.svg?logo=zig)](https://ziglang.org/)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
   [![Build Status](https://github.com/OpenStaticFish/ZigCraft/actions/workflows/build.yml/badge.svg)](https://github.com/OpenStaticFish/ZigCraft/actions)
 
@@ -42,7 +42,6 @@
 ### 🌍 World Generation
 - **Biomes & Climate**: Multi-noise system based on temperature and humidity (11+ biomes).
 - **Infinite Terrain**: Seed-based, deterministic generation with domain warping and 3D caves.
-- **Volumetric Clouds**: Procedural, shadowed cloud layers that integrate with the atmosphere.
 - **Level of Detail (LOD)**: Hierarchical LOD system enabling 100+ chunk render distances using simplified terrain meshes and specialized rendering.
 - **Greedy Meshing**: Optimized vertex data generation for maximum throughput.
 
@@ -117,12 +116,12 @@ To bypass in emergencies: `git push --no-verify`
 - **Auto-open a world**: `nix develop --command zig build run -Dauto-world=normal`
 - **Startup diagnostic**: `nix develop --command zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
 - **Chunk-only debug mode**: `nix develop --command zig build run -Dchunk-debug-mode -Dauto-world=normal`
+- **Shadow/cave lighting capture**: `./scripts/capture_shadow_test.sh screenshots/shadow-test.png`
 
 `-Dchunk-debug-mode` strips the overworld down to basic chunks for isolation work:
 - LOD off by default
 - water generation/rendering off by default
 - caves off by default
-- clouds off by default
 - decorations/features off by default
 
 Re-enable individual systems with `-Dchunk-debug-enable=` using a comma-separated list:
@@ -131,7 +130,6 @@ Re-enable individual systems with `-Dchunk-debug-enable=` using a comma-separate
 - `watergen`
 - `waterrender`
 - `caves`
-- `clouds`
 - `decorations`
 
 Examples:
@@ -146,6 +144,8 @@ nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,
 # Headless startup comparison after 5 seconds
 nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,water,caves -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present
 ```
+
+The shadow/cave lighting capture launches a deterministic low-block test scene, applies a small shadow-focused graphics preset, waits 5 seconds after the target is ready, captures a PNG, and exits. It defaults to a `dug-cave` variant that matches a player-dug dirt/grass cave mouth. Use `ZIGCRAFT_SHADOW_TEST_VARIANT=bend ./scripts/capture_shadow_test.sh screenshots/shadow-bend.png` to check the older bend/deep-black regression. Override the wait with `ZIGCRAFT_SCREENSHOT_DELAY_SECONDS=8 ./scripts/capture_shadow_test.sh screenshots/shadow-test.png`. Screenshot paths are restricted to image extensions from `image/png`, `image/jpeg`, `image/gif`, and `image/webp`; the built-in encoder currently writes PNG.
 
 ### 🧪 Running Tests
 - **All Tests**: `nix develop --command zig build test`

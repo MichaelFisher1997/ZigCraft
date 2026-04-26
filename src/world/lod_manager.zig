@@ -14,6 +14,7 @@
 //! GPU operations are decoupled via LODGPUBridge and LODRenderInterface (Issue #246).
 
 const std = @import("std");
+const sync = @import("sync");
 const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODChunk = lod_chunk.LODChunk;
@@ -58,6 +59,9 @@ const RegionMap = lod_gpu.RegionMap;
 
 const MAX_LOD_REGIONS = 2048;
 const CHUNK_COVERAGE_PADDING: i32 = 1;
+const LOD_UPDATE_DIVISOR: u32 = 2;
+const MIN_LOD_WORKERS: usize = 4;
+const MAX_LOD_WORKERS: usize = 6;
 
 comptime {
     if (LODLevel.count < 2) {
@@ -168,7 +172,7 @@ pub const LODManager = struct {
     stats: LODStats,
 
     // Mutex for thread safety
-    mutex: std.Thread.RwLock,
+    mutex: sync.RwLock,
 
     // GPU bridge for upload/destroy/sync operations (replaces direct RHI field)
     gpu_bridge: LODGPUBridge,
@@ -233,7 +237,7 @@ pub const LODManager = struct {
             queue.* = JobQueue.init(allocator);
             errdefer queue.deinit();
 
-            var upload_queue = try RingBuffer(*LODChunk).init(allocator, 32);
+            var upload_queue = try RingBuffer(*LODChunk).init(allocator, 128);
             errdefer upload_queue.deinit();
 
             regions[i] = region_map;
@@ -269,16 +273,20 @@ pub const LODManager = struct {
             .cleanup_covered_regions = true,
         };
 
-        // Initialize worker pool for LOD generation and meshing (3 workers for LOD tasks)
-        // All LOD jobs go to LOD3 queue in original code, we keep it consistent but use generic index
-        mgr.lod_gen_pool = try WorkerPool.init(allocator, 4, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
+        const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
+        const lod_worker_count = std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS);
+
+        // All LOD jobs go through the shared far-distance queue so the worker pool can
+        // keep the horizon filled before near-detail transitions catch up.
+        mgr.lod_gen_pool = try WorkerPool.init(allocator, lod_worker_count, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
 
         const radii = config.getRadii();
-        log.log.info("LODManager initialized with radii: LOD0={}, LOD1={}, LOD2={}, LOD3={}", .{
+        log.log.info("LODManager initialized with radii: LOD0={}, LOD1={}, LOD2={}, LOD3={} | workers={}", .{
             radii[0],
             radii[1],
             radii[2],
             radii[3],
+            lod_worker_count,
         });
 
         return mgr;
@@ -367,7 +375,10 @@ pub const LODManager = struct {
         // take several milliseconds. Throttling to every 4 frames (approx 15Hz at 60fps)
         // significantly reduces CPU overhead while remaining responsive to player movement.
         self.update_tick += 1;
-        if (self.update_tick % 4 != 0) return;
+        if (self.update_tick % LOD_UPDATE_DIVISOR != 0) {
+            self.processUploads();
+            return;
+        }
 
         if (self.cleanup_covered_regions) {
             if (chunk_checker) |checker| {
@@ -441,12 +452,9 @@ pub const LODManager = struct {
         while (rz <= player_rz + region_radius) : (rz += 1) {
             var rx = player_rx - region_radius;
             while (rx <= player_rx + region_radius) : (rx += 1) {
-                // Check circular distance to avoid thrashing corner chunks
-                const dx = rx - player_rx;
-                const dz = rz - player_rz;
-                if (@as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz) > @as(i64, region_radius) * @as(i64, region_radius)) continue;
-
                 const key = LODRegionKey{ .rx = rx, .rz = rz, .lod = lod };
+                const chunk_bounds = key.chunkBounds();
+                if (!chunk_bounds.intersectsRadius(self.player_cx, self.player_cz, radius)) continue;
 
                 if (self.cleanup_covered_regions) {
                     if (chunk_checker) |checker| {
@@ -480,8 +488,9 @@ pub const LODManager = struct {
                     chunk.job_token = self.next_job_token;
                     self.next_job_token += 1;
 
-                    // Calculate radial priority only so loading stays symmetric.
-                    const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
+                    // Prioritize by actual chunk-space distance to the region bounds so
+                    // horizon loading stays symmetric even for large LOD regions.
+                    const dist_sq = chunk_bounds.distanceSquaredToPoint(self.player_cx, self.player_cz);
                     // Scale priority to match chunk-distance units used by meshing jobs (which are prioritized by chunk dist)
                     // This ensures generation doesn't starve meshing
                     const priority_full = dist_sq * @as(i64, scale) * @as(i64, scale);
@@ -596,13 +605,6 @@ pub const LODManager = struct {
         const lod_radius = radii[@intFromEnum(lod)];
         const storage = &self.regions[@intFromEnum(lod)];
 
-        const scale: i32 = @intCast(lod.chunksPerSide());
-        const player_rx = @divFloor(self.player_cx, scale);
-        const player_rz = @divFloor(self.player_cz, scale);
-
-        // Use same +1 buffer as queuing to match radius exactly
-        const region_radius = @divFloor(lod_radius, scale) + 1;
-
         var to_remove = std.ArrayListUnmanaged(LODRegionKey).empty;
         defer to_remove.deinit(self.allocator);
 
@@ -615,13 +617,7 @@ pub const LODManager = struct {
             const key = entry.key_ptr.*;
             const chunk = entry.value_ptr.*;
 
-            const dx = key.rx - player_rx;
-            const dz = key.rz - player_rz;
-
-            const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
-            const rad_sq = @as(i64, region_radius) * @as(i64, region_radius);
-
-            if (dist_sq > rad_sq) {
+            if (!key.chunkBounds().intersectsRadius(self.player_cx, self.player_cz, lod_radius)) {
                 if (!chunk.isPinned() and
                     chunk.state != .generating and
                     chunk.state != .meshing and
@@ -713,18 +709,23 @@ pub const LODManager = struct {
 
     /// Get LOD level for a given chunk distance
     pub fn getLODForDistance(self: *const Self, chunk_x: i32, chunk_z: i32) LODLevel {
-        const dx = chunk_x - self.player_cx;
-        const dz = chunk_z - self.player_cz;
-        const dist = @max(@abs(dx), @abs(dz));
-        return self.config.getLODForDistance(dist);
+        const dist_sq = pointDistanceSquared(chunk_x, chunk_z, self.player_cx, self.player_cz);
+        const radii = self.config.getRadii();
+
+        inline for (0..LODLevel.count) |i| {
+            const radius_sq = @as(i64, radii[i]) * @as(i64, radii[i]);
+            if (dist_sq <= radius_sq) return @enumFromInt(@as(u3, @intCast(i)));
+        }
+
+        return .lod3;
     }
 
     /// Check if a position is within LOD range
     pub fn isInRange(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
-        const dx = chunk_x - self.player_cx;
-        const dz = chunk_z - self.player_cz;
-        const dist = @max(@abs(dx), @abs(dz));
-        return self.config.isInRange(dist);
+        const radii = self.config.getRadii();
+        const max_radius = radii[LODLevel.count - 1];
+        const dist_sq = pointDistanceSquared(chunk_x, chunk_z, self.player_cx, self.player_cz);
+        return dist_sq <= @as(i64, max_radius) * @as(i64, max_radius);
     }
 
     /// Render all LOD meshes
@@ -738,6 +739,12 @@ pub const LODManager = struct {
         defer self.mutex.unlockShared();
 
         self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks);
+    }
+
+    fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {
+        const dx = @as(i64, x0) - @as(i64, x1);
+        const dz = @as(i64, z0) - @as(i64, z1);
+        return dx * dx + dz * dz;
     }
 
     /// Free LOD meshes where all underlying chunks are loaded
@@ -851,9 +858,10 @@ pub const LODManager = struct {
         switch (chunk.data) {
             .simplified => |*data| {
                 const bounds = chunk.worldBounds();
-                const target_tris = self.config.getQEMTarget(chunk.lod_level);
-                const min_tris = self.config.getQEMMinInputTriangles();
-                try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target_tris, min_tris, self.atlas);
+                // QEM decimation currently introduces visible cracks and terraced holes
+                // in distant terrain. Prefer the stable heightfield path until the
+                // simplifier preserves continuous coverage again.
+                try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas);
             },
             .full => {
                 // LOD0 meshes handled by World, not LODManager
@@ -891,19 +899,15 @@ pub const LODManager = struct {
         };
 
         // Stale job check (too far from player)
-        const scale: i32 = @intCast(lod_level.chunksPerSide());
-        const player_rx = @divFloor(self.player_cx, scale);
-        const player_rz = @divFloor(self.player_cz, scale);
-        const dx = job.data.chunk.x - player_rx;
-        const dz = job.data.chunk.z - player_rz;
         const radii = self.config.getRadii();
         const radius = radii[lod_idx];
-        const region_radius = @divFloor(radius, scale) + 2;
+        const job_key = LODRegionKey{
+            .rx = job.data.chunk.x,
+            .rz = job.data.chunk.z,
+            .lod = lod_level,
+        };
 
-        const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
-        const rad_sq = @as(i64, region_radius) * @as(i64, region_radius);
-
-        if (dist_sq > rad_sq) {
+        if (!job_key.chunkBounds().intersectsRadius(self.player_cx, self.player_cz, radius)) {
             if (chunk.state == .generating or chunk.state == .meshing) {
                 chunk.state = .missing;
             }
@@ -1211,13 +1215,12 @@ test "LODManager end-to-end covered cleanup" {
     };
 
     // Force some regions to be renderable for testing cleanup
-    const key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 }; // radii[1]=4, scale=4. rx=2 is 8 chunks away.
-    // Wait, scale for lod1 is 4. rx=2 means blocks 32-47.
-    // radii[1] is 4 chunks. region_radius = 4/4 + 1 = 2.
-    // rx=2 is right at the edge.
+    const key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod1 }; // radii[1]=4, scale=4. rx=1 covers chunks 4..7.
+    // This region touches the radius exactly at chunk 4, so it should remain in range
+    // under the shared radial bounds test used by queueing, rendering, and unloading.
 
     const chunk = try allocator.create(LODChunk);
-    chunk.* = LODChunk.init(2, 0, .lod1);
+    chunk.* = LODChunk.init(1, 0, .lod1);
     chunk.state = .renderable;
     try mgr.regions[1].put(key, chunk);
 

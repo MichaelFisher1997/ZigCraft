@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const Utils = @import("utils.zig");
@@ -9,7 +10,7 @@ fn loadShaderModule(
     vk_device: c.VkDevice,
     path: []const u8,
 ) !c.VkShaderModule {
-    const code = try std.fs.cwd().readFileAlloc(path, allocator, @enumFromInt(1024 * 1024));
+    const code = try fs.cwd().readFileAlloc(path, allocator, 1024 * 1024);
     defer allocator.free(code);
     return try Utils.createShaderModule(vk_device, code);
 }
@@ -54,19 +55,20 @@ pub fn createTerrainPipeline(
 
     const binding_description = c.VkVertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(rhi.Vertex), .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX };
 
-    var attribute_descriptions: [6]c.VkVertexInputAttributeDescription = undefined;
-    attribute_descriptions[0] = .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = 0 };
-    attribute_descriptions[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32_UINT, .offset = 12 };
-    attribute_descriptions[2] = .{ .binding = 0, .location = 2, .format = c.VK_FORMAT_R32_UINT, .offset = 16 };
-    attribute_descriptions[3] = .{ .binding = 0, .location = 3, .format = c.VK_FORMAT_R16G16_SFLOAT, .offset = 20 };
-    attribute_descriptions[4] = .{ .binding = 0, .location = 4, .format = c.VK_FORMAT_R32_UINT, .offset = 24 };
-    attribute_descriptions[5] = .{ .binding = 0, .location = 5, .format = c.VK_FORMAT_R32_UINT, .offset = 28 };
+    var attribute_descriptions: [7]c.VkVertexInputAttributeDescription = undefined;
+    attribute_descriptions[0] = .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32B32_SFLOAT, .offset = @offsetOf(rhi.Vertex, "pos") };
+    attribute_descriptions[1] = .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R32_UINT, .offset = @offsetOf(rhi.Vertex, "color") };
+    attribute_descriptions[2] = .{ .binding = 0, .location = 2, .format = c.VK_FORMAT_R32_UINT, .offset = @offsetOf(rhi.Vertex, "normal") };
+    attribute_descriptions[3] = .{ .binding = 0, .location = 3, .format = c.VK_FORMAT_R16G16_SFLOAT, .offset = @offsetOf(rhi.Vertex, "uv") };
+    attribute_descriptions[4] = .{ .binding = 0, .location = 4, .format = c.VK_FORMAT_R32_UINT, .offset = @offsetOf(rhi.Vertex, "packed_meta") };
+    attribute_descriptions[5] = .{ .binding = 0, .location = 5, .format = c.VK_FORMAT_R32_UINT, .offset = @offsetOf(rhi.Vertex, "blocklight") };
+    attribute_descriptions[6] = .{ .binding = 0, .location = 6, .format = c.VK_FORMAT_R32_UINT, .offset = @offsetOf(rhi.Vertex, "entrance_dir") };
 
     var vertex_input_info = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
     vertex_input_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;
     vertex_input_info.pVertexBindingDescriptions = &binding_description;
-    vertex_input_info.vertexAttributeDescriptionCount = 6;
+    vertex_input_info.vertexAttributeDescriptionCount = 7;
     vertex_input_info.pVertexAttributeDescriptions = &attribute_descriptions[0];
 
     var pipeline_info = std.mem.zeroes(c.VkGraphicsPipelineCreateInfo);
@@ -314,63 +316,4 @@ pub fn createDebugShadowPipeline(
     var pipeline: c.VkPipeline = null;
     try Utils.checkVk(c.vkCreateGraphicsPipelines(vk_device, null, 1, &pipeline_info, null, &pipeline));
     self.debug_shadow_pipeline = pipeline;
-}
-
-pub fn createCloudPipeline(
-    self: anytype,
-    allocator: std.mem.Allocator,
-    vk_device: c.VkDevice,
-    hdr_render_pass: c.VkRenderPass,
-    viewport_state: *const c.VkPipelineViewportStateCreateInfo,
-    dynamic_state: *const c.VkPipelineDynamicStateCreateInfo,
-    input_assembly: *const c.VkPipelineInputAssemblyStateCreateInfo,
-    rasterizer: *const c.VkPipelineRasterizationStateCreateInfo,
-    multisampling: *const c.VkPipelineMultisampleStateCreateInfo,
-    depth_stencil: *const c.VkPipelineDepthStencilStateCreateInfo,
-    color_blending: *const c.VkPipelineColorBlendStateCreateInfo,
-) !void {
-    const cloud_shaders = try loadShaderPair(allocator, vk_device, shader_registry.CLOUD_VERT, shader_registry.CLOUD_FRAG);
-    defer c.vkDestroyShaderModule(vk_device, cloud_shaders.vert, null);
-    defer c.vkDestroyShaderModule(vk_device, cloud_shaders.frag, null);
-
-    var shader_stages = [_]c.VkPipelineShaderStageCreateInfo{
-        .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_VERTEX_BIT, .module = cloud_shaders.vert, .pName = "main" },
-        .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT, .module = cloud_shaders.frag, .pName = "main" },
-    };
-
-    const binding_description = c.VkVertexInputBindingDescription{ .binding = 0, .stride = 2 * @sizeOf(f32), .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX };
-
-    var attribute_descriptions: [1]c.VkVertexInputAttributeDescription = undefined;
-    attribute_descriptions[0] = .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32_SFLOAT, .offset = 0 };
-
-    var vertex_input_info = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
-    vertex_input_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input_info.vertexBindingDescriptionCount = 1;
-    vertex_input_info.pVertexBindingDescriptions = &binding_description;
-    vertex_input_info.vertexAttributeDescriptionCount = 1;
-    vertex_input_info.pVertexAttributeDescriptions = &attribute_descriptions[0];
-
-    var cloud_depth_stencil = depth_stencil.*;
-    cloud_depth_stencil.depthWriteEnable = c.VK_FALSE;
-
-    var cloud_rasterizer = rasterizer.*;
-    cloud_rasterizer.frontFace = c.VK_FRONT_FACE_COUNTER_CLOCKWISE;
-
-    var pipeline_info = std.mem.zeroes(c.VkGraphicsPipelineCreateInfo);
-    pipeline_info.sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipeline_info.stageCount = 2;
-    pipeline_info.pStages = &shader_stages[0];
-    pipeline_info.pVertexInputState = &vertex_input_info;
-    pipeline_info.pInputAssemblyState = input_assembly;
-    pipeline_info.pViewportState = viewport_state;
-    pipeline_info.pRasterizationState = &cloud_rasterizer;
-    pipeline_info.pMultisampleState = multisampling;
-    pipeline_info.pDepthStencilState = &cloud_depth_stencil;
-    pipeline_info.pColorBlendState = color_blending;
-    pipeline_info.pDynamicState = dynamic_state;
-    pipeline_info.layout = self.cloud_pipeline_layout;
-    pipeline_info.renderPass = hdr_render_pass;
-    pipeline_info.subpass = 0;
-
-    try Utils.checkVk(c.vkCreateGraphicsPipelines(vk_device, null, 1, &pipeline_info, null, &self.cloud_pipeline));
 }

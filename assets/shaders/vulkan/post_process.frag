@@ -23,10 +23,10 @@ layout(set = 0, binding = 1) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
-    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = cloud_shadow_strength
-    vec4 cloud_params;
+    vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = reserved
+    vec4 render_flags;
     vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation
     vec4 volumetric_params;
@@ -165,6 +165,52 @@ vec3 applyFilmGrain(vec3 color, vec2 uv, float intensity, float time) {
     return color + grain * intensity * 0.05;
 }
 
+vec2 sunScreenUV() {
+    vec4 clip = global.view_proj * vec4(normalize(global.sun_dir.xyz) * 256.0, 1.0);
+    vec2 ndc = clip.xy / max(abs(clip.w), 0.001);
+    return ndc * vec2(0.5, -0.5) + vec2(0.5);
+}
+
+float brightMask(vec3 color) {
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float greenBias = smoothstep(0.04, 0.24, color.g - max(color.r, color.b) * 0.45);
+    return smoothstep(0.16, 0.85, luma) * (0.45 + 0.55 * greenBias);
+}
+
+vec3 computeScreenSunShafts(vec2 uv) {
+    if (global.volumetric_params.x < 0.5 || global.render_flags.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
+
+    vec3 currentColor = texture(uHDRBuffer, uv).rgb;
+    float currentLuma = dot(currentColor, vec3(0.2126, 0.7152, 0.0722));
+    float darkReceiver = 1.0 - smoothstep(0.03, 0.32, currentLuma);
+    if (darkReceiver <= 0.001) return vec3(0.0);
+
+    vec2 sourceUV = mix(vec2(0.5), sunScreenUV(), 0.18);
+    vec2 toSource = sourceUV - uv;
+    float centerFade = 1.0 - smoothstep(0.15, 1.45, length(uv * 2.0 - 1.0));
+    float shaft = 0.0;
+    float weightSum = 0.0;
+
+    const int samples = 24;
+    for (int i = 0; i < samples; i++) {
+        float t = (float(i) + 0.5) / float(samples);
+        vec2 sampleUV = uv + toSource * t;
+        if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) continue;
+
+        vec3 sampleColor = texture(uHDRBuffer, sampleUV).rgb;
+        float weight = pow(t, 1.2);
+        shaft += brightMask(sampleColor) * weight;
+        weightSum += weight;
+    }
+
+    shaft /= max(weightSum, 0.001);
+    shaft *= centerFade * darkReceiver;
+    shaft = pow(clamp(shaft, 0.0, 1.0), 1.15);
+
+    vec3 warmSun = mix(global.sun_color.rgb, vec3(1.0, 0.84, 0.52), 0.40);
+    return warmSun * shaft * global.volumetric_params.y * 1.15;
+}
+
 void main() {
     vec3 color = texture(uHDRBuffer, inUV).rgb;
 
@@ -172,7 +218,7 @@ void main() {
         color += texture(uBloomTexture, inUV).rgb * postParams.bloomIntensity;
     }
 
-    if (global.cloud_params.z > 0.5) {
+    if (global.render_flags.z > 0.5) {
         color = agxToneMap(color, global.pbr_params.y, global.pbr_params.z);
         color = applyColorGrading(color, postParams.colorGradingEnabled * postParams.colorGradingIntensity);
         color = applyVignette(color, inUV, postParams.vignetteIntensity);

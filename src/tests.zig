@@ -25,6 +25,7 @@ const Chunk = @import("world/chunk.zig").Chunk;
 const ChunkMesh = @import("world/chunk_mesh.zig").ChunkMesh;
 const NeighborChunks = @import("world/chunk_mesh.zig").NeighborChunks;
 const PackedLight = @import("world/chunk.zig").PackedLight;
+const packEntranceDir = @import("world/chunk.zig").packEntranceDir;
 const CHUNK_SIZE_X = @import("world/chunk.zig").CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = @import("world/chunk.zig").CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = @import("world/chunk.zig").CHUNK_SIZE_Z;
@@ -110,7 +111,6 @@ test {
     _ = @import("game/player_tests.zig");
     _ = @import("game/inventory_tests.zig");
     _ = @import("game/screen_tests.zig");
-    _ = @import("game/session_tests.zig");
     _ = @import("game/world_list_tests.zig");
     _ = @import("game/input_mapper_tests.zig");
     _ = @import("game/settings/persistence_tests.zig");
@@ -1447,27 +1447,35 @@ test "calculateVertexAO corner only occlusion" {
 
 test "normalizeLightValues zero light" {
     const light = PackedLight.init(0, 0);
-    const norm = lighting_sampler.normalizeLightValues(light);
+    const norm = lighting_sampler.normalizeLightValues(light, 0, packEntranceDir(0, 0));
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.skylight, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.blocklight[0], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.blocklight[1], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.blocklight[2], 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), norm.entrance_dir[0], 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), norm.entrance_dir[1], 0.001);
 }
 
 test "normalizeLightValues max light" {
     const light = PackedLight.init(15, 15);
-    const norm = lighting_sampler.normalizeLightValues(light);
+    const norm = lighting_sampler.normalizeLightValues(light, 15, packEntranceDir(1, 0));
     try testing.expectApproxEqAbs(@as(f32, 1.0), norm.skylight, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 1.0), norm.blocklight[0], 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), norm.entrance_bounce, 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), norm.entrance_dir[0], 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), norm.entrance_dir[1], 0.001);
 }
 
 test "normalizeLightValues RGB channels" {
     const light = PackedLight.initRGB(8, 4, 8, 12);
-    const norm = lighting_sampler.normalizeLightValues(light);
+    const norm = lighting_sampler.normalizeLightValues(light, 6, packEntranceDir(-1, 1));
     try testing.expectApproxEqAbs(@as(f32, 8.0 / 15.0), norm.skylight, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 4.0 / 15.0), norm.blocklight[0], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 8.0 / 15.0), norm.blocklight[1], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 12.0 / 15.0), norm.blocklight[2], 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 6.0 / 15.0), norm.entrance_bounce, 0.001);
+    try testing.expectApproxEqAbs(@as(f32, -1.0), norm.entrance_dir[0], 0.001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), norm.entrance_dir[1], 0.001);
 }
 
 test "getBlockColor returns no tint for stone" {
@@ -2466,7 +2474,8 @@ test "computeCascades stable at large world coordinates" {
 }
 
 test "computeCascades uses fixed splits for large distances" {
-    // Shadow distance > 500 triggers fixed split ratios (8%, 25%, 60%, 100%)
+    // Fixed split ratios (25%, 50%, 75%, 100%) keep practical voxel shadow
+    // resolution across common near/medium distances.
     const cascades = CSM.computeCascades(
         2048,
         std.math.degreesToRadians(60.0),
@@ -2478,9 +2487,9 @@ test "computeCascades uses fixed splits for large distances" {
         true,
     );
 
-    try testing.expectApproxEqAbs(@as(f32, 80.0), cascades.cascade_splits[0], 0.1); // 8%
-    try testing.expectApproxEqAbs(@as(f32, 250.0), cascades.cascade_splits[1], 0.1); // 25%
-    try testing.expectApproxEqAbs(@as(f32, 600.0), cascades.cascade_splits[2], 0.1); // 60%
+    try testing.expectApproxEqAbs(@as(f32, 250.0), cascades.cascade_splits[0], 0.1); // 25%
+    try testing.expectApproxEqAbs(@as(f32, 500.0), cascades.cascade_splits[1], 0.1); // 50%
+    try testing.expectApproxEqAbs(@as(f32, 750.0), cascades.cascade_splits[2], 0.1); // 75%
     try testing.expectApproxEqAbs(@as(f32, 1000.0), cascades.cascade_splits[3], 0.1); // 100%
 }
 

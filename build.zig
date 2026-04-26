@@ -11,10 +11,10 @@ pub fn build(b: *std.Build) void {
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
     options.addOption(bool, "smoke_test", smoke_test);
 
-    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, clouds, and decorations for chunk-only debugging") orelse false;
+    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, and decorations for chunk-only debugging") orelse false;
     options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
 
-    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, clouds, decorations)") orelse "";
+    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
     options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
 
     const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly (normal, overworld, flat)") orelse "";
@@ -26,8 +26,20 @@ pub fn build(b: *std.Build) void {
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
 
-    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PPM screenshot after N frames and exit (menu mode)") orelse "";
+    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
     options.addOption([]const u8, "screenshot_path", screenshot_path);
+
+    const screenshot_frame = b.option(u32, "screenshot-frame", "Frame number to capture when screenshot-path is set") orelse 120;
+    options.addOption(u32, "screenshot_frame", screenshot_frame);
+
+    const screenshot_delay_seconds = b.option(u32, "screenshot-delay-seconds", "Seconds to wait after screenshot target is ready before capture") orelse 0;
+    options.addOption(u32, "screenshot_delay_seconds", screenshot_delay_seconds);
+
+    const shadow_test_scene = b.option(bool, "shadow-test-scene", "Launch the deterministic shadow/cave lighting test scene") orelse false;
+    options.addOption(bool, "shadow_test_scene", shadow_test_scene);
+
+    const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
+    options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
 
     const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
     options.addOption(bool, "benchmark", benchmark);
@@ -53,6 +65,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const fs_module = b.createModule(.{
+        .root_source_file = b.path("src/engine/core/fs.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const sync_module = b.createModule(.{
+        .root_source_file = b.path("src/engine/core/sync.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -60,6 +84,8 @@ pub fn build(b: *std.Build) void {
     });
     root_module.addImport("zig-math", zig_math);
     root_module.addImport("zig-noise", zig_noise);
+    root_module.addImport("fs", fs_module);
+    root_module.addImport("sync", sync_module);
     root_module.addOptions("build_options", options);
     root_module.addIncludePath(b.path("libs/stb"));
 
@@ -68,14 +94,14 @@ pub fn build(b: *std.Build) void {
         .root_module = root_module,
     });
 
-    exe.linkLibC();
-    exe.addCSourceFile(.{
+    exe.root_module.link_libc = true;
+    exe.root_module.addCSourceFile(.{
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
 
-    exe.linkSystemLibrary("sdl3");
-    exe.linkSystemLibrary("vulkan");
+    exe.root_module.linkSystemLibrary("sdl3", .{});
+    exe.root_module.linkSystemLibrary("vulkan", .{});
 
     b.installArtifact(exe);
 
@@ -102,6 +128,10 @@ pub fn build(b: *std.Build) void {
     benchmark_options.addOption(u32, "startup_diagnostic_seconds", 0);
     benchmark_options.addOption(bool, "skip_present", true);
     benchmark_options.addOption([]const u8, "screenshot_path", "");
+    benchmark_options.addOption(u32, "screenshot_frame", 120);
+    benchmark_options.addOption(u32, "screenshot_delay_seconds", 0);
+    benchmark_options.addOption(bool, "shadow_test_scene", false);
+    benchmark_options.addOption([]const u8, "shadow_test_variant", "dug-cave");
     benchmark_options.addOption(bool, "benchmark", true);
     benchmark_options.addOption([]const u8, "benchmark_preset", benchmark_preset);
     benchmark_options.addOption(u32, "benchmark_duration", benchmark_duration);
@@ -114,6 +144,8 @@ pub fn build(b: *std.Build) void {
     });
     benchmark_root_module.addImport("zig-math", zig_math);
     benchmark_root_module.addImport("zig-noise", zig_noise);
+    benchmark_root_module.addImport("fs", fs_module);
+    benchmark_root_module.addImport("sync", sync_module);
     benchmark_root_module.addOptions("build_options", benchmark_options);
     benchmark_root_module.addIncludePath(b.path("libs/stb"));
 
@@ -122,14 +154,14 @@ pub fn build(b: *std.Build) void {
         .root_module = benchmark_root_module,
     });
 
-    benchmark_exe.linkLibC();
-    benchmark_exe.addCSourceFile(.{
+    benchmark_exe.root_module.link_libc = true;
+    benchmark_exe.root_module.addCSourceFile(.{
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
 
-    benchmark_exe.linkSystemLibrary("sdl3");
-    benchmark_exe.linkSystemLibrary("vulkan");
+    benchmark_exe.root_module.linkSystemLibrary("sdl3", .{});
+    benchmark_exe.root_module.linkSystemLibrary("vulkan", .{});
 
     b.installArtifact(benchmark_exe);
 
@@ -148,15 +180,17 @@ pub fn build(b: *std.Build) void {
     });
     test_root_module.addImport("zig-math", zig_math);
     test_root_module.addImport("zig-noise", zig_noise);
+    test_root_module.addImport("fs", fs_module);
+    test_root_module.addImport("sync", sync_module);
     test_root_module.addOptions("build_options", options);
 
     const exe_tests = b.addTest(.{
         .root_module = test_root_module,
     });
-    exe_tests.linkLibC();
-    exe_tests.linkSystemLibrary("sdl3");
-    exe_tests.linkSystemLibrary("vulkan");
-    exe_tests.addIncludePath(b.path("libs/stb"));
+    exe_tests.root_module.link_libc = true;
+    exe_tests.root_module.linkSystemLibrary("sdl3", .{});
+    exe_tests.root_module.linkSystemLibrary("vulkan", .{});
+    exe_tests.root_module.addIncludePath(b.path("libs/stb"));
 
     const test_step = b.step("test", "Run unit tests");
     const run_exe_tests = b.addRunArtifact(exe_tests);
@@ -170,19 +204,21 @@ pub fn build(b: *std.Build) void {
     });
     integration_root_module.addImport("zig-math", zig_math);
     integration_root_module.addImport("zig-noise", zig_noise);
+    integration_root_module.addImport("fs", fs_module);
+    integration_root_module.addImport("sync", sync_module);
     integration_root_module.addOptions("build_options", options);
     integration_root_module.addIncludePath(b.path("libs/stb"));
 
     const exe_integration_tests = b.addTest(.{
         .root_module = integration_root_module,
     });
-    exe_integration_tests.linkLibC();
-    exe_integration_tests.addCSourceFile(.{
+    exe_integration_tests.root_module.link_libc = true;
+    exe_integration_tests.root_module.addCSourceFile(.{
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
-    exe_integration_tests.linkSystemLibrary("sdl3");
-    exe_integration_tests.linkSystemLibrary("vulkan");
+    exe_integration_tests.root_module.linkSystemLibrary("sdl3", .{});
+    exe_integration_tests.root_module.linkSystemLibrary("vulkan", .{});
 
     const test_integration_step = b.step("test-integration", "Run integration smoke test");
     const run_integration_tests = b.addRunArtifact(exe_integration_tests);
@@ -200,11 +236,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
     robust_demo.root_module.addOptions("build_options", options);
+    robust_demo.root_module.addImport("fs", fs_module);
+    robust_demo.root_module.addImport("sync", sync_module);
 
-    robust_demo.linkLibC();
-    robust_demo.linkSystemLibrary("sdl3");
-    robust_demo.linkSystemLibrary("vulkan");
-    robust_demo.addIncludePath(b.path("libs/stb"));
+    robust_demo.root_module.link_libc = true;
+    robust_demo.root_module.linkSystemLibrary("sdl3", .{});
+    robust_demo.root_module.linkSystemLibrary("vulkan", .{});
+    robust_demo.root_module.addIncludePath(b.path("libs/stb"));
 
     b.installArtifact(robust_demo);
 
@@ -217,8 +255,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
     integration_robustness.root_module.addOptions("build_options", options);
-    integration_robustness.linkLibC();
-    integration_robustness.linkSystemLibrary("sdl3"); // Needed for C imports if any
+    integration_robustness.root_module.addImport("fs", fs_module);
+    integration_robustness.root_module.addImport("sync", sync_module);
+    integration_robustness.root_module.link_libc = true;
+    integration_robustness.root_module.linkSystemLibrary("sdl3", .{}); // Needed for C imports if any
 
     const test_robustness_run = b.addRunArtifact(integration_robustness);
     // Ensure robust-demo is built first
@@ -243,8 +283,6 @@ pub fn build(b: *std.Build) void {
     const validate_vulkan_ui_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui.frag" });
     const validate_vulkan_ui_tex_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui_tex.vert" });
     const validate_vulkan_ui_tex_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui_tex.frag" });
-    const validate_vulkan_cloud_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/cloud.vert" });
-    const validate_vulkan_cloud_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/cloud.frag" });
     const validate_vulkan_debug_shadow_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/debug_shadow.vert" });
     const validate_vulkan_debug_shadow_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/debug_shadow.frag" });
     const validate_vulkan_ssao_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ssao.vert" });
@@ -271,8 +309,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&validate_vulkan_ui_frag.step);
     test_step.dependOn(&validate_vulkan_ui_tex_vert.step);
     test_step.dependOn(&validate_vulkan_ui_tex_frag.step);
-    test_step.dependOn(&validate_vulkan_cloud_vert.step);
-    test_step.dependOn(&validate_vulkan_cloud_frag.step);
     test_step.dependOn(&validate_vulkan_debug_shadow_vert.step);
     test_step.dependOn(&validate_vulkan_debug_shadow_frag.step);
     test_step.dependOn(&validate_vulkan_ssao_vert.step);

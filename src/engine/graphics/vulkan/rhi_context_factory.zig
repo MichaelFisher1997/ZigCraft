@@ -5,6 +5,7 @@ const log = @import("../../core/log.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const build_options = @import("build_options");
+const runtime_env = @import("../../core/runtime_env.zig");
 const resource_manager_pkg = @import("resource_manager.zig");
 const VulkanBuffer = resource_manager_pkg.VulkanBuffer;
 const TextureResource = resource_manager_pkg.TextureResource;
@@ -99,11 +100,7 @@ pub fn createRHI(
     ctx.options.vsync_enabled = true;
     ctx.options.present_mode = c.VK_PRESENT_MODE_FIFO_KHR;
 
-    const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
-    ctx.options.safe_mode = if (safe_mode_env) |val|
-        !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-    else
-        false;
+    ctx.options.safe_mode = runtime_env.safeModeEnabled();
     if (ctx.options.safe_mode) {
         log.log.warn("ZIGCRAFT_SAFE_MODE enabled: throttling uploads and forcing GPU idle each frame", .{});
     }
@@ -136,11 +133,6 @@ pub fn createRHI(
         ctx.debug_shadow.vbo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
         ctx.debug_shadow.descriptor_next = .{ 0, 0 };
     }
-    ctx.pipeline_manager.cloud_pipeline = null;
-    ctx.pipeline_manager.cloud_pipeline_layout = null;
-    ctx.cloud.cloud_vbo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
-    ctx.cloud.cloud_ebo = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
-    ctx.cloud.cloud_mesh_size = 10000.0;
     ctx.post_process = .{};
     ctx.descriptors.descriptor_pool = null;
     ctx.descriptors.descriptor_set_layout = null;
@@ -197,7 +189,6 @@ pub fn createRHI(
     ctx.ui.ui_screen_width = 0;
     ctx.ui.ui_screen_height = 0;
     ctx.ui.ui_flushed_vertex_count = 0;
-    ctx.cloud.cloud_vao = null;
     ctx.legacy.dummy_shadow_image = null;
     ctx.legacy.dummy_shadow_memory = null;
     ctx.legacy.dummy_shadow_view = null;

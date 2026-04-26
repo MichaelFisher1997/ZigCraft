@@ -9,7 +9,7 @@
 //! Passes are added via `addPass()` and executed sequentially in `execute()`:
 //! ```
 //! ShadowPass0 -> ShadowPass1 -> ShadowPass2 -> ShadowPass3 ->
-//! GPass -> SSAOPass -> SkyPass -> OpaquePass -> CloudPass -> UIPass
+//! GPass -> SSAOPass -> SkyPass -> OpaquePass -> UIPass
 //! ```
 //!
 //! ## Main Pass Lifecycle
@@ -27,7 +27,6 @@
 //! - **SSAOPass**: Screen-space ambient occlusion computation
 //! - **SkyPass**: Atmospheric sky rendering, inside main pass
 //! - **OpaquePass**: Main world geometry rendering
-//! - **CloudPass**: Volumetric cloud rendering
 //! - **UIPass**: Immediate-mode UI overlay
 //!
 //! ## Scene Context
@@ -38,6 +37,7 @@
 
 const std = @import("std");
 const c = @import("../../c.zig").c;
+const build_options = @import("build_options");
 const Camera = @import("camera.zig").Camera;
 const IWorld = @import("../../world/world.zig").IWorld;
 const shadow_scene = @import("shadow_scene.zig");
@@ -66,7 +66,7 @@ pub const SceneContext = struct {
     material_system: *MaterialSystem,
     aspect: f32,
     sky_params: rhi_pkg.SkyParams,
-    cloud_params: rhi_pkg.CloudParams,
+    shadow_sun_dir: Vec3,
     taa_enabled: bool,
     viewport_width: f32,
     viewport_height: f32,
@@ -77,7 +77,6 @@ pub const SceneContext = struct {
     disable_shadow_draw: bool,
     disable_gpass_draw: bool,
     disable_ssao: bool,
-    disable_clouds: bool,
     fxaa_enabled: bool = true,
     bloom_enabled: bool = true,
     resolution_scale: f32 = 1.0,
@@ -120,7 +119,7 @@ pub const RenderGraph = struct {
 
     pub fn init(allocator: std.mem.Allocator) RenderGraph {
         return .{
-            .passes = .{},
+            .passes = .empty,
             .allocator = allocator,
         };
     }
@@ -199,14 +198,15 @@ pub const ShadowPass = struct {
         // Compute cascades once per frame and cache via shared pointer so all
         // cascade passes within the same frame use identical matrices.
         const cascades = if (ctx.cached_cascades.*) |cached| cached else blk: {
-            const computed = CSM.computeCascades(
+            const computed = CSM.computeCascadesWithCamera(
                 ctx.shadow.resolution,
                 ctx.camera.fov,
                 ctx.aspect,
                 0.1,
                 ctx.shadow.distance,
-                ctx.sky_params.sun_dir,
+                ctx.shadow_sun_dir,
                 ctx.camera.getViewMatrixOriginCentered(),
+                ctx.camera.position,
                 true,
             );
             // Validate cascade data before using
@@ -226,10 +226,15 @@ pub const ShadowPass = struct {
                 .light_space_matrices = cascades.light_space_matrices,
                 .cascade_splits = cascades.cascade_splits,
                 .shadow_texel_sizes = cascades.texel_sizes,
+                .resolution = ctx.shadow.resolution,
             });
         }
 
         if (ctx.disable_shadow_draw) return;
+
+        // Keep cutout casters sampling the terrain atlas during the shadow pass.
+        // Without this, shadow.frag can alpha-clip against whatever texture was last bound.
+        ctx.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
 
         ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
         errdefer ctx.shadow_ctx.endPass();
@@ -354,35 +359,6 @@ pub const OpaquePass = struct {
         ctx.render_ctx.bindTexture(ctx.lpv_texture_handle_b, 13);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         ctx.world.render(view_proj, ctx.camera.position, true);
-    }
-};
-
-pub const CloudPass = struct {
-    const VTABLE = IRenderPass.VTable{
-        .name = "CloudPass",
-        .needs_main_pass = true,
-        .execute = execute,
-    };
-    pub fn pass(self: *CloudPass) IRenderPass {
-        return .{
-            .ptr = self,
-            .vtable = &VTABLE,
-        };
-    }
-
-    fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
-        if (ctx.disable_clouds) return;
-        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        ctx.atmosphere_system.renderClouds(ctx.render_ctx, ctx.cloud_params, view_proj) catch |err| {
-            if (err != error.ResourceNotReady and
-                err != error.CloudPipelineNotReady and
-                err != error.CloudPipelineLayoutNotReady and
-                err != error.CommandBufferNotReady)
-            {
-                log.log.errWithTrace("CloudPass: rendering failed: {}", .{err});
-            }
-        };
     }
 };
 

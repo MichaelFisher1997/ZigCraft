@@ -153,8 +153,6 @@ pub const GameAction = enum(u8) {
     toggle_gpass_render,
     /// Toggle SSAO
     toggle_ssao,
-    /// Toggle cloud rendering
-    toggle_clouds,
     /// Toggle fog
     toggle_fog,
     /// Toggle LPV debug overlay
@@ -354,7 +352,6 @@ pub const DEFAULT_BINDINGS = blk: {
     bindings[@intFromEnum(GameAction.toggle_lod_render)] = ActionBinding.init(.{ .key = .f6 });
     bindings[@intFromEnum(GameAction.toggle_gpass_render)] = ActionBinding.init(.{ .key = .f7 });
     bindings[@intFromEnum(GameAction.toggle_ssao)] = ActionBinding.init(.{ .key = .f8 });
-    bindings[@intFromEnum(GameAction.toggle_clouds)] = ActionBinding.init(.{ .key = .f9 });
     bindings[@intFromEnum(GameAction.toggle_fog)] = ActionBinding.init(.{ .key = .f10 });
     bindings[@intFromEnum(GameAction.toggle_lpv_overlay)] = ActionBinding.init(.{ .key = .f11 });
     bindings[@intFromEnum(GameAction.toggle_frustum_debug)] = ActionBinding.init(.{ .key = .h });

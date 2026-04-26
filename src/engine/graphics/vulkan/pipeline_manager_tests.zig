@@ -28,7 +28,6 @@ test "PipelineManager default initialization produces null handles" {
     try testing.expectEqual(@as(c.VkPipeline, null), manager.sky_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.ui_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.ui_tex_pipeline);
-    try testing.expectEqual(@as(c.VkPipeline, null), manager.cloud_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.ui_swapchain_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.ui_swapchain_tex_pipeline);
 
@@ -37,7 +36,6 @@ test "PipelineManager default initialization produces null handles" {
     try testing.expectEqual(@as(c.VkPipelineLayout, null), manager.sky_pipeline_layout);
     try testing.expectEqual(@as(c.VkPipelineLayout, null), manager.ui_pipeline_layout);
     try testing.expectEqual(@as(c.VkPipelineLayout, null), manager.ui_tex_pipeline_layout);
-    try testing.expectEqual(@as(c.VkPipelineLayout, null), manager.cloud_pipeline_layout);
     try testing.expectEqual(@as(c.VkDescriptorSetLayout, null), manager.ui_tex_descriptor_set_layout);
 
     // Debug shadow optional fields should be null
@@ -284,7 +282,6 @@ test "createMainPipelines validates null render pass" {
     manager.ui_pipeline_layout = @ptrFromInt(1);
     manager.ui_tex_pipeline_layout = @ptrFromInt(1);
     manager.ui_tex_descriptor_set_layout = @ptrFromInt(1);
-    manager.cloud_pipeline_layout = @ptrFromInt(1);
 
     // Null render pass validation check
     const hdr_render_pass: c.VkRenderPass = null;
@@ -337,7 +334,6 @@ test "PipelineManager state transitions work correctly" {
     try testing.expectEqual(@as(c.VkPipeline, null), manager.wireframe_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.sky_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.ui_pipeline);
-    try testing.expectEqual(@as(c.VkPipeline, null), manager.cloud_pipeline);
     try testing.expectEqual(@as(c.VkPipeline, null), manager.water_pipeline);
 
     // Setting pipelines to non-null values simulates pipeline creation

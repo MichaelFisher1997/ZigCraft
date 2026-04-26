@@ -21,10 +21,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 sun_dir;
     vec4 sun_color;
     vec4 fog_color;
-    vec4 cloud_wind_offset;
+    vec4 reserved0;
     vec4 params;
     vec4 lighting;
-    vec4 cloud_params;
+    vec4 render_flags;
     vec4 shadow_params;
     vec4 pbr_params;
     vec4 volumetric_params;
@@ -43,10 +43,8 @@ layout(set = 0, binding = 3) uniform sampler2DArrayShadow uShadowMaps;
 
 const float PI = 3.14159265359;
 
-float cloudHash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
 }
 
 // Henyey-Greenstein Phase Function for Mie Scattering (Phase 4)
@@ -57,15 +55,16 @@ float henyeyGreenstein(float g, float cosTheta) {
 
 // Simple shadow sampler for volumetric points, optimized
 float getVolShadow(vec3 p, float viewDepth) {
-    int layer = 2; // Sky is far, but raymarched points can be near
+    int layer = 3; // Sky is far, but raymarched points can be near
     if (viewDepth < shadows.cascade_splits[0]) layer = 0;
     else if (viewDepth < shadows.cascade_splits[1]) layer = 1;
+    else if (viewDepth < shadows.cascade_splits[2]) layer = 2;
 
     vec4 lightSpacePos = shadows.light_space_matrices[layer] * vec4(p, 1.0);
     vec3 proj = lightSpacePos.xyz / lightSpacePos.w;
     proj.xy = proj.xy * 0.5 + 0.5;
     
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z > 1.0) return 1.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 || proj.z < 0.0 || proj.z > 1.0) return 1.0;
     
     return texture(uShadowMaps, vec4(proj.xy, float(layer), proj.z + 0.002));
 }
@@ -163,21 +162,29 @@ float stars(vec3 dir) {
 void main() {
     vec3 dir = normalize(vWorldDir);
 
+    float zenith = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     float horizon = 1.0 - abs(dir.y);
-    horizon = pow(horizon, 1.5);
-    vec3 sky = mix(pc.sky_color.xyz, pc.horizon_color.xyz, horizon) * 4.0; // Boost sky radiance to match terrain boost
+    float horizonBand = pow(horizon, 1.7);
+    float twilight = 1.0 - smoothstep(0.06, 0.28, abs(pc.sun_dir.y));
+
+    vec3 zenithSky = pc.sky_color.xyz * mix(2.45, 3.0, zenith);
+    vec3 horizonSky = pc.horizon_color.xyz * mix(2.2, 2.8, horizonBand);
+    vec3 sky = mix(horizonSky, zenithSky, pow(zenith, 0.64));
 
     float sunDot = dot(dir, normalize(pc.sun_dir.xyz));
-    float sunDisc = smoothstep(0.9995, 0.9999, sunDot);
-    // Use uniform sun color instead of hardcoded value
+    float sunDisc = smoothstep(0.9988, 0.99982, sunDot);
     vec3 sunColor = global.sun_color.rgb;
 
-    float sunGlow = pow(max(sunDot, 0.0), 8.0) * 0.5;
-    sunGlow += pow(max(sunDot, 0.0), 64.0) * 0.3;
+    float sunGlow = pow(max(sunDot, 0.0), 4.0) * 0.12;
+    sunGlow += pow(max(sunDot, 0.0), 14.0) * 0.24;
+    sunGlow += pow(max(sunDot, 0.0), 56.0) * 0.36;
+    sunGlow += pow(max(sunDot, 0.0), 180.0) * 0.30;
 
     float moonDot = dot(dir, -normalize(pc.sun_dir.xyz));
-    float moonDisc = smoothstep(0.9990, 0.9995, moonDot);
+    float moonDisc = smoothstep(0.9990, 0.99962, moonDot);
     vec3 moonColor = pow(vec3(0.9, 0.9, 1.0), vec3(2.2));
+    float moonGlow = pow(max(moonDot, 0.0), 8.0) * 0.04;
+    moonGlow += pow(max(moonDot, 0.0), 48.0) * 0.10;
 
     float starIntensity = 0.0;
     if (pc.params.z < 0.3 && dir.y > 0.0) {
@@ -185,19 +192,21 @@ void main() {
         starIntensity = stars(dir) * nightFactor * 1.5;
     }
 
+    vec3 warmHaze = sunColor * vec3(1.06, 0.70, 0.30) * twilight * horizonBand * 0.10;
+    float sunScatter = pow(max(sunDot, 0.0), 3.8) * (0.05 + 0.16 * twilight);
+    sky += warmHaze + sunColor * sunScatter;
+
     vec3 finalColor = sky;
 
-    // Clouds are now rendered via dedicated cloud pipeline
-    // (removed duplicate cloud rendering from sky shader)
-
-    finalColor += sunGlow * pc.params.z * pow(vec3(1.0, 0.8, 0.4), vec3(2.2));
-    finalColor += sunDisc * sunColor * pc.params.z;
+    finalColor += sunGlow * sunColor * pc.params.z * 1.35;
+    finalColor += sunDisc * sunColor * pc.params.z * 6.5;
+    finalColor += moonGlow * moonColor * pc.params.w * 2.2;
     finalColor += moonDisc * moonColor * pc.params.w * 3.0;
     finalColor += vec3(starIntensity);
 
     // Volumetric Scattering (Phase 4)
     if (global.volumetric_params.x > 0.5) {
-        float dither = cloudHash(gl_FragCoord.xy + vec2(global.params.x));
+        float dither = hash21(gl_FragCoord.xy + vec2(global.params.x));
         // Use camera-relative origin (0,0,0) for raymarching start
         vec4 volumetric = calculateVolumetric(vec3(0.0), dir, dither);
         // Apply transmittance to sky color and add scattered light

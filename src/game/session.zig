@@ -21,7 +21,9 @@ const LODLevel = @import("../world/lod_chunk.zig").LODLevel;
 const render_settings = @import("../engine/graphics/render_settings.zig");
 const RenderDistancePreset = render_settings.RenderDistancePreset;
 const log = @import("../engine/core/log.zig");
+const runtime_env = @import("../engine/core/runtime_env.zig");
 const build_options = @import("build_options");
+const BlockType = @import("../world/block.zig").BlockType;
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
 const IInputMapper = input_mapper_pkg.IInputMapper;
@@ -36,6 +38,11 @@ const region_pkg = @import("../world/worldgen/region.zig");
 const hotbar = @import("ui/hotbar.zig");
 const worldToChunkFromFloat = @import("../world/chunk.zig").worldToChunkFromFloat;
 
+fn getenv(name: [:0]const u8) ?[]const u8 {
+    const value = std.c.getenv(name) orelse return null;
+    return std.mem.span(value);
+}
+
 const ECSManager = @import("../engine/ecs/manager.zig");
 const ECSRegistry = ECSManager.Registry;
 const ECSComponents = @import("../engine/ecs/components.zig");
@@ -44,38 +51,10 @@ const ECSRenderSystem = @import("../engine/ecs/systems/render.zig").RenderSystem
 
 const Atmosphere = @import("../engine/atmosphere/atmosphere.zig").Atmosphere;
 
-pub const CloudState = struct {
-    wind_offset_x: f32 = 0.0,
-    wind_offset_z: f32 = 0.0,
-    cloud_scale: f32 = 1.0 / 64.0,
-    cloud_coverage: f32 = 0.5,
-    cloud_height: f32 = 160.0,
-    cloud_thickness: f32 = 12.0,
-    base_color: Vec3 = Vec3.init(1.0, 1.0, 1.0),
-
-    pub fn update(self: *CloudState, delta_time: f32) void {
-        const wind_dir_x: f32 = 1.0;
-        const wind_dir_z: f32 = 0.2;
-        const wind_speed: f32 = 2.0;
-        self.wind_offset_x += wind_dir_x * wind_speed * delta_time;
-        self.wind_offset_z += wind_dir_z * wind_speed * delta_time;
-    }
-
-    pub fn getShadowParams(self: *const CloudState) struct {
-        wind_offset_x: f32,
-        wind_offset_z: f32,
-        cloud_scale: f32,
-        cloud_coverage: f32,
-        cloud_height: f32,
-    } {
-        return .{
-            .wind_offset_x = self.wind_offset_x,
-            .wind_offset_z = self.wind_offset_z,
-            .cloud_scale = self.cloud_scale,
-            .cloud_coverage = self.cloud_coverage,
-            .cloud_height = self.cloud_height,
-        };
-    }
+const SpawnColumn = struct {
+    x: i32,
+    z: i32,
+    info: @import("../world/worldgen/generator_interface.zig").ColumnInfo,
 };
 
 pub const GameSession = struct {
@@ -96,7 +75,6 @@ pub const GameSession = struct {
     rhi: *RHI,
 
     atmosphere: Atmosphere,
-    clouds: CloudState,
 
     lod_config: LODConfig,
     creative_mode: bool,
@@ -110,22 +88,19 @@ pub const GameSession = struct {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
 
-        const safe_mode_env = std.posix.getenv("ZIGCRAFT_SAFE_MODE");
-        const safe_mode = if (safe_mode_env) |val|
-            !(std.mem.eql(u8, val, "0") or std.mem.eql(u8, val, "false"))
-        else
-            false;
-        const effective_render_distance: i32 = if (safe_mode) @min(render_distance, 8) else render_distance;
+        const safe_mode = runtime_env.safeModeEnabled();
+        const strict_safe_mode = runtime_env.strictSafeModeEnabled();
+        const effective_render_distance: i32 = render_distance;
         const chunk_debug_restore_lod = chunkDebugRestoreEnabled("lod");
-        const effective_lod_enabled = if (safe_mode)
-            false
-        else if (build_options.chunk_debug_mode)
+        const effective_lod_enabled = if (build_options.chunk_debug_mode)
             chunk_debug_restore_lod
         else
             lod_enabled;
 
-        if (safe_mode) {
-            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: render distance capped to {} and LOD disabled", .{effective_render_distance});
+        if (strict_safe_mode) {
+            log.log.warn("ZIGCRAFT_SAFE_MODE enabled: keeping render distance {} with reduced GPU pressure", .{effective_render_distance});
+        } else if (safe_mode) {
+            log.log.warn("Wayland stability profile active: keeping configured render distance {} and LOD behavior", .{effective_render_distance});
         }
         if (build_options.chunk_debug_mode) {
             log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_options.chunk_debug_enable});
@@ -134,7 +109,7 @@ pub const GameSession = struct {
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
         var preset_radii = preset_cfg.lod_radii;
-        preset_radii[0] = if (safe_mode)
+        preset_radii[0] = if (strict_safe_mode)
             @min(effective_render_distance, 8)
         else
             @min(effective_render_distance, preset_radii[0]);
@@ -147,7 +122,7 @@ pub const GameSession = struct {
             }
         }
 
-        const lod_config = if (safe_mode)
+        const lod_config = if (strict_safe_mode)
             LODConfig{
                 .radii = .{
                     @min(effective_render_distance, 8),
@@ -189,7 +164,8 @@ pub const GameSession = struct {
         var ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
         errdefer ecs_render_system.deinit();
 
-        const spawn = findSpawnColumn(world, 8, 8);
+        const seed_spawn = findSpawnColumn(world, 8, 8);
+        const spawn = findActualSpawnColumn(world, seed_spawn.x, seed_spawn.z) orelse seed_spawn;
         const spawn_y: f32 = @floatFromInt(spawn.info.height + 16);
         var player = Player.init(Vec3.init(@floatFromInt(spawn.x), spawn_y, @floatFromInt(spawn.z)), true);
         // Aim toward the terrain so the first frame shows the ground.
@@ -197,6 +173,15 @@ pub const GameSession = struct {
 
         var atmosphere = Atmosphere.init();
         atmosphere.setTimeOfDay(0.5);
+        if (build_options.shadow_test_scene) {
+            atmosphere.time.time_scale = 0.0;
+            player.position = if (std.ascii.eqlIgnoreCase(build_options.shadow_test_variant, "bend"))
+                Vec3.init(5.5, 65.0, -14.0)
+            else
+                Vec3.init(0.0, 65.0, -16.0);
+            player.camera.position = player.getEyePosition();
+            player.camera.setYawPitch(std.math.pi / 2.0, if (std.ascii.eqlIgnoreCase(build_options.shadow_test_variant, "bend")) -std.math.degreesToRadians(8.0) else -std.math.degreesToRadians(5.0));
+        }
 
         session.* = .{
             .allocator = allocator,
@@ -213,12 +198,11 @@ pub const GameSession = struct {
             .ecs_render_system = ecs_render_system,
             .rhi = rhi,
             .atmosphere = atmosphere,
-            .clouds = CloudState{},
             .lod_config = session.lod_config,
             .creative_mode = true,
         };
 
-        const save_env = std.posix.getenv("ZIGCRAFT_SAVE_DIR");
+        const save_env = getenv("ZIGCRAFT_SAVE_DIR");
         if (save_env) |save_path| {
             world.enableSaveManager(save_path, "world") catch |err| {
                 log.log.warn("Failed to initialize save manager: {}", .{err});
@@ -246,7 +230,6 @@ pub const GameSession = struct {
 
     pub fn update(self: *GameSession, dt: f32, total_time: f32, input: IRawInputProvider, mapper: IInputMapper, atlas: *TextureAtlas, window: anytype, paused: bool, skip_world: bool, benchmark_mode: bool) !void {
         self.atmosphere.update(dt);
-        self.clouds.update(dt);
 
         // Update Camera from Player
         self.camera = self.player.camera;
@@ -448,15 +431,11 @@ fn chunkDebugRestoreEnabled(name: []const u8) bool {
     return false;
 }
 
-fn findSpawnColumn(world: *World, default_x: i32, default_z: i32) struct {
-    x: i32,
-    z: i32,
-    info: @import("../world/worldgen/generator_interface.zig").ColumnInfo,
-} {
+fn findSpawnColumn(world: *World, default_x: i32, default_z: i32) SpawnColumn {
     const sea_level = 64;
     const default_info = world.getColumnInfo(default_x, default_z);
     const needs_dry_spawn = build_options.chunk_debug_mode and (chunkDebugRestoreEnabled("water") or chunkDebugRestoreEnabled("watergen") or chunkDebugRestoreEnabled("waterrender"));
-    if (!needs_dry_spawn or (!default_info.is_ocean and default_info.height >= sea_level)) {
+    if ((!needs_dry_spawn or (!default_info.is_ocean and default_info.height >= sea_level)) and isSpawnPatchStable(world, default_x, default_z, default_info, sea_level)) {
         return .{ .x = default_x, .z = default_z, .info = default_info };
     }
 
@@ -471,7 +450,7 @@ fn findSpawnColumn(world: *World, default_x: i32, default_z: i32) struct {
                 const x = default_x + dx;
                 const z = default_z + dz;
                 const info = world.getColumnInfo(x, z);
-                if (!info.is_ocean and info.height >= sea_level) {
+                if (!info.is_ocean and info.height >= sea_level and isSpawnPatchStable(world, x, z, info, sea_level)) {
                     log.log.info("Chunk debug water spawn moved from ({},{}) to ({},{})", .{ default_x, default_z, x, z });
                     return .{ .x = x, .z = z, .info = info };
                 }
@@ -480,4 +459,105 @@ fn findSpawnColumn(world: *World, default_x: i32, default_z: i32) struct {
     }
 
     return .{ .x = default_x, .z = default_z, .info = default_info };
+}
+
+fn findActualSpawnColumn(world: *World, default_x: i32, default_z: i32) ?SpawnColumn {
+    var radius: i32 = 0;
+    while (radius <= 64) : (radius += 1) {
+        var dz: i32 = -radius;
+        while (dz <= radius) : (dz += 1) {
+            var dx: i32 = -radius;
+            while (dx <= radius) : (dx += 1) {
+                if (@max(@abs(dx), @abs(dz)) != radius) continue;
+
+                const x = default_x + dx;
+                const z = default_z + dz;
+                const surface_y = findActualSurfaceY(world, x, z) orelse continue;
+                const info = world.getColumnInfo(x, z);
+                if (isActualSpawnAreaStable(world, x, z, surface_y)) {
+                    if (x != default_x or z != default_z) {
+                        log.log.info("Actual spawn moved from ({},{}) to ({},{})", .{ default_x, default_z, x, z });
+                    }
+                    return .{ .x = x, .z = z, .info = info };
+                }
+            }
+        }
+    }
+    return null;
+}
+
+fn isActualSpawnAreaStable(world: *World, spawn_x: i32, spawn_z: i32, center_y: i32) bool {
+    const patch_radius = 4;
+    const step = 2;
+    const max_height_delta = 4;
+
+    var dz: i32 = -patch_radius;
+    while (dz <= patch_radius) : (dz += step) {
+        var dx: i32 = -patch_radius;
+        while (dx <= patch_radius) : (dx += step) {
+            const surface_y = findActualSurfaceY(world, spawn_x + dx, spawn_z + dz) orelse return false;
+            if (@abs(surface_y - center_y) > max_height_delta) return false;
+        }
+    }
+    return true;
+}
+
+fn findActualSurfaceY(world: *World, x: i32, z: i32) ?i32 {
+    var y: i32 = 255;
+    while (y >= 0) : (y -= 1) {
+        const block = world.getBlock(x, y, z);
+        switch (block) {
+            .air,
+            .water,
+            .lava,
+            .leaves,
+            .mangrove_leaves,
+            .jungle_leaves,
+            .acacia_leaves,
+            .birch_leaves,
+            .spruce_leaves,
+            .tall_grass,
+            .flower_red,
+            .flower_yellow,
+            .dead_bush,
+            .vine,
+            .torch,
+            .cactus,
+            .bamboo,
+            .acacia_sapling,
+            .wood,
+            .mangrove_log,
+            .jungle_log,
+            .acacia_log,
+            .birch_log,
+            .spruce_log,
+            .mangrove_roots,
+            .melon,
+            => continue,
+            else => return y,
+        }
+    }
+    return null;
+}
+
+fn isSpawnPatchStable(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("../world/worldgen/generator_interface.zig").ColumnInfo, sea_level: i32) bool {
+    if (!checkSpawnArea(world, spawn_x, spawn_z, center_info, sea_level, 1, 1, 2)) return false;
+    if (!checkSpawnArea(world, spawn_x, spawn_z, center_info, sea_level, 8, 4, 8)) return false;
+    return true;
+}
+
+fn checkSpawnArea(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("../world/worldgen/generator_interface.zig").ColumnInfo, sea_level: i32, radius: i32, step: i32, max_height_delta: i32) bool {
+    var dz: i32 = -radius;
+    while (dz <= radius) : (dz += step) {
+        var dx: i32 = -radius;
+        while (dx <= radius) : (dx += step) {
+            const info = world.getColumnInfo(spawn_x + dx, spawn_z + dz);
+            if (info.is_ocean or info.height < sea_level) return false;
+            if (@abs(info.height - center_info.height) > max_height_delta) return false;
+
+            const surface_block = world.getBlock(spawn_x + dx, info.height, spawn_z + dz);
+            if (surface_block == .air or surface_block == .water) return false;
+        }
+    }
+    return true;
 }

@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const Allocator = std.mem.Allocator;
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
@@ -387,11 +388,11 @@ pub const SSAOSystem = struct {
         layout_info.pSetLayouts = &self.blur_descriptor_set_layout;
         try Utils.checkVk(c.vkCreatePipelineLayout(vk, &layout_info, null, &self.blur_pipeline_layout));
 
-        const vert_code = try std.fs.cwd().readFileAlloc(shader_registry.SSAO_VERT, allocator, @enumFromInt(1024 * 1024));
+        const vert_code = try fs.cwd().readFileAlloc(shader_registry.SSAO_VERT, allocator, 1024 * 1024);
         defer allocator.free(vert_code);
-        const frag_code = try std.fs.cwd().readFileAlloc(shader_registry.SSAO_FRAG, allocator, @enumFromInt(1024 * 1024));
+        const frag_code = try fs.cwd().readFileAlloc(shader_registry.SSAO_FRAG, allocator, 1024 * 1024);
         defer allocator.free(frag_code);
-        const blur_frag_code = try std.fs.cwd().readFileAlloc(shader_registry.SSAO_BLUR_FRAG, allocator, @enumFromInt(1024 * 1024));
+        const blur_frag_code = try fs.cwd().readFileAlloc(shader_registry.SSAO_BLUR_FRAG, allocator, 1024 * 1024);
         defer allocator.free(blur_frag_code);
 
         const vert_module = try Utils.createShaderModule(vk, vert_code);
@@ -473,7 +474,7 @@ pub const SSAOSystem = struct {
             ds_alloc.pSetLayouts = &self.blur_descriptor_set_layout;
             try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &ds_alloc, &self.blur_descriptor_sets[i]));
 
-            var depth_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .imageView = g_depth_view, .sampler = self.sampler };
+            var depth_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, .imageView = g_depth_view, .sampler = self.sampler };
             var norm_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .imageView = g_normal_view, .sampler = self.sampler };
             var noise_info = c.VkDescriptorImageInfo{ .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, .imageView = self.noise_view, .sampler = self.sampler };
             var buffer_info_ds = c.VkDescriptorBufferInfo{ .buffer = self.kernel_ubo.buffer, .offset = 0, .range = @sizeOf(SSAOParams) };

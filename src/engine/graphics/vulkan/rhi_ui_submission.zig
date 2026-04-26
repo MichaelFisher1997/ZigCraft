@@ -13,6 +13,13 @@ fn getUIPipeline(ctx: anytype, textured: bool) c.VkPipeline {
     return if (textured) ctx.pipeline_manager.ui_tex_pipeline else ctx.pipeline_manager.ui_pipeline;
 }
 
+fn sampledImageLayout(format: rhi.TextureFormat) c.VkImageLayout {
+    return if (format == .depth)
+        c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+    else
+        c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
 pub fn flushUI(ctx: anytype) void {
     if (!ctx.runtime.main_pass_active and !ctx.fxaa.pass_active) {
         return;
@@ -162,7 +169,7 @@ pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) v
     ctx.draw.terrain_pipeline_bound = false;
 
     var image_info = std.mem.zeroes(c.VkDescriptorImageInfo);
-    image_info.imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    image_info.imageLayout = sampledImageLayout(tex.format);
     image_info.imageView = tex.view;
     image_info.sampler = tex.sampler;
 
@@ -248,7 +255,7 @@ pub fn drawDepthTexture(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect
     c.vkCmdPushConstants(command_buffer, ctx.debug_shadow.pipeline_layout.?, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
 
     var image_info = std.mem.zeroes(c.VkDescriptorImageInfo);
-    image_info.imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    image_info.imageLayout = sampledImageLayout(tex.format);
     image_info.imageView = tex.view;
     image_info.sampler = tex.sampler;
 

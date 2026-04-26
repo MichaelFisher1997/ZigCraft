@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const Allocator = std.mem.Allocator;
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
@@ -140,9 +141,9 @@ pub const FXAASystem = struct {
         try Utils.checkVk(c.vkCreatePipelineLayout(vk, &pipe_layout_info, null, &self.pipeline_layout));
 
         // 5. Shaders & Pipeline
-        const vert_code = try std.fs.cwd().readFileAlloc("assets/shaders/vulkan/fxaa.vert.spv", allocator, @enumFromInt(1024 * 1024));
+        const vert_code = try fs.cwd().readFileAlloc("assets/shaders/vulkan/fxaa.vert.spv", allocator, 1024 * 1024);
         defer allocator.free(vert_code);
-        const frag_code = try std.fs.cwd().readFileAlloc("assets/shaders/vulkan/fxaa.frag.spv", allocator, @enumFromInt(1024 * 1024));
+        const frag_code = try fs.cwd().readFileAlloc("assets/shaders/vulkan/fxaa.frag.spv", allocator, 1024 * 1024);
         defer allocator.free(frag_code);
         const vert_module = try Utils.createShaderModule(vk, vert_code);
         defer c.vkDestroyShaderModule(vk, vert_module, null);

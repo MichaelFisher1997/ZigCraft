@@ -5,6 +5,7 @@
 //! delegated to modules in `meshing/`.
 
 const std = @import("std");
+const sync = @import("sync");
 const log = @import("../engine/core/log.zig");
 
 const Chunk = @import("chunk.zig").Chunk;
@@ -45,7 +46,7 @@ pub const ChunkMesh = struct {
     ready: bool = false,
 
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex,
+    mutex: sync.Mutex,
 
     // Pending merged vertex data (built on worker thread, uploaded on main thread)
     pending_solid: ?[]Vertex = null,

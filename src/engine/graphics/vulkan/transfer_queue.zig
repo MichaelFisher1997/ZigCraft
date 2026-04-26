@@ -10,6 +10,7 @@
 //! the ring needs at most 2× the per-frame upload budget.
 
 const std = @import("std");
+const sync = @import("sync");
 const c = @import("../../../c.zig").c;
 const rhi = @import("../rhi.zig");
 const log = @import("../../core/log.zig");
@@ -314,7 +315,7 @@ pub const TransferQueue = struct {
         _ = c.vkResetFences(vk_device, 1, &self.frame_fences[frame_index]);
     }
 
-    pub fn submitAndWait(self: *TransferQueue, vk_device: c.VkDevice, queue_mutex: *std.Thread.Mutex) !void {
+    pub fn submitAndWait(self: *TransferQueue, vk_device: c.VkDevice, queue_mutex: *sync.Mutex) !void {
         if (!self.transfer_ready[self.current_frame]) return;
 
         const cb = self.command_buffers[self.current_frame];
@@ -346,7 +347,7 @@ pub const TransferQueue = struct {
         self.transfer_ready[self.current_frame] = false;
     }
 
-    pub fn flushSync(self: *TransferQueue, vk_device: c.VkDevice, queue_mutex: *std.Thread.Mutex) !void {
+    pub fn flushSync(self: *TransferQueue, vk_device: c.VkDevice, queue_mutex: *sync.Mutex) !void {
         if (!self.transfer_ready[self.current_frame]) return;
         try self.submitAndWait(vk_device, queue_mutex);
     }

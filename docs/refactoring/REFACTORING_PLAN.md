@@ -146,8 +146,7 @@ VulkanContext (Coordinator)
 │   ├── Line pipeline
 │   ├── G-Pass pipeline
 │   ├── Sky pipeline
-│   ├── UI pipelines
-│   └── Cloud pipeline
+│   └── UI pipelines
 ├── ResourceManager (existing)
 │   ├── Buffer management
 │   ├── Texture management
