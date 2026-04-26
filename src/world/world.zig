@@ -222,7 +222,7 @@ pub const World = struct {
     }
 
     pub fn deinit(self: *World) void {
-        self.rhi.waitIdle();
+        self.rhi.query().waitIdle();
 
         if (self.save_manager) |sm| {
             self.saveAllModifiedChunks();

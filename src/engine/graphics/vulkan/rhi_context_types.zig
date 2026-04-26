@@ -172,6 +172,7 @@ const RuntimeState = struct {
     post_process_ran_this_frame: bool = false,
     fxaa_ran_this_frame: bool = false,
     pipeline_rebuild_needed: bool = false,
+    swapchain_recreate_failed: bool = false,
     frame_index: usize,
     image_index: u32,
     clear_color: [4]f32 = .{ 0.07, 0.08, 0.1, 1.0 },

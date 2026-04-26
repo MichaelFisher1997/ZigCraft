@@ -542,7 +542,7 @@ pub const LPVSystem = struct {
         resources.debug_overlay_pixels = try self.allocator.alloc(f32, debug_size);
         @memset(resources.debug_overlay_pixels, 0.0);
 
-        resources.debug_overlay_texture = try self.rhi.createTexture(
+        resources.debug_overlay_texture = try self.rhi.resourceManager().createTexture(
             grid_size,
             grid_size,
             .rgba32f,
@@ -577,17 +577,17 @@ pub const LPVSystem = struct {
     fn destroyGridResources(self: *LPVSystem, resources: *GridResources) void {
         for (0..3) |ch| {
             if (resources.grid_textures_a[ch] != 0) {
-                self.rhi.destroyTexture(resources.grid_textures_a[ch]);
+                self.rhi.resourceManager().destroyTexture(resources.grid_textures_a[ch]);
                 resources.grid_textures_a[ch] = 0;
             }
             if (resources.grid_textures_b[ch] != 0) {
-                self.rhi.destroyTexture(resources.grid_textures_b[ch]);
+                self.rhi.resourceManager().destroyTexture(resources.grid_textures_b[ch]);
                 resources.grid_textures_b[ch] = 0;
             }
         }
 
         if (resources.debug_overlay_texture != 0) {
-            self.rhi.destroyTexture(resources.debug_overlay_texture);
+            self.rhi.resourceManager().destroyTexture(resources.debug_overlay_texture);
             resources.debug_overlay_texture = 0;
         }
         if (resources.debug_overlay_pixels.len > 0) {
@@ -720,16 +720,16 @@ pub const LPVSystem = struct {
     fn destroyGridTextures(self: *LPVSystem) void {
         for (0..3) |ch| {
             if (self.grid_textures_a[ch] != 0) {
-                self.rhi.destroyTexture(self.grid_textures_a[ch]);
+                self.rhi.resourceManager().destroyTexture(self.grid_textures_a[ch]);
                 self.grid_textures_a[ch] = 0;
             }
             if (self.grid_textures_b[ch] != 0) {
-                self.rhi.destroyTexture(self.grid_textures_b[ch]);
+                self.rhi.resourceManager().destroyTexture(self.grid_textures_b[ch]);
                 self.grid_textures_b[ch] = 0;
             }
         }
         if (self.debug_overlay_texture != 0) {
-            self.rhi.destroyTexture(self.debug_overlay_texture);
+            self.rhi.resourceManager().destroyTexture(self.debug_overlay_texture);
             self.debug_overlay_texture = 0;
         }
         if (self.debug_overlay_pixels.len > 0) {

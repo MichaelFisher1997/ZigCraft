@@ -30,7 +30,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     ctx.runtime.ssao_pass_active = false;
 
     ctx.swapchain.recreate() catch |err| {
-        log.log.errWithTrace("Failed to recreate swapchain: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "swapchain", err);
         return;
     };
 
@@ -39,19 +39,19 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
     };
 
     lifecycle.createHDRResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate HDR resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "HDR resources", err);
         return;
     };
     setup.createGPassResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate G-Pass resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "G-Pass resources", err);
         return;
     };
     setup.createSSAOResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate SSAO resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "SSAO resources", err);
         return;
     };
     setup.createTAAResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate TAA resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "TAA resources", err);
         return;
     };
     if (ctx.water_system.reflection_texture_handle != 0) {
@@ -59,15 +59,15 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         ctx.water_system.reflection_texture_handle = 0;
     }
     ctx.render_pass_manager.createMainRenderPass(ctx.vulkan_device.vk_device, ctx.swapchain.getExtent(), ctx.options.msaa_samples) catch |err| {
-        log.log.errWithTrace("Failed to recreate render pass: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "render pass", err);
         return;
     };
     ctx.pipeline_manager.createMainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass, ctx.render_pass_manager.g_render_pass, ctx.options.msaa_samples) catch |err| {
-        log.log.errWithTrace("Failed to recreate pipelines: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "pipelines", err);
         return;
     };
     setup.createWaterResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate water resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "water resources", err);
         return;
     };
 
@@ -81,37 +81,37 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         ctx.draw.dummy_texture;
 
     ctx.water_system.createWaterPipeline(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.hdr_render_pass) catch |err| {
-        log.log.errWithTrace("Failed to recreate water pipeline: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "water pipeline", err);
         return;
     };
     ctx.water_system.createReflectionTerrainPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.pipeline_manager.pipeline_layout) catch |err| {
-        log.log.errWithTrace("Failed to recreate reflection terrain pipelines: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "reflection terrain pipelines", err);
         return;
     };
     setup.createPostProcessResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate post-process resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "post-process resources", err);
         return;
     };
     setup.createSwapchainUIResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate swapchain UI resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "swapchain UI resources", err);
         return;
     };
     ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews()) catch |err| {
-        log.log.errWithTrace("Failed to recreate FXAA resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "FXAA resources", err);
         return;
     };
     ctx.pipeline_manager.createSwapchainUIPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.ui_swapchain_render_pass) catch |err| {
-        log.log.errWithTrace("Failed to recreate swapchain UI pipelines: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "swapchain UI pipelines", err);
         return;
     };
     ctx.bloom.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.hdr.hdr_view, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height, c.VK_FORMAT_R16G16B16A16_SFLOAT) catch |err| {
-        log.log.errWithTrace("Failed to recreate Bloom resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "Bloom resources", err);
         return;
     };
     setup.updatePostProcessDescriptorsWithBloom(ctx);
 
     setup.createUpscaleResources(ctx) catch |err| {
-        log.log.errWithTrace("Failed to recreate upscale resources: {}", .{err});
+        markSwapchainRecreateFailed(ctx, "upscale resources", err);
         return;
     };
 
@@ -148,6 +148,17 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
 
     ctx.runtime.framebuffer_resized = false;
     ctx.runtime.pipeline_rebuild_needed = false;
+    ctx.runtime.swapchain_recreate_failed = false;
+}
+
+fn markSwapchainRecreateFailed(ctx: anytype, stage: []const u8, err: anyerror) void {
+    const already_failed = ctx.runtime.swapchain_recreate_failed;
+    ctx.runtime.swapchain_recreate_failed = true;
+    ctx.runtime.framebuffer_resized = true;
+    ctx.runtime.pipeline_rebuild_needed = true;
+    if (!already_failed) {
+        log.log.errWithTrace("Failed to recreate swapchain at {s}: {}", .{ stage, err });
+    }
 }
 
 pub fn prepareFrameState(ctx: anytype) void {
