@@ -268,24 +268,41 @@ pub const World = struct {
         const seed = self.generator.getSeed();
         const gen_name = self.generator.info.name;
         self.save_manager = try SaveManager.init(self.allocator, save_dir_path, world_name, seed, gen_name);
+        self.streamer.setSaveManager(self.save_manager);
     }
 
     fn enqueueModifiedChunks(self: *World, sm: *SaveManager) std.ArrayListUnmanaged(ChunkKey) {
         var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
 
-        self.storage.chunks_mutex.lockShared();
+        self.storage.chunks_mutex.lock();
         var iter = self.storage.iteratorUnsafe();
         while (iter.next()) |entry| {
             const chunk = &entry.value_ptr.*.chunk;
             if (chunk.modified and chunk.generated) {
+                dirty_keys.append(self.allocator, entry.key_ptr.*) catch |err| {
+                    log.log.err("Failed to track dirty chunk ({}, {}) for save: {}", .{ entry.key_ptr.*.x, entry.key_ptr.*.z, err });
+                    continue;
+                };
+
                 chunk.pin();
                 sm.enqueueSave(chunk);
-                dirty_keys.append(self.allocator, entry.key_ptr.*) catch {};
+                chunk.modified = false;
+                chunk.unpin();
             }
         }
-        self.storage.chunks_mutex.unlockShared();
+        self.storage.chunks_mutex.unlock();
 
         return dirty_keys;
+    }
+
+    fn remarkFailedSaves(self: *World, failed: []ChunkKey) void {
+        self.storage.chunks_mutex.lock();
+        for (failed) |key| {
+            if (self.storage.chunks.get(key)) |data| {
+                data.chunk.modified = true;
+            }
+        }
+        self.storage.chunks_mutex.unlock();
     }
 
     pub fn saveAllModifiedChunks(self: *World) void {
@@ -295,20 +312,7 @@ pub const World = struct {
         defer dirty_keys.deinit(self.allocator);
 
         const failed = sm.flush();
-
-        self.storage.chunks_mutex.lockShared();
-        for (dirty_keys.items) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = false;
-                data.chunk.unpin();
-            }
-        }
-        for (failed) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                data.chunk.modified = true;
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
+        self.remarkFailedSaves(failed);
     }
 
     pub fn checkAutoSave(self: *World) void {
@@ -320,18 +324,7 @@ pub const World = struct {
 
         const failed = sm.flush();
         sm.markAutoSaved();
-
-        self.storage.chunks_mutex.lockShared();
-        for (dirty_keys.items) |key| {
-            if (self.storage.chunks.get(key)) |data| {
-                const should_remark = for (failed) |f| {
-                    if (f.x == key.x and f.z == key.z) break true;
-                } else false;
-                if (!should_remark) data.chunk.modified = false;
-                data.chunk.unpin();
-            }
-        }
-        self.storage.chunks_mutex.unlockShared();
+        self.remarkFailedSaves(failed);
     }
 
     pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
@@ -425,6 +418,7 @@ pub const World = struct {
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
         self.renderer.beginFrame();
         try self.streamer.updateFrame(player_pos, dt);
+        self.checkAutoSave();
     }
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {

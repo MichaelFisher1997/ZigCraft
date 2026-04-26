@@ -212,9 +212,6 @@ pub const GameSession = struct {
             world.enableSaveManager(save_path, "world") catch |err| {
                 log.log.warn("Failed to initialize save manager: {}", .{err});
             };
-            if (world.save_manager) |sm| {
-                world.streamer.setSaveManager(sm);
-            }
         }
 
         // Force map update initially
