@@ -7,6 +7,7 @@ const Widgets = @import("../../engine/ui/widgets.zig");
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
+const EnvironmentContext = Screen.EnvironmentContext;
 const settings_pkg = @import("../settings.zig");
 const Settings = settings_pkg.Settings;
 const Texture = @import("../../engine/graphics/texture.zig").Texture;
@@ -18,7 +19,7 @@ const BG_COLOR = Color.rgba(0.12, 0.14, 0.18, 0.95);
 const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
 
 pub const EnvironmentScreen = struct {
-    context: EngineContext,
+    context: EnvironmentContext,
     environment_maps: std.ArrayListUnmanaged([]const u8),
 
     pub const vtable = IScreen.VTable{
@@ -30,9 +31,13 @@ pub const EnvironmentScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*EnvironmentScreen {
         const self = try allocator.create(EnvironmentScreen);
-        errdefer allocator.destroy(self);
+        errdefer {
+            self.clearEnvironmentMaps();
+            self.environment_maps.deinit(allocator);
+            allocator.destroy(self);
+        }
         self.* = .{
-            .context = context,
+            .context = context.environmentContext(),
             .environment_maps = .empty,
         };
         try self.refreshEnvironmentMaps();
@@ -42,6 +47,7 @@ pub const EnvironmentScreen = struct {
     pub fn deinit(ptr: *anyopaque) void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         self.clearEnvironmentMaps();
+        self.environment_maps.deinit(self.context.allocator);
         self.context.allocator.destroy(self);
     }
 
@@ -152,7 +158,9 @@ pub const EnvironmentScreen = struct {
             const is_hdr = std.mem.endsWith(u8, entry.name, ".hdr");
             if (!is_exr and !is_hdr) continue;
             if (is_hdr and std.mem.endsWith(u8, entry.name, ".exr.hdr")) continue;
-            try self.environment_maps.append(self.context.allocator, try self.context.allocator.dupe(u8, entry.name));
+            const name = try self.context.allocator.dupe(u8, entry.name);
+            errdefer self.context.allocator.free(name);
+            try self.environment_maps.append(self.context.allocator, name);
         }
     }
 

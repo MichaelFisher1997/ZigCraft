@@ -30,10 +30,7 @@ pub const EngineContext = struct {
     benchmark_runner: ?*BenchmarkRunner = null,
 
     pub fn saveSettings(self: EngineContext) void {
-        settings_pkg.persistence.save(self.settings, self.allocator);
-        @import("input_settings.zig").InputSettings.saveFromMapper(self.allocator, self.input_mapper) catch |err| {
-            @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
-        };
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
     }
 
     pub fn menuContext(self: EngineContext) MenuContext {
@@ -57,6 +54,18 @@ pub const EngineContext = struct {
             .input_mapper = self.input_mapper,
             .screen_manager = self.screen_manager,
             .render_settings = self.render_settings,
+        };
+    }
+
+    pub fn environmentContext(self: EngineContext) EnvironmentContext {
+        return .{
+            .allocator = self.allocator,
+            .window_manager = self.window_manager,
+            .render_system = self.render_system,
+            .settings = self.settings,
+            .input = self.input,
+            .input_mapper = self.input_mapper,
+            .screen_manager = self.screen_manager,
         };
     }
 
@@ -98,10 +107,21 @@ pub const SettingsContext = struct {
     render_settings: IRenderSettings,
 
     pub fn saveSettings(self: SettingsContext) void {
-        settings_pkg.persistence.save(self.settings, self.allocator);
-        @import("input_settings.zig").InputSettings.saveFromMapper(self.allocator, self.input_mapper) catch |err| {
-            @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
-        };
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
+    }
+};
+
+pub const EnvironmentContext = struct {
+    allocator: std.mem.Allocator,
+    window_manager: *WindowManager,
+    render_system: *RenderSystem,
+    settings: *Settings,
+    input: IRawInputProvider,
+    input_mapper: IInputMapper,
+    screen_manager: *ScreenManager,
+
+    pub fn saveSettings(self: EnvironmentContext) void {
+        saveSettingsShared(self.allocator, self.settings, self.input_mapper);
     }
 };
 
@@ -119,6 +139,13 @@ pub const WorldContext = struct {
     skip_world_update: bool,
     benchmark_runner: ?*BenchmarkRunner = null,
 };
+
+fn saveSettingsShared(allocator: std.mem.Allocator, settings: *Settings, input_mapper: IInputMapper) void {
+    settings_pkg.persistence.save(settings, allocator);
+    @import("input_settings.zig").InputSettings.saveFromMapper(allocator, input_mapper) catch |err| {
+        @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
+    };
+}
 
 pub const IScreen = struct {
     ptr: *anyopaque,
