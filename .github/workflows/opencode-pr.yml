@@ -288,7 +288,15 @@ jobs:
             -f target_url="${{ github.server_url }}/${{ github.repository }}/pull/${PR_NUMBER}"
 
           if [ "$STATE" = "success" ]; then
-            gh pr merge "$PR_NUMBER" --auto --squash || true
+            CLOSING_REFS=$(gh pr view "$PR_NUMBER" \
+              --json closingIssuesReferences \
+              --jq '[.closingIssuesReferences[].number] | map("Closes #" + tostring) | join("\n")')
+
+            if [ -n "$CLOSING_REFS" ]; then
+              gh pr merge "$PR_NUMBER" --auto --squash --body "$CLOSING_REFS" || true
+            else
+              gh pr merge "$PR_NUMBER" --auto --squash || true
+            fi
           fi
         env:
           GH_TOKEN: ${{ github.token }}
