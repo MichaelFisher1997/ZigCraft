@@ -229,11 +229,14 @@ const MockContext = struct {
         .getNativeSwapchainExtent = getNativeSwapchainExtent,
         .getNativeDevice = getNativeDevice,
         .computeSSAO = computeSSAO,
-        .drawDebugShadowMap = drawDebugShadowMap,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
         .compute = computeSSAO,
+    };
+
+    const MOCK_DEBUG_OVERLAY_VTABLE = rhi.IDebugOverlayContext.VTable{
+        .drawDebugShadowMap = drawDebugShadowMap,
     };
 
     const MOCK_WATER_VTABLE = rhi.IWaterContext.VTable{
@@ -362,6 +365,7 @@ const MockContext = struct {
         .resources = MOCK_RESOURCES_VTABLE,
         .render = MOCK_RENDER_VTABLE,
         .ssao = MOCK_SSAO_VTABLE,
+        .debug_overlay = MOCK_DEBUG_OVERLAY_VTABLE,
         .shadow = MOCK_SHADOW_VTABLE,
         .water = MOCK_WATER_VTABLE,
         .ui = MOCK_UI_VTABLE,

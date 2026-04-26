@@ -280,9 +280,6 @@ pub const RenderContext = struct {
     pub fn computeSSAO(self: RenderContext, proj: Mat4, inv_proj: Mat4) void {
         self.render.vtable.computeSSAO(self.render.ptr, proj, inv_proj);
     }
-    pub fn drawDebugShadowMap(self: RenderContext, cascade_index: usize, depth_map_handle: TextureHandle) void {
-        self.render.vtable.drawDebugShadowMap(self.render.ptr, cascade_index, depth_map_handle);
-    }
     pub fn getNativeSkyPipeline(self: RenderContext) u64 {
         return self.render.vtable.getNativeSkyPipeline(self.render.ptr);
     }
@@ -643,7 +640,7 @@ pub const IDebugOverlayContext = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// Draws debug shadow map overlay (Deprecated - Tracked in #226).
+        /// Draws debug shadow map overlay.
         drawDebugShadowMap: *const fn (ptr: *anyopaque, cascade_index: usize, depth_map_handle: TextureHandle) void,
     };
 
@@ -685,8 +682,6 @@ pub const IRenderContext = struct {
         // Specific rendering passes/techniques (Tracked for refactoring)
         // TODO (#225): Relocate computeSSAO to dedicated SSAOSystem
         computeSSAO: *const fn (ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void,
-        /// @deprecated TODO (#226): Relocate drawDebugShadowMap to a debug overlay system.
-        drawDebugShadowMap: *const fn (ptr: *anyopaque, cascade_index: usize, depth_map_handle: TextureHandle) void,
 
         // Resource Accessors for Systems
         // Note: All accessors return backend-specific handles (e.g., Vulkan handles as u64).
@@ -877,6 +872,7 @@ pub const RHI = struct {
         resources: IResourceFactory.VTable,
         render: IRenderContext.VTable,
         ssao: ISSAOContext.VTable,
+        debug_overlay: IDebugOverlayContext.VTable,
         shadow: IShadowContext.VTable,
         water: IWaterContext.VTable,
         ui: IUIContext.VTable,
@@ -935,6 +931,9 @@ pub const RHI = struct {
     }
     pub fn ssao(self: RHI) ISSAOContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ssao };
+    }
+    pub fn debugOverlay(self: RHI) IDebugOverlayContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.debug_overlay };
     }
     pub fn shadow(self: RHI) IShadowContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.shadow };

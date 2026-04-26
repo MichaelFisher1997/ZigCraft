@@ -862,6 +862,10 @@ const VULKAN_SSAO_VTABLE = rhi.ISSAOContext.VTable{
     .compute = computeSSAO,
 };
 
+const VULKAN_DEBUG_OVERLAY_VTABLE = rhi.IDebugOverlayContext.VTable{
+    .drawDebugShadowMap = drawDebugShadowMap,
+};
+
 const VULKAN_UI_CONTEXT_VTABLE = rhi.IUIContext.VTable{
     .beginPass = begin2DPass,
     .endPass = end2DPass,
@@ -947,9 +951,9 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getNativeDevice = getNativeDevice,
         .setClearColor = setClearColor,
         .computeSSAO = computeSSAO,
-        .drawDebugShadowMap = drawDebugShadowMap,
     },
     .ssao = VULKAN_SSAO_VTABLE,
+    .debug_overlay = VULKAN_DEBUG_OVERLAY_VTABLE,
     .shadow = VULKAN_SHADOW_CONTEXT_VTABLE,
     .water = VULKAN_WATER_CONTEXT_VTABLE,
     .ui = VULKAN_UI_CONTEXT_VTABLE,
