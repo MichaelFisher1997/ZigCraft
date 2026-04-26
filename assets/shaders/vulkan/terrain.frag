@@ -769,10 +769,15 @@ void main() {
     float viewDistance = length(vFragPosWorld);
 
     if (vMaskRadius > 0.0) {
-        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
-        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
+        const float CHUNK_SIZE = 16.0;
         vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        float ditherThreshold = lodTransitionNoise(worldXZ);
+        vec2 fragChunk = floor(worldXZ / CHUNK_SIZE);
+        vec2 cameraChunk = floor(global.cam_pos.xz / CHUNK_SIZE);
+        float maskChunks = floor(vMaskRadius / CHUNK_SIZE + 0.5);
+        float transitionChunks = max(1.0, ceil(LOD_TRANSITION_WIDTH / CHUNK_SIZE));
+        float distFromMask = length(fragChunk - cameraChunk) - maskChunks;
+        float fade = clamp(distFromMask / transitionChunks, 0.0, 1.0);
+        float ditherThreshold = lodTransitionNoise((fragChunk + vec2(0.5)) * CHUNK_SIZE);
         if (fade < ditherThreshold) discard;
     }
     

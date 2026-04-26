@@ -200,7 +200,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                         if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) continue;
                     }
 
-                    var disable_mask = false;
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
                             const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
@@ -212,7 +211,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                                 lod_covered += 1;
                                 continue;
                             }
-                            disable_mask = cov.missing_chunk_in_radius;
                             if (lod_rendered == 0) {
                                 first_missing_cx = cov.missing_cx;
                                 first_missing_cz = cov.missing_cz;
@@ -235,7 +233,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                     // Keep coarser LODs visible until full-detail chunks cover them.
                     // Culling against inner LOD bands creates visible holes while finer
                     // LOD regions are still streaming in.
-                    const mask_radius = if (disable_mask) 0.0 else config.calculateMaskRadius();
+                    const mask_radius = config.calculateMaskRadius();
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
