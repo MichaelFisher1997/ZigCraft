@@ -180,8 +180,8 @@ fn addGreedyFace(
         .south => Face.north,
         else => return error.UnsupportedFace,
     };
-    const base_col = block_def.getFaceColor(face);
-    const col = [3]f32{ base_col[0] * tint[0], base_col[1] * tint[1], base_col[2] * tint[2] };
+    const shade = face.getShade();
+    const col = [3]f32{ shade * tint[0], shade * tint[1], shade * tint[2] };
     const norm = face.getNormal();
     const nf = [3]f32{ @floatFromInt(norm[0]), @floatFromInt(norm[1]), @floatFromInt(norm[2]) };
     const tiles = atlas.getTilesForBlock(@intFromEnum(block_def.id));
