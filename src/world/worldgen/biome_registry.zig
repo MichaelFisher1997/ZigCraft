@@ -36,9 +36,9 @@ pub const Range = struct {
 
 /// Color tints for visual biome identity (RGB 0-1)
 pub const ColorTints = struct {
-    grass: [3]f32 = .{ 0.3, 0.65, 0.2 }, // Default green
-    foliage: [3]f32 = .{ 0.2, 0.5, 0.15 },
-    water: [3]f32 = .{ 0.2, 0.4, 0.8 },
+    grass: [3]f32 = .{ 0.22, 0.72, 0.16 }, // Default green
+    foliage: [3]f32 = .{ 0.14, 0.58, 0.12 },
+    water: [3]f32 = .{ 0.12, 0.38, 0.78 },
 };
 
 /// Vegetation profile for biome-driven placement
@@ -309,7 +309,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{ .oak, .birch, .dense_oak }, .tree_density = 0.12, .bush_density = 0.05, .grass_density = 0.4 },
-        .colors = .{ .grass = .{ 0.25, 0.55, 0.18 }, .foliage = .{ 0.18, 0.45, 0.12 } },
+        .colors = .{ .grass = .{ 0.18, 0.64, 0.16 }, .foliage = .{ 0.12, 0.52, 0.12 } },
     },
     .{
         .id = .taiga,
@@ -321,7 +321,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 6,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{.spruce}, .tree_density = 0.10, .grass_density = 0.2 },
-        .colors = .{ .grass = .{ 0.35, 0.55, 0.25 }, .foliage = .{ 0.28, 0.48, 0.20 } },
+        .colors = .{ .grass = .{ 0.24, 0.56, 0.24 }, .foliage = .{ 0.18, 0.46, 0.18 } },
     },
     .{
         .id = .desert,
@@ -353,9 +353,9 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .vegetation = .{ .tree_types = &.{.swamp_oak}, .tree_density = 0.08 },
         .terrain = .{ .clamp_to_sea_level = true, .height_offset = -2 },
         .colors = .{
-            .grass = .{ 0.35, 0.45, 0.25 },
-            .foliage = .{ 0.30, 0.40, 0.20 },
-            .water = .{ 0.25, 0.35, 0.30 },
+            .grass = .{ 0.24, 0.54, 0.20 },
+            .foliage = .{ 0.18, 0.46, 0.16 },
+            .water = .{ 0.18, 0.38, 0.30 },
         },
     },
     .{
@@ -418,7 +418,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .surface = .{ .top = .mud, .filler = .mud, .depth_range = 4 },
         .vegetation = .{ .tree_types = &.{.mangrove}, .tree_density = 0.15 },
         .terrain = .{ .clamp_to_sea_level = true, .height_offset = -1 },
-        .colors = .{ .grass = .{ 0.4, 0.5, 0.2 }, .foliage = .{ 0.4, 0.5, 0.2 }, .water = .{ 0.2, 0.4, 0.3 } },
+        .colors = .{ .grass = .{ 0.26, 0.58, 0.18 }, .foliage = .{ 0.22, 0.52, 0.16 }, .water = .{ 0.16, 0.38, 0.30 } },
     },
     .{
         .id = .jungle,
@@ -430,7 +430,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{.jungle}, .tree_density = 0.20, .bamboo_density = 0.08, .melon_density = 0.04 },
-        .colors = .{ .grass = .{ 0.2, 0.8, 0.1 }, .foliage = .{ 0.1, 0.7, 0.1 } },
+        .colors = .{ .grass = .{ 0.10, 0.76, 0.08 }, .foliage = .{ 0.08, 0.62, 0.08 } },
     },
     .{
         .id = .savanna,
@@ -498,7 +498,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{ .sparse_oak, .spruce }, .tree_density = 0.08, .grass_density = 0.4 },
         .terrain = .{ .height_amplitude = 1.1, .smoothing = 0.1 },
-        .colors = .{ .grass = .{ 0.35, 0.60, 0.25 } },
+        .colors = .{ .grass = .{ 0.24, 0.62, 0.22 }, .foliage = .{ 0.18, 0.50, 0.16 } },
     },
     .{
         .id = .marsh,
@@ -513,9 +513,9 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .vegetation = .{ .tree_types = &.{.swamp_oak}, .tree_density = 0.04, .grass_density = 0.5 },
         .terrain = .{ .height_offset = -1, .smoothing = 0.3 },
         .colors = .{
-            .grass = .{ 0.30, 0.50, 0.22 },
-            .foliage = .{ 0.25, 0.45, 0.18 },
-            .water = .{ 0.22, 0.38, 0.35 },
+            .grass = .{ 0.20, 0.58, 0.20 },
+            .foliage = .{ 0.16, 0.50, 0.16 },
+            .water = .{ 0.16, 0.40, 0.34 },
         },
     },
     .{
@@ -544,7 +544,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{}, .tree_density = 0, .grass_density = 0.4 }, // No trees
         .terrain = .{ .height_amplitude = 0.5, .smoothing = 0.3 },
-        .colors = .{ .grass = .{ 0.35, 0.60, 0.28 } },
+        .colors = .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
     },
 };
 

@@ -167,8 +167,8 @@ void main() {
     float horizonBand = pow(horizon, 2.4);
     float twilight = 1.0 - smoothstep(0.03, 0.24, abs(pc.sun_dir.y));
 
-    vec3 zenithSky = pc.sky_color.xyz * mix(1.25, 1.55, zenith);
-    vec3 horizonSky = pc.horizon_color.xyz * mix(1.45, 1.70, horizonBand);
+    vec3 zenithSky = pc.sky_color.xyz * mix(1.12, 1.34, zenith);
+    vec3 horizonSky = pc.horizon_color.xyz * mix(1.16, 1.36, horizonBand);
     vec3 sky = mix(horizonSky, zenithSky, smoothstep(0.0, 0.95, pow(zenith, 0.70)));
 
     float sunDot = dot(dir, normalize(pc.sun_dir.xyz));
