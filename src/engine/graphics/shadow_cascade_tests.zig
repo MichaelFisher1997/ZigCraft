@@ -6,8 +6,6 @@ const Vec3 = @import("../math/vec3.zig").Vec3;
 const computeCascadesWithCamera = @import("csm.zig").computeCascadesWithCamera;
 const ShadowCascades = @import("csm.zig").ShadowCascades;
 const CASCADE_COUNT = @import("csm.zig").CASCADE_COUNT;
-const ShadowConfig = rhi.ShadowConfig;
-const ShadowParams = rhi.ShadowParams;
 
 test "computeCascadesWithCamera with non-zero cam_pos produces valid cascades" {
     const cam_pos = Vec3.init(100.0, 50.0, -200.0);
@@ -228,41 +226,32 @@ test "computeCascadesWithCamera diagonal sun direction produces valid cascades" 
     try testing.expect(cascades.isValid());
 }
 
-test "ShadowConfig non-default values are preserved" {
-    const cfg = ShadowConfig{
-        .distance = 1000.0,
-        .resolution = 8192,
-        .pcf_samples = 24,
-        .cascade_blend = false,
-        .strength = 0.7,
-        .light_size = 7.5,
-        .caster_distance = 800.0,
-    };
+test "different resolution produces different texel sizes" {
+    const cascades_1024 = computeCascadesWithCamera(
+        1024,
+        std.math.degreesToRadians(60.0),
+        16.0 / 9.0,
+        0.1,
+        200.0,
+        Vec3.init(0.0, -1.0, 0.0),
+        Mat4.identity,
+        Vec3.zero,
+        true,
+    );
 
-    try testing.expectEqual(@as(f32, 1000.0), cfg.distance);
-    try testing.expectEqual(@as(u32, 8192), cfg.resolution);
-    try testing.expectEqual(@as(u8, 24), cfg.pcf_samples);
-    try testing.expect(!cfg.cascade_blend);
-    try testing.expectEqual(@as(f32, 0.7), cfg.strength);
-    try testing.expectEqual(@as(f32, 7.5), cfg.light_size);
-    try testing.expectEqual(@as(f32, 800.0), cfg.caster_distance);
-}
+    const cascades_2048 = computeCascadesWithCamera(
+        2048,
+        std.math.degreesToRadians(60.0),
+        16.0 / 9.0,
+        0.1,
+        200.0,
+        Vec3.init(0.0, -1.0, 0.0),
+        Mat4.identity,
+        Vec3.zero,
+        true,
+    );
 
-test "ShadowParams all fields set correctly" {
-    const params = ShadowParams{
-        .light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT,
-        .cascade_splits = .{ 5.0, 25.0, 125.0, 625.0 },
-        .shadow_texel_sizes = .{ 0.125, 0.25, 0.5, 1.0 },
-        .light_size = 5.0,
-    };
-
-    try testing.expectEqual(@as(f32, 5.0), params.cascade_splits[0]);
-    try testing.expectEqual(@as(f32, 25.0), params.cascade_splits[1]);
-    try testing.expectEqual(@as(f32, 125.0), params.cascade_splits[2]);
-    try testing.expectEqual(@as(f32, 625.0), params.cascade_splits[3]);
-    try testing.expectEqual(@as(f32, 0.125), params.shadow_texel_sizes[0]);
-    try testing.expectEqual(@as(f32, 0.25), params.shadow_texel_sizes[1]);
-    try testing.expectEqual(@as(f32, 0.5), params.shadow_texel_sizes[2]);
-    try testing.expectEqual(@as(f32, 1.0), params.shadow_texel_sizes[3]);
-    try testing.expectEqual(@as(f32, 5.0), params.light_size);
+    try testing.expect(cascades_1024.isValid());
+    try testing.expect(cascades_2048.isValid());
+    try testing.expect(cascades_1024.texel_sizes[0] > cascades_2048.texel_sizes[0]);
 }
