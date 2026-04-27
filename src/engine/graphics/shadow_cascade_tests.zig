@@ -3,7 +3,6 @@ const testing = std.testing;
 const rhi = @import("rhi.zig");
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;
-const computeCascades = @import("csm.zig").computeCascades;
 const computeCascadesWithCamera = @import("csm.zig").computeCascadesWithCamera;
 const ShadowCascades = @import("csm.zig").ShadowCascades;
 const CASCADE_COUNT = @import("csm.zig").CASCADE_COUNT;
