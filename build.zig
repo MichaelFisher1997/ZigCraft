@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const enable_debug_shadows = b.option(bool, "debug_shadows", "Enable debug shadow visualization resources") orelse false;
     options.addOption(bool, "debug_shadows", enable_debug_shadows);
 
-    const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration when cimgui is vendored") orelse false;
+    const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration") orelse true;
     options.addOption(bool, "imgui", enable_imgui);
 
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
