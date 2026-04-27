@@ -115,8 +115,8 @@ pub const App = struct {
         errdefer audio_manager.deinit();
 
         log.log.info("App.init: initializing UISystemManager", .{});
-        var ui_manager = try UISystemManager.init(render_system.getRHI().uiRenderer(), input.window_width, input.window_height, build_options.smoke_test);
-        errdefer ui_manager.deinit();
+        var ui_manager = try UISystemManager.init(allocator, render_system.getRHI().uiRenderer(), render_system.getRHI().resourceManager(), render_system.getRHI(), &wm, input.window_width, input.window_height, build_options.smoke_test);
+        errdefer ui_manager.deinit(render_system.getRHI().resourceManager());
 
         const input_mapper = InputSettings.loadAndReturnMapper(allocator);
 
@@ -196,7 +196,7 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         self.render_system.waitIdle();
 
-        self.ui_manager.deinit();
+        self.ui_manager.deinit(self.render_system.getRHI().resourceManager());
 
         self.screen_manager.deinit();
         if (self.benchmark_runner) |runner| {

@@ -93,6 +93,7 @@ pub const ShadowConfig = rhi_types.ShadowConfig;
 pub const ShadowParams = rhi_types.ShadowParams;
 pub const Color = rhi_types.Color;
 pub const Rect = rhi_types.Rect;
+pub const UVRect = rhi_types.UVRect;
 pub const GpuTimingResults = rhi_types.GpuTimingResults;
 pub const ICullingSystem = culling.ICullingSystem;
 
@@ -483,6 +484,7 @@ pub const IUIContext = struct {
         endPass: *const fn (ptr: *anyopaque) void,
         drawRect: *const fn (ptr: *anyopaque, rect: Rect, color: Color) void,
         drawTexture: *const fn (ptr: *anyopaque, texture: TextureHandle, rect: Rect) void,
+        drawTextureRegion: *const fn (ptr: *anyopaque, texture: TextureHandle, rect: Rect, uv: UVRect, color: Color) void,
         drawDepthTexture: *const fn (ptr: *anyopaque, texture: TextureHandle, rect: Rect) void,
         bindPipeline: *const fn (ptr: *anyopaque, textured: bool) void,
     };
@@ -498,6 +500,9 @@ pub const IUIContext = struct {
     }
     pub fn drawTexture(self: IUIContext, texture: TextureHandle, rect: Rect) void {
         self.vtable.drawTexture(self.ptr, texture, rect);
+    }
+    pub fn drawTextureRegion(self: IUIContext, texture: TextureHandle, rect: Rect, uv: UVRect, color: Color) void {
+        self.vtable.drawTextureRegion(self.ptr, texture, rect, uv, color);
     }
     pub fn drawDepthTexture(self: IUIContext, texture: TextureHandle, rect: Rect) void {
         self.vtable.drawDepthTexture(self.ptr, texture, rect);
@@ -533,6 +538,9 @@ pub const UIRenderer = struct {
     }
     pub fn drawTexture(self: UIRenderer, texture: TextureHandle, rect: Rect) void {
         self.ctx.drawTexture(texture, rect);
+    }
+    pub fn drawTextureRegion(self: UIRenderer, texture: TextureHandle, rect: Rect, uv: UVRect, color: Color) void {
+        self.ctx.drawTextureRegion(texture, rect, uv, color);
     }
     pub fn drawDepthTexture(self: UIRenderer, texture: TextureHandle, rect: Rect) void {
         self.ctx.drawDepthTexture(texture, rect);
@@ -765,6 +773,13 @@ pub const INativeHandlesContext = struct {
         getCommandBuffer: *const fn (ptr: *anyopaque) u64,
         getSwapchainExtent: *const fn (ptr: *anyopaque) [2]u32,
         getDevice: *const fn (ptr: *anyopaque) u64,
+        getInstance: *const fn (ptr: *anyopaque) u64,
+        getPhysicalDevice: *const fn (ptr: *anyopaque) u64,
+        getQueue: *const fn (ptr: *anyopaque) u64,
+        getQueueFamily: *const fn (ptr: *anyopaque) u32,
+        getDescriptorPool: *const fn (ptr: *anyopaque) u64,
+        getUiRenderPass: *const fn (ptr: *anyopaque) u64,
+        getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
     };
 
     pub fn getSkyPipeline(self: INativeHandlesContext) u64 {
@@ -790,6 +805,27 @@ pub const INativeHandlesContext = struct {
     }
     pub fn getDevice(self: INativeHandlesContext) u64 {
         return self.vtable.getDevice(self.ptr);
+    }
+    pub fn getInstance(self: INativeHandlesContext) u64 {
+        return self.vtable.getInstance(self.ptr);
+    }
+    pub fn getPhysicalDevice(self: INativeHandlesContext) u64 {
+        return self.vtable.getPhysicalDevice(self.ptr);
+    }
+    pub fn getQueue(self: INativeHandlesContext) u64 {
+        return self.vtable.getQueue(self.ptr);
+    }
+    pub fn getQueueFamily(self: INativeHandlesContext) u32 {
+        return self.vtable.getQueueFamily(self.ptr);
+    }
+    pub fn getDescriptorPool(self: INativeHandlesContext) u64 {
+        return self.vtable.getDescriptorPool(self.ptr);
+    }
+    pub fn getUiRenderPass(self: INativeHandlesContext) u64 {
+        return self.vtable.getUiRenderPass(self.ptr);
+    }
+    pub fn getSwapchainImageCount(self: INativeHandlesContext) u32 {
+        return self.vtable.getSwapchainImageCount(self.ptr);
     }
 };
 

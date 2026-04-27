@@ -18,13 +18,14 @@ fn getenv(name: [:0]const u8) ?[]const u8 {
 
 const PANEL_WIDTH_MAX = 700.0;
 const PANEL_HEIGHT_BASE = 500.0;
-const BG_COLOR = Color.rgba(0.12, 0.14, 0.18, 0.92);
-const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
-const TITLE_COLOR = Color.rgba(0.92, 0.94, 0.97, 1.0);
-const LABEL_COLOR = Color.rgba(0.72, 0.78, 0.86, 1.0);
-const SELECTED_BG = Color.rgba(0.18, 0.24, 0.35, 0.95);
-const ROW_HOVER_BG = Color.rgba(0.16, 0.20, 0.28, 0.90);
-const ROW_BG = Color.rgba(0.10, 0.12, 0.16, 0.85);
+const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.95);
+const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.78);
+const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
+const LABEL_COLOR = Color.rgba(0.72, 0.86, 0.96, 1.0);
+const MUTED_COLOR = Color.rgba(0.48, 0.60, 0.70, 0.92);
+const SELECTED_BG = Color.rgba(0.18, 0.34, 0.46, 0.92);
+const ROW_HOVER_BG = Color.rgba(0.11, 0.21, 0.29, 0.92);
+const ROW_BG = Color.rgba(0.035, 0.065, 0.090, 0.88);
 const DELETE_COLOR = Color.rgba(0.85, 0.25, 0.25, 1.0);
 const CONFIRM_BG = Color.rgba(0.18, 0.10, 0.10, 0.97);
 const CONFIRM_BORDER = Color.rgba(0.7, 0.2, 0.2, 1.0);
@@ -99,15 +100,15 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
 }
 
 pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
-    const home = getenv("HOME") orelse return &[_]WorldEntry{};
+    const home = getenv("HOME") orelse return allocator.alloc(WorldEntry, 0);
     return scanWorldsInHome(allocator, home);
 }
 
 pub fn scanWorldsInHome(allocator: std.mem.Allocator, home: []const u8) ![]const WorldEntry {
-    var home_dir = fs.openDirAbsolute(home, .{}) catch return &[_]WorldEntry{};
+    var home_dir = fs.openDirAbsolute(home, .{}) catch return allocator.alloc(WorldEntry, 0);
     defer home_dir.close();
     home_dir.makePath(SAVE_DIR) catch {};
-    var saves_dir = home_dir.openDir(SAVE_DIR, .{ .iterate = true }) catch return &[_]WorldEntry{};
+    var saves_dir = home_dir.openDir(SAVE_DIR, .{ .iterate = true }) catch return allocator.alloc(WorldEntry, 0);
     defer saves_dir.close();
     var entries = std.ArrayList(WorldEntry).empty;
     errdefer {
@@ -237,35 +238,41 @@ pub const WorldListScreen = struct {
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
         const ui_scale: f32 = @max(1.0, screen_h / 720.0);
-        const title_scale: f32 = 3.5 * ui_scale;
-        const label_scale: f32 = 2.0 * ui_scale;
-        const btn_scale: f32 = 2.0 * ui_scale;
-        const row_scale: f32 = 1.8 * ui_scale;
+        const title_scale: f32 = 3.0 * ui_scale;
+        const label_scale: f32 = 1.55 * ui_scale;
+        const btn_scale: f32 = 1.55 * ui_scale;
+        const row_scale: f32 = 1.45 * ui_scale;
         const pw: f32 = @min(screen_w * 0.75, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = PANEL_HEIGHT_BASE * ui_scale;
+        const ph: f32 = @min(screen_h - 96.0 * ui_scale, PANEL_HEIGHT_BASE * ui_scale);
         const px: f32 = (screen_w - pw) * 0.5;
-        const py: f32 = screen_h * 0.12;
+        const py: f32 = (screen_h - ph) * 0.5;
+        drawListBackdrop(ui, screen_w, screen_h, ui_scale);
         ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
+        ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
+        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = 72.0 * ui_scale }, Color.rgba(0.12, 0.22, 0.30, 0.64));
+        ui.drawRect(.{ .x = px + pw - 2.0 * ui_scale, .y = py, .width = 2.0 * ui_scale, .height = ph }, Color.rgba(0.48, 0.76, 0.93, 0.62));
         ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawTextCentered(ui, "LOAD WORLD", screen_w * 0.5, py + 18.0 * ui_scale, title_scale, TITLE_COLOR);
+        Font.drawText(ui, "LOAD WORLD", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
+        Font.drawText(ui, "Select a saved world snapshot.", px + 38.0 * ui_scale, py + 56.0 * ui_scale, 1.05 * ui_scale, MUTED_COLOR);
         const scroll_dy = ctx.input.getScrollDelta().y;
         self.scroll_offset -= scroll_dy * 30.0 * ui_scale;
-        const list_top: f32 = py + 65.0 * ui_scale;
+        const list_top: f32 = py + 92.0 * ui_scale;
         const list_bottom: f32 = py + ph - 90.0 * ui_scale;
         const row_h: f32 = 55.0 * ui_scale;
         const max_scroll = @max(0.0, @as(f32, @floatFromInt(self.worlds.len)) * row_h - (list_bottom - list_top));
         self.scroll_offset = @max(0.0, @min(self.scroll_offset, max_scroll));
-        ui.drawRect(.{ .x = px + 2.0, .y = list_top, .width = pw - 4.0, .height = list_bottom - list_top }, Color.rgba(0.05, 0.06, 0.08, 0.6));
+        ui.drawRect(.{ .x = px + 18.0 * ui_scale, .y = list_top, .width = pw - 36.0 * ui_scale, .height = list_bottom - list_top }, Color.rgba(0.010, 0.020, 0.030, 0.54));
+        ui.drawRectOutline(.{ .x = px + 18.0 * ui_scale, .y = list_top, .width = pw - 36.0 * ui_scale, .height = list_bottom - list_top }, Color.rgba(0.20, 0.36, 0.48, 0.72), 1.0 * ui_scale);
         if (self.worlds.len == 0) {
             Font.drawTextCentered(ui, "NO SAVED WORLDS FOUND", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.4, label_scale, LABEL_COLOR);
-            Font.drawTextCentered(ui, "CREATE A NEW WORLD FIRST", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.4 + 25.0 * ui_scale, label_scale * 0.7, Color.rgba(0.5, 0.55, 0.6, 1.0));
+            Font.drawTextCentered(ui, "CREATE A NEW WORLD FIRST", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.4 + 25.0 * ui_scale, label_scale * 0.7, MUTED_COLOR);
         }
         var i: usize = 0;
         while (i < self.worlds.len) : (i += 1) {
             const ry: f32 = list_top + @as(f32, @floatFromInt(i)) * row_h - self.scroll_offset;
             if (ry + row_h < list_top or ry > list_bottom) continue;
             const world = self.worlds[i];
-            const row_rect = Rect{ .x = px + 6.0 * ui_scale, .y = ry, .width = pw - 12.0 * ui_scale, .height = row_h - 4.0 * ui_scale };
+            const row_rect = Rect{ .x = px + 26.0 * ui_scale, .y = ry, .width = pw - 52.0 * ui_scale, .height = row_h - 5.0 * ui_scale };
             const row_hovered = row_rect.contains(mx, my);
             const is_selected = self.selected == i;
             if (is_selected) {
@@ -275,7 +282,8 @@ pub const WorldListScreen = struct {
             } else {
                 ui.drawRect(row_rect, ROW_BG);
             }
-            ui.drawRectOutline(row_rect, if (is_selected) Color.rgba(0.5, 0.7, 0.95, 1.0) else Color.rgba(0.2, 0.25, 0.3, 1.0), 1.0);
+            ui.drawRect(.{ .x = row_rect.x, .y = row_rect.y, .width = 4.0 * ui_scale, .height = row_rect.height }, if (is_selected) Color.rgba(0.95, 0.62, 0.24, 0.95) else Color.rgba(0.30, 0.50, 0.64, 0.64));
+            ui.drawRectOutline(row_rect, if (is_selected) Color.rgba(0.70, 0.92, 1.0, 1.0) else Color.rgba(0.20, 0.36, 0.48, 0.74), 1.0);
             if (mc and row_hovered and !self.confirm_delete) {
                 self.selected = i;
             }
@@ -287,7 +295,7 @@ pub const WorldListScreen = struct {
             Font.drawText(ui, seed_text, text_x, name_y + 18.0 * ui_scale, row_scale * 0.65, LABEL_COLOR);
             const last_text = formatTimestamp(world.last_played);
             const seed_w = Font.measureTextWidth(seed_text, row_scale * 0.65);
-            Font.drawText(ui, last_text, text_x + seed_w + 15.0 * ui_scale, name_y + 18.0 * ui_scale, row_scale * 0.65, Color.rgba(0.5, 0.55, 0.6, 1.0));
+            Font.drawText(ui, last_text, text_x + seed_w + 15.0 * ui_scale, name_y + 18.0 * ui_scale, row_scale * 0.65, MUTED_COLOR);
         }
         const btn_h: f32 = 46.0 * ui_scale;
         const byy: f32 = py + ph - 70.0 * ui_scale;
@@ -365,16 +373,25 @@ pub const WorldListScreen = struct {
         const allocator = self.context.allocator;
         const dir_path = self.worlds[idx].dir_path;
         deleteWorld(allocator, dir_path);
-        for (self.worlds) |e| {
+        for (self.worlds, 0..) |e, i| {
             allocator.free(e.name);
+            if (i != idx and e.dir_path.len > 0) allocator.free(e.dir_path);
         }
         allocator.free(self.worlds);
-        self.worlds = scanWorlds(allocator) catch &[_]WorldEntry{};
+        self.worlds = scanWorlds(allocator) catch try allocator.alloc(WorldEntry, 0);
         self.selected = null;
         self.confirm_delete = false;
         self.scroll_offset = 0.0;
     }
 };
+
+fn drawListBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
+    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.90));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = screen_h * 0.36 }, Color.rgba(0.075, 0.048, 0.028, 0.64));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.92, 0.62, 0.24, 0.48));
+    ui.drawRect(.{ .x = 42.0 * ui_scale, .y = screen_h * 0.64 - 86.0 * ui_scale, .width = 94.0 * ui_scale, .height = 86.0 * ui_scale }, Color.rgba(0.07, 0.14, 0.15, 0.32));
+    ui.drawRect(.{ .x = screen_w - 156.0 * ui_scale, .y = screen_h * 0.64 - 124.0 * ui_scale, .width = 104.0 * ui_scale, .height = 124.0 * ui_scale }, Color.rgba(0.50, 0.29, 0.12, 0.34));
+}
 
 fn formatTimestamp(ts: i64) []const u8 {
     if (ts <= 0) return "NEVER";

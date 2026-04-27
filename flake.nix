@@ -63,6 +63,208 @@
             platforms = builtins.attrNames zig_sources;
           };
         };
+
+        cimgui = pkgs.stdenv.mkDerivation rec {
+          pname = "cimgui";
+          version = "1.92.7-docking";
+
+          src = pkgs.fetchFromGitHub {
+            owner = "cimgui";
+            repo = "cimgui";
+            rev = "d3f0c2f4a7d4d116ef908295b971a36bdfdafe27";
+            hash = "sha256-CsnoCFSzAibhUz2ffbGQcxczzhpQKpz9WJoRYbNH+kc=";
+            fetchSubmodules = true;
+          };
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.sdl3 pkgs.vulkan-headers ];
+
+          dontConfigure = true;
+
+          cimguiBackendHeader = pkgs.writeText "cimgui_backend.h" ''
+            #pragma once
+            #include <stdbool.h>
+            #include <SDL3/SDL.h>
+            #include <vulkan/vulkan.h>
+
+            #ifdef __cplusplus
+            extern "C" {
+            #endif
+
+            typedef struct ZigCraftImGuiVulkanInitInfo {
+              VkInstance instance;
+              VkPhysicalDevice physical_device;
+              VkDevice device;
+              VkQueue queue;
+              uint32_t queue_family;
+              VkDescriptorPool descriptor_pool;
+              VkRenderPass render_pass;
+              uint32_t min_image_count;
+              uint32_t image_count;
+              VkSampleCountFlagBits msaa_samples;
+            } ZigCraftImGuiVulkanInitInfo;
+
+            bool ZigCraft_ImGui_ImplSDL3_InitForVulkan(SDL_Window* window);
+            bool ZigCraft_ImGui_ImplSDL3_ProcessEvent(const SDL_Event* event);
+            void ZigCraft_ImGui_ImplSDL3_NewFrame(void);
+            void ZigCraft_ImGui_ImplSDL3_Shutdown(void);
+
+            bool ZigCraft_ImGui_ImplVulkan_Init(const ZigCraftImGuiVulkanInitInfo* info);
+            void ZigCraft_ImGui_ImplVulkan_NewFrame(void);
+            void ZigCraft_ImGui_ImplVulkan_RenderDrawData(void* draw_data, VkCommandBuffer command_buffer);
+            void ZigCraft_ImGui_ImplVulkan_Shutdown(void);
+
+            void ZigCraft_ImGui_CreateContext(void);
+            void ZigCraft_ImGui_DestroyContext(void);
+            void ZigCraft_ImGui_StyleColorsDark(void);
+            void ZigCraft_ImGui_NewFrame(void);
+            bool ZigCraft_ImGui_Begin(const char* name);
+            bool ZigCraft_ImGui_Checkbox(const char* label, bool* value);
+            void ZigCraft_ImGui_SameLine(void);
+            void ZigCraft_ImGui_TextUnformatted(const char* text);
+            void ZigCraft_ImGui_End(void);
+            void ZigCraft_ImGui_Render(void);
+            void* ZigCraft_ImGui_GetDrawData(void);
+
+            #ifdef __cplusplus
+            }
+            #endif
+          '';
+
+          cimguiBackendSource = pkgs.writeText "cimgui_backend.cpp" ''
+            #include "cimgui_backend.h"
+            #include "imgui.h"
+            #include "backends/imgui_impl_sdl3.h"
+            #include "backends/imgui_impl_vulkan.h"
+
+            bool ZigCraft_ImGui_ImplSDL3_InitForVulkan(SDL_Window* window) {
+              return ImGui_ImplSDL3_InitForVulkan(window);
+            }
+
+            bool ZigCraft_ImGui_ImplSDL3_ProcessEvent(const SDL_Event* event) {
+              return ImGui_ImplSDL3_ProcessEvent(event);
+            }
+
+            void ZigCraft_ImGui_ImplSDL3_NewFrame(void) {
+              ImGui_ImplSDL3_NewFrame();
+            }
+
+            void ZigCraft_ImGui_ImplSDL3_Shutdown(void) {
+              ImGui_ImplSDL3_Shutdown();
+            }
+
+            bool ZigCraft_ImGui_ImplVulkan_Init(const ZigCraftImGuiVulkanInitInfo* info) {
+              ImGui_ImplVulkan_InitInfo init_info = {};
+              init_info.Instance = info->instance;
+              init_info.PhysicalDevice = info->physical_device;
+              init_info.Device = info->device;
+              init_info.QueueFamily = info->queue_family;
+              init_info.Queue = info->queue;
+              init_info.DescriptorPool = info->descriptor_pool;
+              init_info.PipelineInfoMain.RenderPass = info->render_pass;
+              init_info.MinImageCount = info->min_image_count;
+              init_info.ImageCount = info->image_count;
+              init_info.PipelineInfoMain.MSAASamples = info->msaa_samples;
+              return ImGui_ImplVulkan_Init(&init_info);
+            }
+
+            void ZigCraft_ImGui_ImplVulkan_NewFrame(void) {
+              ImGui_ImplVulkan_NewFrame();
+            }
+
+            void ZigCraft_ImGui_ImplVulkan_RenderDrawData(void* draw_data, VkCommandBuffer command_buffer) {
+              ImGui_ImplVulkan_RenderDrawData(static_cast<ImDrawData*>(draw_data), command_buffer);
+            }
+
+            void ZigCraft_ImGui_ImplVulkan_Shutdown(void) {
+              ImGui_ImplVulkan_Shutdown();
+            }
+
+            void ZigCraft_ImGui_CreateContext(void) {
+              ImGui::CreateContext();
+            }
+
+            void ZigCraft_ImGui_DestroyContext(void) {
+              ImGui::DestroyContext();
+            }
+
+            void ZigCraft_ImGui_StyleColorsDark(void) {
+              ImGui::StyleColorsDark();
+            }
+
+            void ZigCraft_ImGui_NewFrame(void) {
+              ImGui::NewFrame();
+            }
+
+            bool ZigCraft_ImGui_Begin(const char* name) {
+              return ImGui::Begin(name);
+            }
+
+            bool ZigCraft_ImGui_Checkbox(const char* label, bool* value) {
+              return ImGui::Checkbox(label, value);
+            }
+
+            void ZigCraft_ImGui_SameLine(void) {
+              ImGui::SameLine();
+            }
+
+            void ZigCraft_ImGui_TextUnformatted(const char* text) {
+              ImGui::TextUnformatted(text);
+            }
+
+            void ZigCraft_ImGui_End(void) {
+              ImGui::End();
+            }
+
+            void ZigCraft_ImGui_Render(void) {
+              ImGui::Render();
+            }
+
+            void* ZigCraft_ImGui_GetDrawData(void) {
+              return ImGui::GetDrawData();
+            }
+          '';
+
+          buildPhase = ''
+            runHook preBuild
+            cxxflags="-std=c++17 -O2 -fPIC -I. -Iimgui -Iimgui/backends $(pkg-config --cflags sdl3) -I${pkgs.vulkan-headers}/include"
+            $CXX $cxxflags -c cimgui.cpp -o cimgui.o
+            $CXX $cxxflags -c imgui/imgui.cpp -o imgui.o
+            $CXX $cxxflags -c imgui/imgui_draw.cpp -o imgui_draw.o
+            $CXX $cxxflags -c imgui/imgui_demo.cpp -o imgui_demo.o
+            $CXX $cxxflags -c imgui/imgui_tables.cpp -o imgui_tables.o
+            $CXX $cxxflags -c imgui/imgui_widgets.cpp -o imgui_widgets.o
+            $CXX $cxxflags -c imgui/backends/imgui_impl_sdl3.cpp -o imgui_impl_sdl3.o
+            $CXX $cxxflags -c imgui/backends/imgui_impl_vulkan.cpp -o imgui_impl_vulkan.o
+            cp ${cimguiBackendHeader} cimgui_backend.h
+            $CXX $cxxflags -I. -c ${cimguiBackendSource} -o cimgui_backend.o
+            ar rcs libcimgui.a cimgui.o imgui.o imgui_draw.o imgui_demo.o imgui_tables.o imgui_widgets.o imgui_impl_sdl3.o imgui_impl_vulkan.o cimgui_backend.o
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/lib/pkgconfig $out/include/cimgui $out/include/cimgui/imgui
+            cp cimgui.h cimconfig.h $out/include/cimgui/
+            cp imgui/imgui.h imgui/imconfig.h imgui/imgui_internal.h $out/include/cimgui/imgui/
+            cp imgui/imstb_rectpack.h imgui/imstb_textedit.h imgui/imstb_truetype.h $out/include/cimgui/imgui/
+            cp ${cimguiBackendHeader} $out/include/cimgui/cimgui_backend.h
+            cp imgui/backends/imgui_impl_sdl3.h imgui/backends/imgui_impl_vulkan.h $out/include/cimgui/imgui/
+            cp libcimgui.a $out/lib/libcimgui.a
+            cat > $out/lib/pkgconfig/cimgui.pc <<EOF
+            prefix=$out
+            libdir=$out/lib
+            includedir=$out/include/cimgui
+
+            Name: cimgui
+            Description: C API for Dear ImGui with ZigCraft SDL3/Vulkan backend wrapper
+            Version: ${version}
+            Libs: -L$out/lib -lcimgui
+            Cflags: -I$out/include/cimgui -I$out/include/cimgui/imgui
+            EOF
+            runHook postInstall
+          '';
+        };
       in
       {
         packages.default = pkgs.stdenv.mkDerivation {
@@ -82,6 +284,7 @@
             pkgs.vulkan-loader
             pkgs.vulkan-headers
             pkgs.vulkan-validation-layers
+            cimgui
           ];
 
           # Disable hardening to fix "__builtin_va_arg_pack" error during C import
@@ -96,11 +299,13 @@
           '';
 
           postFixup = ''
-            patchelf --add-rpath ${pkgs.lib.makeLibraryPath [ pkgs.sdl3 pkgs.vulkan-loader pkgs.stdenv.cc.cc.lib ]} $out/bin/zigcraft
+            patchelf --add-rpath ${pkgs.lib.makeLibraryPath [ pkgs.sdl3 pkgs.vulkan-loader pkgs.stdenv.cc.cc.lib cimgui ]} $out/bin/zigcraft
             wrapProgram $out/bin/zigcraft \
-              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.vulkan-loader ]}
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.vulkan-loader cimgui ]}
           '';
         };
+
+        packages.cimgui = cimgui;
 
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [
@@ -117,6 +322,7 @@
             pkgs.vulkan-headers
             pkgs.vulkan-validation-layers
             pkgs.mesa.drivers
+            cimgui
           ];
 
           shellHook = ''

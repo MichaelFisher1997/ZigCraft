@@ -26,10 +26,10 @@ fn getenv(name: [:0]const u8) ?[]const u8 {
 
 const PANEL_WIDTH_MAX = 650.0;
 const PANEL_HEIGHT_BASE = 400.0;
-const BG_COLOR = Color.rgba(0.12, 0.14, 0.18, 0.92);
-const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
-const TITLE_COLOR = Color.rgba(0.92, 0.94, 0.97, 1.0);
-const LABEL_COLOR = Color.rgba(0.72, 0.78, 0.86, 1.0);
+const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.94);
+const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.80);
+const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
+const LABEL_COLOR = Color.rgba(0.70, 0.84, 0.94, 1.0);
 
 pub const SingleplayerScreen = struct {
     context: EngineContext,
@@ -91,19 +91,24 @@ pub const SingleplayerScreen = struct {
 
         // Scale UI based on screen height
         const ui_scale: f32 = @max(1.0, screen_h / 720.0);
-        const title_scale: f32 = 3.5 * ui_scale;
-        const label_scale: f32 = 2.5 * ui_scale;
-        const btn_scale: f32 = 2.2 * ui_scale;
-        const input_scale: f32 = 2.5 * ui_scale;
+        const title_scale: f32 = 3.1 * ui_scale;
+        const label_scale: f32 = 1.75 * ui_scale;
+        const btn_scale: f32 = 1.75 * ui_scale;
+        const input_scale: f32 = 1.55 * ui_scale;
 
         const pw: f32 = @min(screen_w * 0.7, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = PANEL_HEIGHT_BASE * ui_scale;
+        const ph: f32 = (PANEL_HEIGHT_BASE + 44.0) * ui_scale;
         const px: f32 = (screen_w - pw) * 0.5;
-        const py: f32 = screen_h * 0.24;
+        const py: f32 = screen_h * 0.18;
+
+        drawCreateWorldBackdrop(ui, screen_w, screen_h, ui_scale);
         ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
+        ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
+        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = 72.0 * ui_scale }, Color.rgba(0.12, 0.22, 0.30, 0.62));
         ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawTextCentered(ui, "CREATE WORLD", screen_w * 0.5, py + 22.0 * ui_scale, title_scale, TITLE_COLOR);
-        const ly: f32 = py + 90.0 * ui_scale;
+        Font.drawText(ui, "CREATE WORLD", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
+        Font.drawText(ui, "Choose a seed and terrain profile.", px + 38.0 * ui_scale, py + 57.0 * ui_scale, 1.05 * ui_scale, Color.rgba(0.58, 0.73, 0.84, 0.92));
+        const ly: f32 = py + 104.0 * ui_scale;
         Font.drawText(ui, "SEED", px + 30.0 * ui_scale, ly, label_scale, LABEL_COLOR);
         const ih: f32 = 52.0 * ui_scale;
         const iy: f32 = ly + 28.0 * ui_scale;
@@ -124,7 +129,7 @@ pub const SingleplayerScreen = struct {
             self.seed_focused = true;
         }
 
-        const gy: f32 = iy + ih + 20.0 * ui_scale;
+        const gy: f32 = iy + ih + 24.0 * ui_scale;
         Font.drawText(ui, "WORLD TYPE", px + 30.0 * ui_scale, gy, label_scale, LABEL_COLOR);
         const g_rect = Rect{ .x = px + 30.0 * ui_scale, .y = gy + 28.0 * ui_scale, .width = pw - 60.0 * ui_scale, .height = ih };
         const g_info = registry.getGeneratorInfo(self.selected_generator_index);
@@ -133,7 +138,7 @@ pub const SingleplayerScreen = struct {
         if (Widgets.drawButton(ui, g_rect, g_label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
             self.selected_generator_index = (self.selected_generator_index + 1) % registry.getGeneratorCount();
         }
-        Font.drawText(ui, g_info.description, px + 30.0 * ui_scale, g_rect.y + g_rect.height + 10.0 * ui_scale, label_scale * 0.7, LABEL_COLOR);
+        Font.drawText(ui, g_info.description, px + 30.0 * ui_scale, g_rect.y + g_rect.height + 12.0 * ui_scale, label_scale * 0.62, Color.rgba(0.55, 0.68, 0.78, 0.95));
 
         const byy: f32 = py + ph - 135.0 * ui_scale;
         const hw: f32 = (pw - 30.0 * ui_scale - 15.0 * ui_scale - 30.0 * ui_scale) / 2.0;
@@ -164,6 +169,14 @@ pub const SingleplayerScreen = struct {
         return Screen.makeScreen(@This(), self);
     }
 };
+
+fn drawCreateWorldBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
+    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.92));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.62, .width = screen_w, .height = screen_h * 0.38 }, Color.rgba(0.075, 0.048, 0.028, 0.72));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.62, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.92, 0.62, 0.24, 0.54));
+    ui.drawRect(.{ .x = 62.0 * ui_scale, .y = screen_h * 0.62 - 72.0 * ui_scale, .width = 92.0 * ui_scale, .height = 72.0 * ui_scale }, Color.rgba(0.07, 0.14, 0.15, 0.34));
+    ui.drawRect(.{ .x = screen_w - 180.0 * ui_scale, .y = screen_h * 0.62 - 116.0 * ui_scale, .width = 118.0 * ui_scale, .height = 116.0 * ui_scale }, Color.rgba(0.50, 0.29, 0.12, 0.38));
+}
 
 fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize) !void {
     const home = getenv("HOME") orelse {

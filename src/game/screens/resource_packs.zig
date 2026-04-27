@@ -13,8 +13,10 @@ const TextureAtlas = @import("../../engine/graphics/texture_atlas.zig").TextureA
 
 const PANEL_WIDTH_MAX = 750.0;
 const PANEL_HEIGHT_MAX = 800.0;
-const BG_COLOR = Color.rgba(0.12, 0.14, 0.18, 0.95);
-const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
+const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.95);
+const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.78);
+const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
+const MUTED_COLOR = Color.rgba(0.48, 0.60, 0.70, 0.92);
 
 pub const ResourcePacksScreen = struct {
     context: ResourcePacksContext,
@@ -74,19 +76,24 @@ pub const ResourcePacksScreen = struct {
 
         const auto_scale: f32 = @max(1.0, screen_h / 720.0);
         const ui_scale: f32 = auto_scale * settings.ui_scale;
-        const title_scale: f32 = 3.5 * ui_scale;
-        const btn_scale: f32 = 2.0 * ui_scale;
+        const title_scale: f32 = 3.0 * ui_scale;
+        const btn_scale: f32 = 1.55 * ui_scale;
 
         const pw: f32 = @min(screen_w * 0.75, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = @min(screen_h - 40.0, PANEL_HEIGHT_MAX * ui_scale);
+        const ph: f32 = @min(screen_h - 80.0 * ui_scale, PANEL_HEIGHT_MAX * ui_scale);
         const px: f32 = (screen_w - pw) * 0.5;
         const py: f32 = (screen_h - ph) * 0.5;
 
+        drawResourcePackBackdrop(ui, screen_w, screen_h, ui_scale);
         ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
+        ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
+        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = 72.0 * ui_scale }, Color.rgba(0.12, 0.22, 0.30, 0.64));
+        ui.drawRect(.{ .x = px + pw - 2.0 * ui_scale, .y = py, .width = 2.0 * ui_scale, .height = ph }, Color.rgba(0.48, 0.76, 0.93, 0.62));
         ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawTextCentered(ui, "RESOURCE PACKS", screen_w * 0.5, py + 25.0 * ui_scale, title_scale, Color.white);
+        Font.drawText(ui, "RESOURCE PACKS", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
+        Font.drawText(ui, "Switch texture sources without leaving the session.", px + 38.0 * ui_scale, py + 56.0 * ui_scale, 1.05 * ui_scale, MUTED_COLOR);
 
-        var sy: f32 = py + 100.0 * ui_scale;
+        var sy: f32 = py + 102.0 * ui_scale;
         const btn_width: f32 = pw - 100.0 * ui_scale;
         const btn_height: f32 = 50.0 * ui_scale;
         const btn_x: f32 = px + 50.0 * ui_scale;
@@ -127,7 +134,7 @@ pub const ResourcePacksScreen = struct {
         }
 
         if (self.reload_status) |status| {
-            Font.drawTextCentered(ui, status, screen_w * 0.5, py + ph - 105.0 * ui_scale, 1.5 * ui_scale, Color.rgba(0.75, 0.82, 0.92, 1.0));
+            Font.drawTextCentered(ui, status, screen_w * 0.5, py + ph - 105.0 * ui_scale, 1.15 * ui_scale, Color.rgba(0.75, 0.86, 0.94, 1.0));
         }
 
         // Back button
@@ -155,3 +162,11 @@ pub const ResourcePacksScreen = struct {
         return Screen.makeScreen(@This(), self);
     }
 };
+
+fn drawResourcePackBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
+    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.88));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = screen_h * 0.36 }, Color.rgba(0.075, 0.048, 0.028, 0.58));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.92, 0.62, 0.24, 0.44));
+    ui.drawRect(.{ .x = 64.0 * ui_scale, .y = screen_h * 0.64 - 74.0 * ui_scale, .width = 88.0 * ui_scale, .height = 74.0 * ui_scale }, Color.rgba(0.07, 0.14, 0.15, 0.28));
+    ui.drawRect(.{ .x = screen_w - 168.0 * ui_scale, .y = screen_h * 0.64 - 110.0 * ui_scale, .width = 112.0 * ui_scale, .height = 110.0 * ui_scale }, Color.rgba(0.50, 0.29, 0.12, 0.30));
+}

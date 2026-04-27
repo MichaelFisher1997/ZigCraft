@@ -114,6 +114,34 @@ const MockContext = struct {
         _ = ptr;
         return 0;
     }
+    fn getNativeInstance(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativePhysicalDevice(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeQueue(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeQueueFamily(ptr: *anyopaque) u32 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeDescriptorPool(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeUiRenderPass(ptr: *anyopaque) u64 {
+        _ = ptr;
+        return 0;
+    }
+    fn getNativeSwapchainImageCount(ptr: *anyopaque) u32 {
+        _ = ptr;
+        return 2;
+    }
 
     fn computeSsao(ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         _ = ptr;
@@ -249,6 +277,13 @@ const MockContext = struct {
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,
+        .getInstance = getNativeInstance,
+        .getPhysicalDevice = getNativePhysicalDevice,
+        .getQueue = getNativeQueue,
+        .getQueueFamily = getNativeQueueFamily,
+        .getDescriptorPool = getNativeDescriptorPool,
+        .getUiRenderPass = getNativeUiRenderPass,
+        .getSwapchainImageCount = getNativeSwapchainImageCount,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
@@ -376,6 +411,7 @@ const MockContext = struct {
         .endPass = undefined,
         .drawRect = undefined,
         .drawTexture = undefined,
+        .drawTextureRegion = undefined,
         .drawDepthTexture = drawDepthTexture,
         .bindPipeline = undefined,
     };

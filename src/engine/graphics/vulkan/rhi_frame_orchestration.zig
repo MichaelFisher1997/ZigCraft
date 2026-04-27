@@ -203,6 +203,9 @@ pub fn prepareFrameState(ctx: anytype) void {
 
     ctx.ui.ui_vertex_offset = 0;
     ctx.ui.ui_flushed_vertex_count = 0;
+    ctx.ui.ui_active_textured = false;
+    ctx.ui.ui_active_texture = 0;
+    ctx.ui.ui_active_tint = .{ 0.0, 0.0, 0.0, 0.0 };
     ctx.ui.ui_tex_descriptor_next[ctx.frames.current_frame] = 0;
     if (comptime build_options.debug_shadows) {
         ctx.debug_shadow.descriptor_next[ctx.frames.current_frame] = 0;
