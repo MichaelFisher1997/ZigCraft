@@ -60,12 +60,15 @@ pub const BiomeDecorator = struct {
     pub fn generateFeatures(self: *const BiomeDecorator, chunk: *Chunk, noise_sampler: *const NoiseSampler) void {
         var prng = std.Random.DefaultPrng.init(self.region_seed ^ @as(u64, @bitCast(@as(i64, chunk.chunk_x))) ^ (@as(u64, @bitCast(@as(i64, chunk.chunk_z))) << 32));
         const random = prng.random();
-
-        const wx_center = chunk.getWorldX() + 8;
-        const wz_center = chunk.getWorldZ() + 8;
-        const region = region_pkg.getRegion(self.region_seed, wx_center, wz_center);
-        const veg_mult = region_pkg.getVegetationMultiplier(region);
-        const allow_subbiomes = region_pkg.allowSubBiomes(region);
+        const world_x = chunk.getWorldX();
+        const world_z = chunk.getWorldZ();
+        const controls = region_pkg.RegionControlCorners.init(
+            self.region_seed,
+            world_x,
+            world_z,
+            world_x + CHUNK_SIZE_X - 1,
+            world_z + CHUNK_SIZE_Z - 1,
+        );
 
         var local_z: u32 = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
@@ -75,9 +78,12 @@ pub const BiomeDecorator = struct {
                 if (surface_y <= 0 or surface_y >= CHUNK_SIZE_Y - 1) continue;
 
                 const biome = chunk.biomes[local_x + local_z * CHUNK_SIZE_X];
-                const wx: f32 = @floatFromInt(chunk.getWorldX() + @as(i32, @intCast(local_x)));
-                const wz: f32 = @floatFromInt(chunk.getWorldZ() + @as(i32, @intCast(local_z)));
+                const wx_i = world_x + @as(i32, @intCast(local_x));
+                const wz_i = world_z + @as(i32, @intCast(local_z));
+                const wx: f32 = @floatFromInt(wx_i);
+                const wz: f32 = @floatFromInt(wz_i);
                 const variant_val = noise_sampler.variant_noise.get2D(wx, wz);
+                const column_controls = controls.sample(wx_i, wz_i);
                 const surface_block = chunk.getBlock(local_x, @intCast(surface_y), local_z);
 
                 self.decoration_provider.decorate(.{
@@ -88,8 +94,8 @@ pub const BiomeDecorator = struct {
                     .surface_block = surface_block,
                     .biome = biome,
                     .variant = variant_val,
-                    .allow_subbiomes = allow_subbiomes,
-                    .veg_mult = veg_mult,
+                    .allow_subbiomes = column_controls.subbiome_mask > 0.5,
+                    .veg_mult = column_controls.vegetation_mult,
                     .random = random,
                 });
             }

@@ -116,6 +116,44 @@ pub fn allowHeightDrama(info: RegionInfo) bool {
 
 const REGION_SIZE = 1024;
 
+pub const RegionControls = struct {
+    height_mult: f32,
+    vegetation_mult: f32,
+    drama_mask: f32,
+    river_mask: f32,
+    subbiome_mask: f32,
+};
+
+pub const RegionControlCorners = struct {
+    min_x: i32,
+    min_z: i32,
+    span_x: f32,
+    span_z: f32,
+    c00: RegionControls,
+    c10: RegionControls,
+    c01: RegionControls,
+    c11: RegionControls,
+
+    pub fn init(seed: u64, min_x: i32, min_z: i32, max_x: i32, max_z: i32) RegionControlCorners {
+        return .{
+            .min_x = min_x,
+            .min_z = min_z,
+            .span_x = @floatFromInt(@max(1, max_x - min_x)),
+            .span_z = @floatFromInt(@max(1, max_z - min_z)),
+            .c00 = getBlendedControls(seed, min_x, min_z),
+            .c10 = getBlendedControls(seed, max_x, min_z),
+            .c01 = getBlendedControls(seed, min_x, max_z),
+            .c11 = getBlendedControls(seed, max_x, max_z),
+        };
+    }
+
+    pub fn sample(self: RegionControlCorners, world_x: i32, world_z: i32) RegionControls {
+        const tx = std.math.clamp(@as(f32, @floatFromInt(world_x - self.min_x)) / self.span_x, 0.0, 1.0);
+        const tz = std.math.clamp(@as(f32, @floatFromInt(world_z - self.min_z)) / self.span_z, 0.0, 1.0);
+        return lerpControls(self.c00, self.c10, self.c01, self.c11, tx, tz);
+    }
+};
+
 /// Path configuration constants
 const VALLEY_WIDTH: f32 = 32.0;
 const VALLEY_DEPTH: f32 = 10.0;
@@ -187,6 +225,59 @@ pub fn getPathInfluence(seed: u64, x: i32, z: i32) f32 {
     const current = getRegion(seed, x, z);
     const path_info = getPathInfo(seed, x, z, current);
     return path_info.influence;
+}
+
+pub fn getBlendedControls(seed: u64, world_x: i32, world_z: i32) RegionControls {
+    const rx = @divFloor(world_x, REGION_SIZE);
+    const rz = @divFloor(world_z, REGION_SIZE);
+    const local_x = @mod(world_x, REGION_SIZE);
+    const local_z = @mod(world_z, REGION_SIZE);
+
+    const tx = smoothstep01(@as(f32, @floatFromInt(local_x)) / @as(f32, @floatFromInt(REGION_SIZE)));
+    const tz = smoothstep01(@as(f32, @floatFromInt(local_z)) / @as(f32, @floatFromInt(REGION_SIZE)));
+
+    const c00 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, rz * REGION_SIZE));
+    const c10 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, rz * REGION_SIZE));
+    const c01 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, (rz + 1) * REGION_SIZE));
+    const c11 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, (rz + 1) * REGION_SIZE));
+
+    return .{
+        .height_mult = bilerp(c00.height_mult, c10.height_mult, c01.height_mult, c11.height_mult, tx, tz),
+        .vegetation_mult = bilerp(c00.vegetation_mult, c10.vegetation_mult, c01.vegetation_mult, c11.vegetation_mult, tx, tz),
+        .drama_mask = bilerp(c00.drama_mask, c10.drama_mask, c01.drama_mask, c11.drama_mask, tx, tz),
+        .river_mask = bilerp(c00.river_mask, c10.river_mask, c01.river_mask, c11.river_mask, tx, tz),
+        .subbiome_mask = bilerp(c00.subbiome_mask, c10.subbiome_mask, c01.subbiome_mask, c11.subbiome_mask, tx, tz),
+    };
+}
+
+fn lerpControls(c00: RegionControls, c10: RegionControls, c01: RegionControls, c11: RegionControls, tx: f32, tz: f32) RegionControls {
+    return .{
+        .height_mult = bilerp(c00.height_mult, c10.height_mult, c01.height_mult, c11.height_mult, tx, tz),
+        .vegetation_mult = bilerp(c00.vegetation_mult, c10.vegetation_mult, c01.vegetation_mult, c11.vegetation_mult, tx, tz),
+        .drama_mask = bilerp(c00.drama_mask, c10.drama_mask, c01.drama_mask, c11.drama_mask, tx, tz),
+        .river_mask = bilerp(c00.river_mask, c10.river_mask, c01.river_mask, c11.river_mask, tx, tz),
+        .subbiome_mask = bilerp(c00.subbiome_mask, c10.subbiome_mask, c01.subbiome_mask, c11.subbiome_mask, tx, tz),
+    };
+}
+
+fn controlsForRegion(info: RegionInfo) RegionControls {
+    return .{
+        .height_mult = getHeightMultiplier(info),
+        .vegetation_mult = getVegetationMultiplier(info),
+        .drama_mask = if (allowHeightDrama(info)) 1.0 else 0.0,
+        .river_mask = if (allowRiver(info)) 1.0 else 0.0,
+        .subbiome_mask = if (allowSubBiomes(info)) 1.0 else 0.0,
+    };
+}
+
+fn smoothstep01(t: f32) f32 {
+    return t * t * (3.0 - 2.0 * t);
+}
+
+fn bilerp(v00: f32, v10: f32, v01: f32, v11: f32, tx: f32, tz: f32) f32 {
+    const a = std.math.lerp(v00, v10, tx);
+    const b = std.math.lerp(v01, v11, tx);
+    return std.math.lerp(a, b, tz);
 }
 
 /// Get complete path information for a position

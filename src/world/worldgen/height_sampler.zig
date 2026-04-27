@@ -14,8 +14,8 @@ const noise_sampler_mod = @import("noise_sampler.zig");
 const NoiseSampler = noise_sampler_mod.NoiseSampler;
 const ColumnNoiseValues = noise_sampler_mod.ColumnNoiseValues;
 const region_pkg = @import("region.zig");
-const RegionInfo = region_pkg.RegionInfo;
 const PathInfo = region_pkg.PathInfo;
+const RegionControls = region_pkg.RegionControls;
 const world_class = @import("world_class.zig");
 const ContinentalZone = world_class.ContinentalZone;
 
@@ -209,7 +209,7 @@ pub const HeightSampler = struct {
         self: *const HeightSampler,
         noise_sampler: *const NoiseSampler,
         noise: ColumnNoiseValues,
-        region: RegionInfo,
+        controls: RegionControls,
         path_info: PathInfo,
         reduction: u8,
     ) f32 {
@@ -246,7 +246,7 @@ pub const HeightSampler = struct {
         // STEP 3: V7-STYLE MULTI-LAYER TERRAIN (Issue #105)
         // Blend terrain_base and terrain_alt using height_select
         // ============================================================
-        const mood_mult = region_pkg.getHeightMultiplier(region);
+        const mood_mult = controls.height_mult;
         const v7_terrain = computeV7Terrain(noise, mood_mult);
 
         // ============================================================
@@ -258,11 +258,11 @@ pub const HeightSampler = struct {
         // STEP 5: Mountains & Ridges - REGION-CONSTRAINED
         // Only apply if allowHeightDrama is true
         // ============================================================
-        if (region_pkg.allowHeightDrama(region) and noise.continentalness > p.continental_inland_low_max) {
+        if (controls.drama_mask > 0.001 and noise.continentalness > p.continental_inland_low_max) {
             const m_mask = self.getMountainMask(noise.peaks_valleys, noise.erosion, noise.continentalness);
             const lift_noise = noise_sampler.getMountainLift(noise.warped_x, noise.warped_z, reduction);
             const mount_lift = (m_mask * lift_noise * p.mount_amp) / (1.0 + (m_mask * lift_noise * p.mount_amp) / p.mount_cap);
-            height += mount_lift * mood_mult;
+            height += mount_lift * mood_mult * controls.drama_mask;
 
             const ridge_params = NoiseSampler.RidgeParams{
                 .inland_min = p.ridge_inland_min,
@@ -270,7 +270,7 @@ pub const HeightSampler = struct {
                 .sparsity = p.ridge_sparsity,
             };
             const ridge_val = noise_sampler.getRidgeFactor(noise.warped_x, noise.warped_z, noise.continentalness, reduction, ridge_params);
-            height += ridge_val * p.ridge_amp * mood_mult;
+            height += ridge_val * p.ridge_amp * mood_mult * controls.drama_mask;
         }
 
         // ============================================================
@@ -300,9 +300,9 @@ pub const HeightSampler = struct {
         // ============================================================
         // STEP 8: River Carving - REGION-CONSTRAINED
         // ============================================================
-        if (region_pkg.allowRiver(region) and noise.river_mask > 0.001 and noise.continentalness > p.continental_coast_max) {
+        if (controls.river_mask > 0.001 and noise.river_mask > 0.001 and noise.continentalness > p.continental_coast_max) {
             const river_bed = sea - 4.0;
-            const carve_alpha = smoothstep(0.0, 1.0, noise.river_mask);
+            const carve_alpha = smoothstep(0.0, 1.0, noise.river_mask) * controls.river_mask;
             if (height > river_bed) {
                 height = std.math.lerp(height, river_bed, carve_alpha);
             }

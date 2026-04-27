@@ -251,21 +251,32 @@ pub const OverworldGenerator = struct {
     /// Generate heightmap data only (for LODSimplifiedData)
     /// Uses classification cache when available to ensure LOD matches LOD0.
     pub fn generateHeightmapOnly(self: *const OverworldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
-        const block_step = LODSimplifiedData.getCellSizeBlocks(lod_level);
-        const world_x = region_x * @as(i32, @intCast(lod_level.regionSizeBlocks()));
-        const world_z = region_z * @as(i32, @intCast(lod_level.regionSizeBlocks()));
+        if (data.width < 2) return;
+
+        const region_size_i: i32 = @intCast(lod_level.regionSizeBlocks());
+        const region_size_f: f32 = @floatFromInt(region_size_i);
+        const grid_max: f32 = @floatFromInt(data.width - 1);
+        const world_x = region_x * region_size_i;
+        const world_z = region_z * region_size_i;
         const sea_level = self.terrain_shape.getSeaLevel();
+        const controls = region_pkg.RegionControlCorners.init(
+            self.terrain_shape.getRegionSeed(),
+            world_x,
+            world_z,
+            world_x + region_size_i,
+            world_z + region_size_i,
+        );
 
         var gz: u32 = 0;
         while (gz < data.width) : (gz += 1) {
             var gx: u32 = 0;
             while (gx < data.width) : (gx += 1) {
                 const idx = gx + gz * data.width;
-                const wx_i = world_x + @as(i32, @intCast(gx * block_step));
-                const wz_i = world_z + @as(i32, @intCast(gz * block_step));
-                const wx: f32 = @floatFromInt(wx_i);
-                const wz: f32 = @floatFromInt(wz_i);
-                const column = self.terrain_shape.sampleColumnData(wx, wz, 0);
+                const wx = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
+                const wz = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
+                const wx_i: i32 = @intFromFloat(@floor(wx));
+                const wz_i: i32 = @intFromFloat(@floor(wz));
+                const column = self.terrain_shape.sampleColumnDataWithControls(wx, wz, 0, controls.sample(wx_i, wz_i));
                 const render_water_surface = column.terrain_height_i < sea_level and (column.is_ocean or self.isInlandWater(wx, wz, column.terrain_height_i));
                 data.heightmap[idx] = if (render_water_surface)
                     @as(f32, @floatFromInt(sea_level))

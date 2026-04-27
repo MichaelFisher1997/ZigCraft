@@ -131,6 +131,14 @@ pub const TerrainShapeGenerator = struct {
     }
 
     pub fn sampleColumnData(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8) ColumnData {
+        const region_seed = self.getRegionSeed();
+        const wx_i: i32 = @intFromFloat(@floor(wx));
+        const wz_i: i32 = @intFromFloat(@floor(wz));
+        const controls = region_pkg.getBlendedControls(region_seed, wx_i, wz_i);
+        return self.sampleColumnDataWithControls(wx, wz, reduction, controls);
+    }
+
+    pub fn sampleColumnDataWithControls(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8, controls: region_pkg.RegionControls) ColumnData {
         const sea: f32 = @floatFromInt(self.params.sea_level);
         var noise = self.noise_sampler.sampleColumn(wx, wz, reduction);
         const cj_octaves: u16 = if (2 > reduction) 2 - @as(u16, reduction) else 1;
@@ -140,11 +148,11 @@ pub const TerrainShapeGenerator = struct {
         noise.river_mask = self.noise_sampler.getRiverMask(noise.warped_x, noise.warped_z, reduction);
 
         const region_seed = self.getRegionSeed();
-        const wx_i: i32 = @intFromFloat(wx);
-        const wz_i: i32 = @intFromFloat(wz);
+        const wx_i: i32 = @intFromFloat(@floor(wx));
+        const wz_i: i32 = @intFromFloat(@floor(wz));
         const region = region_pkg.getRegion(region_seed, wx_i, wz_i);
         const path_info = region_pkg.getPathInfo(region_seed, wx_i, wz_i, region);
-        const terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, region, path_info, reduction);
+        const terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, controls, path_info, reduction);
         const terrain_height_i: i32 = @intFromFloat(terrain_height);
 
         const altitude_offset: f32 = @max(0, terrain_height - sea);
@@ -182,15 +190,25 @@ pub const TerrainShapeGenerator = struct {
         cache_center_z: i32,
         stop_flag: ?*const bool,
     ) bool {
+        const controls = region_pkg.RegionControlCorners.init(
+            self.getRegionSeed(),
+            world_x,
+            world_z,
+            world_x + CHUNK_SIZE_X - 1,
+            world_z + CHUNK_SIZE_Z - 1,
+        );
+
         var local_z: u32 = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
             if (stop_flag) |sf| if (sf.*) return false;
             var local_x: u32 = 0;
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
                 const idx = local_x + local_z * CHUNK_SIZE_X;
-                const wx: f32 = @floatFromInt(world_x + @as(i32, @intCast(local_x)));
-                const wz: f32 = @floatFromInt(world_z + @as(i32, @intCast(local_z)));
-                const column = self.sampleColumnData(wx, wz, 0);
+                const wx_i = world_x + @as(i32, @intCast(local_x));
+                const wz_i = world_z + @as(i32, @intCast(local_z));
+                const wx: f32 = @floatFromInt(wx_i);
+                const wz: f32 = @floatFromInt(wz_i);
+                const column = self.sampleColumnDataWithControls(wx, wz, 0, controls.sample(wx_i, wz_i));
 
                 phase_data.surface_heights[idx] = column.terrain_height_i;
                 phase_data.is_underwater_flags[idx] = column.is_underwater;
