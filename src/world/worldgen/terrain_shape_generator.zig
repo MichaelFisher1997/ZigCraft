@@ -143,8 +143,9 @@ pub const TerrainShapeGenerator = struct {
         const wx_i: i32 = @intFromFloat(wx);
         const wz_i: i32 = @intFromFloat(wz);
         const region = region_pkg.getRegion(region_seed, wx_i, wz_i);
+        const controls = region_pkg.getBlendedControls(region_seed, wx_i, wz_i);
         const path_info = region_pkg.getPathInfo(region_seed, wx_i, wz_i, region);
-        const terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, region, path_info, reduction);
+        const terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, region, controls, path_info, reduction);
         const terrain_height_i: i32 = @intFromFloat(terrain_height);
 
         const altitude_offset: f32 = @max(0, terrain_height - sea);

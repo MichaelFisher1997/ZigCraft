@@ -61,12 +61,6 @@ pub const BiomeDecorator = struct {
         var prng = std.Random.DefaultPrng.init(self.region_seed ^ @as(u64, @bitCast(@as(i64, chunk.chunk_x))) ^ (@as(u64, @bitCast(@as(i64, chunk.chunk_z))) << 32));
         const random = prng.random();
 
-        const wx_center = chunk.getWorldX() + 8;
-        const wz_center = chunk.getWorldZ() + 8;
-        const region = region_pkg.getRegion(self.region_seed, wx_center, wz_center);
-        const veg_mult = region_pkg.getVegetationMultiplier(region);
-        const allow_subbiomes = region_pkg.allowSubBiomes(region);
-
         var local_z: u32 = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
             var local_x: u32 = 0;
@@ -78,6 +72,7 @@ pub const BiomeDecorator = struct {
                 const wx: f32 = @floatFromInt(chunk.getWorldX() + @as(i32, @intCast(local_x)));
                 const wz: f32 = @floatFromInt(chunk.getWorldZ() + @as(i32, @intCast(local_z)));
                 const variant_val = noise_sampler.variant_noise.get2D(wx, wz);
+                const controls = region_pkg.getBlendedControls(self.region_seed, @intFromFloat(wx), @intFromFloat(wz));
                 const surface_block = chunk.getBlock(local_x, @intCast(surface_y), local_z);
 
                 self.decoration_provider.decorate(.{
@@ -88,8 +83,8 @@ pub const BiomeDecorator = struct {
                     .surface_block = surface_block,
                     .biome = biome,
                     .variant = variant_val,
-                    .allow_subbiomes = allow_subbiomes,
-                    .veg_mult = veg_mult,
+                    .allow_subbiomes = controls.subbiome_mask > 0.5,
+                    .veg_mult = controls.vegetation_mult,
                     .random = random,
                 });
             }

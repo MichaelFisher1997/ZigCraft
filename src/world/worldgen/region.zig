@@ -116,6 +116,14 @@ pub fn allowHeightDrama(info: RegionInfo) bool {
 
 const REGION_SIZE = 1024;
 
+pub const RegionControls = struct {
+    height_mult: f32,
+    vegetation_mult: f32,
+    drama_mask: f32,
+    river_mask: f32,
+    subbiome_mask: f32,
+};
+
 /// Path configuration constants
 const VALLEY_WIDTH: f32 = 32.0;
 const VALLEY_DEPTH: f32 = 10.0;
@@ -187,6 +195,49 @@ pub fn getPathInfluence(seed: u64, x: i32, z: i32) f32 {
     const current = getRegion(seed, x, z);
     const path_info = getPathInfo(seed, x, z, current);
     return path_info.influence;
+}
+
+pub fn getBlendedControls(seed: u64, world_x: i32, world_z: i32) RegionControls {
+    const rx = @divFloor(world_x, REGION_SIZE);
+    const rz = @divFloor(world_z, REGION_SIZE);
+    const local_x = @mod(world_x, REGION_SIZE);
+    const local_z = @mod(world_z, REGION_SIZE);
+
+    const tx = smoothstep01(@as(f32, @floatFromInt(local_x)) / @as(f32, @floatFromInt(REGION_SIZE)));
+    const tz = smoothstep01(@as(f32, @floatFromInt(local_z)) / @as(f32, @floatFromInt(REGION_SIZE)));
+
+    const c00 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, rz * REGION_SIZE));
+    const c10 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, rz * REGION_SIZE));
+    const c01 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, (rz + 1) * REGION_SIZE));
+    const c11 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, (rz + 1) * REGION_SIZE));
+
+    return .{
+        .height_mult = bilerp(c00.height_mult, c10.height_mult, c01.height_mult, c11.height_mult, tx, tz),
+        .vegetation_mult = bilerp(c00.vegetation_mult, c10.vegetation_mult, c01.vegetation_mult, c11.vegetation_mult, tx, tz),
+        .drama_mask = bilerp(c00.drama_mask, c10.drama_mask, c01.drama_mask, c11.drama_mask, tx, tz),
+        .river_mask = bilerp(c00.river_mask, c10.river_mask, c01.river_mask, c11.river_mask, tx, tz),
+        .subbiome_mask = bilerp(c00.subbiome_mask, c10.subbiome_mask, c01.subbiome_mask, c11.subbiome_mask, tx, tz),
+    };
+}
+
+fn controlsForRegion(info: RegionInfo) RegionControls {
+    return .{
+        .height_mult = getHeightMultiplier(info),
+        .vegetation_mult = getVegetationMultiplier(info),
+        .drama_mask = if (allowHeightDrama(info)) 1.0 else 0.0,
+        .river_mask = if (allowRiver(info)) 1.0 else 0.0,
+        .subbiome_mask = if (allowSubBiomes(info)) 1.0 else 0.0,
+    };
+}
+
+fn smoothstep01(t: f32) f32 {
+    return t * t * (3.0 - 2.0 * t);
+}
+
+fn bilerp(v00: f32, v10: f32, v01: f32, v11: f32, tx: f32, tz: f32) f32 {
+    const a = std.math.lerp(v00, v10, tx);
+    const b = std.math.lerp(v01, v11, tx);
+    return std.math.lerp(a, b, tz);
 }
 
 /// Get complete path information for a position
