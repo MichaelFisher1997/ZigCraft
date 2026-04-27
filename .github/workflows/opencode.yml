@@ -50,7 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
         with:
-          model: zhipuai-coding-plan/glm-5.1
+          model: minimax-coding-plan/MiniMax-M2.7
           use_github_token: true
