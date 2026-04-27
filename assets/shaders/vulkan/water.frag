@@ -64,31 +64,6 @@ float schlickFresnel(float cos_theta, float F0) {
     return F0 + (1.0 - F0) * pow(1.0 - cos_theta, 5.0);
 }
 
-vec3 gerstnerWave(vec2 pos, float time, vec2 direction, float wavelength, float amplitude) {
-    float k = 2.0 * PI / wavelength;
-    float c = sqrt(9.8 / k);
-    vec2 d = normalize(direction);
-    float f = k * (dot(d, pos) - c * time);
-    float a = amplitude * k;
-    return vec3(
-        d.x * (a * cos(f)),
-        a * sin(f),
-        d.y * (a * cos(f))
-    );
-}
-
-vec3 getProceduralWaveNormal(vec2 pos, float time) {
-    vec3 wave1 = gerstnerWave(pos, time * WAVE_SPEED, vec2(1.0, 0.3), 8.0, WAVE_AMPLITUDE * 0.4);
-    vec3 wave2 = gerstnerWave(pos, time * WAVE_SPEED * 1.2, vec2(-0.5, 0.8), 5.0, WAVE_AMPLITUDE * 0.3);
-    vec3 wave3 = gerstnerWave(pos, time * WAVE_SPEED * 0.8, vec2(0.3, -0.6), 12.0, WAVE_AMPLITUDE * 0.5);
-    vec3 wave4 = gerstnerWave(pos, time * WAVE_SPEED * 1.5, vec2(-0.7, -0.4), 3.0, WAVE_AMPLITUDE * 0.2);
-    
-    vec3 displacement = wave1 + wave2 + wave3 + wave4;
-    
-    vec3 normal = vec3(-displacement.x, 1.0, -displacement.z);
-    return normalize(normal);
-}
-
 float hash21(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -134,14 +109,6 @@ vec3 fbmNormal(vec2 p, float time) {
     return normalize(vec3((h - hx) * 2.4, 1.0, (h - hy) * 2.4));
 }
 
-float surfaceDetail(vec2 p, float time) {
-    vec2 flowA = p + vec2(time * 0.10, -time * 0.05);
-    vec2 flowB = p * 1.7 + vec2(-time * 0.07, time * 0.09);
-    float ripples = fbm(flowA) * 0.58 + fbm(flowB) * 0.42;
-    float bands = sin((flowA.x + flowA.y * 0.42) * 5.5 + fbm(flowB) * 4.0);
-    return clamp(smoothstep(0.50, 0.92, ripples) * 0.65 + smoothstep(0.62, 1.0, bands) * 0.35, 0.0, 1.0);
-}
-
 float linearizeDepthReverseZ(float depth, float near, float far) {
     return (near * far) / (near + depth * (far - near));
 }
@@ -156,6 +123,8 @@ void main() {
     float time = global.params.x;
 
     vec3 base_normal = normalize(vNormal);
+    // Keep voxel water top faces lit like a block surface instead of flipping
+    // with the camera side; underwater rendering can tune this separately.
     if (base_normal.y < 0.0) {
         base_normal = -base_normal;
     }
