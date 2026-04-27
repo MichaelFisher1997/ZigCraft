@@ -215,6 +215,17 @@ jobs:
         if: steps.check-existing.outputs.skip != 'true'
         uses: ./.github/actions/setup-nix
 
+      - name: Load test writer prompt
+        if: steps.check-existing.outputs.skip != 'true'
+        uses: ./.github/actions/load-prompt
+        with:
+          prompt-file: .github/prompts/test-writer.md
+          variables: $MODULE $DEFAULT_BRANCH $SCAN_PATHS
+        env:
+          MODULE: ${{ steps.select-module.outputs.module }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SCAN_PATHS: ${{ steps.select-module.outputs.scan_paths }}
+
       - name: Run opencode test writer
         if: steps.check-existing.outputs.skip != 'true'
         uses: anomalyco/opencode/github@latest
@@ -226,32 +237,7 @@ jobs:
         with:
           model: minimax-coding-plan/MiniMax-M2.7
           use_github_token: true
-          prompt: |
-            Load the `test-writer` skill first — it contains the full codebase context, testing patterns, and workflow rules.
-
-            ## YOUR TASK
-
-            Write 3-8 high-quality unit tests for the module `${{ steps.select-module.outputs.module }}`, targeting `${{ github.event.repository.default_branch }}`.
-
-            ## FILES TO SCAN
-
-            Read these source files to find untested code:
-            ${{ steps.select-module.outputs.scan_paths }}
-
-            Also read any existing test files in the same directories (look for `*_tests.zig` patterns).
-
-            ## GIT WORKFLOW — CRITICAL
-
-            You are running inside the opencode GitHub Action. The infrastructure auto-creates a branch and will handle `git push` and PR creation after you finish.
-
-            **STAY ON THE CURRENT BRANCH. Do NOT create a new branch. Do NOT run `git checkout -b`. Do NOT push. Do NOT run `gh pr create`. The infrastructure does all of that for you.**
-
-            1. Write your test files
-            2. Register new test files in `src/tests.zig`
-            3. Format: `nix develop --command zig fmt src/`
-            4. Run tests: `nix develop --command zig build test` — ALL tests must pass
-            5. Commit your changes: `git add` and `git commit` with message `test: add {area} tests for ${{ steps.select-module.outputs.module }}`
-            6. STOP. Do not push or create a PR.
+          prompt: ${{ env.PROMPT }}
 
       - name: Find and label created PR
         if: steps.check-existing.outputs.skip != 'true'
