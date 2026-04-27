@@ -225,6 +225,21 @@
             }
           '';
 
+          cimguiCompatSource = pkgs.writeText "cimgui_compat.c" ''
+            #include <stdarg.h>
+            #include <stdio.h>
+
+            extern int __isoc99_vsscanf(const char* str, const char* format, va_list args);
+
+            int __isoc23_sscanf(const char* str, const char* format, ...) {
+              va_list args;
+              va_start(args, format);
+              int result = __isoc99_vsscanf(str, format, args);
+              va_end(args);
+              return result;
+            }
+          '';
+
           buildPhase = ''
             runHook preBuild
             cxxflags="-std=c++17 -O2 -fPIC -I. -Iimgui -Iimgui/backends $(pkg-config --cflags sdl3) -I${pkgs.vulkan-headers}/include"
@@ -238,7 +253,8 @@
             $CXX $cxxflags -c imgui/backends/imgui_impl_vulkan.cpp -o imgui_impl_vulkan.o
             cp ${cimguiBackendHeader} cimgui_backend.h
             $CXX $cxxflags -I. -c ${cimguiBackendSource} -o cimgui_backend.o
-            ar rcs libcimgui.a cimgui.o imgui.o imgui_draw.o imgui_demo.o imgui_tables.o imgui_widgets.o imgui_impl_sdl3.o imgui_impl_vulkan.o cimgui_backend.o
+            $CC -O2 -fPIC -c ${cimguiCompatSource} -o cimgui_compat.o
+            ar rcs libcimgui.a cimgui.o imgui.o imgui_draw.o imgui_demo.o imgui_tables.o imgui_widgets.o imgui_impl_sdl3.o imgui_impl_vulkan.o cimgui_backend.o cimgui_compat.o
             runHook postBuild
           '';
 
