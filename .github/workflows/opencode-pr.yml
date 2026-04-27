@@ -108,6 +108,7 @@ jobs:
       - uses: ./.github/actions/load-prompt
         with:
           prompt-file: .github/prompts/pr-review.md
+          variables: $PR_NUMBER $HEAD_SHA $PREVIOUS_REVIEWS
 
       - name: Run opencode
         id: ai_review
