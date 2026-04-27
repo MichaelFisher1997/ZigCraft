@@ -118,7 +118,7 @@ pub const Settings = struct {
     pbr_enabled: bool = false,
     pbr_quality: u8 = 0, // 0=Off, 1=Low (no normal maps), 2=Full
     exposure: f32 = 1.0,
-    saturation: f32 = 1.0,
+    saturation: f32 = 1.08,
 
     // Shadow Settings
     shadow_pcf_samples: u8 = 4, // 4, 8, 12, 16

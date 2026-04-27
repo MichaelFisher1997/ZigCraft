@@ -104,6 +104,17 @@ vec3 agxToneMap(vec3 color, float exposure, float saturation) {
     return clamp(color, 0.0, 1.0);
 }
 
+vec3 applyLushGrade(vec3 color) {
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float chroma = max(max(color.r, color.g), color.b) - min(min(color.r, color.g), color.b);
+
+    color = 0.5 + (color - 0.5) * 1.08;
+    color = mix(vec3(luma), color, 1.0 + (1.0 - smoothstep(0.12, 0.55, chroma)) * 0.10);
+    color = color * 0.98 + color * color * 0.04;
+
+    return clamp(color, 0.0, 1.0);
+}
+
 vec3 ACESFilm(vec3 x) {
     float a = 2.51;
     float b = 0.03;
@@ -220,6 +231,7 @@ void main() {
 
     if (global.render_flags.z > 0.5) {
         color = agxToneMap(color, global.pbr_params.y, global.pbr_params.z);
+        color = applyLushGrade(color);
         color = applyColorGrading(color, postParams.colorGradingEnabled * postParams.colorGradingIntensity);
         color = applyVignette(color, inUV, postParams.vignetteIntensity);
         color = applyFilmGrain(color, inUV, postParams.filmGrainIntensity, global.params.x);
@@ -227,6 +239,7 @@ void main() {
         // Keep the safe/non-PBR path on the same display transform so bright terrain
         // doesn't collapse into a pale linear-looking wash.
         color = agxToneMap(color, global.pbr_params.y, global.pbr_params.z);
+        color = applyLushGrade(color);
     }
 
     outColor = vec4(color, 1.0);

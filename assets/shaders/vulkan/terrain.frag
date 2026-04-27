@@ -751,7 +751,8 @@ void main() {
     }
 
     if (global.params.z > 0.5) {
-        float fogFactor = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0) * atmosphericVisibility;
+        float rawFog = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0);
+        float fogFactor = rawFog * rawFog * 0.72 * atmosphericVisibility;
         color = mix(color, global.fog_color.rgb, fogFactor);
     }
 
