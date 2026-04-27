@@ -284,7 +284,7 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 2. Solid
         def.is_solid = switch (id) {
-            .air, .water, .lava, .torch => false,
+            .air, .water, .lava, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch => false,
             else => true,
         };
 

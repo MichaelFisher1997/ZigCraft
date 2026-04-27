@@ -45,8 +45,8 @@ pub const TextureMapping = struct {
 pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "stone", .files = &.{"stone.png"} },
     .{ .name = "dirt", .files = &.{"dirt.png"} },
-    .{ .name = "grass_top", .files = &.{ "grass_top.png", "grass_carried.png", "grass_block_top.png" } },
-    .{ .name = "grass_side", .files = &.{ "grass_side.png", "grass_side_carried.png", "grass_block_side.png" } },
+    .{ .name = "grass_top", .files = &.{ "grass_top.png", "grass_block_top.png", "grass_carried.png" } },
+    .{ .name = "grass_side", .files = &.{ "grass_side.png", "grass_block_side.png", "grass_side_carried.png" } },
     .{ .name = "sand", .files = &.{"sand.png"} },
     .{ .name = "cobblestone", .files = &.{"cobblestone.png"} },
     .{ .name = "bedrock", .files = &.{"bedrock.png"} },
@@ -54,10 +54,10 @@ pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "wood_side", .files = &.{ "wood_side.png", "oak_log.png", "log_oak.png" } },
     .{ .name = "wood_top", .files = &.{ "wood_top.png", "oak_log_top.png", "log_oak_top.png" } },
     .{ .name = "leaves", .files = &.{ "leaves.png", "oak_leaves.png", "leaves_oak.png" } },
-    .{ .name = "birch_log_side", .files = &.{ "birch_log_side.png", "log_birch.png", "wood_side.png", "oak_log.png", "log_oak.png" } },
+    .{ .name = "birch_log_side", .files = &.{ "birch_log_side.png", "birch_log.png", "log_birch.png", "wood_side.png", "oak_log.png", "log_oak.png" } },
     .{ .name = "birch_log_top", .files = &.{ "birch_log_top.png", "log_birch_top.png", "wood_top.png", "oak_log_top.png", "log_oak_top.png" } },
     .{ .name = "birch_leaves", .files = &.{ "birch_leaves.png", "leaves_birch.png", "leaves.png", "oak_leaves.png", "leaves_oak.png" } },
-    .{ .name = "spruce_log_side", .files = &.{ "spruce_log_side.png", "log_spruce.png", "wood_side.png", "oak_log.png", "log_oak.png" } },
+    .{ .name = "spruce_log_side", .files = &.{ "spruce_log_side.png", "spruce_log.png", "log_spruce.png", "wood_side.png", "oak_log.png", "log_oak.png" } },
     .{ .name = "spruce_log_top", .files = &.{ "spruce_log_top.png", "log_spruce_top.png", "wood_top.png", "oak_log_top.png", "log_oak_top.png" } },
     .{ .name = "spruce_leaves", .files = &.{ "spruce_leaves.png", "leaves_spruce.png", "leaves.png", "oak_leaves.png", "leaves_oak.png" } },
     .{ .name = "water", .files = &.{ "water.png", "water_still.png" } },
@@ -71,17 +71,17 @@ pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "iron_ore", .files = &.{"iron_ore.png"} },
     .{ .name = "gold_ore", .files = &.{"gold_ore.png"} },
     .{ .name = "clay", .files = &.{"clay.png"} },
-    .{ .name = "mangrove_log_side", .files = &.{"mangrove_log_side.png"} },
+    .{ .name = "mangrove_log_side", .files = &.{ "mangrove_log_side.png", "mangrove_log.png" } },
     .{ .name = "mangrove_log_top", .files = &.{"mangrove_log_top.png"} },
     .{ .name = "mangrove_leaves", .files = &.{"mangrove_leaves.png"} },
-    .{ .name = "mangrove_roots", .files = &.{"mangrove_roots.png"} },
-    .{ .name = "jungle_log_side", .files = &.{ "jungle_log_side.png", "log_jungle.png" } },
+    .{ .name = "mangrove_roots", .files = &.{ "mangrove_roots.png", "mangrove_roots_side.png", "mangrove_roots_top.png", "muddy_mangrove_roots_side.png" } },
+    .{ .name = "jungle_log_side", .files = &.{ "jungle_log_side.png", "jungle_log.png", "log_jungle.png" } },
     .{ .name = "jungle_log_top", .files = &.{ "jungle_log_top.png", "log_jungle_top.png" } },
     .{ .name = "jungle_leaves", .files = &.{"jungle_leaves.png"} },
     .{ .name = "melon_side", .files = &.{"melon_side.png"} },
     .{ .name = "melon_top", .files = &.{"melon_top.png"} },
-    .{ .name = "bamboo", .files = &.{ "bamboo.png", "bamboo_stem.png" } },
-    .{ .name = "acacia_log_side", .files = &.{ "acacia_log_side.png", "log_acacia.png" } },
+    .{ .name = "bamboo", .files = &.{ "bamboo.png", "bamboo_stalk.png", "bamboo_stem.png", "bamboo_block.png" } },
+    .{ .name = "acacia_log_side", .files = &.{ "acacia_log_side.png", "acacia_log.png", "log_acacia.png" } },
     .{ .name = "acacia_log_top", .files = &.{ "acacia_log_top.png", "log_acacia_top.png" } },
     .{ .name = "acacia_leaves", .files = &.{"acacia_leaves.png"} },
     .{ .name = "acacia_sapling", .files = &.{ "acacia_sapling.png", "sapling_acacia.png" } },
@@ -93,12 +93,20 @@ pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "red_mushroom_block", .files = &.{ "red_mushroom_block.png", "mushroom_block_skin_red.png" } },
     .{ .name = "brown_mushroom_block", .files = &.{ "brown_mushroom_block.png", "mushroom_block_skin_brown.png" } },
     .{ .name = "vine", .files = &.{ "vine.png", "vines.png", "tall_grass.png", "leaves.png" } },
-    .{ .name = "tall_grass", .files = &.{ "tall_grass.png", "tallgrass.png" } },
+    .{ .name = "tall_grass", .files = &.{ "tall_grass.png", "short_grass.png", "grass.png", "tallgrass.png" } },
     .{ .name = "flower_red", .files = &.{ "flower_red.png", "flower_rose.png", "poppy.png" } },
     .{ .name = "flower_yellow", .files = &.{ "flower_yellow.png", "flower_dandelion.png", "dandelion.png" } },
     .{ .name = "dead_bush", .files = &.{ "dead_bush.png", "deadbush.png" } },
     .{ .name = "torch", .files = &.{ "torch.png", "torch_on.png" } },
     .{ .name = "lava", .files = &.{ "lava.png", "lava_still.png" } },
+};
+
+const FLAT_TEXTURE_SEARCH_DIRS = [_][]const u8{
+    "",
+    "block",
+    "item",
+    "assets/minecraft/textures/block",
+    "assets/minecraft/textures/item",
 };
 
 pub const LoadedTexture = struct {
@@ -285,9 +293,14 @@ pub const ResourcePackManager = struct {
     pub fn loadFlatTexture(self: *Self, pack_path: []const u8, texture_name: []const u8) ?LoadedTexture {
         if (getTextureMapping(texture_name)) |mapping| {
             for (mapping.files) |file_name| {
-                const full_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ pack_path, file_name }) catch continue;
-                defer self.allocator.free(full_path);
-                if (self.loadImageFile(full_path)) |texture| return texture;
+                for (FLAT_TEXTURE_SEARCH_DIRS) |subdir| {
+                    const full_path = if (subdir.len == 0)
+                        std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ pack_path, file_name }) catch continue
+                    else
+                        std.fmt.allocPrint(self.allocator, "{s}/{s}/{s}", .{ pack_path, subdir, file_name }) catch continue;
+                    defer self.allocator.free(full_path);
+                    if (self.loadImageFile(full_path)) |texture| return texture;
+                }
             }
         }
         return null;

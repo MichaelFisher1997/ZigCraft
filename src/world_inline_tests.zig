@@ -214,6 +214,7 @@ test "BlockType isSolid" {
     try testing.expect(block_registry.getBlockDefinition(BlockType.stone).is_solid);
     try testing.expect(block_registry.getBlockDefinition(BlockType.dirt).is_solid);
     try testing.expect(block_registry.getBlockDefinition(BlockType.grass).is_solid);
+    try testing.expect(!block_registry.getBlockDefinition(BlockType.tall_grass).is_solid);
     try testing.expect(block_registry.getBlockDefinition(BlockType.leaves).is_solid);
 }
 
