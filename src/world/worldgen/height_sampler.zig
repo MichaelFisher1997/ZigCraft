@@ -14,7 +14,6 @@ const noise_sampler_mod = @import("noise_sampler.zig");
 const NoiseSampler = noise_sampler_mod.NoiseSampler;
 const ColumnNoiseValues = noise_sampler_mod.ColumnNoiseValues;
 const region_pkg = @import("region.zig");
-const RegionInfo = region_pkg.RegionInfo;
 const PathInfo = region_pkg.PathInfo;
 const RegionControls = region_pkg.RegionControls;
 const world_class = @import("world_class.zig");
@@ -210,7 +209,6 @@ pub const HeightSampler = struct {
         self: *const HeightSampler,
         noise_sampler: *const NoiseSampler,
         noise: ColumnNoiseValues,
-        region: RegionInfo,
         controls: RegionControls,
         path_info: PathInfo,
         reduction: u8,
@@ -248,7 +246,6 @@ pub const HeightSampler = struct {
         // STEP 3: V7-STYLE MULTI-LAYER TERRAIN (Issue #105)
         // Blend terrain_base and terrain_alt using height_select
         // ============================================================
-        _ = region;
         const mood_mult = controls.height_mult;
         const v7_terrain = computeV7Terrain(noise, mood_mult);
 

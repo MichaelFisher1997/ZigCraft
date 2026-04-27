@@ -124,6 +124,36 @@ pub const RegionControls = struct {
     subbiome_mask: f32,
 };
 
+pub const RegionControlCorners = struct {
+    min_x: i32,
+    min_z: i32,
+    span_x: f32,
+    span_z: f32,
+    c00: RegionControls,
+    c10: RegionControls,
+    c01: RegionControls,
+    c11: RegionControls,
+
+    pub fn init(seed: u64, min_x: i32, min_z: i32, max_x: i32, max_z: i32) RegionControlCorners {
+        return .{
+            .min_x = min_x,
+            .min_z = min_z,
+            .span_x = @floatFromInt(@max(1, max_x - min_x)),
+            .span_z = @floatFromInt(@max(1, max_z - min_z)),
+            .c00 = getBlendedControls(seed, min_x, min_z),
+            .c10 = getBlendedControls(seed, max_x, min_z),
+            .c01 = getBlendedControls(seed, min_x, max_z),
+            .c11 = getBlendedControls(seed, max_x, max_z),
+        };
+    }
+
+    pub fn sample(self: RegionControlCorners, world_x: i32, world_z: i32) RegionControls {
+        const tx = std.math.clamp(@as(f32, @floatFromInt(world_x - self.min_x)) / self.span_x, 0.0, 1.0);
+        const tz = std.math.clamp(@as(f32, @floatFromInt(world_z - self.min_z)) / self.span_z, 0.0, 1.0);
+        return lerpControls(self.c00, self.c10, self.c01, self.c11, tx, tz);
+    }
+};
+
 /// Path configuration constants
 const VALLEY_WIDTH: f32 = 32.0;
 const VALLEY_DEPTH: f32 = 10.0;
@@ -211,6 +241,16 @@ pub fn getBlendedControls(seed: u64, world_x: i32, world_z: i32) RegionControls 
     const c01 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, (rz + 1) * REGION_SIZE));
     const c11 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, (rz + 1) * REGION_SIZE));
 
+    return .{
+        .height_mult = bilerp(c00.height_mult, c10.height_mult, c01.height_mult, c11.height_mult, tx, tz),
+        .vegetation_mult = bilerp(c00.vegetation_mult, c10.vegetation_mult, c01.vegetation_mult, c11.vegetation_mult, tx, tz),
+        .drama_mask = bilerp(c00.drama_mask, c10.drama_mask, c01.drama_mask, c11.drama_mask, tx, tz),
+        .river_mask = bilerp(c00.river_mask, c10.river_mask, c01.river_mask, c11.river_mask, tx, tz),
+        .subbiome_mask = bilerp(c00.subbiome_mask, c10.subbiome_mask, c01.subbiome_mask, c11.subbiome_mask, tx, tz),
+    };
+}
+
+fn lerpControls(c00: RegionControls, c10: RegionControls, c01: RegionControls, c11: RegionControls, tx: f32, tz: f32) RegionControls {
     return .{
         .height_mult = bilerp(c00.height_mult, c10.height_mult, c01.height_mult, c11.height_mult, tx, tz),
         .vegetation_mult = bilerp(c00.vegetation_mult, c10.vegetation_mult, c01.vegetation_mult, c11.vegetation_mult, tx, tz),

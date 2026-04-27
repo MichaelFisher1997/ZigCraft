@@ -251,6 +251,8 @@ pub const OverworldGenerator = struct {
     /// Generate heightmap data only (for LODSimplifiedData)
     /// Uses classification cache when available to ensure LOD matches LOD0.
     pub fn generateHeightmapOnly(self: *const OverworldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
+        if (data.width < 2) return;
+
         const region_size_i: i32 = @intCast(lod_level.regionSizeBlocks());
         const region_size_f: f32 = @floatFromInt(region_size_i);
         const grid_max: f32 = @floatFromInt(data.width - 1);
