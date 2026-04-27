@@ -55,12 +55,6 @@
 
 Optimized for high chunk render distances with greedy meshing, job-based multithreading, and a Vulkan RHI backend. Build with `-Doptimize=ReleaseFast` for best results.
 
-## 🖼️ Screenshots
-
-| Luanti-Style Clouds | Biomes | Terrain |
-|---------------------|--------|---------|
-| ![Luanti-style clouds](assets/screenshots/clouds.png) | ![Biomes](assets/screenshots/hero.png) | ![Terrain](assets/screenshots/hero.png) |
-
 ## ⌨️ Controls
 
 | Key | Action |
