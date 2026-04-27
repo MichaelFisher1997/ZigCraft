@@ -132,8 +132,8 @@ pub const TerrainShapeGenerator = struct {
 
     pub fn sampleColumnData(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8) ColumnData {
         const region_seed = self.getRegionSeed();
-        const wx_i: i32 = @intFromFloat(wx);
-        const wz_i: i32 = @intFromFloat(wz);
+        const wx_i: i32 = @intFromFloat(@floor(wx));
+        const wz_i: i32 = @intFromFloat(@floor(wz));
         const controls = region_pkg.getBlendedControls(region_seed, wx_i, wz_i);
         return self.sampleColumnDataWithControls(wx, wz, reduction, controls);
     }
@@ -148,8 +148,8 @@ pub const TerrainShapeGenerator = struct {
         noise.river_mask = self.noise_sampler.getRiverMask(noise.warped_x, noise.warped_z, reduction);
 
         const region_seed = self.getRegionSeed();
-        const wx_i: i32 = @intFromFloat(wx);
-        const wz_i: i32 = @intFromFloat(wz);
+        const wx_i: i32 = @intFromFloat(@floor(wx));
+        const wz_i: i32 = @intFromFloat(@floor(wz));
         const region = region_pkg.getRegion(region_seed, wx_i, wz_i);
         const path_info = region_pkg.getPathInfo(region_seed, wx_i, wz_i, region);
         const terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, controls, path_info, reduction);

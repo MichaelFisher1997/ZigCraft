@@ -259,6 +259,13 @@ pub const OverworldGenerator = struct {
         const world_x = region_x * region_size_i;
         const world_z = region_z * region_size_i;
         const sea_level = self.terrain_shape.getSeaLevel();
+        const controls = region_pkg.RegionControlCorners.init(
+            self.terrain_shape.getRegionSeed(),
+            world_x,
+            world_z,
+            world_x + region_size_i,
+            world_z + region_size_i,
+        );
 
         var gz: u32 = 0;
         while (gz < data.width) : (gz += 1) {
@@ -269,7 +276,7 @@ pub const OverworldGenerator = struct {
                 const wz = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
                 const wx_i: i32 = @intFromFloat(@floor(wx));
                 const wz_i: i32 = @intFromFloat(@floor(wz));
-                const column = self.terrain_shape.sampleColumnData(wx, wz, 0);
+                const column = self.terrain_shape.sampleColumnDataWithControls(wx, wz, 0, controls.sample(wx_i, wz_i));
                 const render_water_surface = column.terrain_height_i < sea_level and (column.is_ocean or self.isInlandWater(wx, wz, column.terrain_height_i));
                 data.heightmap[idx] = if (render_water_surface)
                     @as(f32, @floatFromInt(sea_level))
