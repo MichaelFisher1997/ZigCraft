@@ -1,0 +1,41 @@
+name: Load Prompt
+description: Load a markdown prompt template and substitute environment variables via envsubst
+
+inputs:
+  prompt-file:
+    required: true
+    description: Path to the .md prompt template file
+  env-var:
+    required: false
+    default: PROMPT
+    description: Name of the environment variable to write the rendered prompt to
+  variables:
+    required: false
+    default: ""
+    description: Space-separated list of variable names to substitute (restricts envsubst expansion)
+
+runs:
+  using: composite
+  steps:
+    - name: Load and substitute prompt
+      shell: bash
+      run: |
+        ENV_VAR="${{ inputs.env-var }}"
+        if [[ ! "$ENV_VAR" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          echo "Invalid env-var name: $ENV_VAR" >&2
+          exit 1
+        fi
+
+        if ! command -v envsubst &> /dev/null; then
+          sudo apt-get update -qq && sudo apt-get install -y -qq gettext-base
+        fi
+
+        {
+          echo "${ENV_VAR}<<ENVEOF"
+          if [ -n "${{ inputs.variables }}" ]; then
+            envsubst '${{ inputs.variables }}' < "${{ inputs.prompt-file }}"
+          else
+            envsubst < "${{ inputs.prompt-file }}"
+          fi
+          echo "ENVEOF"
+        } >> "$GITHUB_ENV"
