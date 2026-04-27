@@ -46,6 +46,7 @@ test {
     _ = @import("vulkan_tests.zig");
     _ = @import("engine/graphics/rhi_tests.zig");
     _ = @import("engine/graphics/cloud_system.zig");
+    _ = @import("shadow_cascade_tests.zig");
     _ = @import("engine/graphics/shadow_tests.zig");
     _ = @import("engine/graphics/shadow_system_tests.zig");
     _ = @import("engine/math/utils_tests.zig");
