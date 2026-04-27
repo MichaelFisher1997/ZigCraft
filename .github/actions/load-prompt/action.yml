@@ -1,0 +1,23 @@
+name: Load Prompt
+description: Load a markdown prompt template and substitute environment variables via envsubst
+
+inputs:
+  prompt-file:
+    required: true
+    description: Path to the .md prompt template file
+  env-var:
+    required: false
+    default: PROMPT
+    description: Name of the environment variable to write the rendered prompt to
+
+runs:
+  using: composite
+  steps:
+    - name: Load and substitute prompt
+      shell: bash
+      run: |
+        {
+          echo "${{ inputs.env-var }}<<ENVEOF"
+          envsubst < "${{ inputs.prompt-file }}"
+          echo "ENVEOF"
+        } >> "$GITHUB_ENV"
