@@ -14,7 +14,7 @@ const render_graph_pkg = @import("../../engine/graphics/render_graph.zig");
 const PausedScreen = @import("paused.zig").PausedScreen;
 const DebugShadowOverlay = @import("../../engine/ui/debug_shadow_overlay.zig").DebugShadowOverlay;
 const DebugLPVOverlay = @import("../../engine/ui/debug_lpv_overlay.zig").DebugLPVOverlay;
-const DebugMenuOverlay = @import("../../engine/ui/debug_menu.zig").DebugMenuOverlay;
+const DebugUI = @import("../../engine/ui/debug_ui.zig").DebugUI;
 const DebugFeature = @import("../../engine/ui/debug_menu.zig").DebugFeature;
 const DebugFrustum = @import("../../engine/ui/debug_frustum.zig");
 const DebugFrustumOverlay = DebugFrustum.DebugFrustum;
@@ -57,7 +57,7 @@ pub const WorldScreen = struct {
     session: *GameSession,
     world: IWorld,
     last_debug_toggle_time: f32 = 0,
-    debug_menu: DebugMenuOverlay,
+    debug_ui: DebugUI,
     frustum_buffer: rhi_pkg.BufferHandle = 0,
     frustum_initialized: bool = false,
     chunk_inspector_overlay: ChunkInspectorOverlay = .{},
@@ -87,7 +87,7 @@ pub const WorldScreen = struct {
             .session = session,
             .world = world,
             .last_debug_toggle_time = 0,
-            .debug_menu = .{},
+            .debug_ui = .{},
             .startup_diagnostic_start = context.time.elapsed,
             .startup_diagnostic_logged = false,
         };
@@ -144,8 +144,8 @@ pub const WorldScreen = struct {
         const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
 
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_debug_menu)) {
-            self.debug_menu.toggle();
-            ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), !self.debug_menu.enabled);
+            self.debug_ui.toggleMenu();
+            ctx.input.setMouseCapture(@ptrCast(@alignCast(ctx.window_manager.window)), !self.debug_ui.menuEnabled());
             self.last_debug_toggle_time = now;
         }
 
@@ -423,7 +423,7 @@ pub const WorldScreen = struct {
         const mouse_x: f32 = @floatFromInt(mouse_pos.x);
         const mouse_y: f32 = @floatFromInt(mouse_pos.y);
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
-        const hud_clicked = if (self.debug_menu.enabled) false else mouse_clicked;
+        const hud_clicked = if (self.debug_ui.menuEnabled()) false else mouse_clicked;
 
         if (!clean_capture) {
             try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
@@ -435,8 +435,10 @@ pub const WorldScreen = struct {
             const box_h = 34.0;
             const box_x = screen_w * 0.5 - box_w * 0.5;
             const box_y = screen_h * 0.5 - box_h * 0.5;
-            ui.drawRect(.{ .x = box_x, .y = box_y, .width = box_w, .height = box_h }, Color.rgba(0, 0, 0, 0.55));
-            Font.drawText(ui, msg, box_x + 18.0, box_y + 8.0, 2.0, Color.white);
+            ui.drawRect(.{ .x = box_x, .y = box_y, .width = box_w, .height = box_h }, Color.rgba(0.010, 0.020, 0.030, 0.78));
+            ui.drawRect(.{ .x = box_x, .y = box_y, .width = 5.0, .height = box_h }, Color.rgba(0.95, 0.62, 0.24, 0.92));
+            ui.drawRectOutline(.{ .x = box_x, .y = box_y, .width = box_w, .height = box_h }, Color.rgba(0.42, 0.66, 0.82, 0.68), 1.0);
+            Font.drawText(ui, msg, box_x + 18.0, box_y + 8.0, 2.0, Color.rgba(1.0, 0.93, 0.76, 1.0));
         }
 
         if (shadow_sandbox_active and settings_data.anyShadowMapDebugActive(ctx.settings)) {
@@ -525,7 +527,7 @@ pub const WorldScreen = struct {
             );
         }
 
-        if (self.debug_menu.enabled) {
+        if (self.debug_ui.menuEnabled()) {
             const debug_state = world_debug.ScreenDebugState{
                 .session = self.session,
                 .last_debug_toggle_time = &self.last_debug_toggle_time,
@@ -533,7 +535,7 @@ pub const WorldScreen = struct {
             };
             const feature_states = world_debug.collectStates(debug_state, ctx, render_system);
             const scroll_delta = ctx.input.getScrollDelta();
-            if (self.debug_menu.draw(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale, scroll_delta.y)) |click| {
+            if (self.debug_ui.drawMenu(ui, feature_states, mouse_x, mouse_y, mouse_clicked, ctx.settings.ui_scale, scroll_delta.y, ctx.ui_manager.getImguiBackend())) |click| {
                 world_debug.applyToggle(debug_state, click.feature, ctx, render_system, rhi, ctx.time.elapsed);
             }
         }
@@ -659,14 +661,16 @@ pub const WorldScreen = struct {
         const panel_h = 126.0 * ui_scale;
         const panel_y = @max(12.0 * ui_scale, screen_h - panel_h - 12.0 * ui_scale);
         const panel_w = 372.0 * ui_scale;
-        ui.drawRect(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, Color.rgba(0.03, 0.05, 0.08, 0.86));
-        ui.drawRectOutline(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, Color.rgba(0.45, 0.66, 0.90, 0.9), 2.0 * ui_scale);
+        ui.drawRect(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, Color.rgba(0.010, 0.020, 0.030, 0.78));
+        ui.drawRect(.{ .x = panel_x, .y = panel_y, .width = 5.0 * ui_scale, .height = panel_h }, Color.rgba(0.95, 0.62, 0.24, 0.92));
+        ui.drawRect(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = 28.0 * ui_scale }, Color.rgba(0.10, 0.20, 0.28, 0.62));
+        ui.drawRectOutline(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, Color.rgba(0.42, 0.66, 0.82, 0.68), 1.0 * ui_scale);
 
         const text_scale = 1.75 * ui_scale;
         const text_x = panel_x + 10.0 * ui_scale;
         const line_h = 14.0 * ui_scale;
         var y = panel_y + 10.0 * ui_scale;
-        Font.drawText(ui, "SHADOW PROBE", panel_x + 8.0 * ui_scale, y, text_scale, Color.rgba(0.98, 0.99, 1.0, 1.0));
+        Font.drawText(ui, "SHADOW PROBE", panel_x + 10.0 * ui_scale, y, text_scale, Color.rgba(1.0, 0.93, 0.76, 1.0));
         y += line_h;
 
         if (probe) |p| {

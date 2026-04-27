@@ -8,6 +8,9 @@ pub fn build(b: *std.Build) void {
     const enable_debug_shadows = b.option(bool, "debug_shadows", "Enable debug shadow visualization resources") orelse false;
     options.addOption(bool, "debug_shadows", enable_debug_shadows);
 
+    const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration") orelse true;
+    options.addOption(bool, "imgui", enable_imgui);
+
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
     options.addOption(bool, "smoke_test", smoke_test);
 
@@ -99,9 +102,14 @@ pub fn build(b: *std.Build) void {
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
+    exe.root_module.addCSourceFile(.{
+        .file = b.path("libs/stb/stb_truetype_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
 
     exe.root_module.linkSystemLibrary("sdl3", .{});
     exe.root_module.linkSystemLibrary("vulkan", .{});
+    if (enable_imgui) addCimgui(b, exe);
 
     b.installArtifact(exe);
 
@@ -121,6 +129,7 @@ pub fn build(b: *std.Build) void {
 
     const benchmark_options = b.addOptions();
     benchmark_options.addOption(bool, "debug_shadows", enable_debug_shadows);
+    benchmark_options.addOption(bool, "imgui", enable_imgui);
     benchmark_options.addOption(bool, "smoke_test", false);
     benchmark_options.addOption(bool, "chunk_debug_mode", false);
     benchmark_options.addOption([]const u8, "chunk_debug_enable", "");
@@ -159,9 +168,14 @@ pub fn build(b: *std.Build) void {
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
+    benchmark_exe.root_module.addCSourceFile(.{
+        .file = b.path("libs/stb/stb_truetype_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
 
     benchmark_exe.root_module.linkSystemLibrary("sdl3", .{});
     benchmark_exe.root_module.linkSystemLibrary("vulkan", .{});
+    if (enable_imgui) addCimgui(b, benchmark_exe);
 
     b.installArtifact(benchmark_exe);
 
@@ -188,9 +202,14 @@ pub fn build(b: *std.Build) void {
         .root_module = test_root_module,
     });
     exe_tests.root_module.link_libc = true;
+    exe_tests.root_module.addCSourceFile(.{
+        .file = b.path("libs/stb/stb_truetype_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
     exe_tests.root_module.linkSystemLibrary("sdl3", .{});
     exe_tests.root_module.linkSystemLibrary("vulkan", .{});
     exe_tests.root_module.addIncludePath(b.path("libs/stb"));
+    if (enable_imgui) addCimgui(b, exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
     const run_exe_tests = b.addRunArtifact(exe_tests);
@@ -217,8 +236,13 @@ pub fn build(b: *std.Build) void {
         .file = b.path("libs/stb/stb_image_impl.c"),
         .flags = &.{"-std=c99"},
     });
+    exe_integration_tests.root_module.addCSourceFile(.{
+        .file = b.path("libs/stb/stb_truetype_impl.c"),
+        .flags = &.{"-std=c99"},
+    });
     exe_integration_tests.root_module.linkSystemLibrary("sdl3", .{});
     exe_integration_tests.root_module.linkSystemLibrary("vulkan", .{});
+    if (enable_imgui) addCimgui(b, exe_integration_tests);
 
     const test_integration_step = b.step("test-integration", "Run integration smoke test");
     const run_integration_tests = b.addRunArtifact(exe_integration_tests);
@@ -324,4 +348,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&validate_vulkan_water_vert.step);
     test_step.dependOn(&validate_vulkan_water_frag.step);
     test_step.dependOn(&validate_vulkan_mesh_comp.step);
+}
+
+fn addCimgui(_: *std.Build, compile: *std.Build.Step.Compile) void {
+    compile.root_module.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
+    compile.root_module.link_libcpp = true;
 }

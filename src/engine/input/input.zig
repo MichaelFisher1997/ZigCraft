@@ -12,6 +12,7 @@ const MouseButton = interfaces.MouseButton;
 const Modifiers = interfaces.Modifiers;
 
 const c = @import("../../c.zig").c;
+const imgui_backend = @import("../ui/imgui/imgui_backend.zig");
 
 pub const Input = struct {
     /// Currently pressed keys
@@ -79,6 +80,7 @@ pub const Input = struct {
     pub fn pollEvents(self: *Input) void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
+            if (imgui_backend.available) imgui_backend.Backend.processEvent(&event);
             self.processEvent(event);
         }
     }

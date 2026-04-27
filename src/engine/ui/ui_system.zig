@@ -7,6 +7,7 @@ const rhi = @import("../graphics/rhi.zig");
 
 pub const Color = rhi.Color;
 pub const Rect = rhi.Rect;
+pub const UVRect = rhi.UVRect;
 
 pub const UISystem = struct {
     renderer: rhi.UIRenderer,
@@ -44,6 +45,10 @@ pub const UISystem = struct {
 
     pub fn drawTexture(self: *UISystem, texture_id: rhi.TextureHandle, rect: Rect) void {
         self.renderer.drawTexture(texture_id, rect);
+    }
+
+    pub fn drawTextureRegion(self: *UISystem, texture_id: rhi.TextureHandle, rect: Rect, uv: UVRect, color: Color) void {
+        self.renderer.drawTextureRegion(texture_id, rect, uv, color);
     }
 
     pub fn drawDepthTexture(self: *UISystem, texture: rhi.TextureHandle, rect: Rect) void {

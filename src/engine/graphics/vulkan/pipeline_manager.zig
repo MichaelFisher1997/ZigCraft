@@ -140,8 +140,8 @@ pub const PipelineManager = struct {
 
         // UI pipeline layout
         var ui_push_constant = std.mem.zeroes(c.VkPushConstantRange);
-        ui_push_constant.stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT;
-        ui_push_constant.size = @sizeOf(Mat4);
+        ui_push_constant.stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT;
+        ui_push_constant.size = @sizeOf(Mat4) + @sizeOf([4]f32);
 
         var ui_layout_info = std.mem.zeroes(c.VkPipelineLayoutCreateInfo);
         ui_layout_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;

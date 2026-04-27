@@ -350,6 +350,13 @@ pub const Rect = struct {
     }
 };
 
+pub const UVRect = struct {
+    u0: f32,
+    v0: f32,
+    u1: f32,
+    v1: f32,
+};
+
 pub const GpuTimingResults = struct {
     shadow_pass_ms: [SHADOW_CASCADE_COUNT]f32,
     g_pass_ms: f32,

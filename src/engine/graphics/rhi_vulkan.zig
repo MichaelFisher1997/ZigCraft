@@ -735,6 +735,11 @@ fn drawTexture2D(ctx_ptr: *anyopaque, texture: rhi.TextureHandle, rect: rhi.Rect
     ui_submission.drawTexture2D(ctx, texture, rect);
 }
 
+fn drawTextureRegion2D(ctx_ptr: *anyopaque, texture: rhi.TextureHandle, rect: rhi.Rect, uv: rhi.UVRect, color: rhi.Color) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ui_submission.drawTextureRegion2D(ctx, texture, rect, uv, color);
+}
+
 fn createShader(ctx_ptr: *anyopaque, vertex_src: [*c]const u8, fragment_src: [*c]const u8) rhi.RhiError!rhi.ShaderHandle {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return ctx.resources.createShader(vertex_src, fragment_src);
@@ -855,6 +860,34 @@ fn getNativeDevice(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeDevice(ctx);
 }
+fn getNativeInstance(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeInstance(ctx);
+}
+fn getNativePhysicalDevice(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativePhysicalDevice(ctx);
+}
+fn getNativeQueue(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeQueue(ctx);
+}
+fn getNativeQueueFamily(ctx_ptr: *anyopaque) u32 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeQueueFamily(ctx);
+}
+fn getNativeDescriptorPool(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeDescriptorPool(ctx);
+}
+fn getNativeUiRenderPass(ctx_ptr: *anyopaque) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeUiRenderPass(ctx);
+}
+fn getNativeSwapchainImageCount(ctx_ptr: *anyopaque) u32 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return native_access.getNativeSwapchainImageCount(ctx);
+}
 
 fn computeSsao(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
@@ -886,6 +919,7 @@ const VULKAN_UI_CONTEXT_VTABLE = rhi.IUIContext.VTable{
     .endPass = end2DPass,
     .drawRect = drawRect2D,
     .drawTexture = drawTexture2D,
+    .drawTextureRegion = drawTextureRegion2D,
     .drawDepthTexture = drawDepthTexture,
     .bindPipeline = bindUIPipeline,
 };
@@ -971,6 +1005,13 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,
+        .getInstance = getNativeInstance,
+        .getPhysicalDevice = getNativePhysicalDevice,
+        .getQueue = getNativeQueue,
+        .getQueueFamily = getNativeQueueFamily,
+        .getDescriptorPool = getNativeDescriptorPool,
+        .getUiRenderPass = getNativeUiRenderPass,
+        .getSwapchainImageCount = getNativeSwapchainImageCount,
     },
     .ssao = VULKAN_SSAO_VTABLE,
     .debug_overlay = VULKAN_DEBUG_OVERLAY_VTABLE,

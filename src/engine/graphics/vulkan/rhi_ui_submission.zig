@@ -20,6 +20,10 @@ fn sampledImageLayout(format: rhi.TextureFormat) c.VkImageLayout {
         c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
+fn sameTint(a: [4]f32, b: [4]f32) bool {
+    return a[0] == b[0] and a[1] == b[1] and a[2] == b[2] and a[3] == b[3];
+}
+
 pub fn flushUI(ctx: anytype) void {
     if (!ctx.runtime.main_pass_active and !ctx.fxaa.pass_active) {
         return;
@@ -71,6 +75,9 @@ pub fn begin2DPass(ctx: anytype, screen_width: f32, screen_height: f32) void {
     ctx.ui.ui_screen_width = screen_width;
     ctx.ui.ui_screen_height = screen_height;
     ctx.ui.ui_in_progress = true;
+    ctx.ui.ui_active_textured = false;
+    ctx.ui.ui_active_texture = 0;
+    ctx.ui.ui_active_tint = .{ 0.0, 0.0, 0.0, 0.0 };
 
     const ui_vbo = ctx.ui.ui_vbos[ctx.frames.current_frame];
     if (ui_vbo.mapped_ptr) |ptr| {
@@ -109,6 +116,19 @@ pub fn end2DPass(ctx: anytype) void {
 }
 
 pub fn drawRect2D(ctx: anytype, rect: rhi.Rect, color: rhi.Color) void {
+    if (ctx.ui.ui_active_textured) {
+        flushUI(ctx);
+        ctx.ui.ui_active_textured = false;
+        ctx.ui.ui_active_texture = 0;
+        const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+        const pipeline = getUIPipeline(ctx, false);
+        if (pipeline != null) {
+            c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            const proj = Mat4.orthographic(0, ctx.ui.ui_screen_width, ctx.ui.ui_screen_height, 0, -1, 1);
+            c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+        }
+    }
+
     const x = rect.x;
     const y = rect.y;
     const w = rect.width;
@@ -140,6 +160,10 @@ pub fn drawRect2D(ctx: anytype, rect: rhi.Rect, color: rhi.Color) void {
 pub fn bindUIPipeline(ctx: anytype, textured: bool) void {
     if (!ctx.frames.frame_in_progress) return;
 
+    flushUI(ctx);
+    ctx.ui.ui_active_textured = textured;
+    if (!textured) ctx.ui.ui_active_texture = 0;
+
     ctx.draw.terrain_pipeline_bound = false;
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -150,9 +174,17 @@ pub fn bindUIPipeline(ctx: anytype, textured: bool) void {
 }
 
 pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) void {
+    drawTextureRegion2D(ctx, texture, rect, .{ .u0 = 0.0, .v0 = 0.0, .u1 = 1.0, .v1 = 1.0 }, rhi.Color.white);
+}
+
+pub fn drawTextureRegion2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect, uv: rhi.UVRect, color: rhi.Color) void {
     if (!ctx.frames.frame_in_progress or !ctx.ui.ui_in_progress) return;
 
-    flushUI(ctx);
+    const tint = [_]f32{ color.r, color.g, color.b, color.a };
+    const needs_bind = !ctx.ui.ui_active_textured or ctx.ui.ui_active_texture != texture or !sameTint(ctx.ui.ui_active_tint, tint);
+    if (needs_bind) {
+        flushUI(ctx);
+    }
 
     const tex_opt = ctx.resources.textures.get(texture);
     if (tex_opt == null) {
@@ -162,36 +194,42 @@ pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) v
     const tex = tex_opt.?;
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+    if (needs_bind) {
+        const textured_pipeline = getUIPipeline(ctx, true);
+        if (textured_pipeline == null) return;
+        c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, textured_pipeline);
+        ctx.draw.terrain_pipeline_bound = false;
 
-    const textured_pipeline = getUIPipeline(ctx, true);
-    if (textured_pipeline == null) return;
-    c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, textured_pipeline);
-    ctx.draw.terrain_pipeline_bound = false;
+        var image_info = std.mem.zeroes(c.VkDescriptorImageInfo);
+        image_info.imageLayout = sampledImageLayout(tex.format);
+        image_info.imageView = tex.view;
+        image_info.sampler = tex.sampler;
 
-    var image_info = std.mem.zeroes(c.VkDescriptorImageInfo);
-    image_info.imageLayout = sampledImageLayout(tex.format);
-    image_info.imageView = tex.view;
-    image_info.sampler = tex.sampler;
+        const frame = ctx.frames.current_frame;
+        const idx = ctx.ui.ui_tex_descriptor_next[frame];
+        const pool_len = ctx.ui.ui_tex_descriptor_pool[frame].len;
+        ctx.ui.ui_tex_descriptor_next[frame] = @intCast((idx + 1) % pool_len);
+        const ds = ctx.ui.ui_tex_descriptor_pool[frame][idx];
 
-    const frame = ctx.frames.current_frame;
-    const idx = ctx.ui.ui_tex_descriptor_next[frame];
-    const pool_len = ctx.ui.ui_tex_descriptor_pool[frame].len;
-    ctx.ui.ui_tex_descriptor_next[frame] = @intCast((idx + 1) % pool_len);
-    const ds = ctx.ui.ui_tex_descriptor_pool[frame][idx];
+        var write = std.mem.zeroes(c.VkWriteDescriptorSet);
+        write.sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = ds;
+        write.dstBinding = 0;
+        write.descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.descriptorCount = 1;
+        write.pImageInfo = &image_info;
 
-    var write = std.mem.zeroes(c.VkWriteDescriptorSet);
-    write.sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = ds;
-    write.dstBinding = 0;
-    write.descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.descriptorCount = 1;
-    write.pImageInfo = &image_info;
+        c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, 1, &write, 0, null);
+        c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.ui_tex_pipeline_layout, 0, 1, &ds, 0, null);
 
-    c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, 1, &write, 0, null);
-    c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.ui_tex_pipeline_layout, 0, 1, &ds, 0, null);
+        const proj = Mat4.orthographic(0, ctx.ui.ui_screen_width, ctx.ui.ui_screen_height, 0, -1, 1);
+        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, c.VK_SHADER_STAGE_FRAGMENT_BIT, @sizeOf(Mat4), @sizeOf(@TypeOf(tint)), &tint);
 
-    const proj = Mat4.orthographic(0, ctx.ui.ui_screen_width, ctx.ui.ui_screen_height, 0, -1, 1);
-    c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+        ctx.ui.ui_active_textured = true;
+        ctx.ui.ui_active_texture = texture;
+        ctx.ui.ui_active_tint = tint;
+    }
 
     const x = rect.x;
     const y = rect.y;
@@ -199,12 +237,12 @@ pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) v
     const h = rect.height;
 
     const vertices = [_]f32{
-        x,     y,     0.0, 0.0, 0.0, 0.0,
-        x + w, y,     1.0, 0.0, 0.0, 0.0,
-        x + w, y + h, 1.0, 1.0, 0.0, 0.0,
-        x,     y,     0.0, 0.0, 0.0, 0.0,
-        x + w, y + h, 1.0, 1.0, 0.0, 0.0,
-        x,     y + h, 0.0, 1.0, 0.0, 0.0,
+        x,     y,     uv.u0, uv.v0, 0.0, 0.0,
+        x + w, y,     uv.u1, uv.v0, 0.0, 0.0,
+        x + w, y + h, uv.u1, uv.v1, 0.0, 0.0,
+        x,     y,     uv.u0, uv.v0, 0.0, 0.0,
+        x + w, y + h, uv.u1, uv.v1, 0.0, 0.0,
+        x,     y + h, uv.u0, uv.v1, 0.0, 0.0,
     };
 
     const size = @sizeOf(@TypeOf(vertices));
@@ -214,18 +252,8 @@ pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) v
             const dest = @as([*]u8, @ptrCast(ptr)) + ctx.ui.ui_vertex_offset;
             @memcpy(dest[0..size], std.mem.asBytes(&vertices));
 
-            const start_vertex = @as(u32, @intCast(ctx.ui.ui_vertex_offset / (6 * @sizeOf(f32))));
-            c.vkCmdDraw(command_buffer, 6, 1, start_vertex, 0);
-
             ctx.ui.ui_vertex_offset += size;
-            ctx.ui.ui_flushed_vertex_count = @intCast(ctx.ui.ui_vertex_offset / (6 * @sizeOf(f32)));
         }
-    }
-
-    const restore_pipeline = getUIPipeline(ctx, false);
-    if (restore_pipeline != null) {
-        c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, restore_pipeline);
-        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
     }
 }
 

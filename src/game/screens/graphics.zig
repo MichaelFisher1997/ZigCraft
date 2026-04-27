@@ -13,8 +13,11 @@ const RenderDistancePreset = render_settings_mod.RenderDistancePreset;
 
 const PANEL_WIDTH_MAX = 850.0;
 const PANEL_HEIGHT_BASE = 850.0;
-const BG_COLOR = Color.rgba(0.12, 0.14, 0.18, 0.95);
-const BORDER_COLOR = Color.rgba(0.28, 0.33, 0.42, 1.0);
+const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.95);
+const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.78);
+const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
+const LABEL_COLOR = Color.rgba(0.72, 0.86, 0.96, 1.0);
+const MUTED_COLOR = Color.rgba(0.48, 0.60, 0.70, 0.92);
 
 pub const GraphicsScreen = struct {
     context: EngineContext,
@@ -72,28 +75,33 @@ pub const GraphicsScreen = struct {
 
         const auto_scale: f32 = @max(1.0, screen_h / 720.0);
         const ui_scale: f32 = auto_scale * settings.ui_scale;
-        const label_scale: f32 = 2.2 * ui_scale;
-        const btn_scale: f32 = 1.8 * ui_scale;
-        const title_scale: f32 = 3.5 * ui_scale;
+        const label_scale: f32 = 1.45 * ui_scale;
+        const btn_scale: f32 = 1.35 * ui_scale;
+        const title_scale: f32 = 3.0 * ui_scale;
         const row_height: f32 = 48.0 * ui_scale;
         const btn_height: f32 = 34.0 * ui_scale;
         const toggle_width: f32 = 180.0 * ui_scale;
 
         const pw: f32 = @min(screen_w * 0.8, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = @min(screen_h - 40.0, PANEL_HEIGHT_BASE * ui_scale);
+        const ph: f32 = @min(screen_h - 80.0 * ui_scale, PANEL_HEIGHT_BASE * ui_scale);
         const px: f32 = (screen_w - pw) * 0.5;
         const py: f32 = (screen_h - ph) * 0.5;
 
+        drawGraphicsBackdrop(ui, screen_w, screen_h, ui_scale);
         ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
+        ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
+        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = 72.0 * ui_scale }, Color.rgba(0.12, 0.22, 0.30, 0.64));
+        ui.drawRect(.{ .x = px + pw - 2.0 * ui_scale, .y = py, .width = 2.0 * ui_scale, .height = ph }, Color.rgba(0.48, 0.76, 0.93, 0.62));
         ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawTextCentered(ui, "GRAPHICS SETTINGS", screen_w * 0.5, py + 25.0 * ui_scale, title_scale, Color.white);
+        Font.drawText(ui, "GRAPHICS SETTINGS", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
+        Font.drawText(ui, "Renderer quality, post effects, and distance budgets.", px + 38.0 * ui_scale, py + 56.0 * ui_scale, 1.05 * ui_scale, MUTED_COLOR);
 
-        var sy: f32 = py + 80.0 * ui_scale;
+        var sy: f32 = py + 96.0 * ui_scale;
         const lx: f32 = px + 40.0 * ui_scale;
         const vx: f32 = px + pw - 220.0 * ui_scale;
 
         // Quality Preset
-        Font.drawText(ui, "OVERALL QUALITY", lx, sy, label_scale, Color.rgba(0.4, 0.8, 1.0, 1.0));
+        Font.drawText(ui, "OVERALL QUALITY", lx, sy, label_scale, LABEL_COLOR);
 
         if (settings_pkg.json_presets.graphics_presets.items.len > 0) {
             const preset_idx = settings_pkg.json_presets.getIndex(settings);
@@ -121,7 +129,7 @@ pub const GraphicsScreen = struct {
         sy += row_height + 10.0 * ui_scale;
 
         // Render Distance Preset
-        Font.drawText(ui, "RENDER DISTANCE", lx, sy, label_scale, Color.rgba(0.4, 0.8, 1.0, 1.0));
+        Font.drawText(ui, "RENDER DISTANCE", lx, sy, label_scale, LABEL_COLOR);
         const current_rdp = @intFromEnum(settings.render_distance_preset);
         const rdp_label = settings.render_distance_preset.label();
         if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 5.0, .width = toggle_width, .height = btn_height }, rdp_label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
@@ -154,7 +162,7 @@ pub const GraphicsScreen = struct {
             const val_type = @TypeOf(val_ptr.*);
             const old_val = val_ptr.*;
 
-            Font.drawText(ui, meta.label, lx, sy, label_scale, Color.white);
+            Font.drawText(ui, meta.label, lx, sy, label_scale, LABEL_COLOR);
 
             switch (meta.kind) {
                 .toggle => {
@@ -318,6 +326,12 @@ pub const GraphicsScreen = struct {
         return Screen.makeScreen(@This(), self);
     }
 };
+
+fn drawGraphicsBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
+    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.82));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = screen_h * 0.36 }, Color.rgba(0.075, 0.048, 0.028, 0.52));
+    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.92, 0.62, 0.24, 0.40));
+}
 
 fn getPresetLabel(idx: usize) []const u8 {
     if (idx >= settings_pkg.json_presets.graphics_presets.items.len) return "CUSTOM";
