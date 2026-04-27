@@ -193,7 +193,7 @@ pub const WorldListScreen = struct {
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*WorldListScreen {
         const self = try allocator.create(WorldListScreen);
         errdefer allocator.destroy(self);
-        const worlds = scanWorlds(allocator) catch &[_]WorldEntry{};
+        const worlds = scanWorlds(allocator) catch try allocator.alloc(WorldEntry, 0);
         self.* = .{
             .context = context,
             .worlds = worlds,
@@ -373,12 +373,18 @@ pub const WorldListScreen = struct {
         const allocator = self.context.allocator;
         const dir_path = self.worlds[idx].dir_path;
         deleteWorld(allocator, dir_path);
-        for (self.worlds, 0..) |e, i| {
+        const old_worlds = self.worlds;
+        const empty_worlds = try allocator.alloc(WorldEntry, 0);
+        self.worlds = empty_worlds;
+        for (old_worlds, 0..) |e, i| {
             allocator.free(e.name);
             if (i != idx and e.dir_path.len > 0) allocator.free(e.dir_path);
         }
-        allocator.free(self.worlds);
-        self.worlds = scanWorlds(allocator) catch try allocator.alloc(WorldEntry, 0);
+        allocator.free(old_worlds);
+        if (scanWorlds(allocator)) |new_worlds| {
+            allocator.free(empty_worlds);
+            self.worlds = new_worlds;
+        } else |_| {}
         self.selected = null;
         self.confirm_delete = false;
         self.scroll_offset = 0.0;

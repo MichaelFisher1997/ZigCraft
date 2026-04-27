@@ -1,8 +1,7 @@
 //! Debug UI facade.
 //!
-//! Immediate-mode bitmap/atlas overlays remain the fallback. Once cimgui is
-//! vendored, this module should branch to the ImGui implementation without
-//! changing the world screen draw loop again.
+//! Dear ImGui renders the default debug menu when available. The immediate-mode
+//! bitmap/atlas overlay remains as the non-ImGui fallback.
 
 const DebugMenuOverlay = @import("debug_menu.zig").DebugMenuOverlay;
 const DebugFeature = @import("debug_menu.zig").DebugFeature;

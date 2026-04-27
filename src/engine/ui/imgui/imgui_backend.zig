@@ -83,6 +83,7 @@ pub const Backend = struct {
         if (!build_options.imgui or !self.initialized) return;
         c.ZigCraft_ImGui_Render();
         if (!self.has_draw_commands) return;
+        if (command_buffer == 0) return;
         c.ZigCraft_ImGui_ImplVulkan_RenderDrawData(c.ZigCraft_ImGui_GetDrawData(), @ptrFromInt(command_buffer));
     }
 };

@@ -76,7 +76,7 @@ pub const FontAtlas = struct {
         const scale = renderScale(legacy_scale);
 
         for (text) |ch| {
-            if (ch < FIRST_CHAR or ch >= FIRST_CHAR + CHAR_COUNT) return false;
+            if (ch < FIRST_CHAR or ch >= FIRST_CHAR + CHAR_COUNT) continue;
             const glyph = self.glyphs[ch - FIRST_CHAR];
             const w: f32 = @floatFromInt(glyph.x1 - glyph.x0);
             const h: f32 = @floatFromInt(glyph.y1 - glyph.y0);
