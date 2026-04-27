@@ -272,8 +272,10 @@ pub const GameSession = struct {
                     }
                 }
 
+                self.map_controller.update(input, mapper, &self.camera, dt, window, screen_w, screen_h, self.world_map.width);
+
                 if (self.map_controller.show_map) {
-                    self.map_controller.update(input, mapper, &self.camera, dt, window, screen_w, screen_h, self.world_map.width);
+                    // map open – skip player/world update
                 } else if (!skip_world) {
                     if (!self.inventory_ui_state.visible) {
                         self.player.update(input, mapper, self.world, dt, total_time);

@@ -23,18 +23,28 @@ pub const MapController = struct {
     map_target_zoom: f32 = 4.0,
     map_pos_x: f32 = 0.0,
     map_pos_z: f32 = 0.0,
+    map_target_pos_x: f32 = 0.0,
+    map_target_pos_z: f32 = 0.0,
     last_mouse_x: f32 = 0.0,
     last_mouse_y: f32 = 0.0,
+    vel_x: f32 = 0.0,
+    vel_z: f32 = 0.0,
+    is_dragging: bool = false,
 
     pub fn update(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, camera: *const Camera, time_delta: f32, window: *c.SDL_Window, screen_w: f32, screen_h: f32, world_map_width: u32) void {
         if (mapper.isActionPressed(input, .toggle_map)) {
             self.show_map = !self.show_map;
             log.log.info("Toggle map: show={}", .{self.show_map});
             if (self.show_map) {
-                self.map_pos_x = camera.position.x;
-                self.map_pos_z = camera.position.z;
+                self.map_target_pos_x = camera.position.x;
+                self.map_target_pos_z = camera.position.z;
+                self.map_pos_x = self.map_target_pos_x;
+                self.map_pos_z = self.map_target_pos_z;
                 self.map_target_zoom = self.map_zoom;
                 self.map_needs_update = true;
+                self.vel_x = 0;
+                self.vel_z = 0;
+                self.is_dragging = false;
                 const any_window: ?*anyopaque = @ptrCast(@alignCast(window));
                 input.setMouseCapture(any_window, false);
             } else {
@@ -45,28 +55,32 @@ pub const MapController = struct {
 
         if (!self.show_map) return;
 
-        const dt = @min(time_delta, 0.033);
+        const dt = @min(time_delta, 0.05);
+
         if (mapper.isActionActive(input, .map_zoom_in)) {
-            self.map_target_zoom /= @exp(1.2 * dt);
+            self.map_target_zoom /= @exp(3.0 * dt);
             self.map_needs_update = true;
         }
         if (mapper.isActionActive(input, .map_zoom_out)) {
-            self.map_target_zoom *= @exp(1.2 * dt);
+            self.map_target_zoom *= @exp(3.0 * dt);
             self.map_needs_update = true;
         }
         if (input.getScrollDelta().y != 0) {
             const zoom_delta = input.getScrollDelta().y;
-            self.map_target_zoom *= @exp(zoom_delta * 0.2);
+            self.map_target_zoom *= @exp(zoom_delta * 0.5);
             self.map_needs_update = true;
         }
         self.map_target_zoom = std.math.clamp(self.map_target_zoom, 0.05, 128.0);
         const old_zoom = self.map_zoom;
-        self.map_zoom = std.math.lerp(self.map_zoom, self.map_target_zoom, 20.0 * dt);
+        const zoom_t = 1.0 - @exp(-30.0 * dt);
+        self.map_zoom = std.math.lerp(self.map_zoom, self.map_target_zoom, zoom_t);
         if (@abs(self.map_zoom - old_zoom) > 0.001 * self.map_zoom) self.map_needs_update = true;
 
         if (mapper.isActionPressed(input, .map_center)) {
-            self.map_pos_x = camera.position.x;
-            self.map_pos_z = camera.position.z;
+            self.map_target_pos_x = camera.position.x;
+            self.map_target_pos_z = camera.position.z;
+            self.vel_x = 0;
+            self.vel_z = 0;
             self.map_needs_update = true;
         }
 
@@ -80,26 +94,54 @@ pub const MapController = struct {
         if (input.isMouseButtonPressed(.left)) {
             self.last_mouse_x = mouse_x;
             self.last_mouse_y = mouse_y;
+            self.is_dragging = true;
         }
 
         if (input.isMouseButtonDown(.left)) {
             const drag_dx = mouse_x - self.last_mouse_x;
             const drag_dz = mouse_y - self.last_mouse_y;
-            if (@abs(drag_dx) > 0.1 or @abs(drag_dz) > 0.1) {
-                self.map_pos_x -= drag_dx * self.map_zoom * world_to_screen_ratio;
-                self.map_pos_z -= drag_dz * self.map_zoom * world_to_screen_ratio;
+            if (@abs(drag_dx) > 0.5 or @abs(drag_dz) > 0.5) {
+                const pan_dx = drag_dx * self.map_zoom * world_to_screen_ratio;
+                const pan_dz = drag_dz * self.map_zoom * world_to_screen_ratio;
+                self.map_target_pos_x -= pan_dx;
+                self.map_target_pos_z -= pan_dz;
+                self.vel_x = -pan_dx / dt;
+                self.vel_z = -pan_dz / dt;
                 self.map_needs_update = true;
             }
             self.last_mouse_x = mouse_x;
             self.last_mouse_y = mouse_y;
         } else {
-            const pan_kb_speed = 800.0 * self.map_zoom;
+            self.is_dragging = false;
+
+            if (self.vel_x != 0 or self.vel_z != 0) {
+                const friction = @exp(-12.0 * dt);
+                self.vel_x *= friction;
+                self.vel_z *= friction;
+                if (@abs(self.vel_x) < 1.0 and @abs(self.vel_z) < 1.0) {
+                    self.vel_x = 0;
+                    self.vel_z = 0;
+                } else {
+                    self.map_target_pos_x += self.vel_x * dt;
+                    self.map_target_pos_z += self.vel_z * dt;
+                    self.map_needs_update = true;
+                }
+            }
+
+            const pan_kb_speed = 1600.0 * self.map_zoom;
             const move_vec = mapper.getMovementVector(input);
             if (move_vec.x != 0 or move_vec.z != 0) {
-                self.map_pos_x += move_vec.x * pan_kb_speed * dt;
-                self.map_pos_z -= move_vec.z * pan_kb_speed * dt; // Match coordinate system (W is z+)
+                self.map_target_pos_x += move_vec.x * pan_kb_speed * dt;
+                self.map_target_pos_z -= move_vec.z * pan_kb_speed * dt;
                 self.map_needs_update = true;
             }
+        }
+
+        const pos_t = 1.0 - @exp(-35.0 * dt);
+        self.map_pos_x = std.math.lerp(self.map_pos_x, self.map_target_pos_x, pos_t);
+        self.map_pos_z = std.math.lerp(self.map_pos_z, self.map_target_pos_z, pos_t);
+        if (@abs(self.map_pos_x - self.map_target_pos_x) > 0.5 or @abs(self.map_pos_z - self.map_target_pos_z) > 0.5) {
+            self.map_needs_update = true;
         }
     }
 
