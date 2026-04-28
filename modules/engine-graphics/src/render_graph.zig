@@ -454,7 +454,6 @@ pub const OpaquePass = struct {
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
         const self: *OpaquePass = @ptrCast(@alignCast(ptr));
-        ctx.render_ctx.bindShader(ctx.main_shader);
         self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.red, 11);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
@@ -604,7 +603,6 @@ pub const WaterReflectionPass = struct {
         const proj = ctx.camera.getProjectionMatrixReverseZ(ctx.aspect);
         const reflected_vp = ctx.water_ctx.computeReflectedViewProj(view, proj, ctx.camera.position);
 
-        ctx.render_ctx.bindShader(ctx.main_shader);
         self.material_system.bindTerrainMaterial(ctx.render_ctx, ctx.env_map_handle);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.red, 11);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);

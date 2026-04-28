@@ -480,8 +480,7 @@ fn setSelectionMode(ctx_ptr: *anyopaque, enabled: bool) void {
 
 fn setTextureUniforms(ctx_ptr: *anyopaque, texture_enabled: bool, shadow_map_handles: [rhi.SHADOW_CASCADE_COUNT]rhi.TextureHandle) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    _ = shadow_map_handles;
-    state_control.setTextureUniforms(ctx, texture_enabled);
+    state_control.setTextureUniforms(ctx, texture_enabled, shadow_map_handles);
 }
 
 fn drawDepthTexture(ctx_ptr: *anyopaque, texture: rhi.TextureHandle, rect: rhi.Rect) void {
@@ -764,7 +763,9 @@ fn unmapBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
 
 fn bindShader(ctx_ptr: *anyopaque, handle: rhi.ShaderHandle) void {
     _ = ctx_ptr;
-    _ = handle;
+    if (handle != rhi.InvalidShaderHandle) {
+        log.log.warn("Vulkan RHI bindShader({}) ignored: fixed pipelines are bound by draw submission", .{handle});
+    }
 }
 
 fn beginShadowPass(ctx_ptr: *anyopaque, cascade_index: u32, light_space_matrix: Mat4) void {

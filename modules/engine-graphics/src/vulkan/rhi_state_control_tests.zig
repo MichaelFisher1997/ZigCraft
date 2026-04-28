@@ -2,6 +2,7 @@ const std = @import("std");
 const sync = @import("sync");
 const testing = std.testing;
 const c = @import("c").c;
+const rhi = @import("engine-rhi").rhi;
 const rhi_state_control = @import("rhi_state_control.zig");
 
 // Mock context structures for testing without GPU
@@ -20,8 +21,13 @@ const MockOptions = struct {
 
 const MockDraw = struct {
     descriptors_updated: bool = true,
+    descriptors_dirty: [rhi.MAX_FRAMES_IN_FLIGHT]bool = .{false} ** rhi.MAX_FRAMES_IN_FLIGHT,
     terrain_pipeline_bound: bool = true,
     bound_texture: u32 = 0,
+};
+
+const MockShadowRuntime = struct {
+    shadow_map_handles: [rhi.SHADOW_CASCADE_COUNT]rhi.TextureHandle = .{0} ** rhi.SHADOW_CASCADE_COUNT,
 };
 
 const MockFrames = struct {
@@ -85,6 +91,7 @@ const MockSimpleContext = struct {
     vulkan_device: MockVulkanDevice = .{},
     mutex: sync.Mutex = .{},
     shadow_system: MockShadowSystem = .{},
+    shadow_runtime: MockShadowRuntime = .{},
     window: ?*c.SDL_Window = null,
 };
 
@@ -176,11 +183,16 @@ test "rhi_state_control.setTextureUniforms updates state and marks dirty" {
     var ctx = MockSimpleContext{ .allocator = testing.allocator };
     ctx.options.textures_enabled = false;
     ctx.draw.descriptors_updated = true;
+    const handles: [rhi.SHADOW_CASCADE_COUNT]rhi.TextureHandle = .{ 11, 12, 13, 14 };
 
-    rhi_state_control.setTextureUniforms(&ctx, true);
+    rhi_state_control.setTextureUniforms(&ctx, true, handles);
 
     try testing.expect(ctx.options.textures_enabled);
     try testing.expect(!ctx.draw.descriptors_updated);
+    try testing.expectEqual(handles, ctx.shadow_runtime.shadow_map_handles);
+    for (ctx.draw.descriptors_dirty) |dirty| {
+        try testing.expect(dirty);
+    }
 }
 
 test "rhi_state_control.setWireframe updates state and invalidates pipeline" {
