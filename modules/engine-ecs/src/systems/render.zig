@@ -10,7 +10,49 @@ const RenderContext = rhi_pkg.RenderContext;
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 const Vertex = rhi_pkg.Vertex;
-const wireframe = @import("engine-graphics").wireframe_cube;
+
+fn makeWireframeVertex(x: f32, y: f32, z: f32) Vertex {
+    return Vertex.init(
+        .{ x, y, z },
+        .{ 1.0, 1.0, 1.0 },
+        .{ 0, 1, 0 },
+        .{ 0, 0 },
+        0,
+        1.0,
+        .{ 1.0, 1.0, 1.0 },
+        1.0,
+        0.0,
+    );
+}
+
+const wireframe_line_vertices = [_]Vertex{
+    makeWireframeVertex(0.0, 0.0, 0.0),
+    makeWireframeVertex(1.0, 0.0, 0.0),
+    makeWireframeVertex(1.0, 0.0, 0.0),
+    makeWireframeVertex(1.0, 0.0, 1.0),
+    makeWireframeVertex(1.0, 0.0, 1.0),
+    makeWireframeVertex(0.0, 0.0, 1.0),
+    makeWireframeVertex(0.0, 0.0, 1.0),
+    makeWireframeVertex(0.0, 0.0, 0.0),
+    makeWireframeVertex(0.0, 1.0, 0.0),
+    makeWireframeVertex(1.0, 1.0, 0.0),
+    makeWireframeVertex(1.0, 1.0, 0.0),
+    makeWireframeVertex(1.0, 1.0, 1.0),
+    makeWireframeVertex(1.0, 1.0, 1.0),
+    makeWireframeVertex(0.0, 1.0, 1.0),
+    makeWireframeVertex(0.0, 1.0, 1.0),
+    makeWireframeVertex(0.0, 1.0, 0.0),
+    makeWireframeVertex(0.0, 0.0, 0.0),
+    makeWireframeVertex(0.0, 1.0, 0.0),
+    makeWireframeVertex(1.0, 0.0, 0.0),
+    makeWireframeVertex(1.0, 1.0, 0.0),
+    makeWireframeVertex(1.0, 0.0, 1.0),
+    makeWireframeVertex(1.0, 1.0, 1.0),
+    makeWireframeVertex(0.0, 0.0, 1.0),
+    makeWireframeVertex(0.0, 1.0, 1.0),
+};
+
+const wireframe_line_vertex_count: u32 = @intCast(wireframe_line_vertices.len);
 
 pub const RenderSystem = struct {
     buffer_handle: rhi_pkg.BufferHandle,
@@ -18,8 +60,8 @@ pub const RenderSystem = struct {
     missing_transform_logged: bool,
 
     pub fn init(resources: ResourceManager) !RenderSystem {
-        const buffer = try resources.createBuffer(@sizeOf(@TypeOf(wireframe.line_vertices)), .vertex);
-        try resources.uploadBuffer(buffer, std.mem.asBytes(&wireframe.line_vertices));
+        const buffer = try resources.createBuffer(@sizeOf(@TypeOf(wireframe_line_vertices)), .vertex);
+        try resources.uploadBuffer(buffer, std.mem.asBytes(&wireframe_line_vertices));
 
         return .{
             .buffer_handle = buffer,
@@ -70,7 +112,7 @@ pub const RenderSystem = struct {
 
             if (self.buffer_handle != rhi_pkg.InvalidBufferHandle) {
                 ctx.setModelMatrix(model, mesh.color, 0);
-                ctx.draw(self.buffer_handle, wireframe.line_vertex_count, .lines);
+                ctx.draw(self.buffer_handle, wireframe_line_vertex_count, .lines);
             }
         }
     }

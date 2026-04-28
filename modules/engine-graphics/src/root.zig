@@ -1,6 +1,7 @@
 pub const atmosphere_system = @import("atmosphere_system.zig");
 pub const camera = @import("camera.zig");
 pub const cloud_system = @import("cloud_system.zig");
+pub const cloud_interface = @import("cloud_interface.zig");
 pub const csm = @import("csm.zig");
 pub const lpv_types = @import("lpv_types.zig");
 pub const material_system = @import("material_system.zig");
@@ -28,6 +29,7 @@ pub const AtmosphereSystem = atmosphere_system.AtmosphereSystem;
 pub const Camera = camera.Camera;
 pub const CloudConfig = cloud_system.CloudConfig;
 pub const CloudSystem = cloud_system.CloudSystem;
+pub const ICloudSystem = cloud_interface.ICloudSystem;
 pub const CASCADE_COUNT = csm.CASCADE_COUNT;
 pub const ShadowCascades = csm.ShadowCascades;
 pub const computeCascades = csm.computeCascades;

@@ -125,7 +125,6 @@ pub fn build(b: *std.Build) void {
     addSharedImports(engine_core, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     addSharedImports(engine_ecs, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     engine_ecs.addImport("engine-core", engine_core);
-    engine_ecs.addImport("engine-graphics", engine_graphics);
     engine_ecs.addImport("engine-math", engine_math);
     engine_ecs.addImport("engine-physics", engine_physics);
     engine_ecs.addImport("engine-rhi", engine_rhi);
@@ -151,8 +150,8 @@ pub fn build(b: *std.Build) void {
         engine_ui.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
         engine_ui.link_libcpp = true;
     }
-    engine_input.addImport("engine-ui", engine_ui);
     addSharedImports(world_core, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    world_core.addImport("engine-core", engine_core);
     world_core.addImport("engine-math", engine_math);
     addSharedImports(world_worldgen, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     addSharedImports(world_meshing, zig_math, zig_noise, fs_module, sync_module, c_module, options);
@@ -174,7 +173,6 @@ pub fn build(b: *std.Build) void {
     world_worldgen.addImport("engine-core", engine_core);
     world_worldgen.addImport("engine-rhi", engine_rhi);
     world_worldgen.addImport("world-core", world_core);
-    world_worldgen.addImport("world-lod", world_lod);
     world_worldgen.addOptions("world_worldgen_options", world_worldgen_options);
 
     addSharedImports(world_runtime, zig_math, zig_noise, fs_module, sync_module, c_module, options);

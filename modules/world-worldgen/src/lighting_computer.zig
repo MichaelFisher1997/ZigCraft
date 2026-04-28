@@ -7,6 +7,9 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const MAX_LIGHT = world_core.MAX_LIGHT;
 const packEntranceDir = world_core.packEntranceDir;
 const block_registry = world_core.block_registry;
+const ILightingSystem = @import("lighting_interface.zig").ILightingSystem;
+
+var interface_token: u8 = 0;
 
 pub const LightingComputer = struct {
     const LightNode = struct {
@@ -45,6 +48,10 @@ pub const LightingComputer = struct {
     const ENTRANCE_MIN_EDGE_CONTRAST: u4 = 1;
     const ENTRANCE_PORTAL_SEED_SKY: u4 = 15;
     const ENTRANCE_PORTAL_PROBE_STEPS = 3;
+
+    pub fn interface() ILightingSystem {
+        return .{ .ptr = &interface_token, .vtable = &INTERFACE_VTABLE };
+    }
 
     pub fn computeSkylight(chunk: *Chunk, allocator: std.mem.Allocator) !void {
         for (&chunk.light) |*light| {
@@ -345,6 +352,21 @@ pub const LightingComputer = struct {
         }
     }
 };
+
+const INTERFACE_VTABLE = ILightingSystem.VTable{
+    .computeSkylight = interfaceComputeSkylight,
+    .computeBlockLight = interfaceComputeBlockLight,
+};
+
+fn interfaceComputeSkylight(ptr: *anyopaque, chunk: *Chunk, allocator: std.mem.Allocator) !void {
+    _ = ptr;
+    try LightingComputer.computeSkylight(chunk, allocator);
+}
+
+fn interfaceComputeBlockLight(ptr: *anyopaque, chunk: *Chunk, allocator: std.mem.Allocator) !void {
+    _ = ptr;
+    try LightingComputer.computeBlockLight(chunk, allocator);
+}
 
 test "computeSkylight preserves full light in open columns" {
     var chunk = Chunk.init(0, 0);

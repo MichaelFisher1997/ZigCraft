@@ -1,8 +1,8 @@
 const std = @import("std");
-const Chunk = @import("world-core").Chunk;
-const LODLevel = @import("world-lod").LODLevel;
-const LODGenerator = @import("world-lod").LODGenerator;
-const LODSimplifiedData = @import("world-lod").lod_chunk.LODSimplifiedData;
+const world_core = @import("world-core");
+const Chunk = world_core.Chunk;
+const LODLevel = world_core.LODLevel;
+const LODSimplifiedData = world_core.LODSimplifiedData;
 
 const region_pkg = @import("region.zig");
 const RegionInfo = region_pkg.RegionInfo;
@@ -111,14 +111,6 @@ pub const Generator = struct {
 
     pub fn generateHeightmapOnly(self: Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
         self.vtable.generateHeightmapOnly(self.ptr, data, region_x, region_z, lod_level);
-    }
-
-    pub fn toLODGenerator(self: Generator) LODGenerator {
-        return .{
-            .ptr = self.ptr,
-            .generate_heightmap_only = self.vtable.generateHeightmapOnly,
-            .maybe_recenter_cache = self.vtable.maybeRecenterCache,
-        };
     }
 
     pub fn maybeRecenterCache(self: Generator, player_x: i32, player_z: i32) bool {

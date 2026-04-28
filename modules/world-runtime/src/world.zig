@@ -20,6 +20,7 @@ const registry = @import("world-worldgen").registry;
 const rhi_mod = @import("engine-rhi").rhi;
 const RHI = rhi_mod.RHI;
 const WorldLOD = @import("world-lod").WorldLOD(RHI);
+const LODGenerator = @import("world-lod").LODGenerator;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     return runtime_env.getenv(name);
@@ -66,6 +67,14 @@ const SaveManager = @import("world-persistence").SaveManager;
 const LoadResult = @import("world-persistence").LoadResult;
 const GpuBlockBuffer = world_meshing.GpuBlockBuffer;
 const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
+
+fn lodGeneratorFromGenerator(generator: Generator) LODGenerator {
+    return .{
+        .ptr = generator.ptr,
+        .generate_heightmap_only = generator.vtable.generateHeightmapOnly,
+        .maybe_recenter_cache = generator.vtable.maybeRecenterCache,
+    };
+}
 
 /// Buffer distance beyond render_distance for chunk unloading.
 /// Prevents thrashing when player moves near chunk boundaries.
@@ -304,7 +313,7 @@ pub const World = struct {
         errdefer world.streamer.deinit();
 
         if (options.lod_config) |lod_config| {
-            world.lod = try WorldLOD.init(allocator, options.rhi, lod_config, world.generator.toLODGenerator(), options.atlas);
+            world.lod = try WorldLOD.init(allocator, options.rhi, lod_config, lodGeneratorFromGenerator(world.generator), options.atlas);
             world.lod_enabled = true;
             world.streamer.setLODManager(world.lod.?.manager);
         }

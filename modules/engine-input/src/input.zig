@@ -12,7 +12,8 @@ const MouseButton = interfaces.MouseButton;
 const Modifiers = interfaces.Modifiers;
 
 const c = @import("c").c;
-const imgui_backend = @import("engine-ui").imgui_backend;
+
+pub const RawEventProcessor = *const fn (event: *const c.SDL_Event) void;
 
 pub const Input = struct {
     /// Currently pressed keys
@@ -48,6 +49,7 @@ pub const Input = struct {
     mouse_captured: bool = false,
 
     allocator: std.mem.Allocator,
+    raw_event_processor: ?RawEventProcessor = null,
 
     pub fn init(allocator: std.mem.Allocator) Input {
         return .{
@@ -80,9 +82,13 @@ pub const Input = struct {
     pub fn pollEvents(self: *Input) void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            if (imgui_backend.available) imgui_backend.Backend.processEvent(&event);
+            if (self.raw_event_processor) |process| process(&event);
             self.processEvent(event);
         }
+    }
+
+    pub fn setRawEventProcessor(self: *Input, processor: ?RawEventProcessor) void {
+        self.raw_event_processor = processor;
     }
 
     fn processEvent(self: *Input, event: c.SDL_Event) void {

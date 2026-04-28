@@ -12,8 +12,8 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const BlockType = world_core.BlockType;
 const BiomeId = world_core.BiomeId;
 const LightingComputer = @import("lighting_computer.zig").LightingComputer;
-const LODLevel = @import("world-lod").LODLevel;
-const LODSimplifiedData = @import("world-lod").lod_chunk.LODSimplifiedData;
+const LODLevel = world_core.LODLevel;
+const LODSimplifiedData = world_core.LODSimplifiedData;
 
 const region_pkg = @import("region.zig");
 const RegionInfo = region_pkg.RegionInfo;

@@ -7,6 +7,7 @@ const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const Input = @import("engine-input").Input;
 const Time = @import("../engine/core/time.zig").Time;
 const UISystemManager = @import("engine-ui").UISystemManager;
+const imgui_backend = @import("engine-ui").imgui_backend;
 const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
@@ -36,6 +37,10 @@ pub const BLOCK_TEXTURE_DEFINITIONS = makeBlockTextureDefinitions();
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
     return std.mem.span(value);
+}
+
+fn processImGuiEvent(event: *const c.SDL_Event) void {
+    if (imgui_backend.available) imgui_backend.Backend.processEvent(event);
 }
 
 fn applySettingsToRhi(ctx: *const anyopaque, rhi: *RHI) void {
@@ -183,6 +188,7 @@ pub const App = struct {
         log.log.info("App.init: initializing UISystemManager", .{});
         var ui_manager = try UISystemManager.init(allocator, render_system.getRHI().uiRenderer(), render_system.getRHI().resourceManager(), render_system.getRHI(), &wm, input.window_width, input.window_height, build_options.smoke_test);
         errdefer ui_manager.deinit(render_system.getRHI().resourceManager());
+        input.setRawEventProcessor(processImGuiEvent);
 
         const input_mapper = InputSettings.loadAndReturnMapper(allocator);
 

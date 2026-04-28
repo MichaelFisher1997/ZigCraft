@@ -12,94 +12,17 @@ const Chunk = world_core.Chunk;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
-const BlockType = world_core.BlockType;
-const BiomeId = world_core.BiomeId;
 
 /// LOD level enum - higher values = more simplified
 pub const LODLevel = @import("lod_types.zig").LODLevel;
-
-pub fn regionSizeBlocks(lod_level: LODLevel) u32 {
-    return lod_level.regionSizeBlocks(CHUNK_SIZE_X);
-}
+pub const regionSizeBlocks = world_core.regionSizeBlocks;
 
 /// State for LOD chunks/regions
 pub const LODState = @import("lod_types.zig").LODState;
 
 /// Simplified data for distant LOD levels (LOD1+).
 /// Only stores essential data needed for rendering distant terrain.
-pub const LODSimplifiedData = struct {
-    /// Width/depth of the data grid (depends on LOD level)
-    width: u32,
-    /// Heightmap values (one per grid cell)
-    heightmap: []f32,
-    /// Biome IDs (one per grid cell)
-    biomes: []BiomeId,
-    /// Top surface block type (one per grid cell)
-    top_blocks: []BlockType,
-    /// Average color per column (packed RGB for fast rendering)
-    colors: []u32,
-
-    allocator: std.mem.Allocator,
-
-    /// Get optimal grid size for a given LOD level.
-    /// Get grid size for LOD terrain rendering (balanced for performance).
-    /// Grid size must be a divisor of region size to prevent gaps.
-    /// - LOD1: 32x32 grid = 2 blocks/cell
-    /// - LOD2: 32x32 grid = 4 blocks/cell
-    /// - LOD3: 32x32 grid = 8 blocks/cell
-    pub fn getGridSize(lod_level: LODLevel) u32 {
-        if (lod_level == .lod0) return 16;
-        return 32;
-    }
-
-    /// Get cell size in blocks for a given LOD level and grid size.
-    pub fn getCellSizeBlocks(lod_level: LODLevel) u32 {
-        const region_size = regionSizeBlocks(lod_level);
-        const grid_size = getGridSize(lod_level);
-        return region_size / grid_size;
-    }
-
-    pub fn init(allocator: std.mem.Allocator, lod_level: LODLevel) !LODSimplifiedData {
-        // Grid size scales with LOD level for consistent 2 blocks per cell
-        const grid_size = getGridSize(lod_level);
-        const count = grid_size * grid_size;
-
-        return LODSimplifiedData{
-            .width = grid_size,
-            .heightmap = try allocator.alloc(f32, count),
-            .biomes = try allocator.alloc(BiomeId, count),
-            .top_blocks = try allocator.alloc(BlockType, count),
-            .colors = try allocator.alloc(u32, count),
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *LODSimplifiedData) void {
-        self.allocator.free(self.heightmap);
-        self.allocator.free(self.biomes);
-        self.allocator.free(self.top_blocks);
-        self.allocator.free(self.colors);
-        self.* = undefined;
-    }
-
-    /// Get heightmap value at grid position
-    pub fn getHeight(self: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
-        if (gx >= self.width or gz >= self.width) return 0;
-        return self.heightmap[gz * self.width + gx];
-    }
-
-    /// Set heightmap value at grid position
-    pub fn setHeight(self: *LODSimplifiedData, gx: u32, gz: u32, height: f32) void {
-        if (gx >= self.width or gz >= self.width) return;
-        self.heightmap[gz * self.width + gx] = height;
-    }
-
-    /// Calculate total heap memory used by this data structure
-    pub fn totalMemoryBytes(self: *const LODSimplifiedData) usize {
-        const count = self.width * self.width;
-        return count * (@sizeOf(f32) + @sizeOf(BiomeId) + @sizeOf(BlockType) + @sizeOf(u32));
-    }
-};
+pub const LODSimplifiedData = world_core.LODSimplifiedData;
 
 /// LOD region key - identifies a region at a specific LOD level
 pub const LODRegionKey = struct {

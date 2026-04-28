@@ -3,6 +3,7 @@ const std = @import("std");
 const rhi = @import("engine-rhi");
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
+const cloud_interface = @import("cloud_interface.zig");
 
 const CLOUD_SIZE: f32 = 32.0;
 const MESH_REBUILD_DISTANCE: f32 = 2.5;
@@ -10,17 +11,8 @@ const NOISE_BOUND: f32 = 1.0 + 0.5 + 0.25;
 const MAX_FLAT_RADIUS: u16 = 62;
 const MAX_3D_RADIUS: u16 = 25;
 
-pub const CloudConfig = struct {
-    enabled: bool = true,
-    enable_3d: bool = true,
-    radius: u16 = 25,
-    density: f32 = 0.42,
-    height: f32 = 192.0,
-    thickness: f32 = 16.0,
-    speed_x: f32 = 0.0,
-    speed_z: f32 = -2.0,
-    seed: u32 = 1337,
-};
+pub const CloudConfig = cloud_interface.CloudConfig;
+pub const ICloudSystem = cloud_interface.ICloudSystem;
 
 pub const CloudSystem = struct {
     allocator: std.mem.Allocator,
@@ -87,6 +79,10 @@ pub const CloudSystem = struct {
         ctx.drawOffset(self.vertex_buffer, self.vertex_count, .triangles, 0);
         // Force OpaquePass to rebind terrain state after clouds use the same pipeline.
         ctx.setTerrainPipelineBound(false);
+    }
+
+    pub fn interface(self: *CloudSystem) ICloudSystem {
+        return .{ .ptr = self, .vtable = &INTERFACE_VTABLE };
     }
 
     fn updateMesh(self: *CloudSystem, camera_pos: Vec3) !void {
@@ -203,6 +199,33 @@ pub const CloudSystem = struct {
         return self.grid.items[self.gridIndex(x, z)];
     }
 };
+
+const INTERFACE_VTABLE = ICloudSystem.VTable{
+    .deinit = interfaceDeinit,
+    .setConfig = interfaceSetConfig,
+    .step = interfaceStep,
+    .render = interfaceRender,
+};
+
+fn interfaceDeinit(ptr: *anyopaque) void {
+    const self: *CloudSystem = @ptrCast(@alignCast(ptr));
+    self.deinit();
+}
+
+fn interfaceSetConfig(ptr: *anyopaque, config: CloudConfig) void {
+    const self: *CloudSystem = @ptrCast(@alignCast(ptr));
+    self.setConfig(config);
+}
+
+fn interfaceStep(ptr: *anyopaque, dt: f32) void {
+    const self: *CloudSystem = @ptrCast(@alignCast(ptr));
+    self.step(dt);
+}
+
+fn interfaceRender(ptr: *anyopaque, ctx: rhi.RenderContext, camera_pos: Vec3) !void {
+    const self: *CloudSystem = @ptrCast(@alignCast(ptr));
+    try self.render(ctx, camera_pos);
+}
 
 fn normalizedConfig(config: CloudConfig) CloudConfig {
     var out = config;
