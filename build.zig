@@ -101,6 +101,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     c_module.addIncludePath(b.path("libs/stb"));
+    c_module.linkSystemLibrary("sdl3", .{});
+    c_module.linkSystemLibrary("vulkan", .{});
 
     const engine_math = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/root.zig"), .target = target, .optimize = optimize });
     const engine_audio = b.createModule(.{ .root_source_file = b.path("modules/engine-audio/src/root.zig"), .target = target, .optimize = optimize });
@@ -146,6 +148,8 @@ pub fn build(b: *std.Build) void {
     engine_ui.addImport("engine-core", engine_core);
     engine_ui.addImport("engine-rhi", engine_rhi);
     engine_ui.addOptions("engine_ui_options", engine_ui_options);
+    engine_ui.linkSystemLibrary("sdl3", .{});
+    engine_ui.linkSystemLibrary("vulkan", .{});
     if (enable_imgui) {
         engine_ui.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
         engine_ui.link_libcpp = true;
