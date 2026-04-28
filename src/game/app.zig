@@ -1,17 +1,18 @@
 const std = @import("std");
 const build_options = @import("build_options");
-const c = @import("../c.zig").c;
+const c = @import("c").c;
 
-const log = @import("../engine/core/log.zig");
+const log = @import("engine-core").log;
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
-const Input = @import("../engine/input/input.zig").Input;
+const Input = @import("engine-input").Input;
 const Time = @import("../engine/core/time.zig").Time;
-const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
+const UISystemManager = @import("engine-ui").UISystemManager;
 const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const InputMapper = @import("input_mapper.zig").InputMapper;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
+const texture_atlas = @import("../engine/graphics/texture_atlas.zig");
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 const BenchmarkRunner = @import("../benchmark.zig").BenchmarkRunner;
 const json_presets = @import("settings/json_presets.zig");
@@ -26,11 +27,76 @@ const EngineContext = screen_pkg.EngineContext;
 const HomeScreen = @import("screens/home.zig").HomeScreen;
 const WorldScreen = @import("screens/world.zig").WorldScreen;
 const RenderSettingsAdapter = @import("../engine/graphics/render_settings.zig").RenderSettingsAdapter;
-const runtime_env = @import("../engine/core/runtime_env.zig");
+const runtime_env = @import("engine-core").runtime_env;
+const RHI = @import("../engine/graphics/rhi.zig").RHI;
+const block_registry = @import("world-core").block_registry;
+
+pub const BLOCK_TEXTURE_DEFINITIONS = makeBlockTextureDefinitions();
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
     return std.mem.span(value);
+}
+
+fn applySettingsToRhi(ctx: *const anyopaque, rhi: *RHI) void {
+    const settings: *const Settings = @ptrCast(@alignCast(ctx));
+    @import("settings.zig").apply_logic.applyToRHI(settings, rhi);
+}
+
+fn renderConfigFromSettings(settings: *const Settings) RenderSystem.Config {
+    return .{
+        .shadow_resolution = settings.getShadowResolution(),
+        .msaa_samples = settings.msaa_samples,
+        .anisotropic_filtering = settings.anisotropic_filtering,
+        .texture_pack = settings.texture_pack,
+        .max_texture_resolution = settings.max_texture_resolution,
+        .environment_map = settings.environment_map,
+        .lpv_grid_size = settings.lpv_grid_size,
+        .lpv_cell_size = settings.lpv_cell_size,
+        .lpv_intensity = settings.lpv_intensity,
+        .lpv_propagation_iterations = settings.lpv_propagation_iterations,
+        .lpv_enabled = settings.lpv_enabled,
+        .clouds_enabled = settings.clouds_enabled,
+        .clouds_3d_enabled = settings.clouds_3d_enabled,
+        .cloud_radius = settings.cloud_radius,
+        .cloud_density = settings.cloud_density,
+        .cloud_height = settings.cloud_height,
+        .cloud_thickness = settings.cloud_thickness,
+        .cloud_speed_x = settings.cloud_speed_x,
+        .cloud_speed_z = settings.cloud_speed_z,
+        .taa_enabled = settings.taa_enabled,
+        .bloom_enabled = settings.bloom_enabled,
+        .bloom_intensity = settings.bloom_intensity,
+        .fxaa_enabled = settings.fxaa_enabled,
+        .block_textures = &BLOCK_TEXTURE_DEFINITIONS,
+        .apply_to_rhi = applySettingsToRhi,
+        .apply_context = settings,
+    };
+}
+
+fn makeBlockTextureDefinitions() [texture_atlas.MAX_BLOCK_TYPES]texture_atlas.BlockTextureDefinition {
+    var defs: [texture_atlas.MAX_BLOCK_TYPES]texture_atlas.BlockTextureDefinition = undefined;
+    for (&defs, 0..) |*def, i| {
+        def.* = .{
+            .id = @intCast(i),
+            .name = "unknown",
+            .default_color = .{ 1.0, 1.0, 1.0 },
+            .texture_top = "missing",
+            .texture_bottom = "missing",
+            .texture_side = "missing",
+        };
+    }
+    for (block_registry.BLOCK_REGISTRY, 0..) |block_def, i| {
+        defs[i] = .{
+            .id = @intFromEnum(block_def.id),
+            .name = block_def.name,
+            .default_color = block_def.default_color,
+            .texture_top = block_def.texture_top,
+            .texture_bottom = block_def.texture_bottom,
+            .texture_side = block_def.texture_side,
+        };
+    }
+    return defs;
 }
 
 pub const App = struct {
@@ -85,7 +151,7 @@ pub const App = struct {
         const time = Time.init();
 
         log.log.info("App.init: initializing RenderSystem", .{});
-        const render_system = try RenderSystem.init(allocator, wm.window, &settings_manager.settings);
+        const render_system = try RenderSystem.init(allocator, wm.window, renderConfigFromSettings(&settings_manager.settings));
         errdefer render_system.deinit();
 
         const native_extent = render_system.getRHI().renderContext().getNativeSwapchainExtent();
@@ -300,7 +366,7 @@ pub const App = struct {
 
         try self.maybeLaunchPendingWorld(swapchain_extent);
 
-        self.ui_manager.handleTimingToggle(self.input.interface(), self.input_mapper.interface(), &self.time, self.render_system.getRHI());
+        self.ui_manager.handleTimingToggle(self.input_mapper.interface().isActionPressed(self.input.interface(), .toggle_timing_overlay), &self.time, self.render_system.getRHI());
 
         self.ui_manager.resize(window_width, window_height);
 

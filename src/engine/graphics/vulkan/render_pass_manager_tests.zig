@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 
 const render_pass_manager = @import("render_pass_manager.zig");
 const RenderPassManager = render_pass_manager.RenderPassManager;

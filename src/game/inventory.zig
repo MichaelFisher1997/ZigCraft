@@ -4,7 +4,7 @@
 //! storing and selecting blocks to place.
 
 const std = @import("std");
-const BlockType = @import("../world/block.zig").BlockType;
+const BlockType = @import("world-core").BlockType;
 
 /// Player inventory with hotbar and main storage.
 pub const Inventory = struct {

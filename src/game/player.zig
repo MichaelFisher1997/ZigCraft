@@ -8,16 +8,16 @@ const math = @import("zig-math");
 const Vec3 = math.Vec3;
 const AABB = math.AABB;
 
-const Camera = @import("../engine/graphics/camera.zig").Camera;
-const Input = @import("../engine/input/input.zig").Input;
+const Camera = @import("engine-graphics").Camera;
+const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
 const Key = @import("../engine/core/interfaces.zig").Key;
 const MouseButton = @import("../engine/core/interfaces.zig").MouseButton;
-const World = @import("../world/world.zig").World;
+const World = @import("world-runtime").World;
 const collision = @import("../engine/physics/collision.zig");
 const ray = @import("../engine/math/ray.zig");
-const block = @import("../world/block.zig");
-const block_registry = @import("../world/block_registry.zig");
+const block = @import("world-core").block;
+const block_registry = @import("world-core").block_registry;
 const BlockType = block.BlockType;
 const Face = block.Face;
 const input_mapper_pkg = @import("input_mapper.zig");
@@ -274,7 +274,7 @@ pub const Player = struct {
         } else {
             const aabb = self.getAABB();
             const result = collision.moveAndCollide(
-                world,
+                world.collisionWorld(),
                 aabb,
                 self.velocity,
                 delta_time,
@@ -320,7 +320,7 @@ pub const Player = struct {
         } else {
             const aabb = self.getAABB();
             const result = collision.moveAndCollide(
-                world,
+                world.collisionWorld(),
                 aabb,
                 self.velocity,
                 delta_time,

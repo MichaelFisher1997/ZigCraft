@@ -4,7 +4,7 @@ const testing = std.testing;
 pub const std_options: std.Options = .{ .log_level = .err };
 
 const Noise = @import("zig-noise").Noise;
-const noise_mod = @import("world/worldgen/noise.zig");
+const noise_mod = @import("world-worldgen").noise;
 
 test "Noise deterministic with same seed" {
     const noise1 = Noise.init(12345);

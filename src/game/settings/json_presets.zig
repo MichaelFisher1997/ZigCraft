@@ -3,7 +3,7 @@ const fs = @import("fs");
 const data = @import("data.zig");
 const Settings = data.Settings;
 const RenderDistancePreset = @import("../../engine/graphics/render_settings.zig").RenderDistancePreset;
-const log = @import("../../engine/core/log.zig");
+const log = @import("engine-core").log;
 
 // Preset config compatible with static presets but with dynamic string name
 pub const PresetConfig = struct {

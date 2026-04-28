@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const VulkanDevice = @import("engine/graphics/vulkan_device.zig").VulkanDevice;
 
 test "VulkanDevice.submitGuarded error simulation" {

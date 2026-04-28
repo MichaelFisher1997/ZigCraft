@@ -8,7 +8,7 @@ const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const WorldScreen = @import("world.zig").WorldScreen;
-const log = @import("../../engine/core/log.zig");
+const log = @import("engine-core").log;
 const fs = @import("fs");
 
 fn getenv(name: [:0]const u8) ?[]const u8 {

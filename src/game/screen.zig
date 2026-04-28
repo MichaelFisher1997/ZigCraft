@@ -6,8 +6,8 @@ const IInputMapper = input_mapper_pkg.IInputMapper;
 const Time = @import("../engine/core/time.zig").Time;
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
-const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
-const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
+const AudioSystem = @import("engine-audio").AudioSystem;
+const UISystemManager = @import("engine-ui").UISystemManager;
 const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
 const IRenderSettings = @import("../engine/core/interfaces.zig").IRenderSettings;
 const settings_pkg = @import("settings.zig");
@@ -169,7 +169,7 @@ pub const WorldContext = struct {
 fn saveSettingsShared(allocator: std.mem.Allocator, settings: *Settings, input_mapper: IInputMapper) void {
     settings_pkg.persistence.save(settings, allocator);
     @import("input_settings.zig").InputSettings.saveFromMapper(allocator, input_mapper) catch |err| {
-        @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
+        @import("engine-core").log.log.err("Failed to save input settings: {}", .{err});
     };
 }
 

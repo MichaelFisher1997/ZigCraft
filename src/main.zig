@@ -1,6 +1,6 @@
 const std = @import("std");
 const App = @import("game/app.zig").App;
-const log = @import("engine/core/log.zig");
+const log = @import("engine-core").log;
 
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;

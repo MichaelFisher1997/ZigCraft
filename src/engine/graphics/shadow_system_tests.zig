@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("rhi.zig");
 const Mat4 = @import("../math/mat4.zig").Mat4;
 const Vec3 = @import("../math/vec3.zig").Vec3;

@@ -10,6 +10,7 @@ const ResourcePacksContext = Screen.ResourcePacksContext;
 const settings_pkg = @import("../settings.zig");
 const Settings = settings_pkg.Settings;
 const TextureAtlas = @import("../../engine/graphics/texture_atlas.zig").TextureAtlas;
+const BLOCK_TEXTURE_DEFINITIONS = @import("../app.zig").BLOCK_TEXTURE_DEFINITIONS;
 
 const PANEL_WIDTH_MAX = 750.0;
 const PANEL_HEIGHT_MAX = 800.0;
@@ -155,7 +156,7 @@ pub const ResourcePacksScreen = struct {
         const rhi = render_system.getRHI();
         rhi.waitIdle();
         render_system.getAtlas().deinit();
-        render_system.getAtlas().* = try TextureAtlas.init(ctx.allocator, rhi.resourceManager(), render_system.getResourcePackManager(), ctx.settings.max_texture_resolution);
+        render_system.getAtlas().* = try TextureAtlas.init(ctx.allocator, rhi.resourceManager(), render_system.getResourcePackManager(), ctx.settings.max_texture_resolution, &BLOCK_TEXTURE_DEFINITIONS);
     }
 
     pub fn screen(self: *@This()) IScreen {

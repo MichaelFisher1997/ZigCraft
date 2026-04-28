@@ -10,6 +10,8 @@ pub fn build(b: *std.Build) void {
 
     const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration") orelse true;
     options.addOption(bool, "imgui", enable_imgui);
+    const engine_ui_options = b.addOptions();
+    engine_ui_options.addOption(bool, "imgui", enable_imgui);
 
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
     options.addOption(bool, "smoke_test", smoke_test);
@@ -19,15 +21,27 @@ pub fn build(b: *std.Build) void {
 
     const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
     options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
-
+    const world_worldgen_options = b.addOptions();
+    world_worldgen_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
+    world_worldgen_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
     const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly (normal, overworld, flat)") orelse "";
     options.addOption([]const u8, "auto_world", auto_world);
 
     const startup_diagnostic_seconds = b.option(u32, "startup-diagnostic-seconds", "Wait N seconds after auto-world startup, log chunk counts, and exit") orelse 0;
     options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+    const world_lod_options = b.addOptions();
+    world_lod_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+    const world_runtime_options = b.addOptions();
+    world_runtime_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+    world_runtime_options.addOption(bool, "world_runtime_module", true);
 
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
+    const engine_graphics_options = b.addOptions();
+    engine_graphics_options.addOption(bool, "debug_shadows", enable_debug_shadows);
+    engine_graphics_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
+    engine_graphics_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
+    engine_graphics_options.addOption(bool, "skip_present", skip_present);
 
     const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
     options.addOption([]const u8, "screenshot_path", screenshot_path);
@@ -43,6 +57,7 @@ pub fn build(b: *std.Build) void {
 
     const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
     options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
+    world_worldgen_options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
 
     const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
     options.addOption(bool, "benchmark", benchmark);
@@ -80,6 +95,102 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const c_module = b.createModule(.{
+        .root_source_file = b.path("src/c.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    c_module.addIncludePath(b.path("libs/stb"));
+
+    const engine_math = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_audio = b.createModule(.{ .root_source_file = b.path("modules/engine-audio/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_core = b.createModule(.{ .root_source_file = b.path("modules/engine-core/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_ecs = b.createModule(.{ .root_source_file = b.path("modules/engine-ecs/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_input = b.createModule(.{ .root_source_file = b.path("modules/engine-input/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_physics = b.createModule(.{ .root_source_file = b.path("modules/engine-physics/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_rhi = b.createModule(.{ .root_source_file = b.path("modules/engine-rhi/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_graphics = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_ui = b.createModule(.{ .root_source_file = b.path("modules/engine-ui/src/root.zig"), .target = target, .optimize = optimize });
+    const world_core = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/root.zig"), .target = target, .optimize = optimize });
+    const world_worldgen = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/root.zig"), .target = target, .optimize = optimize });
+    const world_meshing = b.createModule(.{ .root_source_file = b.path("modules/world-meshing/src/root.zig"), .target = target, .optimize = optimize });
+    const world_lod = b.createModule(.{ .root_source_file = b.path("modules/world-lod/src/root.zig"), .target = target, .optimize = optimize });
+    const world_runtime = b.createModule(.{ .root_source_file = b.path("modules/world-runtime/src/root.zig"), .target = target, .optimize = optimize });
+    const world_persistence = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/root.zig"), .target = target, .optimize = optimize });
+
+    addSharedImports(engine_math, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    addSharedImports(engine_audio, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_audio.addImport("engine-math", engine_math);
+    engine_audio.addImport("engine-core", engine_core);
+    addSharedImports(engine_core, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    addSharedImports(engine_ecs, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_ecs.addImport("engine-core", engine_core);
+    engine_ecs.addImport("engine-graphics", engine_graphics);
+    engine_ecs.addImport("engine-math", engine_math);
+    engine_ecs.addImport("engine-physics", engine_physics);
+    engine_ecs.addImport("engine-rhi", engine_rhi);
+    addSharedImports(engine_input, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_input.addImport("engine-core", engine_core);
+
+    addSharedImports(engine_physics, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    addSharedImports(engine_rhi, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_rhi.addImport("engine-math", engine_math);
+    engine_rhi.addImport("engine-core", engine_core);
+    addSharedImports(engine_graphics, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_graphics.addImport("engine-math", engine_math);
+    engine_graphics.addImport("engine-core", engine_core);
+    engine_graphics.addImport("engine-input", engine_input);
+    engine_graphics.addImport("engine-rhi", engine_rhi);
+    engine_graphics.addOptions("engine_graphics_options", engine_graphics_options);
+    addSharedImports(engine_ui, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_ui.addImport("engine-math", engine_math);
+    engine_ui.addImport("engine-core", engine_core);
+    engine_ui.addImport("engine-rhi", engine_rhi);
+    engine_ui.addOptions("engine_ui_options", engine_ui_options);
+    if (enable_imgui) {
+        engine_ui.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
+        engine_ui.link_libcpp = true;
+    }
+    engine_input.addImport("engine-ui", engine_ui);
+    addSharedImports(world_core, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    world_core.addImport("engine-math", engine_math);
+    addSharedImports(world_worldgen, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    addSharedImports(world_meshing, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    world_meshing.addImport("engine-core", engine_core);
+    world_meshing.addImport("engine-graphics", engine_graphics);
+    world_meshing.addImport("engine-rhi", engine_rhi);
+    world_meshing.addImport("world-core", world_core);
+    addSharedImports(world_lod, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    world_lod.addImport("engine-core", engine_core);
+    world_lod.addImport("engine-graphics", engine_graphics);
+    world_lod.addImport("engine-math", engine_math);
+    world_lod.addImport("engine-rhi", engine_rhi);
+    world_lod.addImport("world-meshing", world_meshing);
+    world_lod.addImport("world-core", world_core);
+    world_lod.addOptions("world_lod_options", world_lod_options);
+    addSharedImports(world_persistence, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    world_persistence.addImport("engine-core", engine_core);
+    world_persistence.addImport("world-core", world_core);
+    world_worldgen.addImport("engine-core", engine_core);
+    world_worldgen.addImport("engine-rhi", engine_rhi);
+    world_worldgen.addImport("world-core", world_core);
+    world_worldgen.addImport("world-lod", world_lod);
+    world_worldgen.addOptions("world_worldgen_options", world_worldgen_options);
+
+    addSharedImports(world_runtime, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    world_runtime.addImport("engine-core", engine_core);
+    world_runtime.addImport("engine-graphics", engine_graphics);
+    world_runtime.addImport("engine-math", engine_math);
+    world_runtime.addImport("engine-physics", engine_physics);
+    world_runtime.addImport("engine-rhi", engine_rhi);
+    world_runtime.addImport("engine-ui", engine_ui);
+    world_runtime.addImport("world-core", world_core);
+    world_runtime.addImport("world-lod", world_lod);
+    world_runtime.addImport("world-meshing", world_meshing);
+    world_runtime.addImport("world-persistence", world_persistence);
+    world_runtime.addImport("world-worldgen", world_worldgen);
+    world_runtime.addOptions("world_runtime_options", world_runtime_options);
+
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -89,6 +200,8 @@ pub fn build(b: *std.Build) void {
     root_module.addImport("zig-noise", zig_noise);
     root_module.addImport("fs", fs_module);
     root_module.addImport("sync", sync_module);
+    root_module.addImport("c", c_module);
+    addProjectModuleImports(root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     root_module.addOptions("build_options", options);
     root_module.addIncludePath(b.path("libs/stb"));
 
@@ -155,6 +268,8 @@ pub fn build(b: *std.Build) void {
     benchmark_root_module.addImport("zig-noise", zig_noise);
     benchmark_root_module.addImport("fs", fs_module);
     benchmark_root_module.addImport("sync", sync_module);
+    benchmark_root_module.addImport("c", c_module);
+    addProjectModuleImports(benchmark_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     benchmark_root_module.addOptions("build_options", benchmark_options);
     benchmark_root_module.addIncludePath(b.path("libs/stb"));
 
@@ -196,10 +311,19 @@ pub fn build(b: *std.Build) void {
     test_root_module.addImport("zig-noise", zig_noise);
     test_root_module.addImport("fs", fs_module);
     test_root_module.addImport("sync", sync_module);
+    test_root_module.addImport("c", c_module);
+    addProjectModuleImports(test_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     test_root_module.addOptions("build_options", options);
 
+    const test_filters: []const []const u8 = if (b.option([]const u8, "test-filter", "Only run unit tests whose name contains this filter")) |filter|
+        &.{filter}
+    else if (b.args) |args|
+        if (args.len >= 2 and std.mem.eql(u8, args[0], "--test-filter")) &.{args[1]} else &.{}
+    else
+        &.{};
     const exe_tests = b.addTest(.{
         .root_module = test_root_module,
+        .filters = test_filters,
     });
     exe_tests.root_module.link_libc = true;
     exe_tests.root_module.addCSourceFile(.{
@@ -213,6 +337,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     const run_exe_tests = b.addRunArtifact(exe_tests);
+    run_exe_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     run_exe_tests.step.dependOn(&shader_cmd.step);
     test_step.dependOn(&run_exe_tests.step);
 
@@ -225,6 +350,8 @@ pub fn build(b: *std.Build) void {
     integration_root_module.addImport("zig-noise", zig_noise);
     integration_root_module.addImport("fs", fs_module);
     integration_root_module.addImport("sync", sync_module);
+    integration_root_module.addImport("c", c_module);
+    addProjectModuleImports(integration_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     integration_root_module.addOptions("build_options", options);
     integration_root_module.addIncludePath(b.path("libs/stb"));
 
@@ -262,6 +389,9 @@ pub fn build(b: *std.Build) void {
     robust_demo.root_module.addOptions("build_options", options);
     robust_demo.root_module.addImport("fs", fs_module);
     robust_demo.root_module.addImport("sync", sync_module);
+    robust_demo.root_module.addImport("c", c_module);
+    robust_demo.root_module.addImport("engine-core", engine_core);
+    robust_demo.root_module.addImport("engine-graphics", engine_graphics);
 
     robust_demo.root_module.link_libc = true;
     robust_demo.root_module.linkSystemLibrary("sdl3", .{});
@@ -281,6 +411,8 @@ pub fn build(b: *std.Build) void {
     integration_robustness.root_module.addOptions("build_options", options);
     integration_robustness.root_module.addImport("fs", fs_module);
     integration_robustness.root_module.addImport("sync", sync_module);
+    integration_robustness.root_module.addImport("c", c_module);
+    integration_robustness.root_module.addImport("engine-core", engine_core);
     integration_robustness.root_module.link_libc = true;
     integration_robustness.root_module.linkSystemLibrary("sdl3", .{}); // Needed for C imports if any
 
@@ -353,4 +485,48 @@ pub fn build(b: *std.Build) void {
 fn addCimgui(_: *std.Build, compile: *std.Build.Step.Compile) void {
     compile.root_module.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
     compile.root_module.link_libcpp = true;
+}
+
+fn addSharedImports(module: *std.Build.Module, zig_math: *std.Build.Module, zig_noise: *std.Build.Module, fs_module: *std.Build.Module, sync_module: *std.Build.Module, c_module: *std.Build.Module, options: *std.Build.Step.Options) void {
+    module.addImport("zig-math", zig_math);
+    module.addImport("zig-noise", zig_noise);
+    module.addImport("fs", fs_module);
+    module.addImport("sync", sync_module);
+    module.addImport("c", c_module);
+    module.addOptions("build_options", options);
+}
+
+fn addProjectModuleImports(
+    module: *std.Build.Module,
+    engine_math: *std.Build.Module,
+    engine_audio: *std.Build.Module,
+    engine_core: *std.Build.Module,
+    engine_ecs: *std.Build.Module,
+    engine_input: *std.Build.Module,
+    engine_physics: *std.Build.Module,
+    engine_rhi: *std.Build.Module,
+    engine_graphics: *std.Build.Module,
+    engine_ui: *std.Build.Module,
+    world_core: *std.Build.Module,
+    world_worldgen: *std.Build.Module,
+    world_meshing: *std.Build.Module,
+    world_lod: *std.Build.Module,
+    world_runtime: *std.Build.Module,
+    world_persistence: *std.Build.Module,
+) void {
+    module.addImport("engine-math", engine_math);
+    module.addImport("engine-audio", engine_audio);
+    module.addImport("engine-core", engine_core);
+    module.addImport("engine-ecs", engine_ecs);
+    module.addImport("engine-input", engine_input);
+    module.addImport("engine-physics", engine_physics);
+    module.addImport("engine-rhi", engine_rhi);
+    module.addImport("engine-graphics", engine_graphics);
+    module.addImport("engine-ui", engine_ui);
+    module.addImport("world-core", world_core);
+    module.addImport("world-worldgen", world_worldgen);
+    module.addImport("world-meshing", world_meshing);
+    module.addImport("world-lod", world_lod);
+    module.addImport("world-runtime", world_runtime);
+    module.addImport("world-persistence", world_persistence);
 }

@@ -1,6 +1,6 @@
 const std = @import("std");
 const fs = @import("fs");
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
 const Utils = @import("utils.zig");
 const shader_registry = @import("shader_registry.zig");

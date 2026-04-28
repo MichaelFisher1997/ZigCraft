@@ -9,8 +9,8 @@ const Mat4 = @import("../engine/math/mat4.zig").Mat4;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Vertex = rhi_pkg.Vertex;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
-const BlockType = @import("../world/block.zig").BlockType;
-const block_registry = @import("../world/block_registry.zig");
+const BlockType = @import("world-core").BlockType;
+const block_registry = @import("world-core").block_registry;
 const Inventory = @import("inventory.zig").Inventory;
 
 pub const HandRenderer = struct {

@@ -9,7 +9,7 @@ const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
 const GameAction = input_mapper_pkg.GameAction;
 const ActionBinding = input_mapper_pkg.ActionBinding;
-const log = @import("../engine/core/log.zig");
+const log = @import("engine-core").log;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;

@@ -1,6 +1,6 @@
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
-const Camera = @import("../../engine/graphics/camera.zig").Camera;
+const Camera = @import("engine-graphics").Camera;
 const RenderSystem = @import("../../engine/graphics/render_system.zig").RenderSystem;
 const Settings = @import("../settings/data.zig").Settings;
 

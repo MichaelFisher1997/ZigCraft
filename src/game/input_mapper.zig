@@ -9,7 +9,7 @@ const std = @import("std");
 const interfaces = @import("../engine/core/interfaces.zig");
 const Key = interfaces.Key;
 const MouseButton = interfaces.MouseButton;
-const Input = @import("../engine/input/input.zig").Input;
+const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
 
 pub const MovementVector = struct { x: f32, z: f32 };

@@ -2,7 +2,7 @@ const rhi = @import("../rhi.zig");
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const Vec3 = @import("../../math/vec3.zig").Vec3;
 const water_system = @import("water_system.zig");
-const log = @import("../../core/log.zig");
+const log = @import("engine-core").log;
 
 pub fn beginWaterReflectionPassInternal(ctx: anytype) void {
     if (!ctx.frames.frame_in_progress) return;

@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
 
 test "beginGPassInternal skips when frame not in progress" {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
+const AudioSystem = @import("engine-audio").AudioSystem;
 
 pub const AudioSystemManager = struct {
     audio_system: *AudioSystem,

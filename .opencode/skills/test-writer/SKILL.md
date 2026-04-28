@@ -28,23 +28,29 @@ ZigCraft is a high-performance Minecraft-style voxel engine built with:
 ### Project Structure (testing-relevant)
 
 ```
+modules/
+  engine-core/      # job_system, ring_buffer, time, log, window
+  engine-graphics/  # render system, shaders, textures, camera, shadows, vulkan/
+  engine-rhi/       # RHI contracts, resource manager, render settings, culling
+  engine-input/     # input handling
+  engine-math/      # Vec3, Mat4, AABB, Frustum
+  engine-ui/        # immediate-mode UI, fonts, widgets
+  engine-ecs/       # entity component system
+  world-core/       # chunk, block, block_registry, coordinates, lighting
+  world-worldgen/   # terrain generation, biomes, caves, decorations
+  world-meshing/    # chunk_storage, chunk_mesh, meshing/, GPU block buffers
+  world-lod/        # LOD chunks, meshes, scheduler, renderer, manager
+  world-runtime/    # world facade, streaming, renderer, mutation, GPU mesher
+  world-persistence/# level data, region files, save manager
 src/
-  engine/
-    core/       # job_system, ring_buffer, time, log, window
-    graphics/   # RHI, shaders, textures, camera, shadows, vulkan/
-    input/      # input handling
-    math/       # Vec3, Mat4, AABB, Frustum
-    ui/         # immediate-mode UI, fonts, widgets
-    ecs/        # entity component system
-  world/        # chunk, block, block_registry, chunk_mesh, meshing/, worldgen/
-  game/         # player, screen, inventory, settings/, input_mapper, session
+  game/             # player, screen, inventory, settings/, input_mapper, session
   tests.zig     # Test registry — all test files MUST be registered here
 ```
 
 ### Code Style for Tests
 
 - `const std = @import("std"); const testing = std.testing;`
-- Import the module under test with a relative import
+- Import the package under test by module name, or with a same-package relative import for nearby files
 - Use `std.testing` assertions: `expectEqual`, `expectApproxEqAbs`, `expect`, `expectError`
 - Descriptive test names: `test "ModuleName.functionName edge case description"`
 - Accept `std.mem.Allocator` if allocation is needed; use `testing.allocator`
@@ -53,12 +59,12 @@ src/
 ## Where to Write Tests
 
 - Create or extend `*_tests.zig` files **alongside** the source files (same directory)
-- Example: tests for `src/engine/graphics/vulkan/swapchain.zig` go in `src/engine/graphics/vulkan/swapchain_tests.zig`
+- Example: tests for `modules/engine-graphics/src/vulkan/swapchain.zig` go in `modules/engine-graphics/src/vulkan/swapchain_tests.zig`
 - After creating a new test file, register it in `src/tests.zig`:
   ```zig
-  _ = @import("engine/graphics/vulkan/swapchain_tests.zig");
+  _ = @import("engine-graphics").vulkan.swapchain_tests;
   ```
-  Use a relative import path from `tests.zig`'s location.
+  Prefer importing the owning module root from `src/tests.zig`.
 
 ## What to Test — Priorities
 
@@ -80,7 +86,7 @@ src/
 7. **Struct layout** — `packed struct` alignment, `extern struct` field offsets, GPU data layout.
 8. **Pipeline state** — Shader compilation error handling, pipeline creation failure recovery.
 
-### For world/worldgen modules
+### For world-core/world-worldgen modules
 1. **Chunk boundary conditions** — Negative coordinates, coordinate transforms, edge-of-world
 2. **Determinism** — Same seed always produces identical output
 3. **Noise range guarantees** — Output stays within documented bounds

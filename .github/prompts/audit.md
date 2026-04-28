@@ -62,11 +62,11 @@ Tailor your audit depth based on which module you're scanning:
 
 **engine/physics** → Collision detection edge cases, numerical stability, broad-phase efficiency, penetration resolution
 
-**world** (core) → Chunk data structure correctness, worldToChunk/worldToLocal coordinate transforms, chunk pin/unpin lifecycle, chunk storage efficiency, streaming boundary conditions
+**world-core / world-runtime** → Chunk data structure correctness, worldToChunk/worldToLocal coordinate transforms, chunk pin/unpin lifecycle, chunk storage efficiency, streaming boundary conditions
 
-**world/meshing** → Greedy meshing correctness, AO calculation artifacts, lighting sampler accuracy, boundary mesh stitching, allocation patterns in hot paths
+**world-meshing** → Greedy meshing correctness, AO calculation artifacts, lighting sampler accuracy, boundary mesh stitching, allocation patterns in hot paths
 
-**world/worldgen** → Noise algorithm correctness, biome selection edge cases, cave generation artifacts, terrain continuity at chunk boundaries, allocator usage in generation hot paths, decoration placement bugs, schematic loading safety
+**world-worldgen** → Noise algorithm correctness, biome selection edge cases, cave generation artifacts, terrain continuity at chunk boundaries, allocator usage in generation hot paths, decoration placement bugs, schematic loading safety
 
 **game** → Screen state machine correctness, settings persistence, game loop timing, UI/game state synchronization
 

@@ -1,9 +1,9 @@
 const std = @import("std");
 const fs = @import("fs");
 const Allocator = std.mem.Allocator;
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
-const log = @import("../../core/log.zig");
+const log = @import("engine-core").log;
 const Utils = @import("utils.zig");
 const VulkanDevice = @import("device.zig").VulkanDevice;
 

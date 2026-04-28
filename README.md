@@ -142,12 +142,18 @@ The shadow/cave lighting capture launches a deterministic low-block test scene, 
 ### 🧪 Running Tests
 - **All Tests**: `nix develop --command zig build test`
 - **Single Test**: `nix develop --command zig build test -- --test-filter "Test Name"`
+- **Single Test Alternative**: `nix develop --command zig build test -Dtest-filter="Test Name"`
 
 ## 📂 Project Structure
 
-- `src/engine/`: Core engine components (RHI, Math, UI, Input, Jobs).
-- `src/world/`: Voxel-specific logic (Greedy Meshing, World Manager, Chunks).
-- `src/world/worldgen/`: Procedural terrain, noise, and biome systems.
+- `modules/engine-*`: Core engine packages (RHI, graphics, math, UI, input, jobs, ECS, audio).
+- `modules/world-core`: Blocks, chunks, coordinates, lighting, and shared world types.
+- `modules/world-worldgen`: Procedural terrain, noise, biomes, caves, decorations, and generator registry.
+- `modules/world-meshing`: Chunk storage, mesh generation, GPU block buffers, and meshing helpers.
+- `modules/world-lod`: Distant terrain LOD data, scheduling, rendering, and management.
+- `modules/world-runtime`: World facade, streaming, mutation, rendering, and GPU meshing runtime.
+- `modules/world-persistence`: Level data, chunk serialization, region files, and save manager.
+- `src/game/`: Application/gameplay state, screens, player, inventory, and session logic.
 - `assets/`: GLSL shaders and textures.
 - `scripts/`: Helper scripts for asset processing.
 - `libs/`: Local dependencies (zig-math, zig-noise, stb).

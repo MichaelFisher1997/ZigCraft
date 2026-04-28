@@ -10,8 +10,8 @@ const Rect = @import("../../engine/ui/ui_system.zig").Rect;
 const Font = @import("../../engine/ui/font.zig");
 const widgets = @import("../../engine/ui/widgets.zig");
 const Inventory = @import("../inventory.zig").Inventory;
-const BlockType = @import("../../world/block.zig").BlockType;
-const block_registry = @import("../../world/block_registry.zig");
+const BlockType = @import("world-core").BlockType;
+const block_registry = @import("world-core").block_registry;
 
 /// Inventory UI state
 pub const InventoryUI = struct {

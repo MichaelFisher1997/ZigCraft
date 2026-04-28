@@ -1,41 +1,8 @@
-const std = @import("std");
-const build_options = @import("build_options");
-
-pub fn getenv(name: [:0]const u8) ?[]const u8 {
-    const value = std.c.getenv(name) orelse return null;
-    return std.mem.span(value);
-}
-
-pub fn envFlag(name: [:0]const u8, default: bool) bool {
-    const value = getenv(name) orelse return default;
-    return !(std.mem.eql(u8, value, "0") or std.mem.eql(u8, value, "false"));
-}
-
-pub fn isWaylandSession() bool {
-    if (getenv("WAYLAND_DISPLAY") != null) return true;
-    if (getenv("XDG_SESSION_TYPE")) |value| {
-        return std.ascii.eqlIgnoreCase(value, "wayland");
-    }
-    return false;
-}
-
-pub fn safeModeEnabled() bool {
-    return envFlag("ZIGCRAFT_SAFE_MODE", false);
-}
-
-pub fn safeModeExplicitlyEnabled() bool {
-    return envFlag("ZIGCRAFT_SAFE_MODE", false);
-}
-
-pub fn safeModeAutoEnabled() bool {
-    return false;
-}
-
-pub fn strictSafeModeAutoEnabled() bool {
-    _ = build_options;
-    return false;
-}
-
-pub fn strictSafeModeEnabled() bool {
-    return safeModeExplicitlyEnabled() or strictSafeModeAutoEnabled();
-}
+pub const envFlag = @import("engine-core").envFlag;
+pub const getenv = @import("engine-core").getenv;
+pub const isWaylandSession = @import("engine-core").runtime_env.isWaylandSession;
+pub const safeModeAutoEnabled = @import("engine-core").safeModeAutoEnabled;
+pub const safeModeEnabled = @import("engine-core").safeModeEnabled;
+pub const safeModeExplicitlyEnabled = @import("engine-core").safeModeExplicitlyEnabled;
+pub const strictSafeModeAutoEnabled = @import("engine-core").strictSafeModeAutoEnabled;
+pub const strictSafeModeEnabled = @import("engine-core").strictSafeModeEnabled;

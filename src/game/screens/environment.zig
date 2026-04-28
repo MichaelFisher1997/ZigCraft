@@ -11,7 +11,7 @@ const EnvironmentContext = Screen.EnvironmentContext;
 const settings_pkg = @import("../settings.zig");
 const Settings = settings_pkg.Settings;
 const Texture = @import("../../engine/graphics/texture.zig").Texture;
-const log = @import("../../engine/core/log.zig");
+const log = @import("engine-core").log;
 
 const PANEL_WIDTH_MAX = 750.0;
 const PANEL_HEIGHT_MAX = 800.0;
