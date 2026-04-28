@@ -32,16 +32,16 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.OPENCODE_PAT }}
+
       - name: Select module to scan
         id: select-module
         env:
           INPUT_MODULE: ${{ inputs.module }}
         run: bash scripts/select_audit_module.sh
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.OPENCODE_PAT }}
 
       - name: Configure git identity
         run: bash scripts/configure_git_identity.sh "opencode[bot]" "opencode[bot]@users.noreply.github.com"

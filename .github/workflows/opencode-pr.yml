@@ -33,6 +33,13 @@ jobs:
       statuses: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          token: ${{ github.token }}
+
       - name: Resolve PR context
         id: resolve-pr
         env:
@@ -41,13 +48,6 @@ jobs:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/resolve_pr_context.sh
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.resolve-pr.outputs.pr_head_sha }}
-          fetch-depth: 0
-          token: ${{ github.token }}
 
       - name: Configure git
         run: bash scripts/configure_git_identity.sh "github-actions[bot]" "github-actions[bot]@users.noreply.github.com"

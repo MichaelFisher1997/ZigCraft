@@ -32,22 +32,22 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Select module to test
-        id: select-module
-        env:
-          INPUT_MODULE: ${{ inputs.module }}
-          BASE_BRANCH: ${{ github.event.repository.default_branch }}
-        run: bash scripts/select_test_writer_module.sh
-
       # OPENCODE_PAT must be a classic PAT with `repo` scope (full control of private repositories)
       # or a fine-grained PAT with Contents: Read & Write on this repository.
       # Without write permission, git push will fail with 403.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.select-module.outputs.base_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           token: ${{ secrets.OPENCODE_PAT }}
+
+      - name: Select module to test
+        id: select-module
+        env:
+          INPUT_MODULE: ${{ inputs.module }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash scripts/select_test_writer_module.sh
 
       - name: Configure git identity
         run: bash scripts/configure_git_identity.sh "opencode[bot]" "opencode[bot]@users.noreply.github.com"
