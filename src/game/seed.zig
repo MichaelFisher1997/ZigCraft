@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("../c.zig").c;
+const c = @import("c").c;
 
 pub fn randomSeedValue() u64 {
     const t: u64 = @intCast(c.SDL_GetTicks());

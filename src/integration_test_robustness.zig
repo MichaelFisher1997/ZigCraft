@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const fs = @import("fs");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 
 pub fn main() !void {
     std.debug.print("Running integration tests...\n", .{});

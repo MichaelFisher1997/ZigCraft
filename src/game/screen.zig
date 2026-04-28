@@ -1,15 +1,16 @@
 const std = @import("std");
+const core_interfaces = @import("engine-core").interfaces;
 const UISystem = @import("../engine/ui/ui_system.zig").UISystem;
-const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
+const IRawInputProvider = @import("engine-input").IRawInputProvider;
 const input_mapper_pkg = @import("input_mapper.zig");
 const IInputMapper = input_mapper_pkg.IInputMapper;
 const Time = @import("../engine/core/time.zig").Time;
 const WindowManager = @import("../engine/core/window.zig").WindowManager;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
-const AudioSystem = @import("../engine/audio/system.zig").AudioSystem;
-const UISystemManager = @import("../engine/ui/ui_system_manager.zig").UISystemManager;
+const AudioSystem = @import("engine-audio").AudioSystem;
+const UISystemManager = @import("engine-ui").UISystemManager;
 const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
-const IRenderSettings = @import("../engine/core/interfaces.zig").IRenderSettings;
+const IRenderSettings = core_interfaces.IRenderSettings;
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
 const BenchmarkRunner = @import("../benchmark.zig").BenchmarkRunner;
@@ -169,7 +170,7 @@ pub const WorldContext = struct {
 fn saveSettingsShared(allocator: std.mem.Allocator, settings: *Settings, input_mapper: IInputMapper) void {
     settings_pkg.persistence.save(settings, allocator);
     @import("input_settings.zig").InputSettings.saveFromMapper(allocator, input_mapper) catch |err| {
-        @import("../engine/core/log.zig").log.err("Failed to save input settings: {}", .{err});
+        @import("engine-core").log.log.err("Failed to save input settings: {}", .{err});
     };
 }
 
@@ -219,6 +220,13 @@ pub const IScreen = struct {
             return getStats_fn(self.ptr);
         }
         return null;
+    }
+
+    pub fn handle(self: IScreen) core_interfaces.ScreenHandle {
+        return .{
+            .ptr = self.ptr,
+            .vtable = self.vtable,
+        };
     }
 };
 
@@ -341,6 +349,48 @@ pub const ScreenManager = struct {
                 return;
             }
         }
+    }
+
+    pub fn interface(self: *ScreenManager) core_interfaces.IScreenManager {
+        return .{
+            .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    const VTABLE = core_interfaces.IScreenManager.VTable{
+        .pushScreen = impl_pushScreen,
+        .popScreen = impl_popScreen,
+        .setScreen = impl_setScreen,
+        .drawParentScreen = impl_drawParentScreen,
+    };
+
+    fn screenFromHandle(handle: core_interfaces.ScreenHandle) IScreen {
+        return .{
+            .ptr = handle.ptr,
+            .vtable = @ptrCast(@alignCast(handle.vtable)),
+        };
+    }
+
+    fn impl_pushScreen(ptr: *anyopaque, screen: core_interfaces.ScreenHandle) void {
+        const self: *ScreenManager = @ptrCast(@alignCast(ptr));
+        self.pushScreen(screenFromHandle(screen));
+    }
+
+    fn impl_popScreen(ptr: *anyopaque) void {
+        const self: *ScreenManager = @ptrCast(@alignCast(ptr));
+        self.popScreen();
+    }
+
+    fn impl_setScreen(ptr: *anyopaque, screen: core_interfaces.ScreenHandle) void {
+        const self: *ScreenManager = @ptrCast(@alignCast(ptr));
+        self.setScreen(screenFromHandle(screen));
+    }
+
+    fn impl_drawParentScreen(ptr: *anyopaque, current_ptr: *anyopaque, ui: *anyopaque) !void {
+        const self: *ScreenManager = @ptrCast(@alignCast(ptr));
+        const typed_ui: *UISystem = @ptrCast(@alignCast(ui));
+        try self.drawParentScreen(current_ptr, typed_ui);
     }
 };
 

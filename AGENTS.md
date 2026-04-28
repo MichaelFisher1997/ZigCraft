@@ -63,24 +63,24 @@ nix develop --command zig fmt src/                   # Format code
 ## Project Structure
 
 ```
+modules/
+  engine-core/      # Window, time, logging, job system, shared interfaces
+  engine-graphics/  # Render system, Vulkan backend, shaders, textures, camera, shadows
+  engine-rhi/       # RHI contracts, resource manager, render settings, culling interfaces
+  engine-math/      # Vec3, Mat4, AABB, Frustum, ray/voxel helpers
+  engine-input/     # Input handling
+  engine-ui/        # Immediate-mode UI, fonts, widgets, overlays
+  world-core/       # Blocks, chunk data, coordinates, light packing
+  world-worldgen/   # Terrain generation, biomes, caves, decorations, generator registry
+  world-meshing/    # Chunk storage, chunk mesh generation, GPU block buffers, meshing helpers
+  world-lod/        # Distant terrain LOD chunks, meshes, scheduler, renderer, manager
+  world-runtime/    # World facade, streamer, renderer, mutation, GPU meshing runtime
+  world-persistence/# Level data, region files, chunk serialization, save manager
 src/
-  engine/           # Core systems
-    core/           # Window, time, logging, job system
-    graphics/       # RHI, shaders, textures, camera, shadows
-    input/          # Input handling
-    math/           # Vec3, Mat4, AABB, Frustum (re-exports zig-math)
-    ui/             # Immediate-mode UI, fonts, widgets
-  world/            # Voxel world logic
-    worldgen/       # Terrain generation, biomes, caves
-    block.zig       # Block types and properties
-    chunk.zig       # Chunk data structure (16x256x16)
-    chunk_mesh.zig  # Mesh generation from chunks
-    world.zig       # World management and streaming
-    lod_*.zig       # Level-of-detail system for distant terrain
   game/             # Application logic, state, menus
   c.zig             # Central C imports (@cImport for SDL3, Vulkan)
   main.zig          # Entry point
-  tests.zig         # Unit test suite
+  tests.zig         # Unit test suite aggregator
 libs/               # Local dependencies (zig-math, zig-noise)
 assets/shaders/     # GLSL shaders (vulkan/ contains SPIR-V)
 ```
@@ -104,9 +104,9 @@ const Allocator = std.mem.Allocator;
 // 2. C imports (always via c.zig)
 const c = @import("../c.zig").c;
 
-// 3. Local modules (relative paths)
-const Vec3 = @import("../math/vec3.zig").Vec3;
-const log = @import("../engine/core/log.zig");
+// 3. Project modules by package name
+const Vec3 = @import("engine-math").Vec3;
+const log = @import("engine-core").log;
 ```
 
 ### Memory Management
@@ -117,7 +117,7 @@ const log = @import("../engine/core/log.zig");
 
 ### Error Handling
 - Propagate errors with `try`; define subsystem-specific error sets (`RhiError`)
-- Log errors via `src/engine/core/log.zig`: `log.err("msg: {}", .{err})`
+- Log errors via `@import("engine-core").log`: `log.log.err("msg: {}", .{err})`
 - Use `//!` for module-level docs, `///` for public API documentation
 
 ### Type Patterns
@@ -133,14 +133,14 @@ const log = @import("../engine/core/log.zig");
 - **World**: Global (x, y, z) in blocks/meters
 - **Chunk**: `(chunk_x, chunk_z)` via `@divFloor(world, 16)`
 - **Local**: (x, y, z) within a chunk
-- Use `worldToChunk()` and `worldToLocal()` from `src/world/chunk.zig`
+- Use `worldToChunk()` and `worldToLocal()` from `@import("world-core")`
 
 ---
 
 ## Architecture
 
 ### Render Hardware Interface (RHI)
-- All rendering uses the `RHI` interface in `src/engine/graphics/rhi.zig`
+- All rendering uses the `RHI` interface exported by `engine-rhi`
 - Vulkan is the only backend (`rhi_vulkan.zig`)
 - Extend functionality by updating `RHI.VTable` and backend implementation
 
@@ -155,11 +155,11 @@ const log = @import("../engine/core/log.zig");
 ## Common Tasks
 
 ### Adding a New Block Type
-1. Add entry to `BlockType` enum in `src/world/block.zig`
-2. Register properties in `src/world/block_registry.zig`
-3. Add textures to `src/engine/graphics/texture_atlas.zig`
+1. Add entry to `BlockType` enum in `modules/world-core/src/block.zig`
+2. Register properties in `modules/world-core/src/block_registry.zig`
+3. Add textures to `modules/engine-graphics/src/texture_atlas.zig`
 4. Standardize PBR textures using `./scripts/process_textures.sh`
-5. Update `src/world/chunk_mesh.zig` for special face/transparency logic
+5. Update `modules/world-meshing/src/chunk_mesh.zig` for special face/transparency logic
 
 ### Modifying Shaders
 1. GLSL sources in `assets/shaders/vulkan/`
@@ -167,7 +167,7 @@ const log = @import("../engine/core/log.zig");
 3. Uniform names must match exactly between shader source and RHI backends
 
 ### Adding Unit Tests
-- Add tests to `src/tests.zig` or alongside modules
+- Add tests alongside modules and expose them from the owning module root; aggregate broad suites from `src/tests.zig`
 - Use `std.testing` assertions: `expectEqual`, `expectApproxEqAbs`, `expect`
 - Test naming: descriptive, e.g., `test "Vec3 normalize"`
 

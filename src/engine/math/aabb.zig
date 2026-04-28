@@ -1,1 +1,1 @@
-pub const AABB = @import("zig-math").AABB;
+pub const AABB = @import("engine-math").AABB;

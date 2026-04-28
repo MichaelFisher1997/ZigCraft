@@ -1,7 +1,7 @@
 const std = @import("std");
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
-const log = @import("../../core/log.zig");
+const log = @import("engine-core").log;
 const Mat4 = @import("../../math/mat4.zig").Mat4;
 const pass_orchestration = @import("rhi_pass_orchestration.zig");
 

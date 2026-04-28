@@ -1,7 +1,7 @@
 const std = @import("std");
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
-const log = @import("../../core/log.zig");
+const log = @import("engine-core").log;
 const RenderDevice = @import("../render_device.zig").RenderDevice;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 const ResourceManager = @import("resource_manager.zig").ResourceManager;
@@ -15,7 +15,7 @@ const Utils = @import("utils.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
 const setup = @import("rhi_resource_setup.zig");
 const rhi_timing = @import("rhi_timing.zig");
-const runtime_env = @import("../../core/runtime_env.zig");
+const runtime_env = @import("engine-core").runtime_env;
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 const TOTAL_QUERY_COUNT = rhi_timing.QUERY_COUNT_PER_FRAME * MAX_FRAMES_IN_FLIGHT;

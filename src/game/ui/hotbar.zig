@@ -8,8 +8,8 @@ const UISystem = @import("../../engine/ui/ui_system.zig").UISystem;
 const Color = @import("../../engine/ui/ui_system.zig").Color;
 const Font = @import("../../engine/ui/font.zig");
 const Inventory = @import("../inventory.zig").Inventory;
-const BlockType = @import("../../world/block.zig").BlockType;
-const block_registry = @import("../../world/block_registry.zig");
+const BlockType = @import("world-core").BlockType;
+const block_registry = @import("world-core").block_registry;
 
 /// Hotbar rendering configuration
 pub const HotbarConfig = struct {

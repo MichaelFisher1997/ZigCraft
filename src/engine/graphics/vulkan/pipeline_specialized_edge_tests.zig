@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const pipeline_specialized = @import("pipeline_specialized.zig");
 const PipelineManager = @import("pipeline_manager.zig").PipelineManager;
 const rhi = @import("../rhi.zig");

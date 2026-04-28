@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const Utils = @import("utils.zig");
 const VulkanBuffer = Utils.VulkanBuffer;
 const rhi = @import("../rhi.zig");

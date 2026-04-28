@@ -3,12 +3,12 @@ const testing = std.testing;
 const Vec3 = @import("zig-math").Vec3;
 const Mat4 = @import("zig-math").Mat4;
 const IRenderSettings = @import("engine/core/interfaces.zig").IRenderSettings;
-const IChunkStorage = @import("world/chunk_storage.zig").IChunkStorage;
-const ChunkStorage = @import("world/chunk_storage.zig").ChunkStorage;
-const ChunkData = @import("world/chunk_storage.zig").ChunkData;
-const IWorld = @import("world/world.zig").IWorld;
-const WorldStatsData = @import("world/world.zig").WorldStatsData;
-const RenderStats = @import("world/world_renderer.zig").RenderStats;
+const IChunkStorage = @import("world-meshing").IChunkStorage;
+const ChunkStorage = @import("world-meshing").ChunkStorage;
+const ChunkData = @import("world-meshing").ChunkData;
+const IWorld = @import("world-runtime").IWorld;
+const WorldStatsData = @import("world-runtime").WorldStatsData;
+const RenderStats = @import("world-runtime").RenderStats;
 const shadow_scene = @import("engine/graphics/shadow_scene.zig");
 const ShadowConfig = @import("engine/graphics/rhi_types.zig").ShadowConfig;
 const Settings = @import("game/settings/data.zig").Settings;
@@ -280,7 +280,7 @@ const MockWorld = struct {
         return self.stats;
     }
 
-    fn getLODStats(ptr: *anyopaque) ?@import("world/lod_manager.zig").LODStats {
+    fn getLODStats(ptr: *anyopaque) ?@import("world-lod").LODStats {
         const self: *MockWorld = @ptrCast(@alignCast(ptr));
         self.get_lod_stats_calls += 1;
         return null;

@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const ecs_manager = @import("engine/ecs/manager.zig");
+const ecs_manager = @import("engine-ecs").manager;
 const ECSRegistry = ecs_manager.Registry;
-const ecs_components = @import("engine/ecs/components.zig");
+const ecs_components = @import("engine-ecs").components;
 const Vec3 = @import("zig-math").Vec3;
 
 test "ECS registry basic operations" {

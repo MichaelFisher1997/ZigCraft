@@ -1,1 +1,1 @@
-pub const Vec3 = @import("zig-math").Vec3;
+pub const Vec3 = @import("engine-math").Vec3;

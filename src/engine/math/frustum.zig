@@ -1,2 +1,2 @@
-pub const Plane = @import("zig-math").Plane;
-pub const Frustum = @import("zig-math").Frustum;
+pub const Plane = @import("engine-math").Plane;
+pub const Frustum = @import("engine-math").Frustum;

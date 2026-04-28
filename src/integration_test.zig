@@ -15,7 +15,7 @@ const WorldScreen = @import("game/screens/world.zig").WorldScreen;
 const Screen = @import("game/screen.zig");
 const rhi = @import("engine/graphics/rhi.zig");
 const UISystem = @import("engine/ui/ui_system.zig").UISystem;
-const c = @import("c.zig").c;
+const c = @import("c").c;
 
 const EngineContext = Screen.EngineContext;
 const IScreen = Screen.IScreen;
@@ -65,7 +65,7 @@ const UploadScreen = struct {
 test "smoke test: launch, generate, render, exit" {
     const test_allocator = testing.allocator;
 
-    @import("engine/core/log.zig").log.min_level = .err;
+    @import("engine-core").log.log.min_level = .err;
 
     var app = App.init(test_allocator) catch |err| {
         if (err == error.WindowCreationFailed or err == error.SDLInitializationFailed) {

@@ -4,9 +4,9 @@
 //! buffer access and verifying that the system remains responsive.
 
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c").c;
 const VulkanDevice = @import("engine/graphics/vulkan_device.zig").VulkanDevice;
-const log = @import("engine/core/log.zig");
+const log = @import("engine-core").log;
 
 pub fn main() !void {
     std.debug.print("\n=== GPU Robustness Demo ===\n\n", .{});

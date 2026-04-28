@@ -2,7 +2,7 @@ const std = @import("std");
 const settings_pkg = @import("settings.zig");
 const Settings = settings_pkg.Settings;
 const RHI = @import("../engine/graphics/rhi.zig").RHI;
-const log = @import("../engine/core/log.zig");
+const log = @import("engine-core").log;
 
 pub const SettingsManager = struct {
     allocator: std.mem.Allocator,

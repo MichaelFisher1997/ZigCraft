@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const descriptor_manager = @import("descriptor_manager.zig");
 const DescriptorManager = descriptor_manager.DescriptorManager;
 const rhi = @import("../rhi.zig");

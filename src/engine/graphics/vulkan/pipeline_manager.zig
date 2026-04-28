@@ -8,7 +8,7 @@
 
 const std = @import("std");
 const fs = @import("fs");
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const DescriptorManager = @import("descriptor_manager.zig").DescriptorManager;

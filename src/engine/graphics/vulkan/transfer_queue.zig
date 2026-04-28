@@ -11,9 +11,9 @@
 
 const std = @import("std");
 const sync = @import("sync");
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
-const log = @import("../../core/log.zig");
+const log = @import("engine-core").log;
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
 

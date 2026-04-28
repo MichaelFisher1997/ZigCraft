@@ -279,11 +279,11 @@ For rendering changes:
 ## Common Tasks
 
 ### Adding a New Block Type
-1. Add entry to `BlockType` enum in `src/world/block.zig`
+1. Add entry to `BlockType` enum in `modules/world-core/src/block.zig`
 2. Register properties (`isSolid`, `isTransparent`, `getLightEmission`, `getColor`)
-3. Add textures to `src/engine/graphics/texture_atlas.zig`
+3. Add textures to `modules/engine-graphics/src/texture_atlas.zig`
 4. Standardize PBR textures: `./scripts/process_textures.sh`
-5. Update `src/world/chunk_mesh.zig` for special face/transparency logic
+5. Update `modules/world-meshing/src/chunk_mesh.zig` for special face/transparency logic
 
 ### Modifying Shaders
 1. GLSL sources in `assets/shaders/` (Vulkan shaders in `vulkan/` subdirectory)
@@ -301,19 +301,15 @@ Add tests to `src/tests.zig` using `std.testing` assertions:
 ## Project Structure
 
 ```
+modules/
+  engine-*          # Engine packages for core, graphics, RHI, math, input, UI, ECS, audio
+  world-core/       # Blocks, chunks, coordinates, and light packing
+  world-worldgen/   # Terrain generation, biomes, caves, decorations, generator registry
+  world-meshing/    # Chunk storage, chunk mesh generation, GPU block buffers
+  world-lod/        # Distant terrain LOD chunks, meshes, scheduler, renderer, manager
+  world-runtime/    # World facade, streamer, renderer, mutation, GPU meshing runtime
+  world-persistence/# Level data, region files, chunk serialization, save manager
 src/
-  engine/           # Core engine systems
-    core/           # Window, time, logging, job system
-    graphics/       # RHI, shaders, textures, camera, shadows
-    input/          # Input handling
-    math/           # Vec3, Mat4, AABB, Frustum
-    ui/             # Immediate-mode UI, fonts, widgets
-  world/            # Voxel world logic
-    worldgen/       # Terrain generation, biomes, caves
-    block.zig       # Block types and properties
-    chunk.zig       # Chunk data structure (16x256x16)
-    chunk_mesh.zig  # Mesh generation from chunks
-    world.zig       # World management
   game/             # Application logic, state, menus
   c.zig             # Central C interop (@cImport)
   main.zig          # Entry point

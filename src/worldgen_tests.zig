@@ -2,18 +2,20 @@ const std = @import("std");
 const testing = std.testing;
 const Vec3 = @import("zig-math").Vec3;
 const Mat4 = @import("zig-math").Mat4;
-const Chunk = @import("world/chunk.zig").Chunk;
-const BlockType = @import("world/block.zig").BlockType;
-const block_registry = @import("world/block_registry.zig");
-const BiomeId = @import("world/worldgen/biome.zig").BiomeId;
-const OverworldGenerator = @import("world/worldgen/overworld_generator.zig").OverworldGenerator;
-const deco_registry = @import("world/worldgen/decoration_registry.zig");
-const NoiseSampler = @import("world/worldgen/noise_sampler.zig").NoiseSampler;
-const HeightSampler = @import("world/worldgen/height_sampler.zig").HeightSampler;
-const SurfaceBuilder = @import("world/worldgen/surface_builder.zig").SurfaceBuilder;
-const CoastalSurfaceType = @import("world/worldgen/surface_builder.zig").CoastalSurfaceType;
-const BiomeSource = @import("world/worldgen/biome.zig").BiomeSource;
-const CHUNK_SIZE_Y = @import("world/chunk.zig").CHUNK_SIZE_Y;
+const world_core = @import("world-core");
+const world_worldgen = @import("world-worldgen");
+const Chunk = world_core.Chunk;
+const BlockType = world_core.BlockType;
+const block_registry = world_core.block_registry;
+const BiomeId = world_core.BiomeId;
+const OverworldGenerator = world_worldgen.OverworldGenerator;
+const deco_registry = world_worldgen.decoration_registry;
+const NoiseSampler = world_worldgen.NoiseSampler;
+const HeightSampler = world_worldgen.HeightSampler;
+const SurfaceBuilder = world_worldgen.SurfaceBuilder;
+const CoastalSurfaceType = world_worldgen.surface_builder.CoastalSurfaceType;
+const BiomeSource = world_worldgen.biome.BiomeSource;
+const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
 
 pub const std_options: std.Options = .{ .log_level = .err };
 
@@ -257,8 +259,8 @@ test "Decoration placement" {
 
 test "OverworldGenerator with mock decoration provider" {
     const allocator = std.testing.allocator;
-    const DecorationProvider = @import("world/worldgen/decoration_provider.zig").DecorationProvider;
-    const DecorationContext = @import("world/worldgen/decoration_provider.zig").DecorationProvider.DecorationContext;
+    const DecorationProvider = world_worldgen.DecorationProvider;
+    const DecorationContext = world_worldgen.decoration_provider.DecorationProvider.DecorationContext;
 
     const MockProvider = struct {
         called_count: *usize,
@@ -309,7 +311,7 @@ test "OverworldGenerator with mock decoration provider" {
 // ============================================================================
 
 test "Biome structural constraints - height filter" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const ClimateParams = biome_mod.ClimateParams;
     const StructuralParams = biome_mod.StructuralParams;
     const getBiomeDefinition = biome_mod.getBiomeDefinition;
@@ -352,7 +354,7 @@ test "Biome structural constraints - height filter" {
 }
 
 test "Biome structural constraints - slope filter" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const ClimateParams = biome_mod.ClimateParams;
     const StructuralParams = biome_mod.StructuralParams;
     const getBiomeDefinition = biome_mod.getBiomeDefinition;
@@ -388,7 +390,7 @@ test "Biome structural constraints - slope filter" {
 }
 
 test "Biome structural constraints - desert elevation limit" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const ClimateParams = biome_mod.ClimateParams;
     const StructuralParams = biome_mod.StructuralParams;
     const getBiomeDefinition = biome_mod.getBiomeDefinition;
@@ -428,7 +430,7 @@ test "Biome structural constraints - desert elevation limit" {
 // ============================================================================
 
 test "needsTransition returns true for desert-forest pair" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expect(biome_mod.needsTransition(.desert, .forest) == true);
     try testing.expect(biome_mod.needsTransition(.forest, .desert) == true);
@@ -442,7 +444,7 @@ test "needsTransition returns true for desert-forest pair" {
 }
 
 test "needsTransition returns false for compatible biomes" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expect(biome_mod.needsTransition(.plains, .forest) == false);
 
@@ -453,7 +455,7 @@ test "needsTransition returns false for compatible biomes" {
 }
 
 test "getTransitionBiome returns correct biome for pairs" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expectEqual(biome_mod.getTransitionBiome(.desert, .forest), .dry_plains);
     try testing.expectEqual(biome_mod.getTransitionBiome(.forest, .desert), .dry_plains);
@@ -469,7 +471,7 @@ test "getTransitionBiome returns correct biome for pairs" {
 }
 
 test "getTransitionBiome returns null for compatible pairs" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expectEqual(biome_mod.getTransitionBiome(.plains, .forest), null);
 
@@ -479,7 +481,7 @@ test "getTransitionBiome returns null for compatible pairs" {
 }
 
 test "EdgeBand enum values are correct" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expectEqual(@intFromEnum(biome_mod.EdgeBand.none), 0);
     try testing.expectEqual(@intFromEnum(biome_mod.EdgeBand.outer), 1);
@@ -488,7 +490,7 @@ test "EdgeBand enum values are correct" {
 }
 
 test "Edge detection constants are properly defined" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expectEqual(biome_mod.EDGE_STEP, 4);
 
@@ -501,7 +503,7 @@ test "Edge detection constants are properly defined" {
 }
 
 test "BiomeEdgeInfo struct fields" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const edge_info = biome_mod.BiomeEdgeInfo{
         .base_biome = .desert,
@@ -524,7 +526,7 @@ test "BiomeEdgeInfo struct fields" {
 }
 
 test "Transition rules table has expected entries" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expect(biome_mod.TRANSITION_RULES.len >= 10);
 
@@ -563,7 +565,7 @@ test "Transition rules table has expected entries" {
 // ============================================================================
 
 test "BiomePoint struct fields" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const point = biome_mod.BiomePoint{
         .id = .desert,
@@ -581,7 +583,7 @@ test "BiomePoint struct fields" {
 }
 
 test "BIOME_POINTS table has expected biomes" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     try testing.expect(biome_mod.BIOME_POINTS.len >= 15);
 
@@ -604,35 +606,35 @@ test "BIOME_POINTS table has expected biomes" {
 }
 
 test "selectBiomeVoronoi returns desert for hot/dry" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const result = biome_mod.selectBiomeVoronoi(90, 10, 70, 0.5, 0);
     try testing.expectEqual(result, .desert);
 }
 
 test "selectBiomeVoronoi returns snow_tundra for cold/dry" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const result = biome_mod.selectBiomeVoronoi(5, 30, 70, 0.5, 0);
     try testing.expectEqual(result, .snow_tundra);
 }
 
 test "selectBiomeVoronoi returns ocean for low continentalness" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const result = biome_mod.selectBiomeVoronoi(50, 50, 50, 0.25, 0);
     try testing.expectEqual(result, .ocean);
 }
 
 test "selectBiomeVoronoi returns deep_ocean for very low continentalness" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const result = biome_mod.selectBiomeVoronoi(50, 50, 30, 0.10, 0);
     try testing.expectEqual(result, .deep_ocean);
 }
 
 test "selectBiomeVoronoi respects height constraints" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const high_result = biome_mod.selectBiomeVoronoi(10, 40, 110, 0.65, 0);
     try testing.expectEqual(high_result, .snowy_mountains);
@@ -642,14 +644,14 @@ test "selectBiomeVoronoi respects height constraints" {
 }
 
 test "selectBiomeVoronoi weight affects selection" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const result = biome_mod.selectBiomeVoronoi(50, 45, 70, 0.5, 0);
     try testing.expectEqual(result, .plains);
 }
 
 test "selectBiomeVoronoiWithRiver returns river when mask active" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const result = biome_mod.selectBiomeVoronoiWithRiver(50, 50, 65, 0.5, 0, 0.8);
     try testing.expectEqual(result, .river);
@@ -659,7 +661,7 @@ test "selectBiomeVoronoiWithRiver returns river when mask active" {
 }
 
 test "selectBiomeWithConstraints uses Voronoi selection" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
 
     const climate = biome_mod.ClimateParams{
         .temperature = 0.9,
@@ -737,7 +739,7 @@ test "NoiseSampler different seeds produce different results" {
 }
 
 test "WorldClassMap.getCell in-bounds returns stored cell" {
-    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const world_class_mod = world_worldgen.world_class;
     const ClassCell = world_class_mod.ClassCell;
     const WorldClassMap = world_class_mod.WorldClassMap;
 
@@ -757,7 +759,7 @@ test "WorldClassMap.getCell in-bounds returns stored cell" {
 }
 
 test "WorldClassMap.getCell out-of-bounds returns default cell" {
-    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const world_class_mod = world_worldgen.world_class;
     const WorldClassMap = world_class_mod.WorldClassMap;
 
     var map = WorldClassMap.init();
@@ -773,7 +775,7 @@ test "WorldClassMap.getCell out-of-bounds returns default cell" {
 }
 
 test "WorldClassMap.getCell boundary values" {
-    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const world_class_mod = world_worldgen.world_class;
     const ClassCell = world_class_mod.ClassCell;
     const WorldClassMap = world_class_mod.WorldClassMap;
 
@@ -796,7 +798,7 @@ test "WorldClassMap.getCell boundary values" {
 }
 
 test "WorldClassMap.getCell returns by value (no dangling pointer)" {
-    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const world_class_mod = world_worldgen.world_class;
     const WorldClassMap = world_class_mod.WorldClassMap;
 
     var map = WorldClassMap.init();
@@ -817,7 +819,7 @@ test "WorldClassMap.getCell returns by value (no dangling pointer)" {
 
 test "HeightSampler continental zones" {
     const sampler = HeightSampler.init();
-    const world_class_mod = @import("world/worldgen/world_class.zig");
+    const world_class_mod = world_worldgen.world_class;
 
     try testing.expectEqual(world_class_mod.ContinentalZone.deep_ocean, sampler.getContinentalZone(0.1));
 
@@ -898,7 +900,7 @@ test "BiomeSource ocean detection" {
 }
 
 test "BiomeSource selectBiome hot dry returns desert" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const source = BiomeSource.init();
 
     const climate = biome_mod.ClimateParams{
@@ -921,7 +923,7 @@ test "BiomeSource selectBiome hot dry returns desert" {
 }
 
 test "BiomeSource selectBiome cold wet returns taiga" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const source = BiomeSource.init();
 
     const climate = biome_mod.ClimateParams{
@@ -944,7 +946,7 @@ test "BiomeSource selectBiome cold wet returns taiga" {
 }
 
 test "BiomeSource selectBiome river override" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const source = BiomeSource.init();
 
     const climate = biome_mod.ClimateParams{
@@ -967,7 +969,7 @@ test "BiomeSource selectBiome river override" {
 }
 
 test "BiomeSource selectBiomeSimplified returns valid biome" {
-    const biome_mod = @import("world/worldgen/biome.zig");
+    const biome_mod = world_worldgen.biome;
     const source = BiomeSource.init();
 
     const climate1 = biome_mod.ClimateParams{

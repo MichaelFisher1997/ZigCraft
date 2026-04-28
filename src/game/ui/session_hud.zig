@@ -5,8 +5,8 @@ const Color = @import("../../engine/ui/ui_system.zig").Color;
 const Font = @import("../../engine/ui/font.zig");
 const TextureAtlas = @import("../../engine/graphics/texture_atlas.zig").TextureAtlas;
 const hotbar = @import("hotbar.zig");
-const region_pkg = @import("../../world/worldgen/region.zig");
-const worldToChunkFromFloat = @import("../../world/chunk.zig").worldToChunkFromFloat;
+const region_pkg = @import("world-worldgen").region;
+const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
 
 pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_pack: ?[]const u8, fps: f32, screen_w: f32, screen_h: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) !void {
     if (session.map_controller.show_map) {

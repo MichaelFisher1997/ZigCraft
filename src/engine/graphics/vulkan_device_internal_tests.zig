@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const c = @import("../../c.zig").c;
+const c = @import("c").c;
 const vulkan_device = @import("vulkan_device.zig");
 const VulkanDevice = vulkan_device.VulkanDevice;
 

@@ -1,6 +1,6 @@
 const std = @import("std");
 const sync = @import("sync");
-const c = @import("../../../c.zig").c;
+const c = @import("c").c;
 const rhi = @import("../rhi.zig");
 const RenderDevice = @import("../render_device.zig").RenderDevice;
 const Mat4 = @import("../../math/mat4.zig").Mat4;

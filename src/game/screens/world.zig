@@ -5,10 +5,10 @@ const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const WorldContext = Screen.WorldContext;
 const GameSession = @import("../session.zig").GameSession;
-const IWorld = @import("../../world/world.zig").IWorld;
+const IWorld = @import("world-runtime").IWorld;
 const Vec3 = @import("../../engine/math/vec3.zig").Vec3;
 const rhi_pkg = @import("../../engine/graphics/rhi.zig");
-const Camera = @import("../../engine/graphics/camera.zig").Camera;
+const Camera = @import("engine-graphics").Camera;
 const RenderSystem = @import("../../engine/graphics/render_system.zig").RenderSystem;
 const render_graph_pkg = @import("../../engine/graphics/render_graph.zig");
 const PausedScreen = @import("paused.zig").PausedScreen;
@@ -24,9 +24,9 @@ const Font = @import("../../engine/ui/font.zig");
 const Color = @import("../../engine/ui/ui_system.zig").Color;
 const WorldStats = @import("../../engine/ui/timing_overlay.zig").WorldStats;
 const LODStatsDisplay = @import("../../engine/ui/timing_overlay.zig").LODStatsDisplay;
-const log = @import("../../engine/core/log.zig");
+const log = @import("engine-core").log;
 const CSM = @import("../../engine/graphics/csm.zig");
-const WorldRenderer = @import("../../world/world_renderer.zig").WorldRenderer;
+const WorldRenderer = @import("world-runtime").WorldRenderer;
 const settings_data = @import("../settings/data.zig");
 const build_options = @import("build_options");
 const world_debug = @import("world_debug.zig");
@@ -320,7 +320,7 @@ pub const WorldScreen = struct {
         );
         if (!safe_mode and !startup_light_render) {
             rhi.timing().beginPassTiming("LPVPass");
-            try lpv_system.update(self.session.world, camera.position, ctx.settings.debug_lpv_overlay_active);
+            try lpv_system.update(self.session.world.lpvWorld(), camera.position, ctx.settings.debug_lpv_overlay_active);
             rhi.timing().endPassTiming("LPVPass");
         }
 
@@ -382,7 +382,7 @@ pub const WorldScreen = struct {
                 .water_ctx = rhi.waterSystem(),
                 .ssao_ctx = rhi.ssao(),
                 .timing = rhi.timing(),
-                .world = self.world,
+                .world = self.session.world.renderView(),
                 .shadow_scene = self.world.shadowScene(),
                 .camera = camera,
                 .atmosphere_system = render_system.getAtmosphereSystem(),
@@ -455,7 +455,11 @@ pub const WorldScreen = struct {
                 camera.position,
                 true,
             );
-            DebugShadowOverlay.draw(ui, rhi.shadowSystem(), screen_w, screen_h, .{}, &debug_cascades.cascade_splits, ctx.settings);
+            DebugShadowOverlay.draw(ui, rhi.shadowSystem(), screen_w, screen_h, .{
+                .debug_shadow_cascade_index = ctx.settings.debug_shadow_cascade_index,
+                .debug_shadow_caster_coverage = ctx.settings.debug_shadow_caster_coverage,
+                .debug_shadow_seam_diag = ctx.settings.debug_shadow_seam_diag,
+            }, &debug_cascades.cascade_splits);
         }
         if (ctx.settings.shadow_probe_enabled) {
             const probe = if (shadow_sandbox_active)
@@ -519,9 +523,15 @@ pub const WorldScreen = struct {
 
         if (self.chunk_inspector_overlay.enabled) {
             const world_state = self.session.world.getWorldStateData();
+            const render_stats = self.session.world.getRenderStats();
             self.chunk_inspector_overlay.draw(
                 ui,
-                self.session.world.getRenderStats(),
+                .{
+                    .chunks_total = render_stats.chunks_total,
+                    .chunks_rendered = render_stats.chunks_rendered,
+                    .chunks_culled = render_stats.chunks_culled,
+                    .vertices_rendered = render_stats.vertices_rendered,
+                },
                 self.session.world.getChunkStateCounts(),
                 world_state,
             );

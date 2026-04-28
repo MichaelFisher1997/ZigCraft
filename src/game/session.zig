@@ -2,28 +2,28 @@
 
 const std = @import("std");
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
-const World = @import("../world/world.zig").World;
-const WorldMap = @import("../world/worldgen/world_map.zig").WorldMap;
+const World = @import("world-runtime").World;
+const WorldMap = @import("world-worldgen").WorldMap;
 const MapController = @import("map_controller.zig").MapController;
 const Player = @import("player.zig").Player;
 const Inventory = @import("inventory.zig").Inventory;
 const inventory_ui = @import("ui/inventory_ui.zig");
 const BlockOutline = @import("block_outline.zig").BlockOutline;
 const HandRenderer = @import("hand_renderer.zig").HandRenderer;
-const Camera = @import("../engine/graphics/camera.zig").Camera;
+const Camera = @import("engine-graphics").Camera;
 const RHI = @import("../engine/graphics/rhi.zig").RHI;
 const RenderContext = @import("../engine/graphics/rhi.zig").RenderContext;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
-const Input = @import("../engine/input/input.zig").Input;
+const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
-const LODConfig = @import("../world/lod_chunk.zig").LODConfig;
-const LODLevel = @import("../world/lod_chunk.zig").LODLevel;
+const LODConfig = @import("world-lod").lod_chunk.LODConfig;
+const LODLevel = @import("world-lod").LODLevel;
 const render_settings = @import("../engine/graphics/render_settings.zig");
 const RenderDistancePreset = render_settings.RenderDistancePreset;
-const log = @import("../engine/core/log.zig");
-const runtime_env = @import("../engine/core/runtime_env.zig");
+const log = @import("engine-core").log;
+const runtime_env = @import("engine-core").runtime_env;
 const build_options = @import("build_options");
-const BlockType = @import("../world/block.zig").BlockType;
+const BlockType = @import("world-core").BlockType;
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
 const IInputMapper = input_mapper_pkg.IInputMapper;
@@ -38,18 +38,18 @@ fn getenv(name: [:0]const u8) ?[]const u8 {
     return std.mem.span(value);
 }
 
-const ECSManager = @import("../engine/ecs/manager.zig");
+const ECSManager = @import("engine-ecs").manager;
 const ECSRegistry = ECSManager.Registry;
-const ECSComponents = @import("../engine/ecs/components.zig");
-const ECSPhysicsSystem = @import("../engine/ecs/systems/physics.zig").PhysicsSystem;
-const ECSRenderSystem = @import("../engine/ecs/systems/render.zig").RenderSystem;
+const ECSComponents = @import("engine-ecs").components;
+const ECSPhysicsSystem = @import("engine-ecs").PhysicsSystem;
+const ECSRenderSystem = @import("engine-ecs").RenderSystem;
 
 const Atmosphere = @import("../engine/atmosphere/atmosphere.zig").Atmosphere;
 
 const SpawnColumn = struct {
     x: i32,
     z: i32,
-    info: @import("../world/worldgen/generator_interface.zig").ColumnInfo,
+    info: @import("world-worldgen").ColumnInfo,
 };
 
 pub const GameSession = struct {
@@ -304,7 +304,7 @@ pub const GameSession = struct {
                 try self.world.update(self.player.camera.position, dt);
 
                 // ECS Updates
-                ECSPhysicsSystem.update(&self.ecs_registry, self.world, dt);
+                ECSPhysicsSystem.update(&self.ecs_registry, self.world.collisionWorld(), dt);
             }
         }
     }
@@ -438,13 +438,13 @@ fn findActualSurfaceY(world: *World, x: i32, z: i32) ?i32 {
     return null;
 }
 
-fn isSpawnPatchStable(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("../world/worldgen/generator_interface.zig").ColumnInfo, sea_level: i32) bool {
+fn isSpawnPatchStable(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("world-worldgen").ColumnInfo, sea_level: i32) bool {
     if (!checkSpawnArea(world, spawn_x, spawn_z, center_info, sea_level, 1, 1, 2)) return false;
     if (!checkSpawnArea(world, spawn_x, spawn_z, center_info, sea_level, 8, 4, 8)) return false;
     return true;
 }
 
-fn checkSpawnArea(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("../world/worldgen/generator_interface.zig").ColumnInfo, sea_level: i32, radius: i32, step: i32, max_height_delta: i32) bool {
+fn checkSpawnArea(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("world-worldgen").ColumnInfo, sea_level: i32, radius: i32, step: i32, max_height_delta: i32) bool {
     var dz: i32 = -radius;
     while (dz <= radius) : (dz += step) {
         var dx: i32 = -radius;

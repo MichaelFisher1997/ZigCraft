@@ -9,15 +9,15 @@ const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const seed_gen = @import("../seed.zig");
-const log = @import("../../engine/core/log.zig");
+const log = @import("engine-core").log;
 const Key = @import("../../engine/core/interfaces.zig").Key;
 const IRawInputProvider = @import("../../engine/input/interfaces.zig").IRawInputProvider;
-const Input = @import("../../engine/input/input.zig").Input;
+const Input = @import("engine-input").Input;
 const WorldScreen = @import("world.zig").WorldScreen;
 const WorldListScreen = @import("world_list.zig").WorldListScreen;
 const world_list = @import("world_list.zig");
-const registry = @import("../../world/worldgen/registry.zig");
-const gen_interface = @import("../../world/worldgen/generator_interface.zig");
+const registry = @import("world-worldgen").registry;
+const gen_interface = @import("world-worldgen");
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const data = @import("data.zig");
 const Settings = data.Settings;
-const log = @import("../../engine/core/log.zig");
+const log = @import("engine-core").log;
 const fs = @import("fs");
 
 const CONFIG_DIR = ".config/zigcraft";
