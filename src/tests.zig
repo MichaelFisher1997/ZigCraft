@@ -85,6 +85,7 @@ test {
     _ = @import("world-core").block_biome_tests;
     _ = @import("world-core").chunk_tests;
     _ = @import("world-core").chunk_fill_tests;
+    _ = @import("world-core").chunk_extended_tests;
     _ = @import("world-meshing").chunk_mesh_tests;
     _ = @import("world-meshing").chunk_storage_interface_tests;
     _ = @import("world-core").biome_and_block_tests;
