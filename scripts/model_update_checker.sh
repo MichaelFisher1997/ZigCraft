@@ -45,7 +45,7 @@ cmd_fetch_models() {
 }
 
 cmd_analyze_family() {
-    local response provider current_model family_only base_prefix family_models latest_model latest_release model release current_tracked
+    local response provider current_model family_only base_prefix family_models latest_model latest_release model release
     response="$(api_response)"
     provider="${PROVIDER:?PROVIDER is required}"
     current_model="${CURRENT_MODEL:?CURRENT_MODEL is required}"
@@ -58,13 +58,14 @@ cmd_analyze_family() {
 
     latest_model=""
     latest_release=""
-    for model in $family_models; do
+    while IFS= read -r model; do
+        [[ -n "$model" ]] || continue
         release="$(jq -r ".\"${provider}\".models.\"${model}\".release_date" <<< "$response")"
         if [[ -z "$latest_release" || "$(printf '%s\n' "$release" "$latest_release" | sort -r | head -1)" == "$release" ]]; then
             latest_release="$release"
             latest_model="$model"
         fi
-    done
+    done <<< "$family_models"
 
     write_output latest_family_model "$latest_model"
     write_output latest_release_date "$latest_release"
@@ -73,11 +74,6 @@ cmd_analyze_family() {
         write_output update_type family
         write_output new_model "$latest_model"
         write_output update_reason "Newer model variant ${latest_model} available (released ${latest_release})"
-    elif [[ "$family_only" == "false" ]]; then
-        current_tracked="${CURRENT_LAST_UPDATED:-}"
-        if [[ -n "$current_tracked" && "$current_tracked" != "${CURRENT_LAST_UPDATED:-}" ]]; then
-            write_output update_type spec
-        fi
     fi
 }
 
@@ -177,7 +173,7 @@ cmd_create_pr() {
     local update_reason="${UPDATE_REASON:-}"
     local update_type="${UPDATE_TYPE:-}"
     local workflows="${WORKFLOWS:-}"
-    local new_model branch_name workflows_list pr_body_file
+    local new_model branch_name workflows_list pr_body_file escaped_model_id
 
     new_model="$(cut -d/ -f2 <<< "$new_model_id")"
     branch_name="model-update/${new_model_id//\//-}"
@@ -190,9 +186,11 @@ cmd_create_pr() {
     echo "Type: ${update_type}"
     echo "Workflows: ${workflows}"
 
+    escaped_model_id="$(printf '%s' "$new_model_id" | sed 's/[\\&|]/\\&/g')"
+
     for workflow in .github/workflows/*.yml; do
         if grep -q 'minimax-coding-plan/MiniMax' "$workflow"; then
-            sed -i "s|minimax-coding-plan/MiniMax-[A-Za-z0-9.]*|${new_model_id}|g" "$workflow"
+            sed -i "s|minimax-coding-plan/MiniMax-[A-Za-z0-9.]*|${escaped_model_id}|g" "$workflow"
             echo "Updated: $workflow"
         fi
     done

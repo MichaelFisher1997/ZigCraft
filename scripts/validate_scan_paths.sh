@@ -5,6 +5,8 @@ set -euo pipefail
 scan_paths="${SCAN_PATHS:?SCAN_PATHS is required}"
 missing=0
 
+# SCAN_PATHS is intentionally space-delimited by select_test_writer_module.sh;
+# repository scan targets must not contain spaces.
 for path in $scan_paths; do
     if [[ ! -e "$path" ]]; then
         printf 'WARNING: scan path does not exist: %s\n' "$path"

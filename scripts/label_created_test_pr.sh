@@ -19,9 +19,11 @@ done
 
 if [[ -n "$pr_num" ]]; then
     printf 'Found newly created PR #%s for commit %s\n' "$pr_num" "$head_sha"
-    if ! gh pr edit "$pr_num" --add-label automated-test 2>/dev/null; then
-        printf '::warning::Failed to add automated-test label to PR #%s\n' "$pr_num"
+    label_error="$(mktemp)"
+    if ! gh pr edit "$pr_num" --add-label automated-test 2>"$label_error"; then
+        printf '::warning::Failed to add automated-test label to PR #%s: %s\n' "$pr_num" "$(tr '\n' ' ' < "$label_error")"
     fi
+    rm -f "$label_error"
 else
     printf '::warning::No open PR found for commit %s after %s attempts\n' "$head_sha" "$max_retries"
 fi
