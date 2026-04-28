@@ -11,6 +11,7 @@ pub const block_registry_tests = @import("block_registry_tests.zig");
 pub const block_tests = @import("block_tests.zig");
 pub const chunk_fill_tests = @import("chunk_fill_tests.zig");
 pub const chunk_tests = @import("chunk_tests.zig");
+pub const chunk_extended_tests = @import("chunk_extended_tests.zig");
 pub const packed_light_tests = @import("packed_light_tests.zig");
 pub const world_block_fill_tests = @import("world_block_fill_tests.zig");
 pub const world_coord_tests = @import("world_coord_tests.zig");
