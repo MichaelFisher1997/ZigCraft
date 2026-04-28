@@ -1,0 +1,49 @@
+name: Setup Zig Cache
+description: Restore Zig compiler caches and export ZIG_GLOBAL_CACHE_DIR
+
+inputs:
+  cache-key-prefix:
+    description: Prefix for the Zig cache key
+    required: false
+    default: zig
+  global-cache-dir:
+    description: Zig global cache directory
+    required: false
+    default: .zig-cache-global
+  local-cache-dir:
+    description: Zig local cache directory
+    required: false
+    default: .zig-cache
+
+runs:
+  using: composite
+  steps:
+    - name: Export Zig cache environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        global_cache="${{ github.workspace }}/${{ inputs.global-cache-dir }}"
+        local_cache="${{ github.workspace }}/${{ inputs.local-cache-dir }}"
+        mkdir -p "$global_cache" "$local_cache"
+        echo "ZIG_GLOBAL_CACHE_DIR=$global_cache" >> "$GITHUB_ENV"
+
+    - name: Restore Zig cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.workspace }}/${{ inputs.global-cache-dir }}
+          ${{ github.workspace }}/${{ inputs.local-cache-dir }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock') }}-${{ hashFiles('src/**', 'modules/**', 'libs/**', 'assets/shaders/**') }}
+        restore-keys: |
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock') }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+
+    - name: Summarize Zig cache
+      shell: bash
+      run: |
+        {
+          echo "### Zig Cache"
+          echo "- Global cache: ${{ github.workspace }}/${{ inputs.global-cache-dir }}"
+          echo "- Local cache: ${{ github.workspace }}/${{ inputs.local-cache-dir }}"
+          echo "- Key prefix: ${{ inputs.cache-key-prefix }}-${{ runner.os }}"
+        } >> "$GITHUB_STEP_SUMMARY"
