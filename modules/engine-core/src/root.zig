@@ -1,11 +1,11 @@
-pub const fs = @import("fs.zig");
+pub const fs = @import("fs");
 pub const interfaces = @import("interfaces.zig");
 pub const job_system = @import("job_system.zig");
 pub const log = @import("log.zig");
 pub const lod_types = @import("lod_types.zig");
 pub const ring_buffer = @import("ring_buffer.zig");
 pub const runtime_env = @import("runtime_env.zig");
-pub const sync = @import("sync.zig");
+pub const sync = @import("sync");
 pub const time = @import("time.zig");
 pub const window = @import("window.zig");
 

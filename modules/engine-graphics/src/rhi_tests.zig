@@ -1,9 +1,9 @@
 const std = @import("std");
 const testing = std.testing;
-const rhi = @import("rhi.zig");
+const rhi = @import("engine-rhi").rhi;
 const c = @import("c").c;
-const Mat4 = @import("../math/mat4.zig").Mat4;
-const Vec3 = @import("../math/vec3.zig").Vec3;
+const Mat4 = @import("engine-math").Mat4;
+const Vec3 = @import("engine-math").Vec3;
 
 const MockContext = struct {
     bind_shader_called: bool = false,

@@ -5,7 +5,7 @@ const TimeSystem = @import("time.zig").TimeSystem;
 const CelestialSystem = @import("celestial.zig").CelestialSystem;
 const SkyColorPalette = @import("sky_palette.zig").SkyColorPalette;
 const Config = @import("config.zig").AtmosphereConfig;
-const Vec3 = @import("../math/vec3.zig").Vec3;
+const Vec3 = @import("engine-math").Vec3;
 
 test "TimeSystem initialization and update" {
     var time = TimeSystem{};

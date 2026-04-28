@@ -44,7 +44,7 @@ const ECSComponents = @import("engine-ecs").components;
 const ECSPhysicsSystem = @import("engine-ecs").PhysicsSystem;
 const ECSRenderSystem = @import("engine-ecs").RenderSystem;
 
-const Atmosphere = @import("../engine/atmosphere/atmosphere.zig").Atmosphere;
+const Atmosphere = @import("engine-graphics").Atmosphere;
 
 const SpawnColumn = struct {
     x: i32,
