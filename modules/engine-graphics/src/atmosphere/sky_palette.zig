@@ -1,6 +1,6 @@
 const std = @import("std");
-const Vec3 = @import("../math/vec3.zig").Vec3;
-const utils = @import("../math/utils.zig");
+const Vec3 = @import("engine-math").Vec3;
+const utils = @import("engine-math").utils;
 const Config = @import("config.zig").AtmosphereConfig;
 
 pub const SkyColorPalette = struct {

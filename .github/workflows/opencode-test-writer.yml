@@ -84,49 +84,49 @@ jobs:
 
           case "$SELECTED" in
             graphics/vulkan-device)
-              SCAN_PATHS="src/engine/graphics/vulkan_device.zig src/engine/graphics/vulkan/device.zig src/engine/graphics/vulkan/rhi_state_control.zig"
+              SCAN_PATHS="modules/engine-graphics/src/vulkan_device.zig modules/engine-graphics/src/vulkan/device.zig modules/engine-graphics/src/vulkan/rhi_state_control.zig"
               ;;
             graphics/vulkan-resources)
-              SCAN_PATHS="src/engine/graphics/vulkan/resource_manager.zig src/engine/graphics/vulkan/resource_texture_ops.zig src/engine/graphics/vulkan/rhi_resource_lifecycle.zig src/engine/graphics/vulkan/rhi_resource_setup.zig"
+              SCAN_PATHS="modules/engine-graphics/src/vulkan/resource_manager.zig modules/engine-graphics/src/vulkan/resource_texture_ops.zig modules/engine-graphics/src/vulkan/rhi_resource_lifecycle.zig modules/engine-graphics/src/vulkan/rhi_resource_setup.zig"
               ;;
             graphics/vulkan-pipelines)
-              SCAN_PATHS="src/engine/graphics/vulkan/pipeline_manager.zig src/engine/graphics/vulkan/pipeline_specialized.zig src/engine/graphics/vulkan/shader_registry.zig src/engine/graphics/vulkan/descriptor_manager.zig src/engine/graphics/vulkan/descriptor_bindings.zig"
+              SCAN_PATHS="modules/engine-graphics/src/vulkan/pipeline_manager.zig modules/engine-graphics/src/vulkan/pipeline_specialized.zig modules/engine-graphics/src/vulkan/shader_registry.zig modules/engine-graphics/src/vulkan/descriptor_manager.zig modules/engine-graphics/src/vulkan/descriptor_bindings.zig"
               ;;
             graphics/vulkan-swapchain)
-              SCAN_PATHS="src/engine/graphics/vulkan/swapchain.zig src/engine/graphics/vulkan/swapchain_presenter.zig src/engine/graphics/vulkan_swapchain.zig"
+              SCAN_PATHS="modules/engine-graphics/src/vulkan/swapchain.zig modules/engine-graphics/src/vulkan/swapchain_presenter.zig modules/engine-graphics/src/vulkan_swapchain.zig"
               ;;
             graphics/vulkan-frame)
-              SCAN_PATHS="src/engine/graphics/vulkan/frame_manager.zig src/engine/graphics/vulkan/rhi_frame_orchestration.zig src/engine/graphics/vulkan/render_pass_manager.zig src/engine/graphics/vulkan/rhi_pass_orchestration.zig"
+              SCAN_PATHS="modules/engine-graphics/src/vulkan/frame_manager.zig modules/engine-graphics/src/vulkan/rhi_frame_orchestration.zig modules/engine-graphics/src/vulkan/render_pass_manager.zig modules/engine-graphics/src/vulkan/rhi_pass_orchestration.zig"
               ;;
             graphics/rhi-types)
-              SCAN_PATHS="src/engine/graphics/rhi.zig src/engine/graphics/rhi_types.zig src/engine/graphics/rhi_vulkan.zig src/engine/graphics/rhi_tests.zig"
+              SCAN_PATHS="modules/engine-rhi/src/rhi.zig modules/engine-rhi/src/rhi_types.zig modules/engine-graphics/src/rhi_vulkan.zig modules/engine-graphics/src/rhi_tests.zig"
               ;;
             graphics/shadows)
-              SCAN_PATHS="src/engine/graphics/shadow_system.zig src/engine/graphics/csm.zig src/engine/graphics/vulkan/shadow_system.zig src/engine/graphics/vulkan/rhi_shadow_bridge.zig src/engine/graphics/shadow_scene.zig"
+              SCAN_PATHS="modules/engine-graphics/src/shadow_system.zig modules/engine-graphics/src/csm.zig modules/engine-graphics/src/vulkan/shadow_system.zig modules/engine-graphics/src/vulkan/rhi_shadow_bridge.zig modules/engine-graphics/src/shadow_scene.zig"
               ;;
             graphics/post-process)
-              SCAN_PATHS="src/engine/graphics/vulkan/bloom_system.zig src/engine/graphics/vulkan/fxaa_system.zig src/engine/graphics/vulkan/taa_system.zig src/engine/graphics/vulkan/ssao_system.zig src/engine/graphics/vulkan/post_process_system.zig"
+              SCAN_PATHS="modules/engine-graphics/src/vulkan/bloom_system.zig modules/engine-graphics/src/vulkan/fxaa_system.zig modules/engine-graphics/src/vulkan/taa_system.zig modules/engine-graphics/src/vulkan/ssao_system.zig modules/engine-graphics/src/vulkan/post_process_system.zig"
               ;;
             engine/core)
-              SCAN_PATHS="src/engine/core/job_system.zig src/engine/core/ring_buffer.zig src/engine/core/time.zig src/engine/core/log.zig src/engine/core/window.zig"
+              SCAN_PATHS="modules/engine-core/src/job_system.zig modules/engine-core/src/ring_buffer.zig modules/engine-core/src/time.zig modules/engine-core/src/log.zig modules/engine-core/src/window.zig"
               ;;
             engine/math)
-              SCAN_PATHS="src/engine/math/vec3.zig src/engine/math/mat4.zig src/engine/math/frustum.zig src/engine/math/utils.zig"
+              SCAN_PATHS="modules/engine-math/src/vec3.zig modules/engine-math/src/mat4.zig modules/engine-math/src/frustum.zig modules/engine-math/src/utils.zig"
               ;;
             engine/input)
-              SCAN_PATHS="src/engine/input/input.zig src/engine/input/interfaces.zig"
+              SCAN_PATHS="modules/engine-input/src/input.zig modules/engine-input/src/interfaces.zig"
               ;;
             world)
-              SCAN_PATHS="src/world/chunk.zig src/world/block.zig src/world/block_registry.zig src/world/chunk_storage.zig src/world/chunk_allocator.zig src/world/chunk_mesh.zig"
+              SCAN_PATHS="modules/world-core/src/chunk.zig modules/world-core/src/block.zig modules/world-core/src/block_registry.zig modules/world-meshing/src/chunk_storage.zig modules/world-meshing/src/chunk_allocator.zig modules/world-meshing/src/chunk_mesh.zig"
               ;;
             world/meshing)
-              SCAN_PATHS="src/world/meshing/greedy_mesher.zig src/world/meshing/ao_calculator.zig src/world/meshing/lighting_sampler.zig src/world/meshing/biome_color_sampler.zig src/world/meshing/boundary.zig"
+              SCAN_PATHS="modules/world-meshing/src/meshing/greedy_mesher.zig modules/world-meshing/src/meshing/ao_calculator.zig modules/world-meshing/src/meshing/lighting_sampler.zig modules/world-meshing/src/meshing/biome_color_sampler.zig modules/world-meshing/src/meshing/boundary.zig"
               ;;
             world/worldgen)
-              SCAN_PATHS="src/world/worldgen/overworld_generator.zig src/world/worldgen/biome.zig src/world/worldgen/caves.zig src/world/worldgen/terrain_shape_generator.zig src/world/worldgen/coastal_generator.zig src/world/worldgen/noise_sampler.zig src/world/worldgen/height_sampler.zig src/world/worldgen/surface_builder.zig"
+              SCAN_PATHS="modules/world-worldgen/src/overworld_generator.zig modules/world-worldgen/src/biome.zig modules/world-worldgen/src/caves.zig modules/world-worldgen/src/terrain_shape_generator.zig modules/world-worldgen/src/coastal_generator.zig modules/world-worldgen/src/noise_sampler.zig modules/world-worldgen/src/height_sampler.zig modules/world-worldgen/src/surface_builder.zig"
               ;;
             engine/ecs)
-              SCAN_PATHS="src/engine/ecs/storage.zig src/engine/ecs/manager.zig src/engine/ecs/entity.zig src/engine/ecs/components.zig"
+              SCAN_PATHS="modules/engine-ecs/src/storage.zig modules/engine-ecs/src/manager.zig modules/engine-ecs/src/entity.zig modules/engine-ecs/src/components.zig"
               ;;
             game)
               SCAN_PATHS="src/game/player.zig src/game/screen.zig src/game/inventory.zig src/game/settings/ src/game/input_mapper.zig src/game/session.zig"

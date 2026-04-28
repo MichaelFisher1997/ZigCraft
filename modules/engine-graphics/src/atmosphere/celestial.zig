@@ -1,5 +1,5 @@
 const std = @import("std");
-const Vec3 = @import("../math/vec3.zig").Vec3;
+const Vec3 = @import("engine-math").Vec3;
 
 pub const CelestialSystem = struct {
     orbit_tilt: f32 = 0.35,

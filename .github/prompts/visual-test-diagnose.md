@@ -23,11 +23,11 @@ Something went wrong. Your job is to diagnose the failure and file a detailed Gi
    - Missing files or environment issues
 
 3. **Read relevant source code** to understand the failure:
-   - `src/engine/graphics/vulkan/screenshot.zig` — screenshot capture implementation
-   - `src/engine/graphics/vulkan_swapchain.zig` — headless swapchain setup (look at `headless_mode` path)
+   - `modules/engine-graphics/src/vulkan/screenshot.zig` — screenshot capture implementation
+   - `modules/engine-graphics/src/vulkan_swapchain.zig` — headless swapchain setup (look at `headless_mode` path)
    - `src/game/app.zig` — screenshot mode initialization and frame counting
    - `src/game/screens/home.zig` — the HomeScreen that should be rendered
-   - `src/engine/graphics/rhi_vulkan.zig` — RHI initialization
+   - `modules/engine-graphics/src/rhi_vulkan.zig` — RHI initialization
 
 4. **Diagnose root cause**: Based on the log output and code, determine what went wrong and why.
 

@@ -84,13 +84,13 @@ pub fn build(b: *std.Build) void {
     });
 
     const fs_module = b.createModule(.{
-        .root_source_file = b.path("src/engine/core/fs.zig"),
+        .root_source_file = b.path("modules/engine-core/src/fs.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const sync_module = b.createModule(.{
-        .root_source_file = b.path("src/engine/core/sync.zig"),
+        .root_source_file = b.path("modules/engine-core/src/sync.zig"),
         .target = target,
         .optimize = optimize,
     });

@@ -23,9 +23,9 @@ test {
 
     // ECS and engine tests
     _ = @import("ecs_tests.zig");
-    _ = @import("engine/graphics/vulkan_device.zig");
-    _ = @import("engine/graphics/vulkan_device_tests.zig");
-    _ = @import("engine/graphics/vulkan_device_internal_tests.zig");
+    _ = @import("engine-graphics").vulkan_device;
+    _ = @import("engine-graphics").vulkan_device_tests;
+    _ = @import("engine-graphics").vulkan_device_internal_tests;
     _ = @import("engine-graphics").rhi_state_control_tests;
     _ = @import("engine-graphics").ssao_system_tests;
     _ = @import("engine-graphics").pipeline_manager_tests;
@@ -44,14 +44,14 @@ test {
     _ = @import("engine-graphics").vulkan_frame_tests;
     _ = @import("engine-graphics").utils_tests;
     _ = @import("vulkan_tests.zig");
-    _ = @import("engine/graphics/rhi_tests.zig");
+    _ = @import("engine-graphics").rhi_tests;
     _ = @import("engine-graphics").cloud_system;
-    _ = @import("engine/graphics/shadow_cascade_tests.zig");
-    _ = @import("engine/graphics/shadow_tests.zig");
-    _ = @import("engine/graphics/shadow_system_tests.zig");
-    _ = @import("engine/math/utils_tests.zig");
-    _ = @import("engine/math/frustum_tests.zig");
-    _ = @import("engine/math/mat4_tests.zig");
+    _ = @import("engine-graphics").shadow_cascade_tests;
+    _ = @import("engine-graphics").shadow_tests;
+    _ = @import("engine-graphics").shadow_system_tests;
+    _ = @import("engine-math").utils_tests;
+    _ = @import("engine-math").frustum_tests;
+    _ = @import("engine-math").mat4_tests;
     _ = @import("world-meshing").world_tests;
     _ = @import("world-worldgen").schematics;
     _ = @import("world-worldgen").tree_registry;
@@ -64,7 +64,7 @@ test {
     _ = @import("world-lod").lod_manager_tests;
     _ = @import("world-lod").lod_seam;
     _ = @import("world-lod").lod_renderer;
-    _ = @import("engine/atmosphere/tests.zig");
+    _ = @import("engine-graphics").atmosphere_tests;
     _ = @import("game/settings/tests.zig");
     _ = @import("game/input_settings.zig");
     _ = @import("game/player_tests.zig");

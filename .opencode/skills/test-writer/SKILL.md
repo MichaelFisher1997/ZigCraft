@@ -103,7 +103,7 @@ Many Vulkan types are opaque pointers that can be `null` in tests:
 
 1. **Test pure logic**: Functions not calling Vulkan APIs directly (e.g., `checkVk`, struct constructors, validation, math).
 2. **Partial struct initialization**: Initialize structs with `null` Vulkan handles and test non-Vulkan fields.
-3. **Mock interfaces**: Follow `src/engine/graphics/rhi_tests.zig` patterns — create mock structs with function pointers.
+3. **Mock interfaces**: Follow `modules/engine-graphics/src/rhi_tests.zig` patterns — create mock structs with function pointers.
 4. **Error mapping tests**: Call `checkVk` with specific `VkResult` constants.
 5. **Struct layout tests**: Verify `@sizeOf`, `@offsetOf`, `@bitSizeOf` for GPU-facing structs.
 6. **State machine tests**: Test state transitions without calling Vulkan functions.
