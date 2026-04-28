@@ -1,0 +1,18 @@
+name: Stop Weston
+description: Stop a headless Weston compositor if it is running
+
+inputs:
+  pid-file:
+    required: false
+    default: /tmp/weston.pid
+    description: File containing Weston process ID
+
+runs:
+  using: composite
+  steps:
+    - name: Stop compositor
+      shell: bash
+      run: |
+        if [ -f "${{ inputs.pid-file }}" ]; then
+          kill "$(cat "${{ inputs.pid-file }}")" 2>/dev/null || true
+        fi

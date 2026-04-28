@@ -23,34 +23,12 @@ jobs:
         uses: ./.github/actions/setup-nix
 
       - name: Start headless Wayland compositor
+        uses: ./.github/actions/start-weston
+
+      - name: Prepare opencode cache
         run: |
-          set -euo pipefail
-          mkdir -p /tmp/runtime-runner
-          chmod 700 /tmp/runtime-runner
           mkdir -p /tmp/opencode-cache
-          export XDG_RUNTIME_DIR=/tmp/runtime-runner
-          nix develop .#ci-graphics --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 > weston.log 2>&1 &
-          echo "$!" > /tmp/weston.pid
-          {
-            echo "WAYLAND_DISPLAY=headless"
-            echo "XDG_RUNTIME_DIR=/tmp/runtime-runner"
-            echo "XDG_CACHE_HOME=/tmp/opencode-cache"
-          } >> "$GITHUB_ENV"
-          for i in $(seq 1 30); do
-            if [ -S /tmp/runtime-runner/headless ]; then
-              echo "Weston ready after ${i}s"
-              exit 0
-            fi
-            if ! kill -0 "$(cat /tmp/weston.pid)" 2>/dev/null; then
-              echo "Weston exited before creating the Wayland socket" >&2
-              cat weston.log >&2 || true
-              exit 1
-            fi
-            sleep 1
-          done
-          echo "Timed out waiting for Weston Wayland socket" >&2
-          cat weston.log >&2 || true
-          exit 1
+          echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> "$GITHUB_ENV"
 
       - name: Load visual verification prompt
         uses: ./.github/actions/load-prompt
@@ -77,29 +55,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
+      - name: Setup Lavapipe Vulkan
+        uses: ./.github/actions/setup-lavapipe
+
       - name: Run menu screenshot capture
         id: screenshot
         continue-on-error: true
+        uses: ./.github/actions/run-with-log
+        with:
+          name: Visual Test
+          timeout: 20m
+          log-file: build-output.log
+          command: nix develop .#ci-graphics --command zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true
         env:
           ZIG_GLOBAL_CACHE_DIR: /tmp/zig-cache-global
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless
           ZIGCRAFT_SMOKE_FRAMES: "5"
           ZIGCRAFT_SAFE_RENDER: "1"
-        run: |
-          set -o pipefail
-          LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
-          LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
-          export VK_ICD_FILENAMES=$LVP_PATH
-          export VK_LAYER_PATH=$LAYER_PATH
-          START=$(date +%s)
-          timeout --preserve-status 20m nix develop .#ci-graphics --command zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true 2>&1 | tee build-output.log
-          END=$(date +%s)
-          {
-            echo "### Visual Test"
-            echo "- Screenshot capture duration: $((END - START))s"
-            echo "- Runner: ${{ runner.name }} (${{ runner.os }})"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Convert PPM to PNG
         id: convert
@@ -139,10 +112,7 @@ jobs:
 
       - name: Stop headless Wayland compositor
         if: always()
-        run: |
-          if [ -f /tmp/weston.pid ]; then
-            kill "$(cat /tmp/weston.pid)" 2>/dev/null || true
-          fi
+        uses: ./.github/actions/stop-weston
 
       - name: Run opencode visual verification
         if: steps.convert.outputs.screenshot_exists == 'true'

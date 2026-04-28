@@ -1,0 +1,76 @@
+name: Start Weston
+description: Start a headless Weston compositor and wait for the Wayland socket
+
+inputs:
+  nix-shell:
+    required: false
+    default: .#ci-graphics
+    description: Nix shell containing weston
+  runtime-dir:
+    required: false
+    default: /tmp/runtime-runner
+    description: XDG runtime directory for the compositor
+  socket:
+    required: false
+    default: headless
+    description: Wayland socket name
+  log-file:
+    required: false
+    default: weston.log
+    description: File to write Weston output to
+  pid-file:
+    required: false
+    default: /tmp/weston.pid
+    description: File to write Weston process ID to
+  wait-seconds:
+    required: false
+    default: "30"
+    description: Seconds to wait for the socket
+
+outputs:
+  pid-file:
+    description: PID file path
+    value: ${{ inputs.pid-file }}
+  log-file:
+    description: Log file path
+    value: ${{ inputs.log-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Start compositor
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.runtime-dir }}"
+        chmod 700 "${{ inputs.runtime-dir }}"
+        export XDG_RUNTIME_DIR="${{ inputs.runtime-dir }}"
+
+        nix develop "${{ inputs.nix-shell }}" --command weston \
+          --socket="${{ inputs.socket }}" \
+          --backend=headless-backend.so \
+          --width=1280 \
+          --height=720 > "${{ inputs.log-file }}" 2>&1 &
+        echo "$!" > "${{ inputs.pid-file }}"
+
+        {
+          echo "WAYLAND_DISPLAY=${{ inputs.socket }}"
+          echo "XDG_RUNTIME_DIR=${{ inputs.runtime-dir }}"
+        } >> "$GITHUB_ENV"
+
+        for i in $(seq 1 "${{ inputs.wait-seconds }}"); do
+          if [ -S "${{ inputs.runtime-dir }}/${{ inputs.socket }}" ]; then
+            echo "Weston ready after ${i}s"
+            exit 0
+          fi
+          if ! kill -0 "$(cat "${{ inputs.pid-file }}")" 2>/dev/null; then
+            echo "Weston exited before creating the Wayland socket" >&2
+            cat "${{ inputs.log-file }}" >&2 || true
+            exit 1
+          fi
+          sleep 1
+        done
+
+        echo "Timed out waiting for Weston Wayland socket" >&2
+        cat "${{ inputs.log-file }}" >&2 || true
+        exit 1

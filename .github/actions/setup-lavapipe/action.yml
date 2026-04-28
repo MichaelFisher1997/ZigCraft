@@ -1,0 +1,21 @@
+name: Setup Lavapipe Vulkan
+description: Export Vulkan environment variables for Mesa Lavapipe and validation layers
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Vulkan paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
+        LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
+        {
+          echo "VK_ICD_FILENAMES=$LVP_PATH"
+          echo "VK_LAYER_PATH=$LAYER_PATH"
+        } >> "$GITHUB_ENV"
+        {
+          echo "### Lavapipe Vulkan"
+          echo "- ICD: $LVP_PATH"
+          echo "- Layer path: $LAYER_PATH"
+        } >> "$GITHUB_STEP_SUMMARY"
