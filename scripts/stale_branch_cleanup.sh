@@ -12,7 +12,11 @@ if ! command -v gh &>/dev/null; then
     exit 1
 fi
 
-stale_epoch=$(date -d "-${STALE_DAYS} days" +%s 2>/dev/null || date -v-${STALE_DAYS}d +%s)
+stale_epoch=$(date -d "-${STALE_DAYS} days" +%s 2>/dev/null || date -v-${STALE_DAYS}d +%s 2>/dev/null || true)
+if [[ -z "${stale_epoch:-}" ]]; then
+    echo "error: unable to calculate stale cutoff date" >&2
+    exit 1
+fi
 
 while IFS= read -r name; do
     if [[ "$name" == "$DEFAULT_BRANCH" || "$name" == "main" || "$name" == "master" ]]; then
@@ -61,6 +65,12 @@ while IFS= read -r name; do
 
     if [[ "$ahead" -gt 0 ]]; then
         skipped+=("$name: ${ahead} commit(s) ahead of ${DEFAULT_BRANCH}")
+        continue
+    fi
+
+    behind=$(echo "$status" | jq -r '.behind // 0')
+    if [[ "$ahead" -eq 0 && "$behind" -eq 0 ]]; then
+        skipped+=("$name: identical to ${DEFAULT_BRANCH}")
         continue
     fi
 
