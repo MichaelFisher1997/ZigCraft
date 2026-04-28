@@ -32,87 +32,38 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Select module to scan
-        id: select-module
-        env:
-          INPUT_MODULE: ${{ inputs.module }}
-        run: |
-          MODULES=(
-            "engine/graphics"
-            "engine/core"
-            "engine/math"
-            "engine/input"
-            "engine/ui"
-            "engine/atmosphere"
-            "engine/audio"
-            "engine/ecs"
-            "engine/physics"
-            "world"
-            "world/meshing"
-            "world/worldgen"
-            "game"
-          )
-
-          COUNT=${#MODULES[@]}
-
-          if [ -n "$INPUT_MODULE" ]; then
-            if ! echo "$INPUT_MODULE" | grep -qE '^[a-zA-Z0-9_ /-]+$'; then
-              echo "ERROR: Invalid module input: '$INPUT_MODULE'" >&2
-              exit 1
-            fi
-            SELECTED="$INPUT_MODULE"
-            echo "Manual dispatch: scanning ${SELECTED}"
-          else
-            DAY=$((10#$(date +%j)))
-            INDEX=$((DAY % COUNT))
-            SELECTED="${MODULES[${INDEX}]}"
-            echo "Scheduled run: day=${DAY} index=${INDEX} → ${SELECTED}"
-          fi
-
-          echo "module=${SELECTED}" >> "$GITHUB_OUTPUT"
-          echo "module_path=src/${SELECTED}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.OPENCODE_PAT }}
 
+      - name: Select module to scan
+        id: select-module
+        env:
+          INPUT_MODULE: ${{ inputs.module }}
+        run: bash scripts/select_audit_module.sh
+
       - name: Configure git identity
-        run: |
-          git config user.name "opencode[bot]"
-          git config user.email "opencode[bot]@users.noreply.github.com"
+        run: bash scripts/configure_git_identity.sh "opencode[bot]" "opencode[bot]@users.noreply.github.com"
 
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
 
       - name: Ensure automated-audit label exists
-        run: |
-          if ! gh label list --json name --jq '.[].name' | grep -q '^automated-audit$'; then
-            gh label create "automated-audit" \
-              --description "Issues found by automated opencode audit scans" \
-              --color "1D76DB" || true
-          fi
+        run: bash scripts/ensure_label.sh "automated-audit" "Issues found by automated opencode audit scans" "1D76DB"
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
       - name: Validate module directory exists
-        run: |
-          MODULE_PATH="${{ steps.select-module.outputs.module_path }}"
-          if [ ! -d "$MODULE_PATH" ]; then
-            echo "::warning::Module directory '$MODULE_PATH' does not exist — audit may be limited to partial or no source files"
-            echo "Listing parent directory:"
-            PARENT=$(dirname "$MODULE_PATH")
-            ls -la "$PARENT" 2>/dev/null || echo "Parent directory '$PARENT' also missing"
-          else
-            echo "Module directory confirmed: $MODULE_PATH"
-            echo "Files in module:"
-            find "$MODULE_PATH" -name '*.zig' | head -20
-          fi
+        env:
+          MODULE_PATH: ${{ steps.select-module.outputs.module_path }}
+        run: bash scripts/validate_audit_module.sh
 
       - name: Ensure opencode cache dir exists
         run: |
           sudo chmod u+w ~/.cache 2>/dev/null || true
-          mkdir -p /tmp/opencode-cache ~/.local/share/opencode
+          bash scripts/prepare_opencode_cache.sh
+          mkdir -p ~/.local/share/opencode
 
       - name: Load audit prompt
         uses: ./.github/actions/load-prompt
@@ -136,67 +87,6 @@ jobs:
 
       - name: Compliance guard — enforce issue-only output
         if: always()
-        run: |
-          echo "=== Checking for audit compliance violations ==="
-
-          BOT_LOGIN="github-actions[bot]"
-
-          VIOLATIONS=0
-
-          CUTOFF=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
-          NEW_PRS=$(gh pr list --author "$BOT_LOGIN" --state open --limit 20 \
-            --json number,title,headRefName,createdAt,body \
-            --jq '.[] | select(.createdAt >= "'"$CUTOFF"'") | select(.title | startswith("[Audit]"))')
-
-          if [ -n "$NEW_PRS" ]; then
-            echo "::error::Compliance violation detected: agent created pull request(s) instead of issue(s)"
-            echo "$NEW_PRS" | jq -c '.number' | while read -r PR_NUM; do
-              PR_NUM=$(echo "$PR_NUM" | tr -d '"')
-              echo "  ❌ Closing rogue PR #$PR_NUM"
-
-              PR_BODY=$(gh pr view "$PR_NUM" --json body --jq '.body')
-              PR_TITLE=$(gh pr view "$PR_NUM" --json title --jq '.title')
-              BRANCH=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName')
-
-              ISSUE_TITLE="[Audit] ${PR_TITLE}"
-              ISSUE_BODY=$(cat <<ISSUE_EOF
-          ## ⚠️ Auto-converted from rogue PR #$PR_NUM
-
-          The audit agent incorrectly created a pull request instead of a GitHub issue.
-          The finding has been automatically converted below.
-
-          ---
-
-          $PR_BODY
-          ISSUE_EOF
-          )
-
-              echo "  📝 Creating issue from PR content..."
-              gh issue create \
-                --label "automated-audit" \
-                --title "$ISSUE_TITLE" \
-                --body "$ISSUE_BODY" || echo "  ⚠️ Failed to create issue from PR"
-
-              gh pr close "$PR_NUM" --comment "Auto-closed by compliance guard: audit workflow must create issues, not PRs." --delete-branch
-
-              VIOLATIONS=$((VIOLATIONS + 1))
-            done
-          fi
-
-          BOT_BRANCHES=$(gh api "repos/${{ github.repository }}/branches" \
-            --jq ".[] | select(.name | startswith(\"opencode/\")) | .name" 2>/dev/null || echo "")
-
-          if [ -n "$BOT_BRANCHES" ]; then
-            echo "::warning::Found opencode/ branches that may be audit violations:"
-            echo "$BOT_BRANCHES" | while read -r BRANCH; do
-              echo "  ⚠️ Branch: $BRANCH"
-            done
-          fi
-
-          if [ "$VIOLATIONS" -gt 0 ]; then
-            echo "::error::Compliance guard corrected $VIOLATIONS violation(s). PR(s) closed and converted to issue(s)."
-          else
-            echo "✅ No compliance violations detected."
-          fi
+        run: bash scripts/audit_compliance_guard.sh
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}

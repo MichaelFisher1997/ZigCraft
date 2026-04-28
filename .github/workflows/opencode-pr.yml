@@ -33,69 +33,28 @@ jobs:
       statuses: write
 
     steps:
-      - name: Resolve PR context
-        id: resolve-pr
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            PR_NUMBER="${{ inputs.pr_number }}"
-            HEAD_SHA="${{ inputs.head_sha }}"
-          else
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          fi
-          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-          echo "pr_head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
-          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
-          echo "HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.resolve-pr.outputs.pr_head_sha }}
+          ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
           fetch-depth: 0
           token: ${{ github.token }}
 
+      - name: Resolve PR context
+        id: resolve-pr
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/resolve_pr_context.sh
+
       - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+        run: bash scripts/configure_git_identity.sh "github-actions[bot]" "github-actions[bot]@users.noreply.github.com"
 
       - name: Fetch previous opencode reviews
         id: previous-reviews
-        run: |
-          PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
-          
-          echo "Fetching previous automated reviews..."
-          
-          gh api /repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews \
-            --jq '.[] | select(.user.login == "opencode-agent[bot]") | {body: .body, submitted_at: .submitted_at}' > /tmp/opencode_reviews.json 2>/dev/null || echo "[]" > /tmp/opencode_reviews.json
-          
-          gh api /repos/${{ github.repository }}/pulls/${PR_NUMBER}/comments \
-            --jq '.[] | select(.user.login == "opencode-agent[bot]") | {body: .body, path: .path, line: .line, created_at: .created_at}' > /tmp/opencode_comments.json 2>/dev/null || echo "[]" > /tmp/opencode_comments.json
-          
-          REVIEW_CONTENT="## Previous Automated Reviews from opencode-agent:\n\n"
-          
-          if [ -s /tmp/opencode_reviews.json ] && [ "$(cat /tmp/opencode_reviews.json)" != "[]" ]; then
-            while IFS= read -r review; do
-              if [ -n "$review" ] && [ "$review" != "null" ]; then
-                body=$(echo "$review" | jq -r '.body // empty')
-                date=$(echo "$review" | jq -r '.submitted_at // empty')
-                if [ -n "$body" ] && [ "$body" != "null" ]; then
-                  REVIEW_CONTENT="${REVIEW_CONTENT}### Review from ${date}\n${body}\n\n---\n\n"
-                fi
-              fi
-            done < /tmp/opencode_reviews.json
-          else
-            REVIEW_CONTENT="${REVIEW_CONTENT}No previous automated reviews found.\n"
-          fi
-          
-          {
-            echo "PREVIOUS_REVIEWS<<EOF"
-            printf '%s\n' "$REVIEW_CONTENT"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-          
-          echo "Previous reviews fetched and formatted for context"
+        run: bash scripts/fetch_previous_opencode_reviews.sh
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -103,7 +62,7 @@ jobs:
         uses: ./.github/actions/setup-nix
 
       - name: Prepare opencode cache
-        run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> "$GITHUB_ENV"
+        run: bash scripts/prepare_opencode_cache.sh
 
       - uses: ./.github/actions/load-prompt
         with:
@@ -124,52 +83,13 @@ jobs:
 
       - name: Evaluate AI merge gate
         id: ai_merge_gate
-        run: |
-          PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
-          HEAD_SHA="${{ steps.resolve-pr.outputs.pr_head_sha }}"
-
-          PARSE_JSON=$(bash scripts/evaluate_ai_merge_gate.sh "${{ github.repository }}" "$PR_NUMBER" "$HEAD_SHA")
-
-          STATE=$(printf '%s' "$PARSE_JSON" | jq -r '.state')
-          DESCRIPTION=$(printf '%s' "$PARSE_JSON" | jq -r '.description')
-
-          gh api repos/${{ github.repository }}/statuses/${HEAD_SHA} \
-            -f state="$STATE" \
-            -f context='ai-merge-gate' \
-            -f description="$DESCRIPTION" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/pull/${PR_NUMBER}"
-
-          if [ "$STATE" = "success" ]; then
-            CLOSING_REFS=$(gh pr view "$PR_NUMBER" \
-              --json closingIssuesReferences \
-              --jq '[.closingIssuesReferences[].number] | map("Closes #" + tostring) | join("\n")')
-
-            if [ -n "$CLOSING_REFS" ]; then
-              gh pr merge "$PR_NUMBER" --auto --squash --body "$CLOSING_REFS" || true
-            else
-              gh pr merge "$PR_NUMBER" --auto --squash || true
-            fi
-          fi
+        run: bash scripts/publish_ai_merge_gate.sh
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Mark AI review complete
         if: always()
-        run: |
-          PR_NUMBER="${{ steps.resolve-pr.outputs.pr_number }}"
-          HEAD_SHA="${{ steps.resolve-pr.outputs.pr_head_sha }}"
-          SHORT_SHA="${HEAD_SHA:0:7}"
-          OUTCOME="${{ steps.ai_review.outcome }}"
-          STATE="success"
-
-          if [ "$OUTCOME" != "success" ]; then
-            STATE="failure"
-          fi
-
-          gh api repos/${{ github.repository }}/statuses/${HEAD_SHA} \
-            -f state="$STATE" \
-            -f context='ai-review' \
-            -f description="AI review ${STATE} for ${SHORT_SHA}" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/pull/${PR_NUMBER}"
         env:
+          AI_REVIEW_OUTCOME: ${{ steps.ai_review.outcome }}
           GH_TOKEN: ${{ github.token }}
+        run: bash scripts/mark_ai_review_complete.sh

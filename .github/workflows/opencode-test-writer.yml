@@ -32,143 +32,28 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Select module to test
-        id: select-module
-        env:
-          INPUT_MODULE: ${{ inputs.module }}
-        run: |
-          GRAPHICS_MODULES=(
-            "graphics/vulkan-device"
-            "graphics/vulkan-resources"
-            "graphics/vulkan-pipelines"
-            "graphics/vulkan-swapchain"
-            "graphics/vulkan-frame"
-            "graphics/rhi-types"
-            "graphics/shadows"
-            "graphics/post-process"
-          )
-
-          OTHER_MODULES=(
-            "engine/core"
-            "engine/math"
-            "engine/input"
-            "world"
-            "world/meshing"
-            "world/worldgen"
-            "engine/ecs"
-            "game"
-          )
-
-          if [ -n "$INPUT_MODULE" ]; then
-            if ! echo "$INPUT_MODULE" | grep -qE '^[a-zA-Z0-9_/-]+$'; then
-              echo "ERROR: Invalid module input: '$INPUT_MODULE'" >&2
-              exit 1
-            fi
-            SELECTED="$INPUT_MODULE"
-            echo "Manual dispatch: writing tests for ${SELECTED}"
-          else
-            GRAPHICS_COUNT=${#GRAPHICS_MODULES[@]}
-            OTHER_COUNT=${#OTHER_MODULES[@]}
-
-            SLOT=$(($(date +%s) / 28800))
-            PARITY=$((SLOT % 2))
-
-            if [ "$PARITY" -eq 0 ]; then
-              INDEX=$((SLOT % GRAPHICS_COUNT))
-              SELECTED="${GRAPHICS_MODULES[${INDEX}]}"
-              echo "Graphics slot: parity=${PARITY} index=${INDEX} -> ${SELECTED}"
-            else
-              INDEX=$((SLOT % OTHER_COUNT))
-              SELECTED="${OTHER_MODULES[${INDEX}]}"
-              echo "Other slot: parity=${PARITY} index=${INDEX} -> ${SELECTED}"
-            fi
-          fi
-
-          BRANCH_NAME="test/$(echo "${SELECTED}" | tr '/' '-')"
-
-          case "$SELECTED" in
-            graphics/vulkan-device)
-              SCAN_PATHS="modules/engine-graphics/src/vulkan_device.zig modules/engine-graphics/src/vulkan/device.zig modules/engine-graphics/src/vulkan/rhi_state_control.zig"
-              ;;
-            graphics/vulkan-resources)
-              SCAN_PATHS="modules/engine-graphics/src/vulkan/resource_manager.zig modules/engine-graphics/src/vulkan/resource_texture_ops.zig modules/engine-graphics/src/vulkan/rhi_resource_lifecycle.zig modules/engine-graphics/src/vulkan/rhi_resource_setup.zig"
-              ;;
-            graphics/vulkan-pipelines)
-              SCAN_PATHS="modules/engine-graphics/src/vulkan/pipeline_manager.zig modules/engine-graphics/src/vulkan/pipeline_specialized.zig modules/engine-graphics/src/vulkan/shader_registry.zig modules/engine-graphics/src/vulkan/descriptor_manager.zig modules/engine-graphics/src/vulkan/descriptor_bindings.zig"
-              ;;
-            graphics/vulkan-swapchain)
-              SCAN_PATHS="modules/engine-graphics/src/vulkan/swapchain.zig modules/engine-graphics/src/vulkan/swapchain_presenter.zig modules/engine-graphics/src/vulkan_swapchain.zig"
-              ;;
-            graphics/vulkan-frame)
-              SCAN_PATHS="modules/engine-graphics/src/vulkan/frame_manager.zig modules/engine-graphics/src/vulkan/rhi_frame_orchestration.zig modules/engine-graphics/src/vulkan/render_pass_manager.zig modules/engine-graphics/src/vulkan/rhi_pass_orchestration.zig"
-              ;;
-            graphics/rhi-types)
-              SCAN_PATHS="modules/engine-rhi/src/rhi.zig modules/engine-rhi/src/rhi_types.zig modules/engine-graphics/src/rhi_vulkan.zig modules/engine-graphics/src/rhi_tests.zig"
-              ;;
-            graphics/shadows)
-              SCAN_PATHS="modules/engine-graphics/src/shadow_system.zig modules/engine-graphics/src/csm.zig modules/engine-graphics/src/vulkan/shadow_system.zig modules/engine-graphics/src/vulkan/rhi_shadow_bridge.zig modules/engine-graphics/src/shadow_scene.zig"
-              ;;
-            graphics/post-process)
-              SCAN_PATHS="modules/engine-graphics/src/vulkan/bloom_system.zig modules/engine-graphics/src/vulkan/fxaa_system.zig modules/engine-graphics/src/vulkan/taa_system.zig modules/engine-graphics/src/vulkan/ssao_system.zig modules/engine-graphics/src/vulkan/post_process_system.zig"
-              ;;
-            engine/core)
-              SCAN_PATHS="modules/engine-core/src/job_system.zig modules/engine-core/src/ring_buffer.zig modules/engine-core/src/time.zig modules/engine-core/src/log.zig modules/engine-core/src/window.zig"
-              ;;
-            engine/math)
-              SCAN_PATHS="modules/engine-math/src/vec3.zig modules/engine-math/src/mat4.zig modules/engine-math/src/frustum.zig modules/engine-math/src/utils.zig"
-              ;;
-            engine/input)
-              SCAN_PATHS="modules/engine-input/src/input.zig modules/engine-input/src/interfaces.zig"
-              ;;
-            world)
-              SCAN_PATHS="modules/world-core/src/chunk.zig modules/world-core/src/block.zig modules/world-core/src/block_registry.zig modules/world-meshing/src/chunk_storage.zig modules/world-meshing/src/chunk_allocator.zig modules/world-meshing/src/chunk_mesh.zig"
-              ;;
-            world/meshing)
-              SCAN_PATHS="modules/world-meshing/src/meshing/greedy_mesher.zig modules/world-meshing/src/meshing/ao_calculator.zig modules/world-meshing/src/meshing/lighting_sampler.zig modules/world-meshing/src/meshing/biome_color_sampler.zig modules/world-meshing/src/meshing/boundary.zig"
-              ;;
-            world/worldgen)
-              SCAN_PATHS="modules/world-worldgen/src/overworld_generator.zig modules/world-worldgen/src/biome.zig modules/world-worldgen/src/caves.zig modules/world-worldgen/src/terrain_shape_generator.zig modules/world-worldgen/src/coastal_generator.zig modules/world-worldgen/src/noise_sampler.zig modules/world-worldgen/src/height_sampler.zig modules/world-worldgen/src/surface_builder.zig"
-              ;;
-            engine/ecs)
-              SCAN_PATHS="modules/engine-ecs/src/storage.zig modules/engine-ecs/src/manager.zig modules/engine-ecs/src/entity.zig modules/engine-ecs/src/components.zig"
-              ;;
-            game)
-              SCAN_PATHS="src/game/player.zig src/game/screen.zig src/game/inventory.zig src/game/settings/ src/game/input_mapper.zig src/game/session.zig"
-              ;;
-            *)
-              SCAN_PATHS="src/${SELECTED}"
-              ;;
-          esac
-
-          {
-            echo "module=${SELECTED}"
-            echo "branch=${BRANCH_NAME}"
-            echo "base_branch=${{ github.event.repository.default_branch }}"
-            echo "scan_paths=${SCAN_PATHS}"
-          } >> "$GITHUB_OUTPUT"
-
       # OPENCODE_PAT must be a classic PAT with `repo` scope (full control of private repositories)
       # or a fine-grained PAT with Contents: Read & Write on this repository.
       # Without write permission, git push will fail with 403.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.select-module.outputs.base_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           token: ${{ secrets.OPENCODE_PAT }}
 
+      - name: Select module to test
+        id: select-module
+        env:
+          INPUT_MODULE: ${{ inputs.module }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash scripts/select_test_writer_module.sh
+
       - name: Configure git identity
-        run: |
-          git config user.name "opencode[bot]"
-          git config user.email "opencode[bot]@users.noreply.github.com"
+        run: bash scripts/configure_git_identity.sh "opencode[bot]" "opencode[bot]@users.noreply.github.com"
 
       - name: Ensure test label exists
-        run: |
-          if ! gh label list --json name --jq '.[].name' | grep -q '^automated-test$'; then
-            gh label create "automated-test" \
-              --description "Test PRs created by automated opencode test writer" \
-              --color "0E8A16"
-          fi
+        run: bash scripts/ensure_label.sh "automated-test" "Test PRs created by automated opencode test writer" "0E8A16"
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
@@ -176,44 +61,21 @@ jobs:
         id: check-existing
         env:
           INPUT_MODULE: ${{ inputs.module }}
+          BASE_BRANCH: ${{ steps.select-module.outputs.base_branch }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
-        run: |
-          EXISTING=$(gh pr list \
-            --base ${{ steps.select-module.outputs.base_branch }} \
-            --state open \
-            --limit 50 \
-            --json number,headRefName,labels \
-            --jq '.[] | select((.headRefName | startswith("opencode/schedule-")) or ((.labels | map(.name)) | index("automated-test"))) | "#\(.number) (\(.headRefName))"' || true)
-          if [ -n "$EXISTING" ] && [ -z "$INPUT_MODULE" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Existing automated test PRs already open:"
-            printf '%s\n' "$EXISTING"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: bash scripts/check_existing_test_prs.sh
 
       - name: Validate scan paths exist
         if: steps.check-existing.outputs.skip != 'true'
-        run: |
-          MISSING=0
-          for path in ${{ steps.select-module.outputs.scan_paths }}; do
-            if [ ! -e "$path" ]; then
-              echo "WARNING: scan path does not exist: $path"
-              MISSING=$((MISSING + 1))
-            fi
-          done
-          if [ "$MISSING" -gt 0 ]; then
-            echo "::warning::$MISSING scan path(s) missing — the scan_paths case statement in this workflow may need updating"
-          fi
+        env:
+          SCAN_PATHS: ${{ steps.select-module.outputs.scan_paths }}
+        run: bash scripts/validate_scan_paths.sh
 
       - name: Verify PAT push permissions
         if: steps.check-existing.outputs.skip != 'true'
-        run: |
-          if ! git push --dry-run origin HEAD:${{ steps.select-module.outputs.base_branch }} 2>/dev/null; then
-            echo "::error::OPENCODE_PAT cannot push to repository. Ensure the PAT has 'repo' scope (classic) or Contents: Read & Write (fine-grained)."
-            exit 1
-          fi
-          echo "PAT has push permissions."
+        env:
+          BASE_BRANCH: ${{ steps.select-module.outputs.base_branch }}
+        run: bash scripts/verify_pat_push_permissions.sh
 
       - name: Setup Nix
         if: steps.check-existing.outputs.skip != 'true'
@@ -245,27 +107,6 @@ jobs:
 
       - name: Find and label created PR
         if: steps.check-existing.outputs.skip != 'true'
-        run: |
-          MAX_RETRIES=8
-          HEAD_SHA=$(git rev-parse HEAD)
-          PR_NUM=""
-          for i in $(seq 1 "$MAX_RETRIES"); do
-            sleep $((i * 3))
-            echo "Attempt $i/$MAX_RETRIES: searching for PR for commit ${HEAD_SHA}..."
-            PR_NUM=$(gh api \
-              "repos/${{ github.repository }}/commits/${HEAD_SHA}/pulls" \
-              --jq '[.[] | select(.state == "open")] | .[0].number // empty' 2>/dev/null || true)
-            if [ -n "$PR_NUM" ]; then
-              break
-            fi
-          done
-          if [ -n "$PR_NUM" ]; then
-            echo "Found newly created PR #$PR_NUM for commit ${HEAD_SHA}"
-            if ! gh pr edit "$PR_NUM" --add-label "automated-test" 2>/dev/null; then
-              echo "::warning::Failed to add automated-test label to PR #$PR_NUM"
-            fi
-          else
-            echo "::warning::No open PR found for commit ${HEAD_SHA} after $MAX_RETRIES attempts"
-          fi
+        run: bash scripts/label_created_test_pr.sh
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}

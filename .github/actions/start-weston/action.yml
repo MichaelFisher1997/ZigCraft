@@ -46,6 +46,9 @@ runs:
         chmod 700 "${{ inputs.runtime-dir }}"
         export XDG_RUNTIME_DIR="${{ inputs.runtime-dir }}"
 
+        echo "Realizing ${{ inputs.nix-shell }} before starting Weston"
+        nix develop "${{ inputs.nix-shell }}" --command true
+
         nix develop "${{ inputs.nix-shell }}" --command weston \
           --socket="${{ inputs.socket }}" \
           --backend=headless-backend.so \
