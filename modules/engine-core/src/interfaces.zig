@@ -91,6 +91,41 @@ pub const IRenderSettings = struct {
     }
 };
 
+/// Erased screen handle used by navigation interfaces without coupling core to UI types.
+pub const ScreenHandle = struct {
+    ptr: *anyopaque,
+    vtable: *const anyopaque,
+};
+
+/// Interface for screen navigation. Concrete screen implementations live at the app layer.
+pub const IScreenManager = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        pushScreen: *const fn (ptr: *anyopaque, screen: ScreenHandle) void,
+        popScreen: *const fn (ptr: *anyopaque) void,
+        setScreen: *const fn (ptr: *anyopaque, screen: ScreenHandle) void,
+        drawParentScreen: *const fn (ptr: *anyopaque, current_ptr: *anyopaque, ui: *anyopaque) anyerror!void,
+    };
+
+    pub fn pushScreen(self: IScreenManager, screen: ScreenHandle) void {
+        self.vtable.pushScreen(self.ptr, screen);
+    }
+
+    pub fn popScreen(self: IScreenManager) void {
+        self.vtable.popScreen(self.ptr);
+    }
+
+    pub fn setScreen(self: IScreenManager, screen: ScreenHandle) void {
+        self.vtable.setScreen(self.ptr, screen);
+    }
+
+    pub fn drawParentScreen(self: IScreenManager, current_ptr: *anyopaque, ui: *anyopaque) !void {
+        try self.vtable.drawParentScreen(self.ptr, current_ptr, ui);
+    }
+};
+
 // ============================================================================
 // Common Types
 // ============================================================================
