@@ -17,6 +17,10 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.module || 'scheduled' }}
+  cancel-in-progress: false
+
 jobs:
   audit:
     runs-on: ubuntu-latest

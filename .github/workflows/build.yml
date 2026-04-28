@@ -41,8 +41,10 @@ jobs:
         filters: |
           code_changes:
             - 'src/**'
+            - 'modules/**'
             - 'libs/**'
             - 'assets/shaders/**'
+            - 'scripts/**'
             - 'build.zig'
             - 'build.zig.zon'
             - 'flake.nix'
@@ -93,7 +95,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
+    timeout-minutes: 30
     needs: [changes, build]
     steps:
     - uses: actions/checkout@v4
@@ -111,9 +113,28 @@ jobs:
 
     - name: Run unit tests
       if: needs.changes.outputs.code_changes == 'true'
-      run: nix develop --command zig build test
+      run: |
+        set -o pipefail
+        START=$(date +%s)
+        echo "Unit test start: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee unit-test.log
+        timeout --preserve-status 25m nix develop .#ci-unit --command zig build test 2>&1 | tee -a unit-test.log
+        END=$(date +%s)
+        {
+          echo "### Unit Test"
+          echo "- Duration: $((END - START))s"
+          echo "- Runner: ${{ runner.name }} (${{ runner.os }})"
+        } >> "$GITHUB_STEP_SUMMARY"
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
+
+    - name: Upload unit test log
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: unit-test-log
+        path: unit-test.log
+        if-no-files-found: ignore
+        retention-days: 7
 
   integration-test:
     permissions:
@@ -139,22 +160,42 @@ jobs:
     - name: Start headless Wayland compositor
       if: needs.changes.outputs.code_changes == 'true'
       run: |
+        set -euo pipefail
         mkdir -p /tmp/runtime-runner
         chmod 700 /tmp/runtime-runner
         export XDG_RUNTIME_DIR=/tmp/runtime-runner
-        nix develop --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 &
+        nix develop .#ci-graphics --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 > weston.log 2>&1 &
+        echo "$!" > /tmp/weston.pid
         {
           echo "WAYLAND_DISPLAY=headless"
           echo "XDG_RUNTIME_DIR=/tmp/runtime-runner"
         } >> "$GITHUB_ENV"
-        sleep 5
+        for i in $(seq 1 30); do
+          if [ -S /tmp/runtime-runner/headless ]; then
+            echo "Weston ready after ${i}s"
+            exit 0
+          fi
+          if ! kill -0 "$(cat /tmp/weston.pid)" 2>/dev/null; then
+            echo "Weston exited before creating the Wayland socket" >&2
+            cat weston.log >&2 || true
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "Timed out waiting for Weston Wayland socket" >&2
+        cat weston.log >&2 || true
+        exit 1
 
     - name: Run integration smoke test
       if: needs.changes.outputs.code_changes == 'true'
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
       run: |
-        nix develop --command zig build test-integration
+        set -o pipefail
+        START=$(date +%s)
+        timeout --preserve-status 15m nix develop .#ci-graphics --command zig build test-integration 2>&1 | tee integration-test.log
+        END=$(date +%s)
+        echo "- Integration test duration: $((END - START))s" >> "$GITHUB_STEP_SUMMARY"
 
     - name: Run world load smoke test (headless)
       if: needs.changes.outputs.code_changes == 'true'
@@ -165,8 +206,31 @@ jobs:
         ZIGCRAFT_SMOKE_FRAMES: "3"
         ZIGCRAFT_SAFE_MODE: "1"
       run: |
+        set -o pipefail
         LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
         LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
         export VK_ICD_FILENAMES=$LVP_PATH
         export VK_LAYER_PATH=$LAYER_PATH
-        nix develop --command zig build run -Dsmoke-test=true -Dskip-present=true
+        START=$(date +%s)
+        timeout --preserve-status 15m nix develop .#ci-graphics --command zig build run -Dsmoke-test=true -Dskip-present=true 2>&1 | tee world-smoke-test.log
+        END=$(date +%s)
+        echo "- World smoke test duration: $((END - START))s" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Stop headless Wayland compositor
+      if: always() && needs.changes.outputs.code_changes == 'true'
+      run: |
+        if [ -f /tmp/weston.pid ]; then
+          kill "$(cat /tmp/weston.pid)" 2>/dev/null || true
+        fi
+
+    - name: Upload integration logs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: integration-test-logs
+        path: |
+          integration-test.log
+          world-smoke-test.log
+          weston.log
+        if-no-files-found: ignore
+        retention-days: 7
