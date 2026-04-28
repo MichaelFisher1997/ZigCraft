@@ -32,6 +32,11 @@ jobs:
     - name: Setup Nix
       uses: ./.github/actions/setup-nix
 
+    - name: Setup Zig cache
+      uses: ./.github/actions/setup-zig-cache
+      with:
+        cache-key-prefix: zig-ci-graphics
+
     - name: Start headless Wayland compositor
       uses: ./.github/actions/start-weston
 
@@ -47,7 +52,6 @@ jobs:
         log-file: benchmark.log
         command: nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results
       env:
-        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
         XDG_RUNTIME_DIR: /tmp/runtime-runner
         WAYLAND_DISPLAY: headless
         ZIGCRAFT_SAFE_MODE: '1'

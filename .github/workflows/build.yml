@@ -50,6 +50,7 @@ jobs:
             - 'flake.nix'
             - 'flake.lock'
             - '.github/actions/setup-nix/**'
+            - '.github/actions/setup-zig-cache/**'
 
   build:
     permissions:
@@ -111,6 +112,12 @@ jobs:
       if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/setup-nix
 
+    - name: Setup Zig cache
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-zig-cache
+      with:
+        cache-key-prefix: zig-ci-unit
+
     - name: Run unit tests
       if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/run-with-log
@@ -119,8 +126,6 @@ jobs:
         timeout: 25m
         log-file: unit-test.log
         command: nix develop .#ci-unit --command zig build test
-      env:
-        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
 
     - name: Upload unit test log
       if: failure()
@@ -152,6 +157,12 @@ jobs:
       if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/setup-nix
 
+    - name: Setup Zig cache
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-zig-cache
+      with:
+        cache-key-prefix: zig-ci-graphics
+
     - name: Start headless Wayland compositor
       if: needs.changes.outputs.code_changes == 'true'
       uses: ./.github/actions/start-weston
@@ -164,8 +175,6 @@ jobs:
         timeout: 15m
         log-file: integration-test.log
         command: nix develop .#ci-graphics --command zig build test-integration
-      env:
-        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
 
     - name: Setup Lavapipe Vulkan
       if: needs.changes.outputs.code_changes == 'true'
@@ -180,7 +189,6 @@ jobs:
         log-file: world-smoke-test.log
         command: nix develop .#ci-graphics --command zig build run -Dsmoke-test=true -Dskip-present=true
       env:
-        ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
         XDG_RUNTIME_DIR: /tmp/runtime-runner
         WAYLAND_DISPLAY: headless
         ZIGCRAFT_SMOKE_FRAMES: "3"
