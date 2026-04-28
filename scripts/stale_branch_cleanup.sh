@@ -14,7 +14,7 @@ fi
 
 stale_epoch=$(date -d "-${STALE_DAYS} days" +%s 2>/dev/null || date -v-${STALE_DAYS}d +%s)
 
-gh api "repos/{owner}/{repo}/branches" --paginate --jq '.[].name' | while IFS= read -r name; do
+while IFS= read -r name; do
     if [[ "$name" == "$DEFAULT_BRANCH" || "$name" == "main" || "$name" == "master" ]]; then
         skipped+=("$name: protected")
         continue
@@ -34,7 +34,12 @@ gh api "repos/{owner}/{repo}/branches" --paginate --jq '.[].name' | while IFS= r
         continue
     fi
 
-    last_epoch=$(date -d "$last_date" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_date" +%s 2>/dev/null || echo "0")
+    last_epoch=$(date -d "$last_date" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_date" +%s 2>/dev/null || true)
+    if [[ -z "$last_epoch" ]]; then
+        skipped+=("$name: unable to parse last commit date")
+        continue
+    fi
+
     if [[ "$last_epoch" -gt "$stale_epoch" ]]; then
         skipped+=("$name: last commit ${last_date%%T*} is within ${STALE_DAYS} days")
         continue
@@ -46,8 +51,13 @@ gh api "repos/{owner}/{repo}/branches" --paginate --jq '.[].name' | while IFS= r
         continue
     fi
 
-    ahead=$(echo "$status" | jq -r '.ahead')
-    comp_status=$(echo "$status" | jq -r '.status')
+    ahead=$(echo "$status" | jq -r '.ahead // 0')
+    comp_status=$(echo "$status" | jq -r '.status // "unknown"')
+
+    if [[ "$ahead" == "null" || -z "$ahead" ]]; then
+        skipped+=("$name: invalid compare data")
+        continue
+    fi
 
     if [[ "$ahead" -gt 0 ]]; then
         skipped+=("$name: ${ahead} commit(s) ahead of ${DEFAULT_BRANCH}")
@@ -64,7 +74,7 @@ gh api "repos/{owner}/{repo}/branches" --paginate --jq '.[].name' | while IFS= r
         continue
     fi
     deleted+=("$name (last commit: ${last_date%%T*})")
-done
+done < <(gh api "repos/{owner}/{repo}/branches" --paginate --jq '.[].name')
 
 echo "Deleted branches:"
 printf '  - %s\n' "${deleted[@]+"${deleted[@]}"}"
