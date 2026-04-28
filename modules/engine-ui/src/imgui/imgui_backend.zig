@@ -28,6 +28,7 @@ pub const Backend = struct {
 
         const native = rhi_ptr.nativeHandles();
         const image_count = native.getSwapchainImageCount();
+        const min_image_count: u32 = if (image_count > 1) image_count else 2;
         var init_info = c.ZigCraftImGuiVulkanInitInfo{
             .instance = @ptrFromInt(native.getInstance()),
             .physical_device = @ptrFromInt(native.getPhysicalDevice()),
@@ -36,8 +37,8 @@ pub const Backend = struct {
             .queue_family = native.getQueueFamily(),
             .descriptor_pool = @ptrFromInt(native.getDescriptorPool()),
             .render_pass = @ptrFromInt(native.getUiRenderPass()),
-            .min_image_count = if (image_count > 1) image_count else 2,
-            .image_count = if (image_count > 0) image_count else 2,
+            .min_image_count = min_image_count,
+            .image_count = @max(image_count, min_image_count),
             .msaa_samples = 1,
         };
         if (!c.ZigCraft_ImGui_ImplVulkan_Init(&init_info)) {
