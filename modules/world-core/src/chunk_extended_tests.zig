@@ -49,7 +49,7 @@ test "Chunk.getWorldZ returns chunk_z * CHUNK_SIZE_Z" {
     try testing.expectEqual(@as(i32, 5 * CHUNK_SIZE_Z), chunk.getWorldZ());
 }
 
-test "Chunk.getWorldX works with negative coordinates" {
+test "Chunk.getWorldX and getWorldZ work with negative coordinates" {
     var chunk = Chunk.init(-2, -3);
     try testing.expectEqual(@as(i32, -2 * CHUNK_SIZE_X), chunk.getWorldX());
     try testing.expectEqual(@as(i32, -3 * CHUNK_SIZE_Z), chunk.getWorldZ());
@@ -69,7 +69,8 @@ test "Chunk.fill sets all blocks to given type" {
 
 test "Chunk.fill marks chunk dirty" {
     var chunk = Chunk.init(0, 0);
-    try testing.expect(chunk.dirty);
+    chunk.dirty = false;
+    try testing.expect(!chunk.dirty);
     chunk.fill(.stone);
     try testing.expect(chunk.dirty);
 }
@@ -84,7 +85,7 @@ test "Chunk.fillLayer sets single Y layer" {
     }
     for (0..CHUNK_SIZE_X) |x| {
         for (0..CHUNK_SIZE_Z) |z| {
-            if (64 > 0) try testing.expectEqual(BlockType.air, chunk.getBlock(@intCast(x), 0, @intCast(z)));
+            try testing.expectEqual(BlockType.air, chunk.getBlock(@intCast(x), 0, @intCast(z)));
         }
     }
 }
@@ -119,6 +120,6 @@ test "Chunk.getIndex returns consistent values" {
 
 test "Chunk.setBlockLight and getBlockLight" {
     var chunk = Chunk.init(0, 0);
-    chunk.setBlockLight(5, 7);
+    chunk.setBlockLight(5, 64, 5, 7);
     try testing.expectEqual(@as(u4, 7), chunk.getBlockLight(5, 64, 5));
 }
