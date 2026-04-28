@@ -1,0 +1,40 @@
+name: Run With Log
+description: Run a command with a timeout, tee output to a log, and summarize duration
+
+inputs:
+  name:
+    required: true
+    description: Human-readable command name for logs and summaries
+  command:
+    required: true
+    description: Bash command body to run
+  timeout:
+    required: false
+    default: 15m
+    description: Timeout duration passed to timeout(1)
+  log-file:
+    required: true
+    description: File to write command output to
+
+runs:
+  using: composite
+  steps:
+    - name: Run command with log
+      shell: bash
+      run: |
+        set -euo pipefail
+        START=$(date +%s)
+        COMMAND_FILE="$RUNNER_TEMP/run-with-log-${GITHUB_ACTION}.sh"
+        cat > "$COMMAND_FILE" <<'RUN_WITH_LOG_COMMAND'
+        ${{ inputs.command }}
+        RUN_WITH_LOG_COMMAND
+        chmod +x "$COMMAND_FILE"
+
+        echo "${{ inputs.name }} start: $(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee "${{ inputs.log-file }}"
+        timeout --preserve-status "${{ inputs.timeout }}" bash "$COMMAND_FILE" 2>&1 | tee -a "${{ inputs.log-file }}"
+        END=$(date +%s)
+        {
+          echo "### ${{ inputs.name }}"
+          echo "- Duration: $((END - START))s"
+          echo "- Runner: ${{ runner.name }} (${{ runner.os }})"
+        } >> "$GITHUB_STEP_SUMMARY"

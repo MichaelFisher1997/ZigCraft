@@ -15,6 +15,10 @@ on:
         type: boolean
         default: 'true'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.model_id || 'default' }}
+  cancel-in-progress: false
+
 jobs:
   check-updates:
     runs-on: ubuntu-latest

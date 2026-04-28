@@ -323,28 +323,73 @@
 
         packages.cimgui = cimgui;
 
-        devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [
-            zig
-            pkgs.zls
-            pkgs.pkg-config
-            pkgs.glslang
-            pkgs.weston
-          ];
+        devShells = {
+          default = pkgs.mkShell {
+            nativeBuildInputs = [
+              zig
+              pkgs.zls
+              pkgs.pkg-config
+              pkgs.glslang
+              pkgs.weston
+            ];
 
-          buildInputs = [
-            pkgs.sdl3
-            pkgs.vulkan-loader
-            pkgs.vulkan-headers
-            pkgs.vulkan-validation-layers
-            pkgs.mesa.drivers
-            cimgui
-          ];
+            buildInputs = [
+              pkgs.sdl3
+              pkgs.vulkan-loader
+              pkgs.vulkan-headers
+              pkgs.vulkan-validation-layers
+              pkgs.mesa.drivers
+              cimgui
+            ];
 
-          shellHook = ''
-            echo "Zig ${zig_version} + SDL3 Dev Environment"
-            echo "Compiler: $(zig version)"
-          '';
+            shellHook = ''
+              echo "Zig ${zig_version} + SDL3 Dev Environment"
+              echo "Compiler: $(zig version)"
+            '';
+          };
+
+          ci-unit = pkgs.mkShell {
+            nativeBuildInputs = [
+              zig
+              pkgs.pkg-config
+              pkgs.glslang
+            ];
+
+            buildInputs = [
+              pkgs.sdl3
+              pkgs.vulkan-loader
+              pkgs.vulkan-headers
+              cimgui
+            ];
+
+            shellHook = ''
+              echo "Zig ${zig_version} CI unit environment"
+              echo "Compiler: $(zig version)"
+            '';
+          };
+
+          ci-graphics = pkgs.mkShell {
+            nativeBuildInputs = [
+              zig
+              pkgs.pkg-config
+              pkgs.glslang
+              pkgs.weston
+            ];
+
+            buildInputs = [
+              pkgs.sdl3
+              pkgs.vulkan-loader
+              pkgs.vulkan-headers
+              pkgs.vulkan-validation-layers
+              pkgs.mesa.drivers
+              cimgui
+            ];
+
+            shellHook = ''
+              echo "Zig ${zig_version} CI graphics environment"
+              echo "Compiler: $(zig version)"
+            '';
+          };
         };
       });
 }

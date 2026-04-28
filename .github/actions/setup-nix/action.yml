@@ -14,6 +14,13 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Mark Nix setup start
+      shell: bash
+      run: |
+        START=$(date +%s)
+        echo "SETUP_NIX_START=$START" >> "$GITHUB_ENV"
+        echo "Nix setup start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
     - name: Install Nix (primary)
       id: nix_install_primary
       continue-on-error: true
@@ -37,3 +44,14 @@ runs:
         primary-key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}
         restore-prefixes-first-match: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
         paths: ${{ inputs.cache-paths }}
+
+    - name: Mark Nix setup complete
+      shell: bash
+      run: |
+        END=$(date +%s)
+        START=${SETUP_NIX_START:-$END}
+        {
+          echo "### Nix Setup"
+          echo "- Duration: $((END - START))s"
+          echo "- Cache key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('flake.nix', 'flake.lock') }}"
+        } >> "$GITHUB_STEP_SUMMARY"

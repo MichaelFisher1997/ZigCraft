@@ -33,31 +33,29 @@ jobs:
       uses: ./.github/actions/setup-nix
 
     - name: Start headless Wayland compositor
-      run: |
-        mkdir -p /tmp/runtime-runner
-        chmod 700 /tmp/runtime-runner
-        export XDG_RUNTIME_DIR=/tmp/runtime-runner
-        nix develop --command weston --socket=headless --backend=headless-backend.so --width=1280 --height=720 &
-        {
-          echo "WAYLAND_DISPLAY=headless"
-          echo "XDG_RUNTIME_DIR=/tmp/runtime-runner"
-        } >> "$GITHUB_ENV"
-        sleep 5
+      uses: ./.github/actions/start-weston
+
+    - name: Setup Lavapipe Vulkan
+      uses: ./.github/actions/setup-lavapipe
 
     - name: Run benchmark suite
       id: run_benchmark
+      uses: ./.github/actions/run-with-log
+      with:
+        name: Benchmark
+        timeout: 75m
+        log-file: benchmark.log
+        command: nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results
       env:
         ZIG_GLOBAL_CACHE_DIR: ${{ github.workspace }}/.zig-cache-global
         XDG_RUNTIME_DIR: /tmp/runtime-runner
         WAYLAND_DISPLAY: headless
         ZIGCRAFT_SAFE_MODE: '1'
         BENCHMARK_DURATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '30' }}
-      run: |
-        LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
-        LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
-        export VK_ICD_FILENAMES=$LVP_PATH
-        export VK_LAYER_PATH=$LAYER_PATH
-        nix develop --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results
+
+    - name: Stop headless Wayland compositor
+      if: always()
+      uses: ./.github/actions/stop-weston
 
     - name: Compare against baseline
       id: compare
@@ -71,7 +69,10 @@ jobs:
       uses: actions/upload-artifact@v7
       with:
         name: benchmark-results
-        path: benchmark-results
+        path: |
+          benchmark-results
+          benchmark.log
+          weston.log
         retention-days: 30
 
     - name: Publish commit status
