@@ -1,6 +1,5 @@
 const std = @import("std");
 const c = @import("c").c;
-const rhi = @import("engine-rhi").rhi;
 const frame_orchestration = @import("rhi_frame_orchestration.zig");
 const log = @import("engine-core").log;
 
@@ -10,12 +9,8 @@ pub fn waitIdle(ctx: anytype) void {
     }
 }
 
-pub fn setTextureUniforms(ctx: anytype, texture_enabled: bool, shadow_map_handles: [rhi.SHADOW_CASCADE_COUNT]rhi.TextureHandle) void {
+pub fn setTextureUniforms(ctx: anytype, texture_enabled: bool) void {
     ctx.options.textures_enabled = texture_enabled;
-    ctx.shadow_runtime.shadow_map_handles = shadow_map_handles;
-    for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
-        ctx.draw.descriptors_dirty[i] = true;
-    }
     ctx.draw.descriptors_updated = false;
 }
 

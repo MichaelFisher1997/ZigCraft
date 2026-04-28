@@ -311,6 +311,10 @@ pub const WorkerPool = struct {
             .process_job_fn = process_fn,
         };
 
+        // Note: Partial Thread.spawn failure (where some threads spawn but others fail)
+        // cannot be reliably tested in unit tests because Thread.spawn rarely fails
+        // deterministically. The spawned_count tracking and errdefer cleanup logic
+        // is exercised by the zero-worker test case, which validates the mechanism.
         errdefer {
             queue.stop();
             for (threads[0..pool.spawned_count]) |t| {
