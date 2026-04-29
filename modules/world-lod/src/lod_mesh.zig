@@ -217,8 +217,9 @@ pub const LODMesh = struct {
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
                 const size = cell_size;
 
-                const top_tile_id = getLodTopTile(data, gx, gz, atlas);
-                const top_color = getLodTopColor(data, gx, gz, top_tile_id, avg_color);
+                const top_block = data.top_blocks[gx + gz * data.width];
+                const top_tile_id = getLodTopTile(top_block, atlas);
+                const top_color = getLodTopColor(top_block, top_tile_id, avg_color);
                 try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, top_color, top_color, top_color, top_color, top_tile_id);
 
                 const skirt_depth: f32 = size * 4.0;
@@ -569,11 +570,12 @@ fn buildFullDetailHeightmapMesh(
             const wz = @as(f32, @floatFromInt(gz)) * cell_size;
             const size = cell_size;
 
-            const top_tile_id = getLodTopTile(data, gx, gz, atlas);
-            const tc00 = getLodTopColor(data, gx, gz, top_tile_id, c00);
-            const tc10 = getLodTopColor(data, gx + 1, gz, top_tile_id, c10);
-            const tc01 = getLodTopColor(data, gx, gz + 1, top_tile_id, c01);
-            const tc11 = getLodTopColor(data, gx + 1, gz + 1, top_tile_id, c11);
+            const top_block = data.top_blocks[gx + gz * w];
+            const top_tile_id = getLodTopTile(top_block, atlas);
+            const tc00 = getLodTopColor(top_block, top_tile_id, c00);
+            const tc10 = getLodTopColor(top_block, top_tile_id, c10);
+            const tc01 = getLodTopColor(top_block, top_tile_id, c01);
+            const tc11 = getLodTopColor(top_block, top_tile_id, c11);
             const top_quad = [4]Vertex{
                 makeLODVertex(.{ wx, h00, wz }, .{ unpackR(tc00), unpackG(tc00), unpackB(tc00) }, .{ 0, 1, 0 }, .{ 0, 0 }, top_tile_id),
                 makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(tc10), unpackG(tc10), unpackB(tc10) }, .{ 0, 1, 0 }, .{ 1, 0 }, top_tile_id),
@@ -652,8 +654,7 @@ fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     return (r_avg << 16) | (g_avg << 8) | b_avg;
 }
 
-fn getLodTopTile(data: *const LODSimplifiedData, gx: u32, gz: u32, atlas: *const TextureAtlas) u16 {
-    const block = data.top_blocks[gx + gz * data.width];
+fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     if (block == .air) return Vertex.LOD_TILE_ID;
 
     const tiles = atlas.getTilesForBlock(@intFromEnum(block));
@@ -661,10 +662,9 @@ fn getLodTopTile(data: *const LODSimplifiedData, gx: u32, gz: u32, atlas: *const
     return tiles.top;
 }
 
-fn getLodTopColor(data: *const LODSimplifiedData, gx: u32, gz: u32, tile_id: u16, fallback_color: u32) u32 {
+fn getLodTopColor(block: BlockType, tile_id: u16, fallback_color: u32) u32 {
     if (tile_id == Vertex.LOD_TILE_ID) return fallback_color;
 
-    const block = data.top_blocks[gx + gz * data.width];
     return switch (block) {
         .grass, .leaves, .water => fallback_color,
         else => 0xFFFFFF,
