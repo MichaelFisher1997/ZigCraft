@@ -85,6 +85,15 @@ pub fn cycleUIScale(current: f32) f32 {
     return 0.5;
 }
 
+pub fn prevUIScale(current: f32) f32 {
+    if (current >= 1.6) return 1.5;
+    if (current >= 1.3) return 1.25;
+    if (current >= 1.1) return 1.0;
+    if (current >= 0.8) return 0.75;
+    if (current >= 0.55) return 0.5;
+    return 2.0;
+}
+
 pub fn getPresetLabel(idx: usize) []const u8 {
     if (idx >= json_presets.graphics_presets.items.len) return "CUSTOM";
     return json_presets.graphics_presets.items[idx].name;

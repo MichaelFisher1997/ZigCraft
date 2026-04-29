@@ -10,14 +10,16 @@ const EngineContext = Screen.EngineContext;
 const WorldScreen = @import("world.zig").WorldScreen;
 const log = @import("engine-core").log;
 const fs = @import("fs");
+const Key = @import("../../engine/core/interfaces.zig").Key;
+const IRawInputProvider = @import("../../engine/input/interfaces.zig").IRawInputProvider;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
     return std.mem.span(value);
 }
 
-const PANEL_WIDTH_MAX = 700.0;
-const PANEL_HEIGHT_BASE = 500.0;
+const PANEL_WIDTH_MAX = 900.0;
+const PANEL_HEIGHT_BASE = 640.0;
 const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.95);
 const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.78);
 const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
@@ -29,6 +31,8 @@ const ROW_BG = Color.rgba(0.035, 0.065, 0.090, 0.88);
 const DELETE_COLOR = Color.rgba(0.85, 0.25, 0.25, 1.0);
 const CONFIRM_BG = Color.rgba(0.18, 0.10, 0.10, 0.97);
 const CONFIRM_BORDER = Color.rgba(0.7, 0.2, 0.2, 1.0);
+const RENAME_BG = Color.rgba(0.10, 0.14, 0.20, 0.97);
+const RENAME_BORDER = Color.rgba(0.42, 0.66, 0.82, 1.0);
 
 pub const SAVE_DIR = ".local/share/zigcraft/saves";
 
@@ -99,12 +103,12 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
     };
 }
 
-pub fn scanWorlds(allocator: std.mem.Allocator) ![]const WorldEntry {
+pub fn scanWorlds(allocator: std.mem.Allocator) ![]WorldEntry {
     const home = getenv("HOME") orelse return allocator.alloc(WorldEntry, 0);
     return scanWorldsInHome(allocator, home);
 }
 
-pub fn scanWorldsInHome(allocator: std.mem.Allocator, home: []const u8) ![]const WorldEntry {
+pub fn scanWorldsInHome(allocator: std.mem.Allocator, home: []const u8) ![]WorldEntry {
     var home_dir = fs.openDirAbsolute(home, .{}) catch return allocator.alloc(WorldEntry, 0);
     defer home_dir.close();
     home_dir.makePath(SAVE_DIR) catch {};
@@ -178,10 +182,14 @@ pub fn deleteWorld(allocator: std.mem.Allocator, dir_path: []const u8) void {
 
 pub const WorldListScreen = struct {
     context: EngineContext,
-    worlds: []const WorldEntry,
+    worlds: []WorldEntry,
     selected: ?usize,
     scroll_offset: f32,
     confirm_delete: bool,
+    confirm_clear_all: bool,
+    confirm_rename: bool,
+    rename_buffer: std.ArrayListUnmanaged(u8),
+    rename_focused: bool,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -200,6 +208,10 @@ pub const WorldListScreen = struct {
             .selected = null,
             .scroll_offset = 0.0,
             .confirm_delete = false,
+            .confirm_clear_all = false,
+            .confirm_rename = false,
+            .rename_buffer = std.ArrayListUnmanaged(u8).empty,
+            .rename_focused = false,
         };
         return self;
     }
@@ -211,6 +223,7 @@ pub const WorldListScreen = struct {
             if (e.dir_path.len > 0) self.context.allocator.free(e.dir_path);
         }
         self.context.allocator.free(self.worlds);
+        self.rename_buffer.deinit(self.context.allocator);
         self.context.allocator.destroy(self);
     }
 
@@ -218,11 +231,19 @@ pub const WorldListScreen = struct {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         _ = dt;
         if (self.context.input_mapper.isActionPressed(self.context.input, .ui_back)) {
-            if (self.confirm_delete) {
+            if (self.confirm_rename) {
+                self.confirm_rename = false;
+                self.rename_buffer.clearRetainingCapacity();
+            } else if (self.confirm_delete) {
                 self.confirm_delete = false;
+            } else if (self.confirm_clear_all) {
+                self.confirm_clear_all = false;
             } else {
                 self.context.screen_manager.popScreen();
             }
+        }
+        if (self.confirm_rename and self.rename_focused) {
+            try handleTextTyping(&self.rename_buffer, self.context.allocator, self.context.input, 32);
         }
     }
 
@@ -240,12 +261,13 @@ pub const WorldListScreen = struct {
         const ui_scale: f32 = @max(1.0, screen_h / 720.0);
         const title_scale: f32 = 3.0 * ui_scale;
         const label_scale: f32 = 1.55 * ui_scale;
-        const btn_scale: f32 = 1.55 * ui_scale;
+        const btn_scale: f32 = 1.45 * ui_scale;
         const row_scale: f32 = 1.45 * ui_scale;
-        const pw: f32 = @min(screen_w * 0.75, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = @min(screen_h - 96.0 * ui_scale, PANEL_HEIGHT_BASE * ui_scale);
+        const pw: f32 = @min(screen_w * 0.85, PANEL_WIDTH_MAX * ui_scale);
+        const ph: f32 = @min(screen_h - 80.0 * ui_scale, PANEL_HEIGHT_BASE * ui_scale);
         const px: f32 = (screen_w - pw) * 0.5;
         const py: f32 = (screen_h - ph) * 0.5;
+        const modal_open = self.confirm_delete or self.confirm_clear_all or self.confirm_rename;
         drawListBackdrop(ui, screen_w, screen_h, ui_scale);
         ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
         ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
@@ -254,10 +276,14 @@ pub const WorldListScreen = struct {
         ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
         Font.drawText(ui, "LOAD WORLD", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
         Font.drawText(ui, "Select a saved world snapshot.", px + 38.0 * ui_scale, py + 56.0 * ui_scale, 1.05 * ui_scale, MUTED_COLOR);
+        var count_buf: [64]u8 = undefined;
+        const count_text = std.fmt.bufPrint(&count_buf, "{} WORLDS", .{self.worlds.len}) catch "?";
+        const count_w = Font.measureTextWidth(count_text, 1.05 * ui_scale);
+        Font.drawText(ui, count_text, px + pw - 34.0 * ui_scale - count_w, py + 56.0 * ui_scale, 1.05 * ui_scale, MUTED_COLOR);
         const scroll_dy = ctx.input.getScrollDelta().y;
         self.scroll_offset -= scroll_dy * 30.0 * ui_scale;
         const list_top: f32 = py + 92.0 * ui_scale;
-        const list_bottom: f32 = py + ph - 90.0 * ui_scale;
+        const list_bottom: f32 = py + ph - 100.0 * ui_scale;
         const row_h: f32 = 55.0 * ui_scale;
         const max_scroll = @max(0.0, @as(f32, @floatFromInt(self.worlds.len)) * row_h - (list_bottom - list_top));
         self.scroll_offset = @max(0.0, @min(self.scroll_offset, max_scroll));
@@ -284,7 +310,7 @@ pub const WorldListScreen = struct {
             }
             ui.drawRect(.{ .x = row_rect.x, .y = row_rect.y, .width = 4.0 * ui_scale, .height = row_rect.height }, if (is_selected) Color.rgba(0.95, 0.62, 0.24, 0.95) else Color.rgba(0.30, 0.50, 0.64, 0.64));
             ui.drawRectOutline(row_rect, if (is_selected) Color.rgba(0.70, 0.92, 1.0, 1.0) else Color.rgba(0.20, 0.36, 0.48, 0.74), 1.0);
-            if (mc and row_hovered and !self.confirm_delete) {
+            if (mc and row_hovered and !modal_open) {
                 self.selected = i;
             }
             const text_x: f32 = row_rect.x + 12.0 * ui_scale;
@@ -297,35 +323,68 @@ pub const WorldListScreen = struct {
             const seed_w = Font.measureTextWidth(seed_text, row_scale * 0.65);
             Font.drawText(ui, last_text, text_x + seed_w + 15.0 * ui_scale, name_y + 18.0 * ui_scale, row_scale * 0.65, MUTED_COLOR);
         }
-        const btn_h: f32 = 46.0 * ui_scale;
-        const byy: f32 = py + ph - 70.0 * ui_scale;
-        const btn_w: f32 = (pw - 40.0 * ui_scale) / 3.0;
+        // Bottom buttons: BACK, LOAD, RENAME, DELETE, CLEAR ALL
+        const btn_h: f32 = 44.0 * ui_scale;
+        const byy: f32 = py + ph - 68.0 * ui_scale;
+        const btn_gap: f32 = 10.0 * ui_scale;
+        const btn_w: f32 = (pw - 20.0 * ui_scale - 4.0 * btn_gap) / 5.0;
         const bx_base: f32 = px + 10.0 * ui_scale;
+        // BACK
         if (Widgets.drawButton(ui, .{ .x = bx_base, .y = byy, .width = btn_w, .height = btn_h }, "BACK", btn_scale, mx, my, mc)) {
             ctx.screen_manager.popScreen();
         }
-        const load_enabled = self.selected != null and !self.confirm_delete;
+        // LOAD
+        const load_enabled = self.selected != null and !modal_open;
         if (!load_enabled) {
-            ui.drawRect(.{ .x = bx_base + btn_w + 10.0 * ui_scale, .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.1, 0.12, 0.16, 0.7));
-            ui.drawRectOutline(.{ .x = bx_base + btn_w + 10.0 * ui_scale, .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.2, 0.22, 0.26, 1.0), 2.0);
-            Font.drawTextCentered(ui, "LOAD", bx_base + btn_w + 10.0 * ui_scale + btn_w * 0.5, byy + (btn_h - 7.0 * btn_scale) * 0.5, btn_scale, Color.rgba(0.4, 0.42, 0.46, 1.0));
+            ui.drawRect(.{ .x = bx_base + btn_w + btn_gap, .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.1, 0.12, 0.16, 0.7));
+            ui.drawRectOutline(.{ .x = bx_base + btn_w + btn_gap, .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.2, 0.22, 0.26, 1.0), 2.0);
+            Font.drawTextCentered(ui, "LOAD", bx_base + btn_w + btn_gap + btn_w * 0.5, byy + (btn_h - 7.0 * btn_scale) * 0.5, btn_scale, Color.rgba(0.4, 0.42, 0.46, 1.0));
         } else {
-            if (Widgets.drawButton(ui, .{ .x = bx_base + btn_w + 10.0 * ui_scale, .y = byy, .width = btn_w, .height = btn_h }, "LOAD", btn_scale, mx, my, mc)) {
+            if (Widgets.drawButton(ui, .{ .x = bx_base + btn_w + btn_gap, .y = byy, .width = btn_w, .height = btn_h }, "LOAD", btn_scale, mx, my, mc)) {
                 if (self.selected) |idx| {
                     try self.loadWorld(idx);
                 }
             }
         }
-        const del_enabled = self.selected != null and !self.confirm_delete;
-        if (!del_enabled) {
-            ui.drawRect(.{ .x = bx_base + 2.0 * (btn_w + 10.0 * ui_scale), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.1, 0.1, 0.12, 0.7));
-            ui.drawRectOutline(.{ .x = bx_base + 2.0 * (btn_w + 10.0 * ui_scale), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.2, 0.2, 0.22, 1.0), 2.0);
-            Font.drawTextCentered(ui, "DELETE", bx_base + 2.0 * (btn_w + 10.0 * ui_scale) + btn_w * 0.5, byy + (btn_h - 7.0 * btn_scale) * 0.5, btn_scale, Color.rgba(0.4, 0.35, 0.35, 1.0));
+        // RENAME
+        const rename_enabled = self.selected != null and !modal_open;
+        if (!rename_enabled) {
+            ui.drawRect(.{ .x = bx_base + 2.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.1, 0.12, 0.16, 0.7));
+            ui.drawRectOutline(.{ .x = bx_base + 2.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.2, 0.22, 0.26, 1.0), 2.0);
+            Font.drawTextCentered(ui, "RENAME", bx_base + 2.0 * (btn_w + btn_gap) + btn_w * 0.5, byy + (btn_h - 7.0 * btn_scale) * 0.5, btn_scale, Color.rgba(0.4, 0.42, 0.46, 1.0));
         } else {
-            if (Widgets.drawButton(ui, .{ .x = bx_base + 2.0 * (btn_w + 10.0 * ui_scale), .y = byy, .width = btn_w, .height = btn_h }, "DELETE", btn_scale, mx, my, mc)) {
+            if (Widgets.drawButton(ui, .{ .x = bx_base + 2.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, "RENAME", btn_scale, mx, my, mc)) {
+                if (self.selected) |idx| {
+                    self.rename_buffer.clearRetainingCapacity();
+                    try self.rename_buffer.appendSlice(self.context.allocator, self.worlds[idx].name);
+                    self.confirm_rename = true;
+                    self.rename_focused = true;
+                }
+            }
+        }
+        // DELETE
+        const del_enabled = self.selected != null and !modal_open;
+        if (!del_enabled) {
+            ui.drawRect(.{ .x = bx_base + 3.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.1, 0.1, 0.12, 0.7));
+            ui.drawRectOutline(.{ .x = bx_base + 3.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.2, 0.2, 0.22, 1.0), 2.0);
+            Font.drawTextCentered(ui, "DELETE", bx_base + 3.0 * (btn_w + btn_gap) + btn_w * 0.5, byy + (btn_h - 7.0 * btn_scale) * 0.5, btn_scale, Color.rgba(0.4, 0.35, 0.35, 1.0));
+        } else {
+            if (Widgets.drawButton(ui, .{ .x = bx_base + 3.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, "DELETE", btn_scale, mx, my, mc)) {
                 self.confirm_delete = true;
             }
         }
+        // CLEAR ALL
+        const clear_enabled = self.worlds.len > 0 and !modal_open;
+        if (!clear_enabled) {
+            ui.drawRect(.{ .x = bx_base + 4.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.1, 0.1, 0.12, 0.7));
+            ui.drawRectOutline(.{ .x = bx_base + 4.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, Color.rgba(0.2, 0.2, 0.22, 1.0), 2.0);
+            Font.drawTextCentered(ui, "CLEAR ALL", bx_base + 4.0 * (btn_w + btn_gap) + btn_w * 0.5, byy + (btn_h - 7.0 * btn_scale) * 0.5, btn_scale, Color.rgba(0.4, 0.35, 0.35, 1.0));
+        } else {
+            if (Widgets.drawButton(ui, .{ .x = bx_base + 4.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, "CLEAR ALL", btn_scale, mx, my, mc)) {
+                self.confirm_clear_all = true;
+            }
+        }
+        // Delete confirmation dialog
         if (self.confirm_delete) {
             if (self.selected) |idx| {
                 const cw: f32 = 420.0 * ui_scale;
@@ -348,6 +407,64 @@ pub const WorldListScreen = struct {
                 }
                 if (Widgets.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CONFIRM", btn_scale, mx, my, mc)) {
                     self.confirmDelete(idx) catch {};
+                }
+            }
+        }
+        // Clear all confirmation dialog
+        if (self.confirm_clear_all) {
+            const cw: f32 = 460.0 * ui_scale;
+            const ch: f32 = 170.0 * ui_scale;
+            const cx: f32 = (screen_w - cw) * 0.5;
+            const cy: f32 = (screen_h - ch) * 0.5;
+            ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0, 0, 0, 0.6));
+            ui.drawRect(.{ .x = cx, .y = cy, .width = cw, .height = ch }, CONFIRM_BG);
+            ui.drawRectOutline(.{ .x = cx, .y = cy, .width = cw, .height = ch }, CONFIRM_BORDER, 2.0);
+            const msg_scale: f32 = 1.8 * ui_scale;
+            Font.drawTextCentered(ui, "CLEAR ALL WORLDS?", cx + cw * 0.5, cy + 20.0 * ui_scale, msg_scale, DELETE_COLOR);
+            var count_buf2: [64]u8 = undefined;
+            const count_msg = std.fmt.bufPrint(&count_buf2, "THIS WILL DELETE {} WORLDS", .{self.worlds.len}) catch "?";
+            Font.drawTextCentered(ui, count_msg, cx + cw * 0.5, cy + 50.0 * ui_scale, msg_scale * 0.75, LABEL_COLOR);
+            Font.drawTextCentered(ui, "THIS CANNOT BE UNDONE", cx + cw * 0.5, cy + 72.0 * ui_scale, msg_scale * 0.65, Color.rgba(0.7, 0.5, 0.5, 1.0));
+            const cbw: f32 = (cw - 30.0 * ui_scale) / 2.0;
+            const cby: f32 = cy + ch - 55.0 * ui_scale;
+            if (Widgets.drawButton(ui, .{ .x = cx + 10.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CANCEL", btn_scale, mx, my, mc)) {
+                self.confirm_clear_all = false;
+            }
+            if (Widgets.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CONFIRM", btn_scale, mx, my, mc)) {
+                self.clearAllWorlds() catch {};
+            }
+        }
+        // Rename dialog
+        if (self.confirm_rename) {
+            if (self.selected) |idx| {
+                const cw: f32 = 460.0 * ui_scale;
+                const ch: f32 = 180.0 * ui_scale;
+                const cx: f32 = (screen_w - cw) * 0.5;
+                const cy: f32 = (screen_h - ch) * 0.5;
+                ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0, 0, 0, 0.6));
+                ui.drawRect(.{ .x = cx, .y = cy, .width = cw, .height = ch }, RENAME_BG);
+                ui.drawRectOutline(.{ .x = cx, .y = cy, .width = cw, .height = ch }, RENAME_BORDER, 2.0);
+                const msg_scale: f32 = 1.8 * ui_scale;
+                Font.drawTextCentered(ui, "RENAME WORLD", cx + cw * 0.5, cy + 20.0 * ui_scale, msg_scale, TITLE_COLOR);
+                var name_buf2: [128]u8 = undefined;
+                const current_msg = std.fmt.bufPrint(&name_buf2, "CURRENT: '{s}'", .{self.worlds[idx].name}) catch "'?'";
+                Font.drawTextCentered(ui, current_msg, cx + cw * 0.5, cy + 48.0 * ui_scale, msg_scale * 0.7, MUTED_COLOR);
+                const input_h: f32 = 40.0 * ui_scale;
+                const input_y: f32 = cy + 72.0 * ui_scale;
+                const input_rect = Rect{ .x = cx + 20.0 * ui_scale, .y = input_y, .width = cw - 40.0 * ui_scale, .height = input_h };
+                const cursor_visible = @as(u32, @truncate(@as(u64, @intFromFloat(ctx.time.elapsed * 2.0)))) % 2 == 0;
+                if (mc) {
+                    self.rename_focused = input_rect.contains(mx, my);
+                }
+                Widgets.drawTextInput(ui, input_rect, self.rename_buffer.items, "ENTER NEW NAME", 1.4 * ui_scale, self.rename_focused, cursor_visible);
+                const cbw: f32 = (cw - 30.0 * ui_scale) / 2.0;
+                const cby: f32 = cy + ch - 55.0 * ui_scale;
+                if (Widgets.drawButton(ui, .{ .x = cx + 10.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CANCEL", btn_scale, mx, my, mc)) {
+                    self.confirm_rename = false;
+                    self.rename_buffer.clearRetainingCapacity();
+                }
+                if (Widgets.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "OK", btn_scale, mx, my, mc)) {
+                    self.renameWorld(idx) catch {};
                 }
             }
         }
@@ -389,7 +506,53 @@ pub const WorldListScreen = struct {
         self.confirm_delete = false;
         self.scroll_offset = 0.0;
     }
+
+    fn renameWorld(self: *@This(), idx: usize) !void {
+        const allocator = self.context.allocator;
+        if (self.rename_buffer.items.len == 0) return;
+        const world = self.worlds[idx];
+        var save_dir = fs.openDirAbsolute(world.dir_path, .{}) catch return;
+        defer save_dir.close();
+        writeLevelDat(allocator, save_dir, self.rename_buffer.items, world.seed, world.generator_index, world.last_played) catch |err| {
+            log.log.warn("Failed to write level.dat for rename: {}", .{err});
+            return;
+        };
+        const new_name = try allocator.dupe(u8, self.rename_buffer.items);
+        allocator.free(self.worlds[idx].name);
+        self.worlds[idx].name = new_name;
+        self.confirm_rename = false;
+        self.rename_buffer.clearRetainingCapacity();
+    }
+
+    fn clearAllWorlds(self: *@This()) !void {
+        const allocator = self.context.allocator;
+        for (self.worlds) |e| {
+            deleteWorld(allocator, e.dir_path);
+            allocator.free(e.name);
+        }
+        allocator.free(self.worlds);
+        self.worlds = try allocator.alloc(WorldEntry, 0);
+        self.selected = null;
+        self.confirm_clear_all = false;
+        self.scroll_offset = 0.0;
+    }
 };
+
+fn handleTextTyping(text_input: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, input: IRawInputProvider, max_len: usize) !void {
+    if (input.isKeyPressed(.backspace)) {
+        if (text_input.items.len > 0) _ = text_input.pop();
+    }
+    const shift = input.isKeyDown(.left_shift) or input.isKeyDown(.right_shift);
+    const letters = [_]Key{ .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z };
+    inline for (letters) |key| if (input.isKeyPressed(key) and text_input.items.len < max_len) {
+        var ch: u8 = @intCast(@intFromEnum(key));
+        if (shift) ch = std.ascii.toUpper(ch);
+        try text_input.append(allocator, ch);
+    };
+    const digits = [_]Key{ .@"0", .@"1", .@"2", .@"3", .@"4", .@"5", .@"6", .@"7", .@"8", .@"9" };
+    inline for (digits) |key| if (input.isKeyPressed(key) and text_input.items.len < max_len) try text_input.append(allocator, @intCast(@intFromEnum(key)));
+    if (input.isKeyPressed(.space) and text_input.items.len < max_len) try text_input.append(allocator, ' ');
+}
 
 fn drawListBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
     ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.90));
