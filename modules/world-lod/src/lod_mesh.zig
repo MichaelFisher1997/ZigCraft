@@ -218,7 +218,8 @@ pub const LODMesh = struct {
                 const size = cell_size;
 
                 const top_tile_id = getLodTopTile(data, gx, gz, atlas);
-                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, avg_color, avg_color, avg_color, avg_color, top_tile_id);
+                const top_color = getLodTopColor(data, gx, gz, top_tile_id, avg_color);
+                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, top_color, top_color, top_color, top_color, top_tile_id);
 
                 const skirt_depth: f32 = size * 4.0;
                 if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .west, Vertex.LOD_TILE_ID);
@@ -569,11 +570,15 @@ fn buildFullDetailHeightmapMesh(
             const size = cell_size;
 
             const top_tile_id = getLodTopTile(data, gx, gz, atlas);
+            const tc00 = getLodTopColor(data, gx, gz, top_tile_id, c00);
+            const tc10 = getLodTopColor(data, gx + 1, gz, top_tile_id, c10);
+            const tc01 = getLodTopColor(data, gx, gz + 1, top_tile_id, c01);
+            const tc11 = getLodTopColor(data, gx + 1, gz + 1, top_tile_id, c11);
             const top_quad = [4]Vertex{
-                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, .{ 0, 1, 0 }, .{ 0, 0 }, top_tile_id),
-                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, .{ 0, 1, 0 }, .{ 1, 0 }, top_tile_id),
-                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, .{ 0, 1, 0 }, .{ 1, 1 }, top_tile_id),
-                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, .{ 0, 1, 0 }, .{ 0, 1 }, top_tile_id),
+                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(tc00), unpackG(tc00), unpackB(tc00) }, .{ 0, 1, 0 }, .{ 0, 0 }, top_tile_id),
+                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(tc10), unpackG(tc10), unpackB(tc10) }, .{ 0, 1, 0 }, .{ 1, 0 }, top_tile_id),
+                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(tc11), unpackG(tc11), unpackB(tc11) }, .{ 0, 1, 0 }, .{ 1, 1 }, top_tile_id),
+                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(tc01), unpackG(tc01), unpackB(tc01) }, .{ 0, 1, 0 }, .{ 0, 1 }, top_tile_id),
             };
             try appendIndexedQuad(&vertices, &indices, allocator, &top_quad);
 
@@ -654,6 +659,16 @@ fn getLodTopTile(data: *const LODSimplifiedData, gx: u32, gz: u32, atlas: *const
     const tiles = atlas.getTilesForBlock(@intFromEnum(block));
     if (tiles.top == 0) return Vertex.LOD_TILE_ID;
     return tiles.top;
+}
+
+fn getLodTopColor(data: *const LODSimplifiedData, gx: u32, gz: u32, tile_id: u16, fallback_color: u32) u32 {
+    if (tile_id == Vertex.LOD_TILE_ID) return fallback_color;
+
+    const block = data.top_blocks[gx + gz * data.width];
+    return switch (block) {
+        .grass, .leaves, .water => fallback_color,
+        else => 0xFFFFFF,
+    };
 }
 
 fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id: u16) Vertex {
@@ -1046,6 +1061,10 @@ fn vertexTileId(v: Vertex) u16 {
     return @intCast(v.packed_meta & 0xFFFF);
 }
 
+fn vertexRgb(v: Vertex) u32 {
+    return v.color & 0x00FFFFFF;
+}
+
 test "buildFromSimplifiedData uses atlas top tiles for surface vertices" {
     const allocator = std.testing.allocator;
     const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
@@ -1087,6 +1106,54 @@ test "buildFromSimplifiedData uses atlas top tiles for surface vertices" {
         const tile_id = vertexTileId(v);
         try std.testing.expect(tile_id == 23 or tile_id == Vertex.LOD_TILE_ID);
         if (tile_id == 23) top_tile_count += 1;
+    }
+    try std.testing.expect(top_tile_count > 0);
+}
+
+test "buildFromSimplifiedData uses white tint for textured non-biome tops" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.sand)] = TextureAtlas.BlockTiles.uniform(31);
+
+    var data = try LODSimplifiedData.init(allocator, .lod3);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = 64.0;
+        data.biomes[i] = .beach;
+        data.top_blocks[i] = .sand;
+        data.colors[i] = 0xD8C76D;
+    }
+
+    var mesh = LODMesh.init(allocator, .lod3);
+    defer mesh.deinit(testResources());
+
+    try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expect(verts.len > 0);
+
+    var top_tile_count: usize = 0;
+    for (verts) |v| {
+        const tile_id = vertexTileId(v);
+        try std.testing.expect(tile_id == 31 or tile_id == Vertex.LOD_TILE_ID);
+        if (tile_id == 31) {
+            top_tile_count += 1;
+            try std.testing.expectEqual(@as(u32, 0xFFFFFF), vertexRgb(v));
+        }
     }
     try std.testing.expect(top_tile_count > 0);
 }
