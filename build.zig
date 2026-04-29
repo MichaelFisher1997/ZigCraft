@@ -40,6 +40,19 @@ pub fn build(b: *std.Build) void {
 
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
+
+    const monitor_index = b.option(i32, "monitor-index", "Open the game window on a specific SDL display index (0-based, -1 = default)") orelse -1;
+    options.addOption(i32, "monitor_index", monitor_index);
+
+    const monitor_name = b.option([]const u8, "monitor-name", "Move the game window to a named Hyprland monitor (e.g. DP-2)") orelse "";
+    options.addOption([]const u8, "monitor_name", monitor_name);
+
+    const window_video_driver = b.option([]const u8, "window-video-driver", "SDL video driver override for the game window (x11, wayland, or empty)") orelse "";
+    options.addOption([]const u8, "window_video_driver", window_video_driver);
+
+    const window_no_focus = b.option(bool, "window-no-focus", "Create the game window without taking keyboard focus") orelse false;
+    options.addOption(bool, "window_no_focus", window_no_focus);
+
     const engine_graphics_options = b.addOptions();
     engine_graphics_options.addOption(bool, "debug_shadows", enable_debug_shadows);
     engine_graphics_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
@@ -311,6 +324,10 @@ pub fn build(b: *std.Build) void {
     benchmark_options.addOption([]const u8, "auto_world", "");
     benchmark_options.addOption([]const u8, "auto_preset", "");
     benchmark_options.addOption(u32, "startup_diagnostic_seconds", 0);
+    benchmark_options.addOption(i32, "monitor_index", monitor_index);
+    benchmark_options.addOption([]const u8, "monitor_name", monitor_name);
+    benchmark_options.addOption([]const u8, "window_video_driver", window_video_driver);
+    benchmark_options.addOption(bool, "window_no_focus", window_no_focus);
     benchmark_options.addOption(bool, "skip_present", true);
     benchmark_options.addOption([]const u8, "screenshot_path", "");
     benchmark_options.addOption(u32, "screenshot_frame", 120);

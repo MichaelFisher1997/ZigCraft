@@ -24,6 +24,15 @@ nix develop --command zig build test-integration     # Window init smoke test
 nix develop --command zig build test-robustness      # GPU robustness test
 ```
 
+### Headless Runtime Verification
+Use project skills for bounded background runs:
+- `headless-crash-test` for crash, hang, startup, and world-load checks
+- `headless-screenshot` for offscreen screenshots and visual evidence
+- `headless-benchmark` for JSON benchmark runs with full offscreen graphics rendering
+- `headless-graphics-verification` for graphics/RHI/shader verification workflows
+
+When launching the game from an agent, prefer `-Dskip-present` unless the user explicitly requests a visible window. Always set a tool timeout for runtime, screenshot, and benchmark commands so the agent never gets stuck on a hung game process.
+
 ### Formatting & Git Hooks
 ```bash
 nix develop --command zig fmt src/                   # Format code
@@ -34,8 +43,12 @@ nix develop --command zig fmt src/                   # Format code
 ```bash
 -Ddebug_shadows    # Enable shadow debug visualization
 -Dsmoke-test       # Auto-load world and exit (for automated testing)
--Dskip-present     # Headless mode (skip presentation)
+-Dskip-present     # Full offscreen graphics mode (render without showing/presenting a window)
 -Dauto-world=normal  # Auto-open a generator directly (normal/overworld or flat)
+-Dmonitor-index=1  # Open the game window on a specific 0-based SDL display index
+-Dmonitor-name=DP-2  # Move the game window to a named Hyprland monitor
+-Dwindow-video-driver=x11  # Force SDL's video backend (useful when Wayland ignores window placement)
+-Dwindow-no-focus  # Create the game window without taking keyboard focus
 -Dstartup-diagnostic-seconds=5  # Wait N seconds, log chunk/LOD counts, and exit
 -Dchunk-debug-mode  # Disable LOD, water, caves, and decorations for isolation
 -Dchunk-debug-enable=lod,caves  # Re-enable individual systems in chunk-debug-mode
