@@ -118,7 +118,8 @@ pub const GraphicsScreen = struct {
             if (comptime std.mem.eql(u8, decl.name, "render_distance")) continue;
             total_rows += 1;
         }
-        const total_content_h: f32 = @as(f32, @floatFromInt(total_rows)) * row_height + 40.0 * ui_scale;
+        const warning_extra: f32 = if (render_settings_mod.getPresetConfig(settings.render_distance_preset).show_warning) 22.0 * ui_scale else 0.0;
+        const total_content_h: f32 = @as(f32, @floatFromInt(total_rows)) * row_height + 40.0 * ui_scale + warning_extra;
         const max_scroll = @max(0.0, total_content_h - content_h);
         self.scroll_offset = @max(0.0, @min(self.scroll_offset, max_scroll));
 

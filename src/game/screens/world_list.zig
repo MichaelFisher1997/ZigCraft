@@ -10,8 +10,7 @@ const EngineContext = Screen.EngineContext;
 const WorldScreen = @import("world.zig").WorldScreen;
 const log = @import("engine-core").log;
 const fs = @import("fs");
-const Key = @import("../../engine/core/interfaces.zig").Key;
-const IRawInputProvider = @import("../../engine/input/interfaces.zig").IRawInputProvider;
+const text_input = @import("../text_input.zig");
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
@@ -243,7 +242,7 @@ pub const WorldListScreen = struct {
             }
         }
         if (self.confirm_rename and self.rename_focused) {
-            try handleTextTyping(&self.rename_buffer, self.context.allocator, self.context.input, 32);
+            try text_input.handleTextTyping(&self.rename_buffer, self.context.allocator, self.context.input, 32);
         }
     }
 
@@ -510,6 +509,8 @@ pub const WorldListScreen = struct {
     fn renameWorld(self: *@This(), idx: usize) !void {
         const allocator = self.context.allocator;
         if (self.rename_buffer.items.len == 0) return;
+        const new_name = try allocator.dupe(u8, self.rename_buffer.items);
+        errdefer allocator.free(new_name);
         const world = self.worlds[idx];
         var save_dir = fs.openDirAbsolute(world.dir_path, .{}) catch return;
         defer save_dir.close();
@@ -517,7 +518,6 @@ pub const WorldListScreen = struct {
             log.log.warn("Failed to write level.dat for rename: {}", .{err});
             return;
         };
-        const new_name = try allocator.dupe(u8, self.rename_buffer.items);
         allocator.free(self.worlds[idx].name);
         self.worlds[idx].name = new_name;
         self.confirm_rename = false;
@@ -526,33 +526,19 @@ pub const WorldListScreen = struct {
 
     fn clearAllWorlds(self: *@This()) !void {
         const allocator = self.context.allocator;
+        const new_worlds = try allocator.alloc(WorldEntry, 0);
+        errdefer allocator.free(new_worlds);
         for (self.worlds) |e| {
             deleteWorld(allocator, e.dir_path);
             allocator.free(e.name);
         }
         allocator.free(self.worlds);
-        self.worlds = try allocator.alloc(WorldEntry, 0);
+        self.worlds = new_worlds;
         self.selected = null;
         self.confirm_clear_all = false;
         self.scroll_offset = 0.0;
     }
 };
-
-fn handleTextTyping(text_input: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, input: IRawInputProvider, max_len: usize) !void {
-    if (input.isKeyPressed(.backspace)) {
-        if (text_input.items.len > 0) _ = text_input.pop();
-    }
-    const shift = input.isKeyDown(.left_shift) or input.isKeyDown(.right_shift);
-    const letters = [_]Key{ .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z };
-    inline for (letters) |key| if (input.isKeyPressed(key) and text_input.items.len < max_len) {
-        var ch: u8 = @intCast(@intFromEnum(key));
-        if (shift) ch = std.ascii.toUpper(ch);
-        try text_input.append(allocator, ch);
-    };
-    const digits = [_]Key{ .@"0", .@"1", .@"2", .@"3", .@"4", .@"5", .@"6", .@"7", .@"8", .@"9" };
-    inline for (digits) |key| if (input.isKeyPressed(key) and text_input.items.len < max_len) try text_input.append(allocator, @intCast(@intFromEnum(key)));
-    if (input.isKeyPressed(.space) and text_input.items.len < max_len) try text_input.append(allocator, ' ');
-}
 
 fn drawListBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
     ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.90));

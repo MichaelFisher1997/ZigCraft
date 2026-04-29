@@ -106,7 +106,7 @@ pub const SettingsScreen = struct {
         // Calculate content start Y to center everything vertically
         const section_gap: f32 = 20.0 * ui_scale;
         const label_h: f32 = 20.0 * ui_scale;
-        const total_content: f32 = 2.0 * label_h + 7.0 * row_height + 2.0 * section_gap + 48.0 * ui_scale;
+        const total_content: f32 = 2.0 * label_h + 9.0 * row_height + 2.0 * section_gap + 42.0 * ui_scale;
         var sy: f32 = content_top + @max(10.0 * ui_scale, (content_bottom - content_top - total_content) * 0.4);
 
         // DISPLAY section

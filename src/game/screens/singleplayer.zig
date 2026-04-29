@@ -10,8 +10,7 @@ const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const seed_gen = @import("../seed.zig");
 const log = @import("engine-core").log;
-const Key = @import("../../engine/core/interfaces.zig").Key;
-const IRawInputProvider = @import("../../engine/input/interfaces.zig").IRawInputProvider;
+const text_input = @import("../text_input.zig");
 const Input = @import("engine-input").Input;
 const WorldScreen = @import("world.zig").WorldScreen;
 const WorldListScreen = @import("world_list.zig").WorldListScreen;
@@ -74,10 +73,10 @@ pub const SingleplayerScreen = struct {
         }
 
         if (self.seed_focused) {
-            try handleTextTyping(&self.seed_input, self.context.allocator, self.context.input, 32);
+            try text_input.handleTextTyping(&self.seed_input, self.context.allocator, self.context.input, 32);
         }
         if (self.name_focused) {
-            try handleTextTyping(&self.name_input, self.context.allocator, self.context.input, 32);
+            try text_input.handleTextTyping(&self.name_input, self.context.allocator, self.context.input, 32);
         }
     }
 
@@ -209,7 +208,8 @@ pub const SingleplayerScreen = struct {
         }
         if (Widgets.drawButton(ui, .{ .x = ix + hw + 15.0 * ui_scale, .y = bottom_btn_y, .width = hw, .height = btn_row_h }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
             const seed = try seed_gen.resolveSeed(&self.seed_input, ctx.allocator);
-            const world_name = if (self.name_input.items.len > 0) self.name_input.items else "New World";
+            const trimmed_name = std.mem.trim(u8, self.name_input.items, " \t\r\n");
+            const world_name = if (trimmed_name.len > 0) trimmed_name else "New World";
             log.log.info("World seed: {} | Type: {s} | Name: {s}", .{ seed, registry.getGeneratorInfo(self.selected_generator_index).name, world_name });
             saveNewWorld(ctx.allocator, seed, self.selected_generator_index, world_name) catch |err| {
                 log.log.warn("Failed to save level.dat for new world: {}", .{err});
@@ -265,20 +265,4 @@ fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize,
         log.log.warn("Cannot save world: failed to write level.dat: {}", .{err});
         return err;
     };
-}
-
-fn handleTextTyping(text_input: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, input: IRawInputProvider, max_len: usize) !void {
-    if (input.isKeyPressed(.backspace)) {
-        if (text_input.items.len > 0) _ = text_input.pop();
-    }
-    const shift = input.isKeyDown(.left_shift) or input.isKeyDown(.right_shift);
-    const letters = [_]Key{ .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z };
-    inline for (letters) |key| if (input.isKeyPressed(key) and text_input.items.len < max_len) {
-        var ch: u8 = @intCast(@intFromEnum(key));
-        if (shift) ch = std.ascii.toUpper(ch);
-        try text_input.append(allocator, ch);
-    };
-    const digits = [_]Key{ .@"0", .@"1", .@"2", .@"3", .@"4", .@"5", .@"6", .@"7", .@"8", .@"9" };
-    inline for (digits) |key| if (input.isKeyPressed(key) and text_input.items.len < max_len) try text_input.append(allocator, @intCast(@intFromEnum(key)));
-    if (input.isKeyPressed(.space) and text_input.items.len < max_len) try text_input.append(allocator, ' ');
 }
