@@ -45,10 +45,10 @@ test {
     _ = @import("engine-graphics").utils_tests;
     _ = @import("vulkan_tests.zig");
     _ = @import("engine-graphics").rhi_tests;
-    _ = @import("engine-graphics").cloud_system;
-    _ = @import("engine-graphics").shadow_cascade_tests;
+    _ = @import("engine-clouds").cloud_system;
+    _ = @import("engine-shadows").shadow_cascade_tests;
     _ = @import("engine-graphics").shadow_tests;
-    _ = @import("engine-graphics").shadow_system_tests;
+    _ = @import("engine-shadows").shadow_system_tests;
     _ = @import("engine-math").utils_tests;
     _ = @import("engine-math").frustum_tests;
     _ = @import("engine-math").mat4_tests;
@@ -64,7 +64,7 @@ test {
     _ = @import("world-lod").lod_manager_tests;
     _ = @import("world-lod").lod_seam;
     _ = @import("world-lod").lod_renderer;
-    _ = @import("engine-graphics").atmosphere_tests;
+    _ = @import("engine-atmosphere").atmosphere_tests;
     _ = @import("game/settings/tests.zig");
     _ = @import("game/input_settings.zig");
     _ = @import("game/player_tests.zig");

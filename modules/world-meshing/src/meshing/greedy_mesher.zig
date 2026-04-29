@@ -14,7 +14,7 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const BlockType = world_core.BlockType;
 const Face = world_core.Face;
 const block_registry = world_core.block_registry;
-const TextureAtlas = @import("engine-graphics").TextureAtlas;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 const rhi_mod = @import("engine-rhi");
 const Vertex = rhi_mod.Vertex;
 

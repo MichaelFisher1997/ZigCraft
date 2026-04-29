@@ -1,2 +1,2 @@
-pub const CloudConfig = @import("engine-graphics").CloudConfig;
-pub const CloudSystem = @import("engine-graphics").CloudSystem;
+pub const CloudConfig = @import("engine-clouds").CloudConfig;
+pub const CloudSystem = @import("engine-clouds").CloudSystem;

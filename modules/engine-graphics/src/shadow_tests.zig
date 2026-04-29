@@ -4,11 +4,11 @@ const c = @import("c").c;
 const rhi = @import("engine-rhi").rhi;
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
-const ShadowSystem = @import("shadow_system.zig").ShadowSystem;
-const computeCascades = @import("csm.zig").computeCascades;
-const ShadowCascades = @import("csm.zig").ShadowCascades;
-const CASCADE_COUNT = @import("csm.zig").CASCADE_COUNT;
-const shadow_scene = @import("shadow_scene.zig");
+const ShadowSystem = @import("engine-shadows").ShadowSystem;
+const computeCascades = @import("engine-shadows").computeCascades;
+const ShadowCascades = @import("engine-shadows").ShadowCascades;
+const CASCADE_COUNT = @import("engine-shadows").CASCADE_COUNT;
+const shadow_scene = @import("engine-shadows").shadow_scene;
 const ShadowConfig = rhi.ShadowConfig;
 
 fn mat4IsIdentity(m: Mat4) bool {
