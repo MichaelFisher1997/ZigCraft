@@ -9,7 +9,7 @@ const runtime_env = @import("engine-core").runtime_env;
 const resource_manager_pkg = @import("resource_manager.zig");
 const VulkanBuffer = resource_manager_pkg.VulkanBuffer;
 const TextureResource = resource_manager_pkg.TextureResource;
-const ShadowSystem = @import("../shadow_system.zig").ShadowSystem;
+const ShadowSystem = @import("engine-shadows").ShadowSystem;
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 

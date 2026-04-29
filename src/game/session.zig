@@ -10,7 +10,7 @@ const Inventory = @import("inventory.zig").Inventory;
 const inventory_ui = @import("ui/inventory_ui.zig");
 const BlockOutline = @import("block_outline.zig").BlockOutline;
 const HandRenderer = @import("hand_renderer.zig").HandRenderer;
-const Camera = @import("engine-graphics").Camera;
+const Camera = @import("engine-camera").Camera;
 const RHI = @import("../engine/graphics/rhi.zig").RHI;
 const RenderContext = @import("../engine/graphics/rhi.zig").RenderContext;
 const TextureAtlas = @import("../engine/graphics/texture_atlas.zig").TextureAtlas;
@@ -44,7 +44,7 @@ const ECSComponents = @import("engine-ecs").components;
 const ECSPhysicsSystem = @import("engine-ecs").PhysicsSystem;
 const ECSRenderSystem = @import("engine-ecs").RenderSystem;
 
-const Atmosphere = @import("engine-graphics").Atmosphere;
+const Atmosphere = @import("engine-atmosphere").Atmosphere;
 
 const SpawnColumn = struct {
     x: i32,

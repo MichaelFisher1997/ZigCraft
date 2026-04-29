@@ -52,7 +52,7 @@ const RingBuffer = engine_core.ring_buffer.RingBuffer;
 
 const LODGenerator = @import("lod_generator.zig").LODGenerator;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
-const TextureAtlas = @import("engine-graphics").TextureAtlas;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;

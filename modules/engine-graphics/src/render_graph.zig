@@ -38,9 +38,9 @@
 const std = @import("std");
 const c = @import("c").c;
 const build_options = @import("engine_graphics_options");
-const Camera = @import("camera.zig").Camera;
+const Camera = @import("engine-camera").Camera;
 const IWorldRenderView = @import("world_render_view.zig").IWorldRenderView;
-const shadow_scene = @import("shadow_scene.zig");
+const shadow_scene = @import("engine-shadows").shadow_scene;
 const rhi_pkg = @import("engine-rhi").rhi;
 const RenderContext = rhi_pkg.RenderContext;
 const ShadowSystemWrapper = rhi_pkg.ShadowSystemWrapper;
@@ -49,13 +49,13 @@ const ISSAOContext = rhi_pkg.ISSAOContext;
 const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("engine-math").Vec3;
 const log = @import("engine-core").log;
-const CSM = @import("csm.zig");
-pub const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
-const MaterialSystem = @import("material_system.zig").MaterialSystem;
+const CSM = @import("engine-shadows").csm;
+pub const AtmosphereSystem = @import("engine-atmosphere").AtmosphereSystem;
+const MaterialSystem = @import("engine-assets").MaterialSystem;
 pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
 const LPVBackend = @import("lpv_backend.zig").LPVBackend;
-const TextureAtlas = @import("texture_atlas.zig").TextureAtlas;
-const CloudSystem = @import("cloud_system.zig").CloudSystem;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
+const CloudSystem = @import("engine-clouds").CloudSystem;
 
 pub const LPVConfig = struct {
     grid_size: u32,
@@ -303,6 +303,9 @@ pub const ShadowPass = struct {
         ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
         errdefer ctx.shadow_ctx.endPass();
         ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position, ctx.shadow);
+        if (ctx.cloud_system) |clouds| {
+            try clouds.renderShadow(ctx.render_ctx, ctx.camera.position);
+        }
         ctx.shadow_ctx.endPass();
     }
 };

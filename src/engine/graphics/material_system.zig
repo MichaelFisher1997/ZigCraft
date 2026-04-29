@@ -1,1 +1,1 @@
-pub const MaterialSystem = @import("engine-graphics").MaterialSystem;
+pub const MaterialSystem = @import("engine-assets").MaterialSystem;

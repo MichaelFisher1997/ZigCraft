@@ -10,8 +10,7 @@ const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const seed_gen = @import("../seed.zig");
 const log = @import("engine-core").log;
-const Key = @import("../../engine/core/interfaces.zig").Key;
-const IRawInputProvider = @import("../../engine/input/interfaces.zig").IRawInputProvider;
+const text_input = @import("../text_input.zig");
 const Input = @import("engine-input").Input;
 const WorldScreen = @import("world.zig").WorldScreen;
 const WorldListScreen = @import("world_list.zig").WorldListScreen;
@@ -24,8 +23,7 @@ fn getenv(name: [:0]const u8) ?[]const u8 {
     return std.mem.span(value);
 }
 
-const PANEL_WIDTH_MAX = 650.0;
-const PANEL_HEIGHT_BASE = 400.0;
+const PANEL_WIDTH_MAX = 780.0;
 const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.94);
 const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.80);
 const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
@@ -35,6 +33,8 @@ pub const SingleplayerScreen = struct {
     context: EngineContext,
     seed_input: std.ArrayListUnmanaged(u8),
     seed_focused: bool,
+    name_input: std.ArrayListUnmanaged(u8),
+    name_focused: bool,
     selected_generator_index: usize,
 
     pub const vtable = IScreen.VTable{
@@ -48,7 +48,9 @@ pub const SingleplayerScreen = struct {
         self.* = .{
             .context = context,
             .seed_input = std.ArrayListUnmanaged(u8).empty,
-            .seed_focused = true,
+            .seed_focused = false,
+            .name_input = std.ArrayListUnmanaged(u8).empty,
+            .name_focused = true,
             .selected_generator_index = 0,
         };
         return self;
@@ -57,6 +59,7 @@ pub const SingleplayerScreen = struct {
     pub fn deinit(ptr: *anyopaque) void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         self.seed_input.deinit(self.context.allocator);
+        self.name_input.deinit(self.context.allocator);
         self.context.allocator.destroy(self);
     }
 
@@ -70,7 +73,10 @@ pub const SingleplayerScreen = struct {
         }
 
         if (self.seed_focused) {
-            try handleSeedTyping(&self.seed_input, self.context.allocator, self.context.input, 32);
+            try text_input.handleTextTyping(&self.seed_input, self.context.allocator, self.context.input, 32);
+        }
+        if (self.name_focused) {
+            try text_input.handleTextTyping(&self.name_input, self.context.allocator, self.context.input, 32);
         }
     }
 
@@ -89,74 +95,123 @@ pub const SingleplayerScreen = struct {
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
 
-        // Scale UI based on screen height
         const ui_scale: f32 = @max(1.0, screen_h / 720.0);
-        const title_scale: f32 = 3.1 * ui_scale;
-        const label_scale: f32 = 1.75 * ui_scale;
-        const btn_scale: f32 = 1.75 * ui_scale;
-        const input_scale: f32 = 1.55 * ui_scale;
+        const title_scale: f32 = 3.0 * ui_scale;
+        const label_scale: f32 = 1.65 * ui_scale;
+        const btn_scale: f32 = 1.55 * ui_scale;
+        const input_scale: f32 = 1.45 * ui_scale;
 
-        const pw: f32 = @min(screen_w * 0.7, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = (PANEL_HEIGHT_BASE + 44.0) * ui_scale;
+        const margin: f32 = 60.0 * ui_scale;
+        const pw: f32 = @min(screen_w - margin * 2.0, PANEL_WIDTH_MAX * ui_scale);
+        const ph: f32 = screen_h - margin * 2.0;
         const px: f32 = (screen_w - pw) * 0.5;
-        const py: f32 = screen_h * 0.18;
+        const py: f32 = margin;
+
+        const header_h: f32 = 80.0 * ui_scale;
+        const footer_h: f32 = 70.0 * ui_scale;
+        const content_top: f32 = py + header_h;
+        const content_bottom: f32 = py + ph - footer_h;
+        const content_h: f32 = content_bottom - content_top;
 
         drawCreateWorldBackdrop(ui, screen_w, screen_h, ui_scale);
         ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
         ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
-        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = 72.0 * ui_scale }, Color.rgba(0.12, 0.22, 0.30, 0.62));
+        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = header_h }, Color.rgba(0.12, 0.22, 0.30, 0.62));
         ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawText(ui, "CREATE WORLD", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
-        Font.drawText(ui, "Choose a seed and terrain profile.", px + 38.0 * ui_scale, py + 57.0 * ui_scale, 1.05 * ui_scale, Color.rgba(0.58, 0.73, 0.84, 0.92));
-        const ly: f32 = py + 104.0 * ui_scale;
-        Font.drawText(ui, "SEED", px + 30.0 * ui_scale, ly, label_scale, LABEL_COLOR);
-        const ih: f32 = 52.0 * ui_scale;
-        const iy: f32 = ly + 28.0 * ui_scale;
-        const rw: f32 = 150.0 * ui_scale;
-        const iw: f32 = pw - 30.0 * ui_scale - rw - 15.0 * ui_scale - 30.0 * ui_scale;
-        const ix: f32 = px + 30.0 * ui_scale;
-        const rx: f32 = ix + iw + 15.0 * ui_scale;
-        const seed_rect = Rect{ .x = ix, .y = iy, .width = iw, .height = ih };
-        const random_rect = Rect{ .x = rx, .y = iy, .width = rw, .height = ih };
-        if (mouse_clicked) self.seed_focused = seed_rect.contains(mouse_x, mouse_y);
+        Font.drawText(ui, "CREATE WORLD", px + 34.0 * ui_scale, py + 22.0 * ui_scale, title_scale, TITLE_COLOR);
+        Font.drawText(ui, "Name your world, choose a seed and terrain profile.", px + 38.0 * ui_scale, py + 54.0 * ui_scale, 1.0 * ui_scale, Color.rgba(0.58, 0.73, 0.84, 0.92));
 
         const cursor_visible = @as(u32, @truncate(@as(u64, @intFromFloat(ctx.time.elapsed * 2.0)))) % 2 == 0;
+        const ih: f32 = 48.0 * ui_scale;
+        const ix: f32 = px + 30.0 * ui_scale;
+        const iw: f32 = pw - 60.0 * ui_scale;
+
+        // Calculate centered vertical positions for 3 sections + buttons within content area
+        const section_gap: f32 = 28.0 * ui_scale;
+        const label_h: f32 = 22.0 * ui_scale;
+        const desc_h: f32 = 18.0 * ui_scale;
+        const btn_row_h: f32 = 42.0 * ui_scale;
+        const total_content_needed: f32 = 3.0 * label_h + 3.0 * ih + 2.0 * section_gap + desc_h + section_gap + btn_row_h + 10.0 * ui_scale;
+        const start_y: f32 = content_top + @max(10.0 * ui_scale, (content_h - total_content_needed) * 0.3);
+
+        // World Name
+        var cy: f32 = start_y;
+        Font.drawText(ui, "WORLD NAME", ix, cy, label_scale, LABEL_COLOR);
+        cy += label_h + 4.0 * ui_scale;
+        const name_rect = Rect{ .x = ix, .y = cy, .width = iw, .height = ih };
+        if (mouse_clicked) self.name_focused = name_rect.contains(mouse_x, mouse_y);
+        Widgets.drawTextInput(ui, name_rect, self.name_input.items, "ENTER WORLD NAME", input_scale, self.name_focused, cursor_visible);
+
+        // Seed
+        cy += ih + section_gap;
+        Font.drawText(ui, "SEED", ix, cy, label_scale, LABEL_COLOR);
+        cy += label_h + 4.0 * ui_scale;
+        const rw: f32 = 140.0 * ui_scale;
+        const sw: f32 = iw - rw - 15.0 * ui_scale;
+        const seed_rect = Rect{ .x = ix, .y = cy, .width = sw, .height = ih };
+        const random_rect = Rect{ .x = ix + sw + 15.0 * ui_scale, .y = cy, .width = rw, .height = ih };
+        if (mouse_clicked) {
+            const in_seed = seed_rect.contains(mouse_x, mouse_y);
+            const in_name = name_rect.contains(mouse_x, mouse_y);
+            self.seed_focused = in_seed;
+            self.name_focused = in_name;
+        }
         Widgets.drawTextInput(ui, seed_rect, self.seed_input.items, "LEAVE BLANK FOR RANDOM", input_scale, self.seed_focused, cursor_visible);
 
         if (Widgets.drawButton(ui, random_rect, "RANDOM", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
             const gen = seed_gen.randomSeedValue();
             try seed_gen.setSeedInput(&self.seed_input, ctx.allocator, gen);
             self.seed_focused = true;
+            self.name_focused = false;
         }
 
-        const gy: f32 = iy + ih + 24.0 * ui_scale;
-        Font.drawText(ui, "WORLD TYPE", px + 30.0 * ui_scale, gy, label_scale, LABEL_COLOR);
-        const g_rect = Rect{ .x = px + 30.0 * ui_scale, .y = gy + 28.0 * ui_scale, .width = pw - 60.0 * ui_scale, .height = ih };
+        // World Type
+        cy += ih + section_gap;
+        Font.drawText(ui, "WORLD TYPE", ix, cy, label_scale, LABEL_COLOR);
+        cy += label_h + 4.0 * ui_scale;
+        const arrow_w: f32 = 44.0 * ui_scale;
+        const g_label_w: f32 = iw - 2.0 * arrow_w - 2.0 * 10.0 * ui_scale;
         const g_info = registry.getGeneratorInfo(self.selected_generator_index);
-        var g_label_buf: [128]u8 = undefined;
-        const g_label = try std.fmt.bufPrint(&g_label_buf, "{s} ({}/{})", .{ g_info.name, self.selected_generator_index + 1, registry.getGeneratorCount() });
-        if (Widgets.drawButton(ui, g_rect, g_label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            self.selected_generator_index = (self.selected_generator_index + 1) % registry.getGeneratorCount();
-        }
-        Font.drawText(ui, g_info.description, px + 30.0 * ui_scale, g_rect.y + g_rect.height + 12.0 * ui_scale, label_scale * 0.62, Color.rgba(0.55, 0.68, 0.78, 0.95));
+        const gen_count = registry.getGeneratorCount();
 
-        const byy: f32 = py + ph - 135.0 * ui_scale;
-        const hw: f32 = (pw - 30.0 * ui_scale - 15.0 * ui_scale - 30.0 * ui_scale) / 2.0;
-        const btn_h: f32 = 45.0 * ui_scale;
-        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale, .y = byy, .width = pw - 60.0 * ui_scale, .height = btn_h }, "LOAD WORLD", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+        if (Widgets.drawButton(ui, .{ .x = ix, .y = cy, .width = arrow_w, .height = ih }, "<", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+            if (self.selected_generator_index == 0) {
+                self.selected_generator_index = gen_count - 1;
+            } else {
+                self.selected_generator_index -= 1;
+            }
+        }
+        var g_label_buf: [128]u8 = undefined;
+        const g_label = try std.fmt.bufPrint(&g_label_buf, "{s} ({}/{})", .{ g_info.name, self.selected_generator_index + 1, gen_count });
+        Font.drawTextCentered(ui, g_label, ix + arrow_w + 10.0 * ui_scale + g_label_w * 0.5, cy + (ih - 7.0 * btn_scale) * 0.5, btn_scale, TITLE_COLOR);
+        if (Widgets.drawButton(ui, .{ .x = ix + arrow_w + g_label_w + 20.0 * ui_scale, .y = cy, .width = arrow_w, .height = ih }, ">", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+            self.selected_generator_index = (self.selected_generator_index + 1) % gen_count;
+        }
+        cy += ih + 8.0 * ui_scale;
+        Font.drawText(ui, g_info.description, ix, cy, label_scale * 0.62, Color.rgba(0.55, 0.68, 0.78, 0.95));
+
+        // Footer buttons - positioned at fixed bottom of panel
+        const footer_y: f32 = py + ph - footer_h + 10.0 * ui_scale;
+        ui.drawRect(.{ .x = px, .y = py + ph - footer_h, .width = pw, .height = 2.0 * ui_scale }, Color.rgba(0.20, 0.36, 0.48, 0.50));
+
+        const load_btn_y: f32 = footer_y;
+        if (Widgets.drawButton(ui, .{ .x = ix, .y = load_btn_y, .width = iw, .height = btn_row_h }, "LOAD WORLD", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
             const wl_screen = try WorldListScreen.init(ctx.allocator, ctx);
             errdefer wl_screen.deinit(wl_screen);
             ctx.screen_manager.pushScreen(wl_screen.screen());
         }
 
-        const byy2: f32 = byy + btn_h + 15.0 * ui_scale;
-        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale, .y = byy2, .width = hw, .height = btn_h }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+        const bottom_btn_y: f32 = load_btn_y + btn_row_h + 10.0 * ui_scale;
+        const hw: f32 = (iw - 15.0 * ui_scale) / 2.0;
+        if (Widgets.drawButton(ui, .{ .x = ix, .y = bottom_btn_y, .width = hw, .height = btn_row_h }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
             ctx.screen_manager.popScreen();
         }
-        if (Widgets.drawButton(ui, .{ .x = px + 30.0 * ui_scale + hw + 15.0 * ui_scale, .y = byy2, .width = hw, .height = btn_h }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
+        if (Widgets.drawButton(ui, .{ .x = ix + hw + 15.0 * ui_scale, .y = bottom_btn_y, .width = hw, .height = btn_row_h }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
             const seed = try seed_gen.resolveSeed(&self.seed_input, ctx.allocator);
-            log.log.info("World seed: {} | Type: {s}", .{ seed, registry.getGeneratorInfo(self.selected_generator_index).name });
-            saveNewWorld(ctx.allocator, seed, self.selected_generator_index) catch |err| {
+            const trimmed_name = std.mem.trim(u8, self.name_input.items, " \t\r\n");
+            const world_name = if (trimmed_name.len > 0) trimmed_name else "New World";
+            log.log.info("World seed: {} | Type: {s} | Name: {s}", .{ seed, registry.getGeneratorInfo(self.selected_generator_index).name, world_name });
+            saveNewWorld(ctx.allocator, seed, self.selected_generator_index, world_name) catch |err| {
                 log.log.warn("Failed to save level.dat for new world: {}", .{err});
             };
             const world_screen = try WorldScreen.init(ctx.allocator, ctx, seed, self.selected_generator_index);
@@ -178,7 +233,7 @@ fn drawCreateWorldBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale
     ui.drawRect(.{ .x = screen_w - 180.0 * ui_scale, .y = screen_h * 0.62 - 116.0 * ui_scale, .width = 118.0 * ui_scale, .height = 116.0 * ui_scale }, Color.rgba(0.50, 0.29, 0.12, 0.38));
 }
 
-fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize) !void {
+fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize, world_name: []const u8) !void {
     const home = getenv("HOME") orelse {
         log.log.warn("Cannot save world: HOME not set", .{});
         return error.NoHome;
@@ -206,24 +261,8 @@ fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize)
         return err;
     };
     defer save_dir.close();
-    world_list.writeLevelDat(allocator, save_dir, dir_name, seed, generator_index, timestamp) catch |err| {
+    world_list.writeLevelDat(allocator, save_dir, world_name, seed, generator_index, timestamp) catch |err| {
         log.log.warn("Cannot save world: failed to write level.dat: {}", .{err});
         return err;
     };
-}
-
-fn handleSeedTyping(seed_input: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, input: IRawInputProvider, max_len: usize) !void {
-    if (input.isKeyPressed(.backspace)) {
-        if (seed_input.items.len > 0) _ = seed_input.pop();
-    }
-    const shift = input.isKeyDown(.left_shift) or input.isKeyDown(.right_shift);
-    const letters = [_]Key{ .a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z };
-    inline for (letters) |key| if (input.isKeyPressed(key) and seed_input.items.len < max_len) {
-        var ch: u8 = @intCast(@intFromEnum(key));
-        if (shift) ch = std.ascii.toUpper(ch);
-        try seed_input.append(allocator, ch);
-    };
-    const digits = [_]Key{ .@"0", .@"1", .@"2", .@"3", .@"4", .@"5", .@"6", .@"7", .@"8", .@"9" };
-    inline for (digits) |key| if (input.isKeyPressed(key) and seed_input.items.len < max_len) try seed_input.append(allocator, @intCast(@intFromEnum(key)));
-    if (input.isKeyPressed(.space) and seed_input.items.len < max_len) try seed_input.append(allocator, ' ');
 }

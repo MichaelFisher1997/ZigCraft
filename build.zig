@@ -112,6 +112,18 @@ pub fn build(b: *std.Build) void {
     const engine_physics = b.createModule(.{ .root_source_file = b.path("modules/engine-physics/src/root.zig"), .target = target, .optimize = optimize });
     const engine_rhi = b.createModule(.{ .root_source_file = b.path("modules/engine-rhi/src/root.zig"), .target = target, .optimize = optimize });
     const engine_graphics = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_assets_impl = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/assets_root.zig"), .target = target, .optimize = optimize });
+    const engine_camera_impl = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/camera_root.zig"), .target = target, .optimize = optimize });
+    const engine_clouds_impl = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/clouds_root.zig"), .target = target, .optimize = optimize });
+    const engine_atmosphere_impl = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/atmosphere_root.zig"), .target = target, .optimize = optimize });
+    const engine_shadows_impl = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/shadows_root.zig"), .target = target, .optimize = optimize });
+    const engine_lighting_impl = b.createModule(.{ .root_source_file = b.path("modules/engine-graphics/src/lighting_root.zig"), .target = target, .optimize = optimize });
+    const engine_assets = b.createModule(.{ .root_source_file = b.path("modules/engine-assets/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_camera = b.createModule(.{ .root_source_file = b.path("modules/engine-camera/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_clouds = b.createModule(.{ .root_source_file = b.path("modules/engine-clouds/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_atmosphere = b.createModule(.{ .root_source_file = b.path("modules/engine-atmosphere/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_shadows = b.createModule(.{ .root_source_file = b.path("modules/engine-shadows/src/root.zig"), .target = target, .optimize = optimize });
+    const engine_lighting = b.createModule(.{ .root_source_file = b.path("modules/engine-lighting/src/root.zig"), .target = target, .optimize = optimize });
     const engine_ui = b.createModule(.{ .root_source_file = b.path("modules/engine-ui/src/root.zig"), .target = target, .optimize = optimize });
     const world_core = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/root.zig"), .target = target, .optimize = optimize });
     const world_worldgen = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/root.zig"), .target = target, .optimize = optimize });
@@ -137,11 +149,51 @@ pub fn build(b: *std.Build) void {
     addSharedImports(engine_rhi, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     engine_rhi.addImport("engine-math", engine_math);
     engine_rhi.addImport("engine-core", engine_core);
+    addSharedImports(engine_assets_impl, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_assets_impl.addImport("engine-core", engine_core);
+    engine_assets_impl.addImport("engine-rhi", engine_rhi);
+    addSharedImports(engine_assets, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_assets.addImport("engine-assets-impl", engine_assets_impl);
+    addSharedImports(engine_camera_impl, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_camera_impl.addImport("engine-core", engine_core);
+    engine_camera_impl.addImport("engine-input", engine_input);
+    engine_camera_impl.addImport("engine-math", engine_math);
+    addSharedImports(engine_camera, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_camera.addImport("engine-camera-impl", engine_camera_impl);
+    addSharedImports(engine_clouds_impl, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_clouds_impl.addImport("engine-math", engine_math);
+    engine_clouds_impl.addImport("engine-rhi", engine_rhi);
+    addSharedImports(engine_clouds, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_clouds.addImport("engine-clouds-impl", engine_clouds_impl);
+    addSharedImports(engine_atmosphere_impl, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_atmosphere_impl.addImport("engine-core", engine_core);
+    engine_atmosphere_impl.addImport("engine-math", engine_math);
+    engine_atmosphere_impl.addImport("engine-rhi", engine_rhi);
+    addSharedImports(engine_atmosphere, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_atmosphere.addImport("engine-atmosphere-impl", engine_atmosphere_impl);
+    addSharedImports(engine_shadows_impl, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_shadows_impl.addImport("engine-core", engine_core);
+    engine_shadows_impl.addImport("engine-math", engine_math);
+    engine_shadows_impl.addImport("engine-rhi", engine_rhi);
+    addSharedImports(engine_shadows, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_shadows.addImport("engine-shadows-impl", engine_shadows_impl);
+    addSharedImports(engine_lighting_impl, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_lighting_impl.addImport("engine-core", engine_core);
+    engine_lighting_impl.addImport("engine-math", engine_math);
+    engine_lighting_impl.addImport("engine-rhi", engine_rhi);
+    addSharedImports(engine_lighting, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_lighting.addImport("engine-lighting-impl", engine_lighting_impl);
     addSharedImports(engine_graphics, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    engine_graphics.addImport("engine-assets", engine_assets);
+    engine_graphics.addImport("engine-atmosphere", engine_atmosphere);
+    engine_graphics.addImport("engine-camera", engine_camera);
+    engine_graphics.addImport("engine-clouds", engine_clouds);
+    engine_graphics.addImport("engine-lighting", engine_lighting);
     engine_graphics.addImport("engine-math", engine_math);
     engine_graphics.addImport("engine-core", engine_core);
     engine_graphics.addImport("engine-input", engine_input);
     engine_graphics.addImport("engine-rhi", engine_rhi);
+    engine_graphics.addImport("engine-shadows", engine_shadows);
     engine_graphics.addOptions("engine_graphics_options", engine_graphics_options);
     addSharedImports(engine_ui, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     engine_ui.addImport("engine-math", engine_math);
@@ -160,11 +212,13 @@ pub fn build(b: *std.Build) void {
     addSharedImports(world_worldgen, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     addSharedImports(world_meshing, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_meshing.addImport("engine-core", engine_core);
+    world_meshing.addImport("engine-assets", engine_assets);
     world_meshing.addImport("engine-graphics", engine_graphics);
     world_meshing.addImport("engine-rhi", engine_rhi);
     world_meshing.addImport("world-core", world_core);
     addSharedImports(world_lod, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_lod.addImport("engine-core", engine_core);
+    world_lod.addImport("engine-assets", engine_assets);
     world_lod.addImport("engine-graphics", engine_graphics);
     world_lod.addImport("engine-math", engine_math);
     world_lod.addImport("engine-rhi", engine_rhi);
@@ -181,6 +235,9 @@ pub fn build(b: *std.Build) void {
 
     addSharedImports(world_runtime, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_runtime.addImport("engine-core", engine_core);
+    world_runtime.addImport("engine-assets", engine_assets);
+    world_runtime.addImport("engine-lighting", engine_lighting);
+    world_runtime.addImport("engine-shadows", engine_shadows);
     world_runtime.addImport("engine-graphics", engine_graphics);
     world_runtime.addImport("engine-math", engine_math);
     world_runtime.addImport("engine-physics", engine_physics);
@@ -203,7 +260,7 @@ pub fn build(b: *std.Build) void {
     root_module.addImport("fs", fs_module);
     root_module.addImport("sync", sync_module);
     root_module.addImport("c", c_module);
-    addProjectModuleImports(root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     root_module.addOptions("build_options", options);
     root_module.addIncludePath(b.path("libs/stb"));
 
@@ -271,7 +328,7 @@ pub fn build(b: *std.Build) void {
     benchmark_root_module.addImport("fs", fs_module);
     benchmark_root_module.addImport("sync", sync_module);
     benchmark_root_module.addImport("c", c_module);
-    addProjectModuleImports(benchmark_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(benchmark_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     benchmark_root_module.addOptions("build_options", benchmark_options);
     benchmark_root_module.addIncludePath(b.path("libs/stb"));
 
@@ -314,7 +371,7 @@ pub fn build(b: *std.Build) void {
     test_root_module.addImport("fs", fs_module);
     test_root_module.addImport("sync", sync_module);
     test_root_module.addImport("c", c_module);
-    addProjectModuleImports(test_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(test_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     test_root_module.addOptions("build_options", options);
 
     const test_filters: []const []const u8 = if (b.option([]const u8, "test-filter", "Only run unit tests whose name contains this filter")) |filter|
@@ -353,7 +410,7 @@ pub fn build(b: *std.Build) void {
     integration_root_module.addImport("fs", fs_module);
     integration_root_module.addImport("sync", sync_module);
     integration_root_module.addImport("c", c_module);
-    addProjectModuleImports(integration_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(integration_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
     integration_root_module.addOptions("build_options", options);
     integration_root_module.addIncludePath(b.path("libs/stb"));
 
@@ -508,6 +565,12 @@ fn addProjectModuleImports(
     engine_physics: *std.Build.Module,
     engine_rhi: *std.Build.Module,
     engine_graphics: *std.Build.Module,
+    engine_assets: *std.Build.Module,
+    engine_camera: *std.Build.Module,
+    engine_clouds: *std.Build.Module,
+    engine_atmosphere: *std.Build.Module,
+    engine_shadows: *std.Build.Module,
+    engine_lighting: *std.Build.Module,
     engine_ui: *std.Build.Module,
     world_core: *std.Build.Module,
     world_worldgen: *std.Build.Module,
@@ -524,6 +587,12 @@ fn addProjectModuleImports(
     module.addImport("engine-physics", engine_physics);
     module.addImport("engine-rhi", engine_rhi);
     module.addImport("engine-graphics", engine_graphics);
+    module.addImport("engine-assets", engine_assets);
+    module.addImport("engine-camera", engine_camera);
+    module.addImport("engine-clouds", engine_clouds);
+    module.addImport("engine-atmosphere", engine_atmosphere);
+    module.addImport("engine-shadows", engine_shadows);
+    module.addImport("engine-lighting", engine_lighting);
     module.addImport("engine-ui", engine_ui);
     module.addImport("world-core", world_core);
     module.addImport("world-worldgen", world_worldgen);
