@@ -431,7 +431,8 @@ float debugOutdoorFactor(float skyLight) {
 
 float classicLightCurve(float lightLevel) {
     float l = clamp(lightLevel, 0.0, 1.0);
-    return l * l * (3.0 - 2.0 * l);
+    if (l <= 0.0) return 0.0;
+    return 0.075 + 0.925 * pow(l, 1.35);
 }
 
 vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float entranceBounceIn, vec2 entranceDirIn, vec3 blockLightIn, float ao, float shadowAmount, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
@@ -447,18 +448,16 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
     float sunAmount = clamp(global.params.w, 0.0, 1.0);
     float moonAmount = (1.0 - sunAmount) * 0.20;
     float skyLight = clamp(skyLightIn, 0.0, 1.0);
-    float entrance = clamp(entranceBounceIn, 0.0, 1.0);
     float skyCurve = classicLightCurve(skyLight);
-    float entranceCurve = pow(entrance, 0.72) * (1.0 - outdoor);
     float blockLevel = clamp(max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b)), 0.0, 1.0);
     float blockCurve = classicLightCurve(blockLevel);
-    float caveLightLevel = max(max(skyLight, entrance * 0.85), blockLevel);
+    float caveLightLevel = max(skyLight, blockLevel);
+    float litGate = step(0.0001, caveLightLevel);
     float darknessGate = smoothstep(0.002, 0.052, caveLightLevel);
     float visibilityFloor = 1.0 - outdoor;
-    float caveSideVisibility = visibilityFloor * (0.45 + 0.55 * sideFactor);
+    float caveSideVisibility = visibilityFloor * litGate * (0.45 + 0.55 * sideFactor);
 
-    float caveEntranceMask = smoothstep(0.015, 0.10, entrance) * (1.0 - outdoor);
-    float shadowGate = smoothstep(0.90, 1.0, skyLight) * outdoor * (1.0 - caveEntranceMask);
+    float shadowGate = smoothstep(0.90, 1.0, skyLight) * outdoor;
     float shadowVis = smoothstep(0.12, 0.80, clamp(shadowAmount, 0.0, 1.0)) * global.shadow_params.z * shadowGate;
 
     vec2 nXZ = length(N.xz) > 0.001 ? normalize(N.xz) : vec2(0.0);
@@ -469,19 +468,18 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
     vec3 moonKeyTint = vec3(0.18, 0.22, 0.34);
     vec3 skyTint = mix(vec3(0.52, 0.70, 0.86), global.fog_color.rgb, 0.45);
     vec3 entranceTint = vec3(0.50, 0.68, 0.82);
-    vec3 caveTint = vec3(0.24, 0.245, 0.255);
+    vec3 caveTint = vec3(0.32, 0.34, 0.36);
 
-    float lowEntranceReadability = smoothstep(0.025, 0.16, entrance) * (1.0 - outdoor);
-    float indoorFloor = (0.085 * darknessGate) + (0.040 * lowEntranceReadability);
+    float indoorFloor = 0.045 * litGate;
     vec3 skyFill = caveTint * (indoorFloor + caveSideVisibility * 0.060);
-    skyFill += skyTint * global.lighting.x * skyCurve * (0.58 + 0.18 * faceUp);
-    skyFill += entranceTint * global.lighting.x * entranceCurve * (0.42 + 0.28 * entranceFacing + 0.12 * faceUp);
+    skyFill += skyTint * global.lighting.x * skyCurve * (0.82 + 0.18 * faceUp + 0.12 * entranceFacing);
+    skyFill += entranceTint * 0.0;
 
     vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * outdoor * (1.0 - shadowVis) * 0.55;
     keyLight += moonKeyTint * moonAmount * outdoor * (0.20 + 0.35 * faceUp);
     vec3 blockFill = blockLightIn * (0.18 + blockCurve * 0.92);
     vec3 lightColor = (keyLight + skyFill + blockFill) * faceShade;
-    lightColor = max(lightColor, caveTint * (0.58 * caveSideVisibility + 0.42 * darknessGate + entranceCurve * 0.95 + blockCurve));
+    lightColor = max(lightColor, caveTint * litGate * (0.18 + 0.48 * max(skyCurve, blockCurve) + 0.18 * caveSideVisibility));
 
     directKeyOut = clamp(max(max(keyLight.r, keyLight.g), keyLight.b), 0.0, 1.0);
     skyFillOut = clamp(max(max(skyFill.r, skyFill.g), skyFill.b), 0.0, 1.0);
@@ -490,7 +488,7 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
 
     float aoFactor = mix(1.0, ao, 0.14);
     float lightReadability = clamp(max(max(lightColor.r, lightColor.g), lightColor.b), 0.0, 1.0);
-    float colorVisibility = smoothstep(0.24, 0.72, max(max(skyCurve, entranceCurve), blockCurve));
+    float colorVisibility = smoothstep(0.08, 0.62, max(skyCurve, blockCurve));
     float luma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
     vec3 caveAlbedo = mix(vec3(luma), albedo, max(colorVisibility, outdoor));
     return caveAlbedo * clamp(lightColor * aoFactor, vec3(0.0), vec3(1.0)) + vec3(luma) * caveTint * (1.0 - colorVisibility) * lightReadability * darknessGate * 0.10;
