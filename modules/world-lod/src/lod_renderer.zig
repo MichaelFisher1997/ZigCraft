@@ -52,10 +52,27 @@ const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
 const Frustum = @import("engine-math").Frustum;
 const rhi_types = @import("engine-rhi");
-const log = @import("engine-core").log;
+const engine_core = @import("engine-core");
+const log = engine_core.log;
 const build_options = @import("world_lod_options");
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
+
+fn activeLODCount(config: ILODConfig) usize {
+    return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
+}
+
+const RenderDiag = struct {
+    meshes_seen: u32 = 0,
+    missing_region: u32 = 0,
+    not_ready: u32 = 0,
+    bad_state: u32 = 0,
+    covered_finer_lod: u32 = 0,
+    out_of_range: u32 = 0,
+    covered_chunks: u32 = 0,
+    frustum_culled: u32 = 0,
+    drawn: u32 = 0,
+};
 
 /// Expected RHI interface for LODRenderer:
 /// - createBuffer(size: usize, usage: BufferUsage) !BufferHandle
@@ -143,9 +160,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
 
-            // Collect visible meshes
-            // Process from highest LOD down
-            var i: usize = LODLevel.count - 1;
+            // Collect visible meshes from coarsest active LOD down. Some presets
+            // intentionally disable coarser levels to avoid low-quality slabs.
+            var i: usize = activeLODCount(config) - 1;
             while (i > 0) : (i -= 1) {
                 const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
                 self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks) catch |err| {
@@ -179,6 +196,9 @@ pub fn LODRenderer(comptime RHI: type) type {
         ) !void {
             const meshes = &all_meshes[@intFromEnum(lod)];
             const regions = &all_regions[@intFromEnum(lod)];
+            const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
+            const disable_frustum = engine_core.envFlag("ZIGCRAFT_LOD_DISABLE_FRUSTUM", false);
+            var diag = RenderDiag{};
             var lod_rendered: u32 = 0;
             var lod_covered: u32 = 0;
             var first_missing_cx: i32 = 0;
@@ -191,17 +211,30 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             var iter = meshes.iterator();
             while (iter.next()) |entry| {
+                diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
-                if (!mesh.ready or mesh.vertex_count == 0) continue;
+                if (!mesh.ready or mesh.vertex_count == 0) {
+                    diag.not_ready += 1;
+                    continue;
+                }
                 if (regions.get(entry.key_ptr.*)) |chunk| {
-                    if (chunk.state != .renderable) continue;
-                    if (self.isCoveredByFinerLOD(entry.key_ptr.*, all_meshes, all_regions)) continue;
+                    if (chunk.state != .renderable) {
+                        diag.bad_state += 1;
+                        continue;
+                    }
+                    if (self.isCoveredByFinerLOD(entry.key_ptr.*, all_meshes, all_regions)) {
+                        diag.covered_finer_lod += 1;
+                        continue;
+                    }
 
                     const bounds = chunk.worldBounds();
                     const chunk_bounds = chunk.chunkBounds();
 
                     if (max_distance_chunks) |max_dist| {
-                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) continue;
+                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) {
+                            diag.out_of_range += 1;
+                            continue;
+                        }
                     }
 
                     if (chunk_checker) |checker| {
@@ -213,6 +246,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                             const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, pc_x, pc_z, lod0_radius);
                             if (cov.covered) {
                                 lod_covered += 1;
+                                diag.covered_chunks += 1;
                                 continue;
                             }
                             if (lod_rendered == 0) {
@@ -225,8 +259,11 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     lod_rendered += 1;
 
-                    if (use_frustum) {
-                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) continue;
+                    if (use_frustum and !disable_frustum) {
+                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) {
+                            diag.frustum_culled += 1;
+                            continue;
+                        }
                     }
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
@@ -241,6 +278,34 @@ pub fn LODRenderer(comptime RHI: type) type {
                         .padding = .{ 0, 0, 0 },
                     });
                     try self.draw_list.append(self.allocator, mesh);
+                    diag.drawn += 1;
+                } else {
+                    diag.missing_region += 1;
+                }
+            }
+
+            if (diag_enabled) {
+                const S = struct {
+                    var counter: [LODLevel.count]u64 = .{0} ** LODLevel.count;
+                };
+                const lod_idx = @intFromEnum(lod);
+                S.counter[lod_idx] += 1;
+                if (S.counter[lod_idx] % 120 == 1) {
+                    log.log.info("LOD_RENDER_DIAG lod={} meshes={} drawn={} not_ready={} bad_state={} no_region={} finer={} chunk_cov={} frustum={} range={} frustum_disabled={} cam_chunk=({}, {})", .{
+                        lod_idx,
+                        diag.meshes_seen,
+                        diag.drawn,
+                        diag.not_ready,
+                        diag.bad_state,
+                        diag.missing_region,
+                        diag.covered_finer_lod,
+                        diag.covered_chunks,
+                        diag.frustum_culled,
+                        diag.out_of_range,
+                        disable_frustum,
+                        pc_x_diag,
+                        pc_z_diag,
+                    });
                 }
             }
 

@@ -103,13 +103,20 @@ pub const GameSession = struct {
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
-        var preset_radii = preset_cfg.lod_radii;
+        const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0];
+        var preset_radii = if (!strict_safe_mode and manual_distance_expanded)
+            LODConfig.radiiForRenderDistance(effective_render_distance)
+        else
+            preset_cfg.lod_radii;
         preset_radii[0] = if (strict_safe_mode)
             @min(effective_render_distance, 8)
         else
             @min(effective_render_distance, preset_radii[0]);
 
-        const active_count = preset_cfg.active_lod_count;
+        const active_count = if (!strict_safe_mode and manual_distance_expanded)
+            LODConfig.activeCountForRenderDistance(effective_render_distance)
+        else
+            preset_cfg.active_lod_count;
         if (active_count < LODLevel.count) {
             var i: usize = active_count;
             while (i < LODLevel.count) : (i += 1) {
