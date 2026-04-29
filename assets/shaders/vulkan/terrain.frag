@@ -270,9 +270,12 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
         return manualShadowPcfStable(projCoords.xy, layer, compareDepth);
     }
 
+    float receiverSlope = clamp(1.0 - NdotL, 0.0, 1.0);
+    float softness = 1.0 + receiverSlope * 0.85 + clamp(cascadeScale - 1.0, 0.0, 3.0) * 0.18;
+
     if (pcfSamples <= 4) {
         float shadow = texture(uShadowMaps, vec4(projCoords.xy, float(layer), compareDepth));
-        float radius = uvTexelSize * 0.75;
+        float radius = uvTexelSize * 1.75 * softness;
         for (int i = 0; i < 4; i++) {
             shadow += texture(uShadowMaps, vec4(projCoords.xy + pcfCross4[i] * radius, float(layer), compareDepth));
         }
@@ -281,15 +284,12 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
 
     // Fixed-radius PCF while stabilizing shadows. PCSS blocker search made voxel
     // shadow edges breathe/smear during motion and hid real projection bugs.
-    float radius = uvTexelSize;
-    float shadow = 0.0;
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            vec2 offset = vec2(float(x), float(y)) * radius;
-            shadow += texture(uShadowMaps, vec4(projCoords.xy + offset, float(layer), compareDepth));
-        }
+    float radius = uvTexelSize * 2.35 * softness;
+    float shadow = texture(uShadowMaps, vec4(projCoords.xy, float(layer), compareDepth));
+    for (int i = 0; i < 16; i++) {
+        shadow += texture(uShadowMaps, vec4(projCoords.xy + poissonDisk16[i] * radius, float(layer), compareDepth));
     }
-    return 1.0 - (shadow / 9.0);
+    return 1.0 - (shadow / 17.0);
 }
 
 float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float cascadeDistance, int layer) {
@@ -431,7 +431,8 @@ float debugOutdoorFactor(float skyLight) {
 
 float classicLightCurve(float lightLevel) {
     float l = clamp(lightLevel, 0.0, 1.0);
-    return l * l * (3.0 - 2.0 * l);
+    if (l <= 0.0) return 0.0;
+    return 0.075 + 0.925 * pow(l, 1.35);
 }
 
 vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float entranceBounceIn, vec2 entranceDirIn, vec3 blockLightIn, float ao, float shadowAmount, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
@@ -447,19 +448,17 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
     float sunAmount = clamp(global.params.w, 0.0, 1.0);
     float moonAmount = (1.0 - sunAmount) * 0.20;
     float skyLight = clamp(skyLightIn, 0.0, 1.0);
-    float entrance = clamp(entranceBounceIn, 0.0, 1.0);
     float skyCurve = classicLightCurve(skyLight);
-    float entranceCurve = pow(entrance, 0.72) * (1.0 - outdoor);
     float blockLevel = clamp(max(blockLightIn.r, max(blockLightIn.g, blockLightIn.b)), 0.0, 1.0);
     float blockCurve = classicLightCurve(blockLevel);
-    float caveLightLevel = max(max(skyLight, entrance * 0.85), blockLevel);
+    float caveLightLevel = max(skyLight, blockLevel);
+    float litGate = step(0.0001, caveLightLevel);
     float darknessGate = smoothstep(0.002, 0.052, caveLightLevel);
     float visibilityFloor = 1.0 - outdoor;
-    float caveSideVisibility = visibilityFloor * (0.45 + 0.55 * sideFactor);
+    float caveSideVisibility = visibilityFloor * litGate * (0.45 + 0.55 * sideFactor);
 
-    float caveEntranceMask = smoothstep(0.015, 0.10, entrance) * (1.0 - outdoor);
-    float shadowGate = smoothstep(0.90, 1.0, skyLight) * outdoor * (1.0 - caveEntranceMask);
-    float shadowVis = smoothstep(0.12, 0.80, clamp(shadowAmount, 0.0, 1.0)) * global.shadow_params.z * shadowGate;
+    float shadowGate = smoothstep(0.82, 1.0, skyLight) * outdoor;
+    float shadowVis = clamp(smoothstep(0.04, 0.68, clamp(shadowAmount, 0.0, 1.0)) * global.shadow_params.z * 2.175 * shadowGate, 0.0, 1.0);
 
     vec2 nXZ = length(N.xz) > 0.001 ? normalize(N.xz) : vec2(0.0);
     vec2 entranceDir = length(entranceDirIn) > 0.001 ? normalize(entranceDirIn) : vec2(0.0);
@@ -468,20 +467,18 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
     vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.90, 0.72), 0.25);
     vec3 moonKeyTint = vec3(0.18, 0.22, 0.34);
     vec3 skyTint = mix(vec3(0.52, 0.70, 0.86), global.fog_color.rgb, 0.45);
-    vec3 entranceTint = vec3(0.50, 0.68, 0.82);
-    vec3 caveTint = vec3(0.24, 0.245, 0.255);
+    vec3 caveTint = vec3(0.32, 0.34, 0.36);
 
-    float lowEntranceReadability = smoothstep(0.025, 0.16, entrance) * (1.0 - outdoor);
-    float indoorFloor = (0.085 * darknessGate) + (0.040 * lowEntranceReadability);
+    float indoorFloor = 0.045 * litGate;
     vec3 skyFill = caveTint * (indoorFloor + caveSideVisibility * 0.060);
-    skyFill += skyTint * global.lighting.x * skyCurve * (0.58 + 0.18 * faceUp);
-    skyFill += entranceTint * global.lighting.x * entranceCurve * (0.42 + 0.28 * entranceFacing + 0.12 * faceUp);
+    skyFill += skyTint * global.lighting.x * skyCurve * (0.82 + 0.18 * faceUp + 0.12 * entranceFacing);
+    skyFill *= mix(1.0, 0.22, shadowVis);
 
     vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * outdoor * (1.0 - shadowVis) * 0.55;
     keyLight += moonKeyTint * moonAmount * outdoor * (0.20 + 0.35 * faceUp);
     vec3 blockFill = blockLightIn * (0.18 + blockCurve * 0.92);
     vec3 lightColor = (keyLight + skyFill + blockFill) * faceShade;
-    lightColor = max(lightColor, caveTint * (0.58 * caveSideVisibility + 0.42 * darknessGate + entranceCurve * 0.95 + blockCurve));
+    lightColor = max(lightColor, caveTint * litGate * mix(1.0, 0.13, shadowVis) * (0.18 + 0.48 * max(skyCurve, blockCurve) + 0.18 * caveSideVisibility));
 
     directKeyOut = clamp(max(max(keyLight.r, keyLight.g), keyLight.b), 0.0, 1.0);
     skyFillOut = clamp(max(max(skyFill.r, skyFill.g), skyFill.b), 0.0, 1.0);
@@ -490,7 +487,7 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
 
     float aoFactor = mix(1.0, ao, 0.14);
     float lightReadability = clamp(max(max(lightColor.r, lightColor.g), lightColor.b), 0.0, 1.0);
-    float colorVisibility = smoothstep(0.24, 0.72, max(max(skyCurve, entranceCurve), blockCurve));
+    float colorVisibility = smoothstep(0.08, 0.62, max(skyCurve, blockCurve));
     float luma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
     vec3 caveAlbedo = mix(vec3(luma), albedo, max(colorVisibility, outdoor));
     return caveAlbedo * clamp(lightColor * aoFactor, vec3(0.0), vec3(1.0)) + vec3(luma) * caveTint * (1.0 - colorVisibility) * lightReadability * darknessGate * 0.10;
@@ -686,9 +683,11 @@ void main() {
     float nDotL = max(dot(N, L), 0.0);
     float skyVisibility = clamp(vSkyLight, 0.0, 1.0);
     float atmosphericVisibility = skyVisibilityFactor(skyVisibility);
+    bool isCloud = vTileID < 0 && vEntranceDir.x > 0.9 && vEntranceDir.y < -0.9;
     float cascadeDistance = length(vFragPosWorld);
     int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
+    if (isCloud) shadowFactor = 0.0;
     
     float totalShadow = shadowFactor;
 
@@ -760,8 +759,8 @@ void main() {
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
         if (debugChannel < DEBUG_SHADOW_FACTOR + 0.5) {
             float caveEntranceMask = smoothstep(0.015, 0.10, vEntranceBounce) * (1.0 - debugOutdoor);
-            float debugShadowGate = smoothstep(0.90, 1.0, vSkyLight) * debugOutdoor * (1.0 - caveEntranceMask);
-            float effectiveShadow = shadowFactor * global.shadow_params.z * debugShadowGate;
+            float debugShadowGate = smoothstep(0.82, 1.0, vSkyLight) * debugOutdoor * (1.0 - caveEntranceMask);
+            float effectiveShadow = clamp(smoothstep(0.04, 0.68, shadowFactor) * global.shadow_params.z * 2.175 * debugShadowGate, 0.0, 1.0);
             vec3 debugShadow = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), effectiveShadow);
             float debugVisibility = max(atmosphericVisibility, max(smoothstep(0.001, 0.08, vEntranceBounce), smoothstep(0.001, 0.08, max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)))));
             color = mix(vec3(0.02, 0.02, 0.02), debugShadow, max(debugVisibility, 0.20));
