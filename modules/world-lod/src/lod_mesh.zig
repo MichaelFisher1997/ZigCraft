@@ -190,7 +190,7 @@ pub const LODMesh = struct {
     }
 
     /// Build mesh from simplified LOD data (heightmap-based)
-    pub fn buildFromSimplifiedData(self: *LODMesh, data: *const LODSimplifiedData, _: i32, _: i32, _: *const TextureAtlas) !void {
+    pub fn buildFromSimplifiedData(self: *LODMesh, data: *const LODSimplifiedData, world_x: i32, world_z: i32, atlas: *const TextureAtlas) !void {
         if (data.width < 2) return error.EmptyData;
 
         const region_size: f32 = @floatFromInt(lod_chunk.regionSizeBlocks(self.lod_level));
@@ -217,13 +217,17 @@ pub const LODMesh = struct {
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
                 const size = cell_size;
 
-                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, avg_color, avg_color, avg_color, avg_color, Vertex.LOD_TILE_ID);
+                const material = selectCellMaterial(data, atlas, gx, gz);
+                const top_tile = material.top;
+                const side_tile = material.side;
+
+                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, avg_color, avg_color, avg_color, avg_color, top_tile, world_x, world_z);
 
                 const skirt_depth: f32 = size * 4.0;
-                if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .west, Vertex.LOD_TILE_ID);
-                if (gx == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h10 + h11) * 0.5, wz, size, (h10 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .east, Vertex.LOD_TILE_ID);
-                if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .north, Vertex.LOD_TILE_ID);
-                if (gz == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .south, Vertex.LOD_TILE_ID);
+                if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .west, side_tile, world_x, world_z);
+                if (gx == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h10 + h11) * 0.5, wz, size, (h10 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .east, side_tile, world_x, world_z);
+                if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .north, side_tile, world_x, world_z);
+                if (gz == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .south, side_tile, world_x, world_z);
             }
         }
 
@@ -337,9 +341,9 @@ pub const LODMesh = struct {
         heightmap: []const f32,
         biomes: []const BiomeId,
         width: u32,
-        _: i32,
-        _: i32,
-        _: *const TextureAtlas,
+        world_x: i32,
+        world_z: i32,
+        atlas: *const TextureAtlas,
     ) !void {
         const cell_size = getCellSize(self.lod_level);
 
@@ -364,34 +368,36 @@ pub const LODMesh = struct {
                 const wy: f32 = height;
                 const size: f32 = @floatFromInt(cell_size);
 
-                try addTopFaceQuad(self.allocator, &vertices, wx, wy, wz, size, r, g, b, Vertex.LOD_TILE_ID);
+                const tiles = atlas.getTilesForBlock(@intFromEnum(biome.getSurfaceBlock()));
+
+                try addTopFaceQuad(self.allocator, &vertices, wx, wy, wz, size, r, g, b, tiles.top, world_x, world_z);
 
                 // Add skirts
                 const skirt_depth = size * 4.0;
                 if (gx == 0) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, tiles.side, world_x, world_z);
                 }
                 if (gx == width - 1) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, tiles.side, world_x, world_z);
                 }
                 if (gz == 0) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, tiles.side, world_x, world_z);
                 }
                 if (gz == width - 1) {
-                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
+                    try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, tiles.side, world_x, world_z);
                 }
 
                 // Side faces for height differences
                 if (gx > 0) {
                     const nh = heightmap[(gx - 1) + gz * width];
                     if (height > nh + 2) {
-                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, nh, r * 0.7, g * 0.7, b * 0.7, .west, Vertex.LOD_TILE_ID);
+                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, nh, r * 0.7, g * 0.7, b * 0.7, .west, tiles.side, world_x, world_z);
                     }
                 }
                 if (gz > 0) {
                     const nh = heightmap[gx + (gz - 1) * width];
                     if (height > nh + 2) {
-                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, nh, r * 0.8, g * 0.8, b * 0.8, .north, Vertex.LOD_TILE_ID);
+                        try addSideFaceQuad(self.allocator, &vertices, wx, wy, wz, size, nh, r * 0.8, g * 0.8, b * 0.8, .north, tiles.side, world_x, world_z);
                     }
                 }
             }
@@ -490,7 +496,7 @@ const SkirtParams = struct {
 
 const SkirtDir = enum { north, south, east, west };
 
-fn makeSkirtQuad(params: SkirtParams, tile_id: u16) [4]Vertex {
+fn makeSkirtQuad(params: SkirtParams, tile_id: u16, world_x: i32, world_z: i32) [4]Vertex {
     const p = params;
     const cr = unpackR(p.avg_c) * p.brightness;
     const cg = unpackG(p.avg_c) * p.brightness;
@@ -503,30 +509,31 @@ fn makeSkirtQuad(params: SkirtParams, tile_id: u16) [4]Vertex {
         .east => .{ 1, 0, 0 },
     };
     const col = [3]f32{ cr, cg, cb };
+    const face_dir = skirtDirToFaceDir(p.dir);
     return switch (p.dir) {
         .north => .{
-            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, .{ 0, 0 }, tile_id),
-            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, .{ 1, 0 }, tile_id),
-            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, .{ 1, 1 }, tile_id),
-            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, .{ 0, 1 }, tile_id),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, sideFaceUV(.{ p.x + p.size, skirt_bottom, p.z }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, sideFaceUV(.{ p.x, skirt_bottom, p.z }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, sideFaceUV(.{ p.x, p.avg_h, p.z }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, sideFaceUV(.{ p.x + p.size, p.avg_h, p.z }, face_dir, world_x, world_z), tile_id),
         },
         .south => .{
-            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, .{ 0, 0 }, tile_id),
-            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, .{ 1, 0 }, tile_id),
-            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, .{ 1, 1 }, tile_id),
-            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, .{ 0, 1 }, tile_id),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, sideFaceUV(.{ p.x, skirt_bottom, p.z + p.size }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, sideFaceUV(.{ p.x + p.size, skirt_bottom, p.z + p.size }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, sideFaceUV(.{ p.x + p.size, p.avg_h, p.z + p.size }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, sideFaceUV(.{ p.x, p.avg_h, p.z + p.size }, face_dir, world_x, world_z), tile_id),
         },
         .west => .{
-            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, .{ 0, 0 }, tile_id),
-            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, .{ 1, 0 }, tile_id),
-            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, .{ 1, 1 }, tile_id),
-            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, .{ 0, 1 }, tile_id),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z }, col, normal, sideFaceUV(.{ p.x, skirt_bottom, p.z }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x, skirt_bottom, p.z + p.size }, col, normal, sideFaceUV(.{ p.x, skirt_bottom, p.z + p.size }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x, p.avg_h, p.z + p.size }, col, normal, sideFaceUV(.{ p.x, p.avg_h, p.z + p.size }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x, p.avg_h, p.z }, col, normal, sideFaceUV(.{ p.x, p.avg_h, p.z }, face_dir, world_x, world_z), tile_id),
         },
         .east => .{
-            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, .{ 0, 0 }, tile_id),
-            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, .{ 1, 0 }, tile_id),
-            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, .{ 1, 1 }, tile_id),
-            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, .{ 0, 1 }, tile_id),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z + p.size }, col, normal, sideFaceUV(.{ p.x + p.size, skirt_bottom, p.z + p.size }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x + p.size, skirt_bottom, p.z }, col, normal, sideFaceUV(.{ p.x + p.size, skirt_bottom, p.z }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z }, col, normal, sideFaceUV(.{ p.x + p.size, p.avg_h, p.z }, face_dir, world_x, world_z), tile_id),
+            makeLODVertex(.{ p.x + p.size, p.avg_h, p.z + p.size }, col, normal, sideFaceUV(.{ p.x + p.size, p.avg_h, p.z + p.size }, face_dir, world_x, world_z), tile_id),
         },
     };
 }
@@ -535,7 +542,7 @@ fn buildFullDetailHeightmapMesh(
     allocator: std.mem.Allocator,
     lod_level: LODLevel,
     data: *const LODSimplifiedData,
-    _: *const TextureAtlas,
+    atlas: *const TextureAtlas,
 ) !FullDetailMesh {
     const w = data.width;
     const grid_total = w * w;
@@ -566,12 +573,13 @@ fn buildFullDetailHeightmapMesh(
             const wx = @as(f32, @floatFromInt(gx)) * cell_size;
             const wz = @as(f32, @floatFromInt(gz)) * cell_size;
             const size = cell_size;
+            const material = selectCellMaterial(data, atlas, gx, gz);
 
             const top_quad = [4]Vertex{
-                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, .{ 0, 1, 0 }, .{ 0, 0 }, Vertex.LOD_TILE_ID),
-                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, .{ 0, 1, 0 }, .{ 1, 0 }, Vertex.LOD_TILE_ID),
-                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, .{ 0, 1, 0 }, .{ 1, 1 }, Vertex.LOD_TILE_ID),
-                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, .{ 0, 1, 0 }, .{ 0, 1 }, Vertex.LOD_TILE_ID),
+                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h00, wz }, 0, 0), material.top),
+                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h10, wz }, 0, 0), material.top),
+                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h11, wz + size }, 0, 0), material.top),
+                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h01, wz + size }, 0, 0), material.top),
             };
             try appendIndexedQuad(&vertices, &indices, allocator, &top_quad);
 
@@ -583,7 +591,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c00, c10, c00, c10),
                 .brightness = 0.7,
                 .dir = .north,
-            }, Vertex.LOD_TILE_ID));
+            }, material.side, 0, 0));
             if (gz == w - 2) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
                 .x = wx,
                 .z = wz,
@@ -592,7 +600,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c01, c11, c01, c11),
                 .brightness = 0.7,
                 .dir = .south,
-            }, Vertex.LOD_TILE_ID));
+            }, material.side, 0, 0));
             if (gx == 0) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
                 .x = wx,
                 .z = wz,
@@ -601,7 +609,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c00, c01, c00, c01),
                 .brightness = 0.6,
                 .dir = .west,
-            }, Vertex.LOD_TILE_ID));
+            }, material.side, 0, 0));
             if (gx == w - 2) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
                 .x = wx,
                 .z = wz,
@@ -610,7 +618,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c10, c11, c10, c11),
                 .brightness = 0.6,
                 .dir = .east,
-            }, Vertex.LOD_TILE_ID));
+            }, material.side, 0, 0));
         }
     }
 
@@ -621,6 +629,46 @@ fn buildFullDetailHeightmapMesh(
 }
 
 const FaceDir = enum { north, south, east, west };
+
+const LOD_UV_BLOCK_SCALE: f32 = 1.0;
+
+fn topFaceUV(pos: [3]f32, world_x: i32, world_z: i32) [2]f32 {
+    return .{
+        (@as(f32, @floatFromInt(world_x)) + pos[0]) * LOD_UV_BLOCK_SCALE,
+        (@as(f32, @floatFromInt(world_z)) + pos[2]) * LOD_UV_BLOCK_SCALE,
+    };
+}
+
+fn sideFaceUV(pos: [3]f32, dir: FaceDir, world_x: i32, world_z: i32) [2]f32 {
+    const horizontal = switch (dir) {
+        .north, .south => @as(f32, @floatFromInt(world_x)) + pos[0],
+        .east, .west => @as(f32, @floatFromInt(world_z)) + pos[2],
+    };
+    return .{ horizontal * LOD_UV_BLOCK_SCALE, pos[1] * LOD_UV_BLOCK_SCALE };
+}
+
+fn skirtDirToFaceDir(dir: SkirtDir) FaceDir {
+    return switch (dir) {
+        .north => .north,
+        .south => .south,
+        .east => .east,
+        .west => .west,
+    };
+}
+
+fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
+    const clamped_x = @min(gx, data.width - 1);
+    const clamped_z = @min(gz, data.width - 1);
+    const idx = clamped_x + clamped_z * data.width;
+    const block = data.top_blocks[idx];
+    if (block != .air) return block;
+    return data.biomes[idx].getSurfaceBlock();
+}
+
+fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32) TextureAtlas.BlockTiles {
+    const block = blockForLODCell(data, gx, gz);
+    return atlas.getTilesForBlock(@intFromEnum(block));
+}
 
 // Helper functions for unpacking colors
 fn unpackR(color: u32) f32 {
@@ -673,6 +721,8 @@ fn addSmoothQuad(
     c01: u32,
     c11: u32,
     tile_id: u16,
+    world_x: i32,
+    world_z: i32,
 ) !void {
     const y00 = h00;
     const y10 = h10;
@@ -711,31 +761,31 @@ fn addSmoothQuad(
     }
 
     // Triangle 1: (0,0), (1,1), (1,0)
-    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n1, .{ 0, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n1, .{ 1, 1 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y10, z }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, n1, .{ 1, 0 }, tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n1, topFaceUV(.{ x, y00, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n1, topFaceUV(.{ x + size, y11, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y10, z }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, n1, topFaceUV(.{ x + size, y10, z }, world_x, world_z), tile_id));
 
-    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n2, .{ 0, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x, y01, z + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, n2, .{ 0, 1 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n2, .{ 1, 1 }, tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n2, topFaceUV(.{ x, y00, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y01, z + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, n2, topFaceUV(.{ x, y01, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n2, topFaceUV(.{ x + size, y11, z + size }, world_x, world_z), tile_id));
 }
 
 /// Add a top-facing quad (two triangles)
-fn addTopFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y: f32, z: f32, size: f32, r: f32, g: f32, b: f32, tile_id: u16) !void {
+fn addTopFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y: f32, z: f32, size: f32, r: f32, g: f32, b: f32, tile_id: u16, world_x: i32, world_z: i32) !void {
     const normal = [3]f32{ 0, 1, 0 };
     const color = [3]f32{ r, g, b };
 
-    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, .{ 0, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, .{ 1, 1 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x, y, z + size }, color, normal, .{ 0, 1 }, tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, topFaceUV(.{ x, y, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, topFaceUV(.{ x + size, y, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z + size }, color, normal, topFaceUV(.{ x, y, z + size }, world_x, world_z), tile_id));
 
-    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, .{ 0, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, .{ 1, 1 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z }, color, normal, .{ 1, 0 }, tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, topFaceUV(.{ x, y, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, topFaceUV(.{ x + size, y, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z }, color, normal, topFaceUV(.{ x + size, y, z }, world_x, world_z), tile_id));
 }
 
 /// Add a side-facing quad for cliff faces
-fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y_top: f32, z: f32, size: f32, y_bottom: f32, r: f32, g: f32, b: f32, dir: FaceDir, tile_id: u16) !void {
+fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y_top: f32, z: f32, size: f32, y_bottom: f32, r: f32, g: f32, b: f32, dir: FaceDir, tile_id: u16, world_x: i32, world_z: i32) !void {
     const color = [3]f32{ r, g, b };
 
     const normal: [3]f32 = switch (dir) {
@@ -773,13 +823,13 @@ fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanag
         },
     };
 
-    try vertices.append(allocator, makeLODVertex(corners[0], color, normal, .{ 0, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(corners[1], color, normal, .{ 1, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(corners[2], color, normal, .{ 1, 1 }, tile_id));
+    try vertices.append(allocator, makeLODVertex(corners[0], color, normal, sideFaceUV(corners[0], dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(corners[1], color, normal, sideFaceUV(corners[1], dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(corners[2], color, normal, sideFaceUV(corners[2], dir, world_x, world_z), tile_id));
 
-    try vertices.append(allocator, makeLODVertex(corners[0], color, normal, .{ 0, 0 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(corners[2], color, normal, .{ 1, 1 }, tile_id));
-    try vertices.append(allocator, makeLODVertex(corners[3], color, normal, .{ 0, 1 }, tile_id));
+    try vertices.append(allocator, makeLODVertex(corners[0], color, normal, sideFaceUV(corners[0], dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(corners[2], color, normal, sideFaceUV(corners[2], dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(corners[3], color, normal, sideFaceUV(corners[3], dir, world_x, world_z), tile_id));
 }
 
 /// LOD Mesh Builder - builds meshes for LOD regions
@@ -796,9 +846,9 @@ pub const LODMeshBuilder = struct {
         mesh: *LODMesh,
         heightmaps: [4][]const f32, // NW, NE, SW, SE chunks
         biomes: [4][]const BiomeId,
-        _: i32,
-        _: i32,
-        _: *const TextureAtlas,
+        world_x: i32,
+        world_z: i32,
+        atlas: *const TextureAtlas,
     ) !void {
         _ = self;
         const chunk_size: u32 = 16;
@@ -834,6 +884,7 @@ pub const LODMeshBuilder = struct {
                     const height = heightmap[idx];
                     const biome = biome_data[idx];
                     const color = biome_mod.getBiomeColor(biome);
+                    const tiles = atlas.getTilesForBlock(@intFromEnum(biome.getSurfaceBlock()));
 
                     const r: f32 = @as(f32, @floatFromInt((color >> 16) & 0xFF)) / 255.0;
                     const g: f32 = @as(f32, @floatFromInt((color >> 8) & 0xFF)) / 255.0;
@@ -844,14 +895,14 @@ pub const LODMeshBuilder = struct {
                     const wy: f32 = @floatFromInt(height);
                     const size: f32 = @floatFromInt(cell_size);
 
-                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, Vertex.LOD_TILE_ID);
+                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, tiles.top, world_x, world_z);
 
                     // Skirts
                     const skirt_depth = size * 4.0;
-                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
-                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
-                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
-                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
+                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, tiles.side, world_x, world_z);
+                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, tiles.side, world_x, world_z);
+                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, tiles.side, world_x, world_z);
+                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, tiles.side, world_x, world_z);
                 }
             }
         }
@@ -876,9 +927,9 @@ pub const LODMeshBuilder = struct {
         mesh: *LODMesh,
         heightmaps: [16][]const f32,
         biomes_data: [16][]const BiomeId,
-        _: i32,
-        _: i32,
-        _: *const TextureAtlas,
+        world_x: i32,
+        world_z: i32,
+        atlas: *const TextureAtlas,
     ) !void {
         _ = self;
         const chunk_size: u32 = 16;
@@ -911,6 +962,7 @@ pub const LODMeshBuilder = struct {
                     const height = heightmap[idx];
                     const biome = biome_data[idx];
                     const color = biome_mod.getBiomeColor(biome);
+                    const tiles = atlas.getTilesForBlock(@intFromEnum(biome.getSurfaceBlock()));
 
                     const r: f32 = @as(f32, @floatFromInt((color >> 16) & 0xFF)) / 255.0;
                     const g: f32 = @as(f32, @floatFromInt((color >> 8) & 0xFF)) / 255.0;
@@ -921,14 +973,14 @@ pub const LODMeshBuilder = struct {
                     const wy: f32 = @floatFromInt(height);
                     const size: f32 = @floatFromInt(cell_size);
 
-                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, Vertex.LOD_TILE_ID);
+                    try addTopFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, r, g, b, tiles.top, world_x, world_z);
 
                     // Skirts
                     const skirt_depth = size * 4.0;
-                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, Vertex.LOD_TILE_ID);
-                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, Vertex.LOD_TILE_ID);
-                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, Vertex.LOD_TILE_ID);
-                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, Vertex.LOD_TILE_ID);
+                    if (gx == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .west, tiles.side, world_x, world_z);
+                    if (gx == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.6, g * 0.6, b * 0.6, .east, tiles.side, world_x, world_z);
+                    if (gz == 0) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .north, tiles.side, world_x, world_z);
+                    if (gz == grid_per_chunk - 1) try addSideFaceQuad(mesh.allocator, &vertices, wx, wy, wz, size, wy - skirt_depth, r * 0.7, g * 0.7, b * 0.7, .south, tiles.side, world_x, world_z);
                 }
             }
         }
@@ -1031,7 +1083,7 @@ test "buildFullDetailHeightmapMesh spans full LOD region" {
     try std.testing.expectEqual(@as(f32, 256.0), max_z);
 }
 
-test "buildFromSimplifiedData marks vertices as LOD" {
+test "buildFromSimplifiedData uses atlas tiles and world-scaled UVs" {
     const allocator = std.testing.allocator;
     const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
 
@@ -1047,7 +1099,7 @@ test "buildFromSimplifiedData marks vertices as LOD" {
         .has_pbr = false,
         .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** MAX_BLOCK_TYPES,
     };
-    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = TextureAtlas.BlockTiles.uniform(23);
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
 
     var data = try LODSimplifiedData.init(allocator, .lod3);
     defer data.deinit();
@@ -1062,15 +1114,26 @@ test "buildFromSimplifiedData marks vertices as LOD" {
     var mesh = LODMesh.init(allocator, .lod3);
     defer mesh.deinit(testResources());
 
-    try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+    try mesh.buildFromSimplifiedData(&data, 32, 64, &atlas);
 
     const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
     try std.testing.expect(verts.len > 0);
 
-    for (verts) |v| try std.testing.expectEqual(Vertex.LOD_TILE_ID, @as(u16, @intCast(v.packed_meta & 0xFFFF)));
+    try std.testing.expectEqual(@as(u16, 23), @as(u16, @intCast(verts[0].packed_meta & 0xFFFF)));
+    try std.testing.expectEqual(@as(f32, 32.0), @as(f32, verts[0].uv[0]));
+    try std.testing.expectEqual(@as(f32, 64.0), @as(f32, verts[0].uv[1]));
+
+    var found_side_tile = false;
+    for (verts) |v| {
+        if (@as(u16, @intCast(v.packed_meta & 0xFFFF)) == 24) {
+            found_side_tile = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_side_tile);
 }
 
-test "buildFromHeightmap marks vertices as LOD" {
+test "buildFromHeightmap uses biome atlas tiles" {
     const allocator = std.testing.allocator;
     const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
 
@@ -1086,6 +1149,7 @@ test "buildFromHeightmap marks vertices as LOD" {
         .has_pbr = false,
         .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** MAX_BLOCK_TYPES,
     };
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
 
     const width: u32 = 4;
     const count = width * width;
@@ -1099,5 +1163,5 @@ test "buildFromHeightmap marks vertices as LOD" {
 
     const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
     try std.testing.expect(verts.len > 0);
-    for (verts) |v| try std.testing.expectEqual(@as(u16, Vertex.LOD_TILE_ID), @as(u16, @intCast(v.packed_meta & 0xFFFF)));
+    try std.testing.expectEqual(@as(u16, 23), @as(u16, @intCast(verts[0].packed_meta & 0xFFFF)));
 }
