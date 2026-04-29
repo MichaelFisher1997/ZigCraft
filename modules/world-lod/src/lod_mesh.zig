@@ -631,18 +631,23 @@ fn buildFullDetailHeightmapMesh(
 const FaceDir = enum { north, south, east, west };
 
 const LOD_UV_BLOCK_SCALE: f32 = 1.0;
+const LOD_UV_WRAP_BLOCKS: i32 = 256;
+
+fn lodUVOffset(coord: i32) f32 {
+    return @floatFromInt(@mod(coord, LOD_UV_WRAP_BLOCKS));
+}
 
 fn topFaceUV(pos: [3]f32, world_x: i32, world_z: i32) [2]f32 {
     return .{
-        (@as(f32, @floatFromInt(world_x)) + pos[0]) * LOD_UV_BLOCK_SCALE,
-        (@as(f32, @floatFromInt(world_z)) + pos[2]) * LOD_UV_BLOCK_SCALE,
+        (lodUVOffset(world_x) + pos[0]) * LOD_UV_BLOCK_SCALE,
+        (lodUVOffset(world_z) + pos[2]) * LOD_UV_BLOCK_SCALE,
     };
 }
 
 fn sideFaceUV(pos: [3]f32, dir: FaceDir, world_x: i32, world_z: i32) [2]f32 {
     const horizontal = switch (dir) {
-        .north, .south => @as(f32, @floatFromInt(world_x)) + pos[0],
-        .east, .west => @as(f32, @floatFromInt(world_z)) + pos[2],
+        .north, .south => lodUVOffset(world_x) + pos[0],
+        .east, .west => lodUVOffset(world_z) + pos[2],
     };
     return .{ horizontal * LOD_UV_BLOCK_SCALE, pos[1] * LOD_UV_BLOCK_SCALE };
 }

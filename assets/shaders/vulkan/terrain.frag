@@ -261,7 +261,7 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     
     float bias = BASE_BIAS * cascadeScale + SLOPE_BIAS * min(tanTheta, 5.0) * cascadeScale;
     bias = min(bias, MAX_BIAS);
-    if (vTileID < 0) bias = max(bias, 0.00045 * cascadeScale);
+    if (vTileID < 0 || vMaskRadius > 0.0) bias = max(bias, 0.00045 * cascadeScale);
     float compareDepth = min(currentDepth + bias, 1.0);
 
     int pcfSamples = int(global.shadow_params.x);
@@ -657,6 +657,7 @@ void main() {
     const float LOD_TRANSITION_WIDTH = 24.0;
     const float AO_FADE_DISTANCE = 128.0;
     float viewDistance = length(vFragPosWorld);
+    bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
 
     if (vMaskRadius > 0.0) {
         const float CHUNK_SIZE = 16.0;
@@ -672,7 +673,7 @@ void main() {
     vec2 uv = (vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) + tiledUV) * (1.0 / 16.0);
 
     vec3 N = normalize(vNormal);
-    if (vTileID < 0) {
+    if (isLOD) {
         N = vec3(0.0, 1.0, 0.0);
     }
     vec4 normalMapSample = vec4(0.5, 0.5, 1.0, 0.0);
@@ -693,7 +694,7 @@ void main() {
     float totalShadow = shadowFactor;
 
     float ssao = mix(1.0, texture(uSSAOMap, gl_FragCoord.xy / global.viewport_size.xy).r, global.pbr_params.w);
-    if (vTileID < 0) {
+    if (isLOD) {
         ssao = 1.0;
     }
     float ao = mix(1.0, vAO, mix(0.4, 0.05, clamp(viewDistance / AO_FADE_DISTANCE, 0.0, 1.0)));
@@ -735,7 +736,7 @@ void main() {
         } else {
             color = computeLegacyDirect(albedo, nDotL, totalShadow, vSkyLight, vBlockLight, LEGACY_LIGHTING_INTENSITY) * ao * ssao;
         }
-    } else if (vTileID < 0) {
+    } else if (isLOD) {
         color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
     } else {
         color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
