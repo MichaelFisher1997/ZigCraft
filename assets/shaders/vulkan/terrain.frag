@@ -467,13 +467,11 @@ vec3 computeSimpleLighting(vec3 albedo, vec3 N, vec3 L, float skyLightIn, float 
     vec3 sunKeyTint = mix(global.sun_color.rgb, vec3(1.0, 0.90, 0.72), 0.25);
     vec3 moonKeyTint = vec3(0.18, 0.22, 0.34);
     vec3 skyTint = mix(vec3(0.52, 0.70, 0.86), global.fog_color.rgb, 0.45);
-    vec3 entranceTint = vec3(0.50, 0.68, 0.82);
     vec3 caveTint = vec3(0.32, 0.34, 0.36);
 
     float indoorFloor = 0.045 * litGate;
     vec3 skyFill = caveTint * (indoorFloor + caveSideVisibility * 0.060);
     skyFill += skyTint * global.lighting.x * skyCurve * (0.82 + 0.18 * faceUp + 0.12 * entranceFacing);
-    skyFill += entranceTint * 0.0;
     skyFill *= mix(1.0, 0.22, shadowVis);
 
     vec3 keyLight = sunKeyTint * sunDiffuse * sunAmount * outdoor * (1.0 - shadowVis) * 0.55;
@@ -685,7 +683,7 @@ void main() {
     float nDotL = max(dot(N, L), 0.0);
     float skyVisibility = clamp(vSkyLight, 0.0, 1.0);
     float atmosphericVisibility = skyVisibilityFactor(skyVisibility);
-    bool isCloud = vTileID < 0 && vSkyLight > 0.99 && vSkyLight < 0.999 && max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)) < 0.001;
+    bool isCloud = vTileID < 0 && vEntranceDir.x > 0.9 && vEntranceDir.y < -0.9;
     float cascadeDistance = length(vFragPosWorld);
     int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
     float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
