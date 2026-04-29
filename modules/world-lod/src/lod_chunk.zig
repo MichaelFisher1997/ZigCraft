@@ -209,6 +209,8 @@ pub const ILODConfig = struct {
 
     pub const VTable = struct {
         getRadii: *const fn (ptr: *anyopaque) [LODLevel.count]i32,
+        getActiveLODCount: *const fn (ptr: *anyopaque) u32,
+        setActiveLODCount: *const fn (ptr: *anyopaque, count: u32) void,
         setLOD0Radius: *const fn (ptr: *anyopaque, radius: i32) void,
         setRadii: *const fn (ptr: *anyopaque, radii: [LODLevel.count]i32) void,
         getLODForDistance: *const fn (ptr: *anyopaque, dist_chunks: i32) LODLevel,
@@ -222,6 +224,12 @@ pub const ILODConfig = struct {
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
         return self.vtable.getRadii(self.ptr);
+    }
+    pub fn getActiveLODCount(self: ILODConfig) u32 {
+        return self.vtable.getActiveLODCount(self.ptr);
+    }
+    pub fn setActiveLODCount(self: ILODConfig, count: u32) void {
+        self.vtable.setActiveLODCount(self.ptr, count);
     }
     pub fn setLOD0Radius(self: ILODConfig, radius: i32) void {
         self.vtable.setLOD0Radius(self.ptr, radius);
@@ -258,8 +266,15 @@ pub const ILODConfig = struct {
     }
 };
 
+pub fn activeLODCount(config: ILODConfig) usize {
+    return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
+}
+
 /// Concrete implementation of LOD system configuration.
 pub const LODConfig = struct {
+    pub const dynamic_lod0_radius: i32 = 16;
+    pub const dynamic_lod3_radius: i32 = 512;
+
     radii: [LODLevel.count]i32 = .{ 16, 40, 80, 160 },
 
     memory_budget_mb: u32 = 256,
@@ -286,15 +301,29 @@ pub const LODConfig = struct {
         return self.qem_triangle_targets[@intFromEnum(lod)];
     }
 
+    pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
+        const lod0 = @min(@max(distance, 1), dynamic_lod0_radius);
+        const dist_i64 = @as(i64, @max(distance, 1));
+        const max_radius_i64 = @as(i64, dynamic_lod3_radius);
+        const lod1 = @as(i32, @intCast(@min(@max(@as(i64, lod0) * 2, dist_i64 * 2), max_radius_i64)));
+        const lod2 = @as(i32, @intCast(@min(@max(@as(i64, lod1) * 2, dist_i64 * 4), max_radius_i64)));
+        return .{ lod0, @min(lod1, dynamic_lod3_radius), lod2, dynamic_lod3_radius };
+    }
+
+    pub fn activeCountForRenderDistance(distance: i32) u32 {
+        return if (distance > dynamic_lod0_radius) LODLevel.count else 2;
+    }
+
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
-        inline for (0..LODLevel.count) |i| {
+        const active_lod_count = activeLODCount(self.interfaceConst());
+        for (0..active_lod_count) |i| {
             if (dist_chunks <= self.radii[i]) return @enumFromInt(@as(u3, @intCast(i)));
         }
-        return .lod3; // Beyond max distance, still use LOD3
+        return @enumFromInt(@as(u3, @intCast(active_lod_count - 1)));
     }
 
     pub fn isInRange(self: *const LODConfig, dist_chunks: i32) bool {
-        return dist_chunks <= self.radii[LODLevel.count - 1];
+        return dist_chunks <= self.radii[activeLODCount(self.interfaceConst()) - 1];
     }
 
     /// Returns the interface for this concrete config.
@@ -305,8 +334,17 @@ pub const LODConfig = struct {
         };
     }
 
+    fn interfaceConst(self: *const LODConfig) ILODConfig {
+        return .{
+            .ptr = @constCast(self),
+            .vtable = &VTABLE,
+        };
+    }
+
     const VTABLE = ILODConfig.VTable{
         .getRadii = getRadiiWrapper,
+        .getActiveLODCount = getActiveLODCountWrapper,
+        .setActiveLODCount = setActiveLODCountWrapper,
         .setLOD0Radius = setLOD0RadiusWrapper,
         .setRadii = setRadiiWrapper,
         .getLODForDistance = getLODForDistanceWrapper,
@@ -321,6 +359,14 @@ pub const LODConfig = struct {
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.radii;
+    }
+    fn getActiveLODCountWrapper(ptr: *anyopaque) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return std.math.clamp(self.active_lod_count, 1, LODLevel.count);
+    }
+    fn setActiveLODCountWrapper(ptr: *anyopaque, count: u32) void {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        self.active_lod_count = std.math.clamp(count, 1, LODLevel.count);
     }
     fn setLOD0RadiusWrapper(ptr: *anyopaque, radius: i32) void {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -392,6 +438,43 @@ test "LODConfig distance calculation" {
     try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(20));
     try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(50));
     try std.testing.expectEqual(LODLevel.lod3, config.getLODForDistance(100));
+}
+
+test "LODConfig distance calculation respects active LOD count" {
+    const config = LODConfig{
+        .radii = .{ 16, 32, 64, 128 },
+        .active_lod_count = 2,
+    };
+
+    try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(10));
+    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(20));
+    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(100));
+    try std.testing.expect(!config.isInRange(100));
+}
+
+test "ILODConfig exposes clamped active LOD count" {
+    var config = LODConfig{ .active_lod_count = 2 };
+    var interface = config.interface();
+    try std.testing.expectEqual(@as(u32, 2), interface.getActiveLODCount());
+
+    config.active_lod_count = 0;
+    interface = config.interface();
+    try std.testing.expectEqual(@as(u32, 1), interface.getActiveLODCount());
+
+    config.active_lod_count = LODLevel.count + 10;
+    interface = config.interface();
+    try std.testing.expectEqual(@as(u32, LODLevel.count), interface.getActiveLODCount());
+}
+
+test "LODConfig expands render distance into distant LOD horizon" {
+    try std.testing.expectEqual(@as(u32, 2), LODConfig.activeCountForRenderDistance(8));
+    try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(32));
+
+    const radii = LODConfig.radiiForRenderDistance(32);
+    try std.testing.expectEqual(@as(i32, 16), radii[0]);
+    try std.testing.expectEqual(@as(i32, 64), radii[1]);
+    try std.testing.expectEqual(@as(i32, 128), radii[2]);
+    try std.testing.expectEqual(@as(i32, 512), radii[3]);
 }
 
 test "ChunkBounds intersects radius radially" {

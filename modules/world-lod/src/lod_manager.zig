@@ -339,10 +339,11 @@ pub const LODManager = struct {
         const player_wz: i32 = @intFromFloat(player_pos.z);
         _ = self.generator.maybeRecenterCache(player_wx, player_wz);
 
-        // Queue LOD regions that need loading (also queue on first frame)
-        // Priority: LOD3 first (fast, fills horizon), then LOD2, LOD1
-        // We iterate backwards from LODLevel.count-1 down to 1
-        var i: usize = LODLevel.count - 1;
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+
+        // Queue active LOD regions coarsest-first so the horizon fills before
+        // finer detail. Presets may intentionally disable coarser levels.
+        var i: usize = active_lod_count - 1;
         while (i > 0) : (i -= 1) {
             self.queueLODRegions(@enumFromInt(@as(u3, @intCast(i))), player_velocity, chunk_checker, checker_ctx) catch |err| {
                 log.log.warn("LOD queue error for level {}: {} (non-fatal)", .{ i, err });
@@ -395,7 +396,8 @@ pub const LODManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        for (1..LODLevel.count) |i| {
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        for (1..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
             var iter = self.regions[i].iterator();
             while (iter.next()) |entry| {
@@ -405,18 +407,19 @@ pub const LODManager = struct {
                     const dx = chunk.region_x * scale - self.player_cx;
                     const dz = chunk.region_z * scale - self.player_cz;
                     const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
-                    const lod_bits = @as(i32, @intCast(i)) << 28;
+                    const lod_priority_bias = @as(i32, @intCast(LODLevel.count - 1 - i)) << 28;
 
                     chunk.state = .meshing;
                     try self.gen_queues[LODLevel.count - 1].push(.{
                         .type = .chunk_meshing,
                         // Encode LOD level in high bits of dist_sq
-                        .dist_sq = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_bits,
+                        .dist_sq = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias,
                         .data = .{
                             .chunk = .{
                                 .x = chunk.region_x,
                                 .z = chunk.region_z,
                                 .job_token = chunk.job_token,
+                                .lod_level = @as(u3, @intCast(i)),
                             },
                         },
                     });
@@ -437,8 +440,9 @@ pub const LODManager = struct {
         const max_uploads = self.config.getMaxUploadsPerFrame();
         var uploads: u32 = 0;
 
-        // Process from highest LOD down (furthest, should be ready first)
-        var i: usize = LODLevel.count - 1;
+        // Process from highest active LOD down (furthest, should be ready first)
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        var i: usize = active_lod_count - 1;
         while (i > 0) : (i -= 1) {
             while (!self.upload_queues[i].isEmpty() and uploads < max_uploads) {
                 if (self.upload_queues[i].pop()) |chunk| {
@@ -466,7 +470,8 @@ pub const LODManager = struct {
     /// Unload regions that are too far from player
     fn unloadDistantRegions(self: *Self) !void {
         const radii = self.config.getRadii();
-        for (1..LODLevel.count) |i| {
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        for (1..active_lod_count) |i| {
             try self.unloadDistantForLevel(@enumFromInt(@as(u3, @intCast(i))), radii[i]);
         }
     }
@@ -584,18 +589,19 @@ pub const LODManager = struct {
         const dist_sq = pointDistanceSquared(chunk_x, chunk_z, self.player_cx, self.player_cz);
         const radii = self.config.getRadii();
 
-        inline for (0..LODLevel.count) |i| {
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        for (0..active_lod_count) |i| {
             const radius_sq = @as(i64, radii[i]) * @as(i64, radii[i]);
             if (dist_sq <= radius_sq) return @enumFromInt(@as(u3, @intCast(i)));
         }
 
-        return .lod3;
+        return @enumFromInt(@as(u3, @intCast(active_lod_count - 1)));
     }
 
     /// Check if a position is within LOD range
     pub fn isInRange(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
         const radii = self.config.getRadii();
-        const max_radius = radii[LODLevel.count - 1];
+        const max_radius = radii[lod_chunk.activeLODCount(self.config) - 1];
         const dist_sq = pointDistanceSquared(chunk_x, chunk_z, self.player_cx, self.player_cz);
         return dist_sq <= @as(i64, max_radius) * @as(i64, max_radius);
     }
@@ -625,7 +631,8 @@ pub const LODManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        for (1..LODLevel.count) |i| {
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        for (1..active_lod_count) |i| {
             const storage = &self.regions[i];
             const meshes = &self.meshes[i];
 
@@ -748,8 +755,7 @@ pub const LODManager = struct {
     fn processLODJob(ctx: *anyopaque, job: Job) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
 
-        // Determine which LOD level this job is for based on encoded priority
-        const lod_level: LODLevel = @enumFromInt(@as(u3, @intCast((job.dist_sq >> 28) & 0x7)));
+        const lod_level: LODLevel = @enumFromInt(job.data.chunk.lod_level);
         const key = LODRegionKey{
             .rx = job.data.chunk.x,
             .rz = job.data.chunk.z,

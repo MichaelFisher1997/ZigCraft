@@ -23,7 +23,7 @@
 //! ## Frustum Culling
 //!
 //! Visible regions are filtered by frustum culling before adding to the draw
-//! list. Each LODChunk has an AABB that is tested against the camera frustum.
+//! list. Each LODChunk has conservative bounds that are tested against the camera frustum.
 //! Optional ChunkChecker callback allows additional visibility filtering.
 
 const std = @import("std");
@@ -51,12 +51,24 @@ const ChunkChecker = lod_gpu.ChunkChecker;
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
 const Frustum = @import("engine-math").Frustum;
-const AABB = @import("engine-math").AABB;
 const rhi_types = @import("engine-rhi");
-const log = @import("engine-core").log;
+const engine_core = @import("engine-core");
+const log = engine_core.log;
 const build_options = @import("world_lod_options");
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
+
+const RenderDiag = struct {
+    meshes_seen: u32 = 0,
+    missing_region: u32 = 0,
+    not_ready: u32 = 0,
+    bad_state: u32 = 0,
+    covered_finer_lod: u32 = 0,
+    out_of_range: u32 = 0,
+    covered_chunks: u32 = 0,
+    frustum_culled: u32 = 0,
+    drawn: u32 = 0,
+};
 
 /// Expected RHI interface for LODRenderer:
 /// - createBuffer(size: usize, usage: BufferUsage) !BufferHandle
@@ -144,9 +156,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
 
-            // Collect visible meshes
-            // Process from highest LOD down
-            var i: usize = LODLevel.count - 1;
+            // Collect visible meshes from coarsest active LOD down. Some presets
+            // intentionally disable coarser levels to avoid low-quality slabs.
+            var i: usize = lod_chunk.activeLODCount(config) - 1;
             while (i > 0) : (i -= 1) {
                 const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
                 self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks) catch |err| {
@@ -180,6 +192,9 @@ pub fn LODRenderer(comptime RHI: type) type {
         ) !void {
             const meshes = &all_meshes[@intFromEnum(lod)];
             const regions = &all_regions[@intFromEnum(lod)];
+            const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
+            const disable_frustum = engine_core.envFlag("ZIGCRAFT_LOD_DISABLE_FRUSTUM", false);
+            var diag = RenderDiag{};
             var lod_rendered: u32 = 0;
             var lod_covered: u32 = 0;
             var first_missing_cx: i32 = 0;
@@ -192,17 +207,30 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             var iter = meshes.iterator();
             while (iter.next()) |entry| {
+                diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
-                if (!mesh.ready or mesh.vertex_count == 0) continue;
+                if (!mesh.ready or mesh.vertex_count == 0) {
+                    diag.not_ready += 1;
+                    continue;
+                }
                 if (regions.get(entry.key_ptr.*)) |chunk| {
-                    if (chunk.state != .renderable) continue;
-                    if (self.isCoveredByFinerLOD(entry.key_ptr.*, all_meshes, all_regions)) continue;
+                    if (chunk.state != .renderable) {
+                        diag.bad_state += 1;
+                        continue;
+                    }
+                    if (self.isCoveredByFinerLOD(entry.key_ptr.*, all_meshes, all_regions)) {
+                        diag.covered_finer_lod += 1;
+                        continue;
+                    }
 
                     const bounds = chunk.worldBounds();
                     const chunk_bounds = chunk.chunkBounds();
 
                     if (max_distance_chunks) |max_dist| {
-                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) continue;
+                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) {
+                            diag.out_of_range += 1;
+                            continue;
+                        }
                     }
 
                     if (chunk_checker) |checker| {
@@ -214,6 +242,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                             const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, pc_x, pc_z, lod0_radius);
                             if (cov.covered) {
                                 lod_covered += 1;
+                                diag.covered_chunks += 1;
                                 continue;
                             }
                             if (lod_rendered == 0) {
@@ -226,11 +255,11 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     lod_rendered += 1;
 
-                    const aabb_min = Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, 0.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z);
-                    const aabb_max = Vec3.init(@as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, 256.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z);
-
-                    if (use_frustum) {
-                        if (!frustum.intersectsAABB(AABB.init(aabb_min, aabb_max))) continue;
+                    if (use_frustum and !disable_frustum) {
+                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) {
+                            diag.frustum_culled += 1;
+                            continue;
+                        }
                     }
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
@@ -245,6 +274,34 @@ pub fn LODRenderer(comptime RHI: type) type {
                         .padding = .{ 0, 0, 0 },
                     });
                     try self.draw_list.append(self.allocator, mesh);
+                    diag.drawn += 1;
+                } else {
+                    diag.missing_region += 1;
+                }
+            }
+
+            if (diag_enabled) {
+                const S = struct {
+                    var counter: [LODLevel.count]u64 = .{0} ** LODLevel.count;
+                };
+                const lod_idx = @intFromEnum(lod);
+                S.counter[lod_idx] += 1;
+                if (S.counter[lod_idx] % 120 == 1) {
+                    log.log.info("LOD_RENDER_DIAG lod={} meshes={} drawn={} not_ready={} bad_state={} no_region={} finer={} chunk_cov={} frustum={} range={} frustum_disabled={} cam_chunk=({}, {})", .{
+                        lod_idx,
+                        diag.meshes_seen,
+                        diag.drawn,
+                        diag.not_ready,
+                        diag.bad_state,
+                        diag.missing_region,
+                        diag.covered_finer_lod,
+                        diag.covered_chunks,
+                        diag.frustum_culled,
+                        diag.out_of_range,
+                        disable_frustum,
+                        pc_x_diag,
+                        pc_z_diag,
+                    });
                 }
             }
 
@@ -417,6 +474,23 @@ pub fn LODRenderer(comptime RHI: type) type {
 fn isRegionInRange(bounds: ChunkBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
     const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
     return bounds.intersectsRadius(camera_chunk.chunk_x, camera_chunk.chunk_z, max_distance_chunks);
+}
+
+fn isRegionInFrustum(frustum: Frustum, bounds: LODChunk.WorldBounds, camera_pos: Vec3) bool {
+    const min_x: f32 = @floatFromInt(bounds.min_x);
+    const min_z: f32 = @floatFromInt(bounds.min_z);
+    const max_x: f32 = @floatFromInt(bounds.max_x);
+    const max_z: f32 = @floatFromInt(bounds.max_z);
+
+    const center = Vec3.init(
+        (min_x + max_x) * 0.5 - camera_pos.x,
+        128.0 - camera_pos.y,
+        (min_z + max_z) * 0.5 - camera_pos.z,
+    );
+    const half_x = (max_x - min_x) * 0.5;
+    const half_z = (max_z - min_z) * 0.5;
+    const radius = @sqrt(half_x * half_x + half_z * half_z + 128.0 * 128.0);
+    return frustum.intersectsSphere(center, radius);
 }
 
 // Tests

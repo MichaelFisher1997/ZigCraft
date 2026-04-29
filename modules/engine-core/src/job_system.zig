@@ -81,6 +81,7 @@ pub const Job = struct {
         x: i32,
         z: i32,
         job_token: u32,
+        lod_level: u3 = 0,
     };
 
     pub const GenericJobData = struct {

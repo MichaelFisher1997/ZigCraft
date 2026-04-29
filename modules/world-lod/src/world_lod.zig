@@ -123,6 +123,11 @@ pub fn WorldLOD(comptime RHI: type) type {
             });
         }
 
+        pub fn setActiveLODCount(self: *Self, count: u32) void {
+            self.manager.config.setActiveLODCount(count);
+            log.log.info("Active LOD count updated: {}", .{self.manager.config.getActiveLODCount()});
+        }
+
         pub fn getStats(self: *const Self) LODStats {
             return self.manager.getStats();
         }

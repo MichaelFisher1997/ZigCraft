@@ -42,8 +42,8 @@ fn parseEnabledEnv(value: ?[]const u8, default_enabled: bool) bool {
 
 pub fn chooseVertexCapacityMb(vram_mb: usize, strict_safe_mode: bool) usize {
     if (strict_safe_mode) return @min(@as(usize, 256), @max(@as(usize, 128), @divFloor(vram_mb, 8)));
-    if (vram_mb >= 8192) return 512;
-    if (vram_mb >= 6144) return 384;
+    if (vram_mb >= 8192) return 768;
+    if (vram_mb >= 6144) return 512;
     if (vram_mb >= 4096) return 256;
     return 128;
 }
@@ -70,8 +70,8 @@ pub const ShadowStats = struct {
 test "WorldRenderer chooses vertex capacity from VRAM tier" {
     try std.testing.expectEqual(@as(usize, 128), chooseVertexCapacityMb(2048, false));
     try std.testing.expectEqual(@as(usize, 256), chooseVertexCapacityMb(4096, false));
-    try std.testing.expectEqual(@as(usize, 384), chooseVertexCapacityMb(6144, false));
-    try std.testing.expectEqual(@as(usize, 512), chooseVertexCapacityMb(8192, false));
+    try std.testing.expectEqual(@as(usize, 512), chooseVertexCapacityMb(6144, false));
+    try std.testing.expectEqual(@as(usize, 768), chooseVertexCapacityMb(8192, false));
 }
 
 test "WorldRenderer clamps strict safe vertex capacity" {

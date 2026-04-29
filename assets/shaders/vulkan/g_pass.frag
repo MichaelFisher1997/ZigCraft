@@ -47,6 +47,7 @@ float lodTransitionNoise(vec2 worldXZ) {
 
 void main() {
     const float LOD_TRANSITION_WIDTH = 24.0;
+    bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
     if (vMaskRadius > 0.0) {
         float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
         float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
@@ -56,7 +57,7 @@ void main() {
     }
 
     vec3 N = normalize(vNormal);
-    if (vTileID < 0) {
+    if (isLOD) {
         N = vec3(0.0, 1.0, 0.0);
     } else {
         // Calculate UV coordinates in atlas

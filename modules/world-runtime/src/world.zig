@@ -444,7 +444,9 @@ pub const World = struct {
             self.streamer.setRenderDistance(target);
 
             if (self.lod) |lod| {
-                lod.setLOD0Radius(target);
+                const radii = LODConfig.radiiForRenderDistance(target);
+                lod.setRadii(radii);
+                lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(target));
             }
         }
     }
