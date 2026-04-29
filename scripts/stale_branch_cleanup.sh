@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-DEFAULT_BRANCH="dev"
+HEAD_BRANCH="dev"
 STALE_DAYS=7
 
 deleted=()
@@ -19,7 +19,7 @@ if [[ -z "${stale_epoch:-}" ]]; then
 fi
 
 while IFS= read -r name; do
-    if [[ "$name" == "$DEFAULT_BRANCH" || "$name" == "main" || "$name" == "master" ]]; then
+    if [[ "$name" == "$HEAD_BRANCH" || "$name" == "main" || "$name" == "master" ]]; then
         skipped+=("$name: protected")
         continue
     fi
@@ -49,7 +49,7 @@ while IFS= read -r name; do
         continue
     fi
 
-    if ! status=$(gh api "repos/{owner}/{repo}/compare/${DEFAULT_BRANCH}...${name}" \
+    if ! status=$(gh api "repos/{owner}/{repo}/compare/${HEAD_BRANCH}...${name}" \
         --jq '{ahead: .ahead_by, behind: .behind_by, status: .status}' 2>/dev/null); then
         skipped+=("$name: API error during compare")
         continue
@@ -64,18 +64,28 @@ while IFS= read -r name; do
     fi
 
     if [[ "$ahead" -gt 0 ]]; then
-        skipped+=("$name: ${ahead} commit(s) ahead of ${DEFAULT_BRANCH}")
+        skipped+=("$name: ${ahead} commit(s) ahead of ${HEAD_BRANCH}")
         continue
     fi
 
     behind=$(echo "$status" | jq -r '.behind // 0')
+    if [[ "$behind" == "null" || -z "$behind" ]]; then
+        skipped+=("$name: invalid compare data")
+        continue
+    fi
+
     if [[ "$ahead" -eq 0 && "$behind" -eq 0 ]]; then
-        skipped+=("$name: identical to ${DEFAULT_BRANCH}")
+        skipped+=("$name: identical to ${HEAD_BRANCH}")
         continue
     fi
 
     if [[ "$comp_status" == "diverged" ]]; then
-        skipped+=("$name: diverged from ${DEFAULT_BRANCH}")
+        skipped+=("$name: diverged from ${HEAD_BRANCH}")
+        continue
+    fi
+
+    if [[ "$behind" -le 0 ]]; then
+        skipped+=("$name: not behind ${HEAD_BRANCH}")
         continue
     fi
 
@@ -96,7 +106,7 @@ if [[ ${#deleted[@]} -gt 0 ]]; then
     gh label create automation --color "#0366d6" --description "Automated processes" 2>/dev/null || true
 
     body=$(printf '### Stale Branch Cleanup Report\n\n')
-    body+=$(printf '**%d** branch(es) deleted (no commits ahead of `%s`, last activity > %d days ago):\n\n' "${#deleted[@]}" "$DEFAULT_BRANCH" "$STALE_DAYS")
+    body+=$(printf '**%d** branch(es) deleted (stale, behind `%s`, and 0 commits ahead):\n\n' "${#deleted[@]}" "$HEAD_BRANCH")
     for d in "${deleted[@]}"; do
         body+=$(printf -- '- `%s`\n' "$d")
     done
