@@ -37,6 +37,7 @@ pub fn collectStates(screen: ScreenDebugState, ctx: WorldContext, render_system:
     states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
     states[@intFromEnum(DebugFeature.ssao)] = !render_system.getDisableSSAO();
     states[@intFromEnum(DebugFeature.fog)] = screen.session.atmosphere.fog_enabled;
+    states[@intFromEnum(DebugFeature.clouds)] = render_system.getCloudsEnabled();
     states[@intFromEnum(DebugFeature.lpv_overlay)] = ctx.settings.debug_lpv_overlay_active;
     states[@intFromEnum(DebugFeature.frustum_debug)] = ctx.settings.debug_frustum_active;
     states[@intFromEnum(DebugFeature.occlusion_debug)] = ctx.settings.debug_occlusion_active;
@@ -93,6 +94,10 @@ pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldCo
         .gpass_render => render_system.setDisableGPassDraw(!render_system.getDisableGPassDraw()),
         .ssao => render_system.setDisableSSAO(!render_system.getDisableSSAO()),
         .fog => screen.session.atmosphere.fog_enabled = !screen.session.atmosphere.fog_enabled,
+        .clouds => {
+            ctx.settings.clouds_enabled = !ctx.settings.clouds_enabled;
+            render_system.setCloudsEnabled(ctx.settings.clouds_enabled);
+        },
         .lpv_overlay => ctx.settings.debug_lpv_overlay_active = !ctx.settings.debug_lpv_overlay_active,
         .frustum_debug => ctx.settings.debug_frustum_active = !ctx.settings.debug_frustum_active,
         .occlusion_debug => ctx.settings.debug_occlusion_active = !ctx.settings.debug_occlusion_active,

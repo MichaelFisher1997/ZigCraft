@@ -303,15 +303,16 @@ pub const LODConfig = struct {
 
     pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
         const lod0 = @min(@max(distance, 1), dynamic_lod0_radius);
-        const dist_i64 = @as(i64, @max(distance, 1));
+        const lod0_i64 = @as(i64, lod0);
         const max_radius_i64 = @as(i64, dynamic_lod3_radius);
-        const lod1 = @as(i32, @intCast(@min(@max(@as(i64, lod0) * 2, dist_i64 * 2), max_radius_i64)));
-        const lod2 = @as(i32, @intCast(@min(@max(@as(i64, lod1) * 2, dist_i64 * 4), max_radius_i64)));
-        return .{ lod0, @min(lod1, dynamic_lod3_radius), lod2, dynamic_lod3_radius };
+        const lod1 = @as(i32, @intCast(@min(@max(lod0_i64 * 4, @as(i64, 32)), max_radius_i64)));
+        const lod2 = @as(i32, @intCast(@min(@max(@as(i64, lod1) * 4, @as(i64, 128)), max_radius_i64)));
+        return .{ lod0, lod1, lod2, dynamic_lod3_radius };
     }
 
     pub fn activeCountForRenderDistance(distance: i32) u32 {
-        return if (distance > dynamic_lod0_radius) LODLevel.count else 2;
+        _ = distance;
+        return LODLevel.count;
     }
 
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
@@ -467,13 +468,19 @@ test "ILODConfig exposes clamped active LOD count" {
 }
 
 test "LODConfig expands render distance into distant LOD horizon" {
-    try std.testing.expectEqual(@as(u32, 2), LODConfig.activeCountForRenderDistance(8));
+    try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(8));
     try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(32));
+
+    const low_radii = LODConfig.radiiForRenderDistance(8);
+    try std.testing.expectEqual(@as(i32, 8), low_radii[0]);
+    try std.testing.expectEqual(@as(i32, 32), low_radii[1]);
+    try std.testing.expectEqual(@as(i32, 128), low_radii[2]);
+    try std.testing.expectEqual(@as(i32, 512), low_radii[3]);
 
     const radii = LODConfig.radiiForRenderDistance(32);
     try std.testing.expectEqual(@as(i32, 16), radii[0]);
     try std.testing.expectEqual(@as(i32, 64), radii[1]);
-    try std.testing.expectEqual(@as(i32, 128), radii[2]);
+    try std.testing.expectEqual(@as(i32, 256), radii[2]);
     try std.testing.expectEqual(@as(i32, 512), radii[3]);
 }
 

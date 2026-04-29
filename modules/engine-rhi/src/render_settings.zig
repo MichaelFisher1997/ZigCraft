@@ -37,10 +37,10 @@ pub const RenderDistancePresetConfig = struct {
 
 pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
     .{
-        .lod_radii = .{ 8, 16, 16, 16 },
-        .fog_start_percent = .{ 0.5, 0.5, 0.0, 0.0 },
-        .active_lod_count = 2,
-        .qem_targets = .{ 0, 2000, 0, 0 },
+        .lod_radii = .{ 6, 6, 6, 512 },
+        .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
+        .active_lod_count = 4,
+        .qem_targets = .{ 0, 1200, 300, 48 },
         .memory_budget_mb = 128,
         .max_uploads_per_frame = 4,
         .skip_cutout_lod2 = false,
@@ -48,7 +48,7 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .show_warning = false,
     },
     .{
-        .lod_radii = .{ 16, 32, 48, 64 },
+        .lod_radii = .{ 10, 40, 160, 512 },
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.4 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
@@ -59,7 +59,7 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .show_warning = false,
     },
     .{
-        .lod_radii = .{ 16, 32, 64, 100 },
+        .lod_radii = .{ 12, 48, 192, 512 },
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
@@ -70,7 +70,7 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .show_warning = false,
     },
     .{
-        .lod_radii = .{ 16, 32, 64, 256 },
+        .lod_radii = .{ 14, 56, 256, 512 },
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
@@ -81,7 +81,7 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .show_warning = false,
     },
     .{
-        .lod_radii = .{ 16, 32, 128, 512 },
+        .lod_radii = .{ 16, 64, 256, 512 },
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },

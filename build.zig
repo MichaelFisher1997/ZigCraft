@@ -27,6 +27,9 @@ pub fn build(b: *std.Build) void {
     const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly (normal, overworld, flat)") orelse "";
     options.addOption([]const u8, "auto_world", auto_world);
 
+    const auto_preset = b.option([]const u8, "auto-preset", "Graphics preset to apply for auto-world launches (low, medium, high, ultra, extreme)") orelse "";
+    options.addOption([]const u8, "auto_preset", auto_preset);
+
     const startup_diagnostic_seconds = b.option(u32, "startup-diagnostic-seconds", "Wait N seconds after auto-world startup, log chunk counts, and exit") orelse 0;
     options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
     const world_lod_options = b.addOptions();
@@ -306,6 +309,7 @@ pub fn build(b: *std.Build) void {
     benchmark_options.addOption(bool, "chunk_debug_mode", false);
     benchmark_options.addOption([]const u8, "chunk_debug_enable", "");
     benchmark_options.addOption([]const u8, "auto_world", "");
+    benchmark_options.addOption([]const u8, "auto_preset", "");
     benchmark_options.addOption(u32, "startup_diagnostic_seconds", 0);
     benchmark_options.addOption(bool, "skip_present", true);
     benchmark_options.addOption([]const u8, "screenshot_path", "");

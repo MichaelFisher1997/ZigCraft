@@ -108,10 +108,11 @@ pub const BenchmarkRunner = struct {
         const shadow_avg = averageArray(&gpu.shadow_pass_ms);
         const chunks_rendered = if (world_stats) |ws| ws.chunks_rendered else 0;
         const vertices = if (world_stats) |ws| ws.vertices_rendered else 0;
+        const frame_fps = if (dt > 0.000001) 1.0 / dt else fps;
 
         try self.samples.append(self.allocator, .{
             .cpu_ms = dt * 1000.0,
-            .fps = fps,
+            .fps = frame_fps,
             .gpu_shadow_ms = shadow_avg,
             .gpu_opaque_ms = gpu.opaque_pass_ms,
             .gpu_total_ms = gpu.total_gpu_ms,
@@ -163,12 +164,18 @@ pub const BenchmarkRunner = struct {
         }
 
         const count = @as(f64, @floatFromInt(@max(self.samples.items.len, 1)));
+        var fps_summary = try summarizeSeries(self.allocator, fps_values);
+        const sampled_s = cpu_sum / 1000.0;
+        if (sampled_s > 0.0) {
+            fps_summary.avg = @as(f64, @floatFromInt(self.samples.items.len)) / sampled_s;
+        }
+
         return .{
             .preset = self.preset,
             .render_distance = self.render_distance,
             .frames = @intCast(self.samples.items.len),
             .duration_s = self.duration_s,
-            .fps = try summarizeSeries(self.allocator, fps_values),
+            .fps = fps_summary,
             .cpu_ms_avg = cpu_sum / count,
             .gpu_ms = .{
                 .shadow_avg = shadow_sum / count,

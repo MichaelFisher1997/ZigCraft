@@ -86,6 +86,27 @@ layout(set = 0, binding = 11) uniform sampler3D uLPVGrid;       // LPV SH Red ch
 layout(set = 0, binding = 12) uniform sampler3D uLPVGridG;      // LPV SH Green channel
 layout(set = 0, binding = 13) uniform sampler3D uLPVGridB;      // LPV SH Blue channel
 
+vec3 sampleTileAverage(vec2 tileBase) {
+    const float TILE_SIZE = 1.0 / 16.0;
+    vec4 s0 = texture(uTexture, tileBase + vec2(0.25, 0.25) * TILE_SIZE);
+    vec4 s1 = texture(uTexture, tileBase + vec2(0.75, 0.25) * TILE_SIZE);
+    vec4 s2 = texture(uTexture, tileBase + vec2(0.25, 0.75) * TILE_SIZE);
+    vec4 s3 = texture(uTexture, tileBase + vec2(0.75, 0.75) * TILE_SIZE);
+
+    vec4 samples[4] = vec4[](s0, s1, s2, s3);
+    vec3 sum = vec3(0.0);
+    float weight = 0.0;
+    for (int i = 0; i < 4; i++) {
+        float w = smoothstep(0.05, 0.5, samples[i].a);
+        sum += samples[i].rgb * w;
+        weight += w;
+    }
+    if (weight <= 0.001) {
+        return texture(uTexture, tileBase + vec2(0.5) * TILE_SIZE).rgb;
+    }
+    return sum / weight;
+}
+
 layout(set = 0, binding = 2) uniform ShadowUniforms {
     mat4 light_space_matrices[4];
     vec4 cascade_splits;
@@ -653,8 +674,16 @@ void main() {
     float debugOutdoor = baselineOutdoorFactor(vSkyLight);
     const float LOD_TRANSITION_WIDTH = 24.0;
     const float AO_FADE_DISTANCE = 128.0;
+    const float TEXTURE_FADE_START = 32.0;
+    const float TEXTURE_FADE_END = 128.0;
+    const float SHADOW_FADE_START = 72.0;
+    const float SHADOW_FADE_END = 128.0;
     float viewDistance = length(vFragPosWorld);
     bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
+    float textureDetail = 1.0 - smoothstep(TEXTURE_FADE_START, TEXTURE_FADE_END, viewDistance);
+    if (isLOD) {
+        textureDetail = 0.0;
+    }
 
     if (vMaskRadius > 0.0) {
         const float CHUNK_SIZE = 16.0;
@@ -665,19 +694,21 @@ void main() {
         if (length(fragChunk - cameraChunk) <= maskChunks) discard;
     }
     
+    vec2 tileBase = vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) * (1.0 / 16.0);
     vec2 tiledUV = fract(vTexCoord);
     tiledUV = clamp(tiledUV, 0.001, 0.999);
-    vec2 uv = (vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) + tiledUV) * (1.0 / 16.0);
+    vec2 uv = tileBase + tiledUV * (1.0 / 16.0);
 
     vec3 N = normalize(vNormal);
     if (isLOD) {
         N = vec3(0.0, 1.0, 0.0);
     }
     vec4 normalMapSample = vec4(0.5, 0.5, 1.0, 0.0);
-    if (global.lighting.z > 0.5 && global.pbr_params.x > 1.5 && vTileID >= 0) {
+    if (global.lighting.z > 0.5 && global.pbr_params.x > 1.5 && vTileID >= 0 && textureDetail > 0.2) {
         normalMapSample = texture(uNormalMap, uv);
         mat3 TBN = mat3(normalize(vTangent), normalize(vBitangent), N);
-        N = normalize(TBN * (normalMapSample.rgb * 2.0 - 1.0));
+        vec3 mappedNormal = normalize(TBN * (normalMapSample.rgb * 2.0 - 1.0));
+        N = normalize(mix(N, mappedNormal, textureDetail));
     }
 
     vec3 L = normalize(global.sun_dir.xyz);
@@ -687,10 +718,14 @@ void main() {
     bool isCloud = vTileID < 0 && vEntranceDir.x > 0.9 && vEntranceDir.y < -0.9;
     float cascadeDistance = length(vFragPosWorld);
     int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
-    float shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
+    float shadowFactor = 0.0;
+    if (!isLOD) {
+        shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
+        shadowFactor *= 1.0 - smoothstep(SHADOW_FADE_START, SHADOW_FADE_END, cascadeDistance);
+    }
     if (isCloud) shadowFactor = 0.0;
     
-    float totalShadow = shadowFactor;
+    float totalShadow = shadowFactor * clamp(global.shadow_params.z, 0.0, 1.0);
 
     float ssao = mix(1.0, texture(uSSAOMap, gl_FragCoord.xy / global.viewport_size.xy).r, global.pbr_params.w);
     if (isLOD) {
@@ -712,7 +747,8 @@ void main() {
             float chroma = max(max(normalizedTint.r, normalizedTint.g), normalizedTint.b) - min(min(normalizedTint.r, normalizedTint.g), normalizedTint.b);
             float tintStrength = smoothstep(0.05, 0.2, chroma);
             vec3 tint = mix(vec3(1.0), normalizedTint, tintStrength);
-            albedo = texColor.rgb * tint;
+            vec3 flatTexColor = sampleTileAverage(tileBase) * tint;
+            albedo = mix(flatTexColor, texColor.rgb * tint, textureDetail);
             float albedoLuma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
             albedo = max(albedo, vec3(0.055) * smoothstep(0.0, 0.09, 0.09 - albedoLuma));
         }
@@ -722,7 +758,8 @@ void main() {
         vec4 texColor = texture(uTexture, uv);
         if (texColor.a < 0.1) discard;
         outputAlpha = texColor.a;
-        vec3 albedo = texColor.rgb * vColor;
+        vec3 flatTexColor = sampleTileAverage(tileBase) * vColor;
+        vec3 albedo = mix(flatTexColor, texColor.rgb * vColor, textureDetail);
 
         if (global.render_flags.z > 0.5 && global.lighting.z > 0.5 && global.pbr_params.x > 0.5) {
             float roughness = texture(uRoughnessMap, uv).r;
