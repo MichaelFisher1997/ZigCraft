@@ -508,13 +508,14 @@ pub const WorldListScreen = struct {
 
     fn renameWorld(self: *@This(), idx: usize) !void {
         const allocator = self.context.allocator;
-        if (self.rename_buffer.items.len == 0) return;
-        const new_name = try allocator.dupe(u8, self.rename_buffer.items);
+        const trimmed = std.mem.trim(u8, self.rename_buffer.items, " \t\r\n");
+        if (trimmed.len == 0) return;
+        const new_name = try allocator.dupe(u8, trimmed);
         errdefer allocator.free(new_name);
         const world = self.worlds[idx];
         var save_dir = fs.openDirAbsolute(world.dir_path, .{}) catch return;
         defer save_dir.close();
-        writeLevelDat(allocator, save_dir, self.rename_buffer.items, world.seed, world.generator_index, world.last_played) catch |err| {
+        writeLevelDat(allocator, save_dir, trimmed, world.seed, world.generator_index, world.last_played) catch |err| {
             log.log.warn("Failed to write level.dat for rename: {}", .{err});
             return;
         };
