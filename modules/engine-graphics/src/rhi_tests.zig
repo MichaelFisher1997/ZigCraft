@@ -520,7 +520,7 @@ test "AtmosphereSystem.renderSky with null handles" {
     var mock = MockContext{};
     const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };
 
-    const AtmosphereSystem = @import("atmosphere_system.zig").AtmosphereSystem;
+    const AtmosphereSystem = @import("engine-atmosphere").AtmosphereSystem;
     var system = try AtmosphereSystem.init(testing.allocator, rhi_instance.resourceManager());
     defer system.deinit();
 

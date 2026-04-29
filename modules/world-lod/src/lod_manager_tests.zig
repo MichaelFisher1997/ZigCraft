@@ -14,7 +14,7 @@ const LODSimplifiedData = lod_chunk.LODSimplifiedData;
 
 const Chunk = @import("world-core").Chunk;
 const Generator = @import("world-worldgen").Generator;
-const TextureAtlas = @import("engine-graphics").TextureAtlas;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 const rhi_types = @import("engine-rhi").rhi_types;

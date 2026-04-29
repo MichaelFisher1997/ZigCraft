@@ -8,7 +8,7 @@ const math = @import("zig-math");
 const Vec3 = math.Vec3;
 const AABB = math.AABB;
 
-const Camera = @import("engine-graphics").Camera;
+const Camera = @import("engine-camera").Camera;
 const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("../engine/input/interfaces.zig").IRawInputProvider;
 const Key = @import("../engine/core/interfaces.zig").Key;

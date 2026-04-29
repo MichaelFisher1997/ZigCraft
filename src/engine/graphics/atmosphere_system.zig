@@ -1,1 +1,1 @@
-pub const AtmosphereSystem = @import("engine-graphics").AtmosphereSystem;
+pub const AtmosphereSystem = @import("engine-atmosphere").AtmosphereSystem;

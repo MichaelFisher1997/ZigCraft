@@ -1,1 +1,1 @@
-pub const ShadowSystem = @import("engine-graphics").ShadowSystem;
+pub const ShadowSystem = @import("engine-shadows").ShadowSystem;

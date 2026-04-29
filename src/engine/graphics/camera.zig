@@ -1,1 +1,1 @@
-pub const Camera = @import("engine-graphics").Camera;
+pub const Camera = @import("engine-camera").Camera;

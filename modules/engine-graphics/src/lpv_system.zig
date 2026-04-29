@@ -7,7 +7,7 @@ const VulkanContext = @import("vulkan/rhi_context_types.zig").VulkanContext;
 const Utils = @import("vulkan/utils.zig");
 const lpv_utils = @import("lpv_utils.zig");
 const LPVBackend = @import("lpv_backend.zig").LPVBackend;
-const lpv_types = @import("lpv_types.zig");
+const lpv_types = @import("engine-lighting").lpv_types;
 
 const MAX_LIGHTS_PER_UPDATE = lpv_types.MAX_LIGHTS_PER_UPDATE;
 const DEFAULT_PROPAGATION_FACTOR = lpv_types.DEFAULT_PROPAGATION_FACTOR;

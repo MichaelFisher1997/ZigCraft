@@ -31,7 +31,7 @@ const math = @import("engine-math");
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const LODGenerator = @import("lod_generator.zig").LODGenerator;
-const TextureAtlas = @import("engine-graphics").TextureAtlas;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 const log = @import("engine-core").log;
 
 pub fn WorldLOD(comptime RHI: type) type {
