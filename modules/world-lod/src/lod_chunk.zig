@@ -266,6 +266,10 @@ pub const ILODConfig = struct {
     }
 };
 
+pub fn activeLODCount(config: ILODConfig) usize {
+    return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
+}
+
 /// Concrete implementation of LOD system configuration.
 pub const LODConfig = struct {
     pub const dynamic_lod0_radius: i32 = 16;
@@ -311,20 +315,28 @@ pub const LODConfig = struct {
     }
 
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
-        inline for (0..LODLevel.count) |i| {
+        const active_lod_count = activeLODCount(self.interfaceConst());
+        for (0..active_lod_count) |i| {
             if (dist_chunks <= self.radii[i]) return @enumFromInt(@as(u3, @intCast(i)));
         }
-        return .lod3; // Beyond max distance, still use LOD3
+        return @enumFromInt(@as(u3, @intCast(active_lod_count - 1)));
     }
 
     pub fn isInRange(self: *const LODConfig, dist_chunks: i32) bool {
-        return dist_chunks <= self.radii[LODLevel.count - 1];
+        return dist_chunks <= self.radii[activeLODCount(self.interfaceConst()) - 1];
     }
 
     /// Returns the interface for this concrete config.
     pub fn interface(self: *LODConfig) ILODConfig {
         return .{
             .ptr = self,
+            .vtable = &VTABLE,
+        };
+    }
+
+    fn interfaceConst(self: *const LODConfig) ILODConfig {
+        return .{
+            .ptr = @constCast(self),
             .vtable = &VTABLE,
         };
     }
@@ -426,6 +438,18 @@ test "LODConfig distance calculation" {
     try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(20));
     try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(50));
     try std.testing.expectEqual(LODLevel.lod3, config.getLODForDistance(100));
+}
+
+test "LODConfig distance calculation respects active LOD count" {
+    const config = LODConfig{
+        .radii = .{ 16, 32, 64, 128 },
+        .active_lod_count = 2,
+    };
+
+    try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(10));
+    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(20));
+    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(100));
+    try std.testing.expect(!config.isInRange(100));
 }
 
 test "ILODConfig exposes clamped active LOD count" {

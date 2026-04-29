@@ -73,10 +73,6 @@ comptime {
     }
 }
 
-fn activeLODCount(config: ILODConfig) usize {
-    return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
-}
-
 /// LOD transition request
 const LODTransition = struct {
     region_key: LODRegionKey,
@@ -343,7 +339,7 @@ pub const LODManager = struct {
         const player_wz: i32 = @intFromFloat(player_pos.z);
         _ = self.generator.maybeRecenterCache(player_wx, player_wz);
 
-        const active_lod_count = activeLODCount(self.config);
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
 
         // Queue active LOD regions coarsest-first so the horizon fills before
         // finer detail. Presets may intentionally disable coarser levels.
@@ -400,7 +396,7 @@ pub const LODManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const active_lod_count = activeLODCount(self.config);
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
         for (1..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
             var iter = self.regions[i].iterator();
@@ -445,7 +441,7 @@ pub const LODManager = struct {
         var uploads: u32 = 0;
 
         // Process from highest active LOD down (furthest, should be ready first)
-        const active_lod_count = activeLODCount(self.config);
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
         var i: usize = active_lod_count - 1;
         while (i > 0) : (i -= 1) {
             while (!self.upload_queues[i].isEmpty() and uploads < max_uploads) {
@@ -474,7 +470,7 @@ pub const LODManager = struct {
     /// Unload regions that are too far from player
     fn unloadDistantRegions(self: *Self) !void {
         const radii = self.config.getRadii();
-        const active_lod_count = activeLODCount(self.config);
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
         for (1..active_lod_count) |i| {
             try self.unloadDistantForLevel(@enumFromInt(@as(u3, @intCast(i))), radii[i]);
         }
@@ -593,7 +589,7 @@ pub const LODManager = struct {
         const dist_sq = pointDistanceSquared(chunk_x, chunk_z, self.player_cx, self.player_cz);
         const radii = self.config.getRadii();
 
-        const active_lod_count = activeLODCount(self.config);
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
         for (0..active_lod_count) |i| {
             const radius_sq = @as(i64, radii[i]) * @as(i64, radii[i]);
             if (dist_sq <= radius_sq) return @enumFromInt(@as(u3, @intCast(i)));
@@ -605,7 +601,7 @@ pub const LODManager = struct {
     /// Check if a position is within LOD range
     pub fn isInRange(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
         const radii = self.config.getRadii();
-        const max_radius = radii[activeLODCount(self.config) - 1];
+        const max_radius = radii[lod_chunk.activeLODCount(self.config) - 1];
         const dist_sq = pointDistanceSquared(chunk_x, chunk_z, self.player_cx, self.player_cz);
         return dist_sq <= @as(i64, max_radius) * @as(i64, max_radius);
     }
@@ -635,7 +631,7 @@ pub const LODManager = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const active_lod_count = activeLODCount(self.config);
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
         for (1..active_lod_count) |i| {
             const storage = &self.regions[i];
             const meshes = &self.meshes[i];

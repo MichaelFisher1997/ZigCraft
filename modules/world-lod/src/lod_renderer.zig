@@ -58,10 +58,6 @@ const build_options = @import("world_lod_options");
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 
-fn activeLODCount(config: ILODConfig) usize {
-    return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
-}
-
 const RenderDiag = struct {
     meshes_seen: u32 = 0,
     missing_region: u32 = 0,
@@ -162,7 +158,7 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             // Collect visible meshes from coarsest active LOD down. Some presets
             // intentionally disable coarser levels to avoid low-quality slabs.
-            var i: usize = activeLODCount(config) - 1;
+            var i: usize = lod_chunk.activeLODCount(config) - 1;
             while (i > 0) : (i -= 1) {
                 const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
                 self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks) catch |err| {

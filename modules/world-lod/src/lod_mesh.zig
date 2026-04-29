@@ -259,7 +259,7 @@ pub const LODMesh = struct {
         min_input_triangles: u32,
         atlas: *const TextureAtlas,
     ) !void {
-        const full_mesh = buildFullDetailHeightmapMesh(self.allocator, self.lod_level, data, atlas) catch |err| {
+        const full_mesh = buildFullDetailHeightmapMesh(self.allocator, self.lod_level, data, world_x, world_z, atlas) catch |err| {
             log.log.warn("LOD{} full-detail mesh build failed, falling back: {}", .{ @intFromEnum(self.lod_level), err });
             return self.buildFromSimplifiedData(data, world_x, world_z, atlas);
         };
@@ -543,6 +543,8 @@ fn buildFullDetailHeightmapMesh(
     allocator: std.mem.Allocator,
     lod_level: LODLevel,
     data: *const LODSimplifiedData,
+    world_x: i32,
+    world_z: i32,
     atlas: *const TextureAtlas,
 ) !FullDetailMesh {
     const w = data.width;
@@ -583,10 +585,10 @@ fn buildFullDetailHeightmapMesh(
             const tc01 = getLodTopColor(top_block, top_tile_id, c01);
             const tc11 = getLodTopColor(top_block, top_tile_id, c11);
             const top_quad = [4]Vertex{
-                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(tc00), unpackG(tc00), unpackB(tc00) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h00, wz }, 0, 0), top_tile_id),
-                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(tc10), unpackG(tc10), unpackB(tc10) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h10, wz }, 0, 0), top_tile_id),
-                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(tc11), unpackG(tc11), unpackB(tc11) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h11, wz + size }, 0, 0), top_tile_id),
-                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(tc01), unpackG(tc01), unpackB(tc01) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h01, wz + size }, 0, 0), top_tile_id),
+                makeLODVertex(.{ wx, h00, wz }, .{ unpackR(tc00), unpackG(tc00), unpackB(tc00) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h00, wz }, world_x, world_z), top_tile_id),
+                makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(tc10), unpackG(tc10), unpackB(tc10) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h10, wz }, world_x, world_z), top_tile_id),
+                makeLODVertex(.{ wx + size, h11, wz + size }, .{ unpackR(tc11), unpackG(tc11), unpackB(tc11) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h11, wz + size }, world_x, world_z), top_tile_id),
+                makeLODVertex(.{ wx, h01, wz + size }, .{ unpackR(tc01), unpackG(tc01), unpackB(tc01) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h01, wz + size }, world_x, world_z), top_tile_id),
             };
             try appendIndexedQuad(&vertices, &indices, allocator, &top_quad);
 
@@ -598,7 +600,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c00, c10, c00, c10),
                 .brightness = 0.7,
                 .dir = .north,
-            }, material.side, 0, 0));
+            }, material.side, world_x, world_z));
             if (gz == w - 2) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
                 .x = wx,
                 .z = wz,
@@ -607,7 +609,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c01, c11, c01, c11),
                 .brightness = 0.7,
                 .dir = .south,
-            }, material.side, 0, 0));
+            }, material.side, world_x, world_z));
             if (gx == 0) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
                 .x = wx,
                 .z = wz,
@@ -616,7 +618,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c00, c01, c00, c01),
                 .brightness = 0.6,
                 .dir = .west,
-            }, material.side, 0, 0));
+            }, material.side, world_x, world_z));
             if (gx == w - 2) try appendIndexedQuad(&vertices, &indices, allocator, &makeSkirtQuad(.{
                 .x = wx,
                 .z = wz,
@@ -625,7 +627,7 @@ fn buildFullDetailHeightmapMesh(
                 .avg_c = averageColor(c10, c11, c10, c11),
                 .brightness = 0.6,
                 .dir = .east,
-            }, material.side, 0, 0));
+            }, material.side, world_x, world_z));
         }
     }
 
@@ -1100,7 +1102,7 @@ test "buildFullDetailHeightmapMesh spans full LOD region" {
         data.colors[i] = 0;
     }
 
-    const mesh = try buildFullDetailHeightmapMesh(allocator, .lod3, &data, &atlas);
+    const mesh = try buildFullDetailHeightmapMesh(allocator, .lod3, &data, 32, 64, &atlas);
     defer {
         allocator.free(mesh.vertices);
         allocator.free(mesh.indices);
@@ -1115,6 +1117,8 @@ test "buildFullDetailHeightmapMesh spans full LOD region" {
 
     try std.testing.expectEqual(@as(f32, 256.0), max_x);
     try std.testing.expectEqual(@as(f32, 256.0), max_z);
+    try std.testing.expectEqual(@as(f32, 32.0), @as(f32, mesh.vertices[0].uv[0]));
+    try std.testing.expectEqual(@as(f32, 64.0), @as(f32, mesh.vertices[0].uv[1]));
 }
 
 fn vertexTileId(v: Vertex) u16 {
