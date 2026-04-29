@@ -23,7 +23,7 @@
 //! ## Frustum Culling
 //!
 //! Visible regions are filtered by frustum culling before adding to the draw
-//! list. Each LODChunk has an AABB that is tested against the camera frustum.
+//! list. Each LODChunk has conservative bounds that are tested against the camera frustum.
 //! Optional ChunkChecker callback allows additional visibility filtering.
 
 const std = @import("std");
@@ -51,7 +51,6 @@ const ChunkChecker = lod_gpu.ChunkChecker;
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
 const Frustum = @import("engine-math").Frustum;
-const AABB = @import("engine-math").AABB;
 const rhi_types = @import("engine-rhi");
 const log = @import("engine-core").log;
 const build_options = @import("world_lod_options");
@@ -226,11 +225,8 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     lod_rendered += 1;
 
-                    const aabb_min = Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, 0.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z);
-                    const aabb_max = Vec3.init(@as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, 256.0 - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z);
-
                     if (use_frustum) {
-                        if (!frustum.intersectsAABB(AABB.init(aabb_min, aabb_max))) continue;
+                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) continue;
                     }
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
@@ -417,6 +413,23 @@ pub fn LODRenderer(comptime RHI: type) type {
 fn isRegionInRange(bounds: ChunkBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
     const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
     return bounds.intersectsRadius(camera_chunk.chunk_x, camera_chunk.chunk_z, max_distance_chunks);
+}
+
+fn isRegionInFrustum(frustum: Frustum, bounds: LODChunk.WorldBounds, camera_pos: Vec3) bool {
+    const min_x: f32 = @floatFromInt(bounds.min_x);
+    const min_z: f32 = @floatFromInt(bounds.min_z);
+    const max_x: f32 = @floatFromInt(bounds.max_x);
+    const max_z: f32 = @floatFromInt(bounds.max_z);
+
+    const center = Vec3.init(
+        (min_x + max_x) * 0.5 - camera_pos.x,
+        128.0 - camera_pos.y,
+        (min_z + max_z) * 0.5 - camera_pos.z,
+    );
+    const half_x = (max_x - min_x) * 0.5;
+    const half_z = (max_z - min_z) * 0.5;
+    const radius = @sqrt(half_x * half_x + half_z * half_z + 128.0 * 128.0);
+    return frustum.intersectsSphere(center, radius);
 }
 
 // Tests
