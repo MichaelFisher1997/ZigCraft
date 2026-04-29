@@ -654,14 +654,10 @@ pub const WorldScreen = struct {
     }
 
     fn resolveStableShadowSunDir(self: *WorldScreen, live_sun_dir: Vec3) Vec3 {
-        // Moving the light-space basis every frame causes visible sub-texel shimmer.
-        // Quantize shadow direction updates to small angular steps; shadows still
-        // track time of day, but the cascade projection no longer jitters constantly.
-        const min_dot = 0.99999;
-        if (!self.stable_shadow_sun_initialized or self.stable_shadow_sun_dir.dot(live_sun_dir) < min_dot) {
-            self.stable_shadow_sun_dir = live_sun_dir;
-            self.stable_shadow_sun_initialized = true;
-        }
+        // Cloud shadows make quantized sun-direction updates visibly pop sideways.
+        // Cascades are already texel-snapped, so keep the light direction continuous.
+        self.stable_shadow_sun_dir = live_sun_dir;
+        self.stable_shadow_sun_initialized = true;
         return self.stable_shadow_sun_dir;
     }
 
