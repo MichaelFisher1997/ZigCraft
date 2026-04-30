@@ -1100,8 +1100,8 @@ fn addVerticalCrossQuad(
 ) !void {
     const half = width * 0.5;
     const y_top = y_bottom + height;
-    try addVerticalBillboardQuad(allocator, vertices, .{ center_x - half, y_bottom, center_z }, .{ center_x + half, y_bottom, center_z }, y_top, color, tile_id, world_x, world_z);
-    try addVerticalBillboardQuad(allocator, vertices, .{ center_x, y_bottom, center_z - half }, .{ center_x, y_bottom, center_z + half }, y_top, color, tile_id, world_x, world_z);
+    try addVerticalBillboardQuad(allocator, vertices, .{ center_x - half, y_bottom, center_z }, .{ center_x + half, y_bottom, center_z }, y_top, color, tile_id, .north, world_x, world_z);
+    try addVerticalBillboardQuad(allocator, vertices, .{ center_x, y_bottom, center_z - half }, .{ center_x, y_bottom, center_z + half }, y_top, color, tile_id, .east, world_x, world_z);
 }
 
 fn addVerticalBillboardQuad(
@@ -1112,6 +1112,7 @@ fn addVerticalBillboardQuad(
     y_top: f32,
     color: u32,
     tile_id: u16,
+    dir: FaceDir,
     world_x: i32,
     world_z: i32,
 ) !void {
@@ -1120,13 +1121,13 @@ fn addVerticalBillboardQuad(
     const col = [3]f32{ unpackR(color), unpackG(color), unpackB(color) };
     const normal = [3]f32{ 0, 0, 1 };
 
-    try vertices.append(allocator, makeLODVertex(bottom_a, col, normal, sideFaceUV(bottom_a, .north, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(bottom_b, col, normal, sideFaceUV(bottom_b, .north, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(top_b, col, normal, sideFaceUV(top_b, .north, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(bottom_a, col, normal, sideFaceUV(bottom_a, dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(bottom_b, col, normal, sideFaceUV(bottom_b, dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(top_b, col, normal, sideFaceUV(top_b, dir, world_x, world_z), tile_id));
 
-    try vertices.append(allocator, makeLODVertex(bottom_a, col, normal, sideFaceUV(bottom_a, .north, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(top_b, col, normal, sideFaceUV(top_b, .north, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(top_a, col, normal, sideFaceUV(top_a, .north, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(bottom_a, col, normal, sideFaceUV(bottom_a, dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(top_b, col, normal, sideFaceUV(top_b, dir, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(top_a, col, normal, sideFaceUV(top_a, dir, world_x, world_z), tile_id));
 }
 
 /// LOD Mesh Builder - builds meshes for LOD regions
