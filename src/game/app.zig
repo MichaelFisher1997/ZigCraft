@@ -8,31 +8,29 @@ const Input = @import("engine-input").Input;
 const Time = @import("../engine/core/time.zig").Time;
 const UISystemManager = @import("engine-ui").UISystemManager;
 const imgui_backend = @import("engine-ui").imgui_backend;
-const WorldStats = @import("../engine/ui/timing_overlay.zig").WorldStats;
+const WorldStats = @import("engine-ui").WorldStats;
 const Vec3 = @import("../engine/math/vec3.zig").Vec3;
 const Mat4 = @import("../engine/math/mat4.zig").Mat4;
-const InputMapper = @import("input_mapper.zig").InputMapper;
+const InputMapper = @import("game-core").InputMapper;
 const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
-const texture_atlas = @import("../engine/graphics/texture_atlas.zig");
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
-const BenchmarkRunner = @import("../benchmark.zig").BenchmarkRunner;
-const json_presets = @import("settings/json_presets.zig");
+const BenchmarkRunner = @import("game-core").BenchmarkRunner;
+const json_presets = @import("game-core").settings.json_presets;
 
-const SettingsManager = @import("settings_manager.zig").SettingsManager;
-const Settings = @import("settings.zig").Settings;
-const InputSettings = @import("input_settings.zig").InputSettings;
+const SettingsManager = @import("game-core").SettingsManager;
+const Settings = @import("game-core").Settings;
+const InputSettings = @import("game-core").InputSettings;
+const BuildConfig = @import("game-core").BuildConfig;
 
-const screen_pkg = @import("screen.zig");
+const screen_pkg = @import("game-ui").screen;
 const ScreenManager = screen_pkg.ScreenManager;
 const EngineContext = screen_pkg.EngineContext;
-const HomeScreen = @import("screens/home.zig").HomeScreen;
-const WorldScreen = @import("screens/world.zig").WorldScreen;
+const HomeScreen = @import("game-ui").HomeScreen;
+const WorldScreen = @import("game-ui").WorldScreen;
 const RenderSettingsAdapter = @import("../engine/graphics/render_settings.zig").RenderSettingsAdapter;
 const runtime_env = @import("engine-core").runtime_env;
 const RHI = @import("../engine/graphics/rhi.zig").RHI;
-const block_registry = @import("world-core").block_registry;
-
-pub const BLOCK_TEXTURE_DEFINITIONS = makeBlockTextureDefinitions();
+pub const BLOCK_TEXTURE_DEFINITIONS = @import("game-core").BLOCK_TEXTURE_DEFINITIONS;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
@@ -45,7 +43,7 @@ fn processImGuiEvent(event: *const c.SDL_Event) void {
 
 fn applySettingsToRhi(ctx: *const anyopaque, rhi: *RHI) void {
     const settings: *const Settings = @ptrCast(@alignCast(ctx));
-    @import("settings.zig").apply_logic.applyToRHI(settings, rhi);
+    @import("game-core").settings.apply_logic.applyToRHI(settings, rhi);
 }
 
 fn renderConfigFromSettings(settings: *const Settings) RenderSystem.Config {
@@ -79,29 +77,16 @@ fn renderConfigFromSettings(settings: *const Settings) RenderSystem.Config {
     };
 }
 
-fn makeBlockTextureDefinitions() [texture_atlas.MAX_BLOCK_TYPES]texture_atlas.BlockTextureDefinition {
-    var defs: [texture_atlas.MAX_BLOCK_TYPES]texture_atlas.BlockTextureDefinition = undefined;
-    for (&defs, 0..) |*def, i| {
-        def.* = .{
-            .id = @intCast(i),
-            .name = "unknown",
-            .default_color = .{ 1.0, 1.0, 1.0 },
-            .texture_top = "missing",
-            .texture_bottom = "missing",
-            .texture_side = "missing",
-        };
-    }
-    for (block_registry.BLOCK_REGISTRY, 0..) |block_def, i| {
-        defs[i] = .{
-            .id = @intFromEnum(block_def.id),
-            .name = block_def.name,
-            .default_color = block_def.default_color,
-            .texture_top = block_def.texture_top,
-            .texture_bottom = block_def.texture_bottom,
-            .texture_side = block_def.texture_side,
-        };
-    }
-    return defs;
+fn gameBuildConfig() BuildConfig {
+    return .{
+        .auto_world = build_options.auto_world,
+        .chunk_debug_enable = build_options.chunk_debug_enable,
+        .chunk_debug_mode = build_options.chunk_debug_mode,
+        .screenshot_path = build_options.screenshot_path,
+        .shadow_test_scene = build_options.shadow_test_scene,
+        .shadow_test_variant = build_options.shadow_test_variant,
+        .startup_diagnostic_seconds = build_options.startup_diagnostic_seconds,
+    };
 }
 
 pub const App = struct {
@@ -300,6 +285,7 @@ pub const App = struct {
             .skip_world_update = self.skip_world_update,
             .render_settings = self.render_settings_adapter.interface(),
             .benchmark_runner = self.benchmark_runner,
+            .build_config = gameBuildConfig(),
         };
     }
 

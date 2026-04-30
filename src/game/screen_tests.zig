@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const screen_module = @import("screen.zig");
+const screen_module = @import("game-ui").screen;
 const ScreenManager = screen_module.ScreenManager;
 const IScreen = screen_module.IScreen;
 const UISystem = @import("../engine/ui/ui_system.zig").UISystem;

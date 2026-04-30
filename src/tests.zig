@@ -65,14 +65,14 @@ test {
     _ = @import("world-lod").lod_seam;
     _ = @import("world-lod").lod_renderer;
     _ = @import("engine-atmosphere").atmosphere_tests;
-    _ = @import("game/settings/tests.zig");
-    _ = @import("game/input_settings.zig");
+    _ = @import("game-core").settings_tests;
+    _ = @import("game-core").input_settings;
     _ = @import("game/player_tests.zig");
     _ = @import("game/inventory_tests.zig");
     _ = @import("game/screen_tests.zig");
     _ = @import("game/world_list_tests.zig");
     _ = @import("game/input_mapper_tests.zig");
-    _ = @import("game/settings/persistence_tests.zig");
+    _ = @import("game-core").settings_persistence_tests;
     _ = @import("world-persistence").region_file;
     _ = @import("world-persistence").chunk_serializer;
     _ = @import("world-persistence").level_data;

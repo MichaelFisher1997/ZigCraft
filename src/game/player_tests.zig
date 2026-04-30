@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Vec3 = @import("zig-math").Vec3;
-const player_module = @import("player.zig");
+const player_module = @import("game-core").player;
 const Player = player_module.Player;
 
 test "Player.init creates player with correct initial state" {
