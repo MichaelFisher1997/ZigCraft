@@ -11,7 +11,7 @@
 |________/|______/ \______/  \______/ |__/  |__/|__/  |__/|__/         |__/   
 ```
 
-  <img src="assets/screenshots/clouds.png" alt="ZigCraft voxel landscape with clouds" width="100%" />
+  <img src="assets/screenshots/distant-lod-landscape.png" alt="ZigCraft distant voxel landscape with LOD terrain and forests" width="100%" />
 
   # ⚡ ZigCraft ⚡
 

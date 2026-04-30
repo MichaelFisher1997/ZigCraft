@@ -212,23 +212,32 @@ pub const LODMesh = struct {
                 const c01 = data.colors[gx + (gz + 1) * data.width];
                 const c11 = data.colors[(gx + 1) + (gz + 1) * data.width];
                 const avg_color = averageColor(c00, c10, c01, c11);
+                const lit_avg_color = applyColorBrightness(avg_color, averageAmbientOcclusion(data, gx, gz));
                 const wx = @as(f32, @floatFromInt(gx)) * cell_size;
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
                 const size = cell_size;
 
-                const material = selectCellMaterial(data, atlas, gx, gz);
+                const material = selectCellMaterial(data, atlas, gx, gz, self.lod_level);
                 const top_tile = material.top;
                 const side_tile = material.side;
-                const top_block = blockForLODCell(data, gx, gz);
-                const top_color = getLodTopColor(top_block, top_tile, avg_color);
+                const top_block = blockForLODQuad(data, gx, gz);
+                const top_color = getLodTopColor(top_block, top_tile, lit_avg_color);
 
                 try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, top_color, top_color, top_color, top_color, top_tile, world_x, world_z);
 
                 const skirt_depth: f32 = size * 4.0;
-                if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .west, side_tile, world_x, world_z);
-                if (gx == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h10 + h11) * 0.5, wz, size, (h10 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.6, unpackG(avg_color) * 0.6, unpackB(avg_color) * 0.6, .east, side_tile, world_x, world_z);
-                if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .north, side_tile, world_x, world_z);
-                if (gz == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(avg_color) * 0.7, unpackG(avg_color) * 0.7, unpackB(avg_color) * 0.7, .south, side_tile, world_x, world_z);
+                if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.6, unpackG(lit_avg_color) * 0.6, unpackB(lit_avg_color) * 0.6, .west, side_tile, world_x, world_z);
+                if (gx == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h10 + h11) * 0.5, wz, size, (h10 + h11) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.6, unpackG(lit_avg_color) * 0.6, unpackB(lit_avg_color) * 0.6, .east, side_tile, world_x, world_z);
+                if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.7, unpackG(lit_avg_color) * 0.7, unpackB(lit_avg_color) * 0.7, .north, side_tile, world_x, world_z);
+                if (gz == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.7, unpackG(lit_avg_color) * 0.7, unpackB(lit_avg_color) * 0.7, .south, side_tile, world_x, world_z);
+
+                try addHeightDeltaFaces(self.allocator, &vertices, data, gx, gz, wx, wz, size, h00, h10, h01, h11, lit_avg_color, side_tile, world_x, world_z);
+                if (shouldRenderLODTree(self.lod_level, top_block)) {
+                    const vegetation = representativeVegetation(data, gx, gz);
+                    if (vegetation.tree_coverage >= 0.08) {
+                        try addTreeImpostor(self.allocator, &vertices, wx + size * 0.5 + vegetation.offset_x, wz + size * 0.5 + vegetation.offset_z, size, (h00 + h10 + h01 + h11) * 0.25, vegetation, atlas, world_x, world_z);
+                    }
+                }
             }
         }
 
@@ -576,14 +585,14 @@ fn buildFullDetailHeightmapMesh(
             const wx = @as(f32, @floatFromInt(gx)) * cell_size;
             const wz = @as(f32, @floatFromInt(gz)) * cell_size;
             const size = cell_size;
-            const material = selectCellMaterial(data, atlas, gx, gz);
+            const material = selectCellMaterial(data, atlas, gx, gz, lod_level);
 
-            const top_block = data.top_blocks[gx + gz * w];
-            const top_tile_id = getLodTopTile(top_block, atlas);
-            const tc00 = getLodTopColor(top_block, top_tile_id, c00);
-            const tc10 = getLodTopColor(top_block, top_tile_id, c10);
-            const tc01 = getLodTopColor(top_block, top_tile_id, c01);
-            const tc11 = getLodTopColor(top_block, top_tile_id, c11);
+            const top_block = blockForLODQuad(data, gx, gz);
+            const top_tile_id = getLodTopTile(top_block, atlas, lod_level);
+            const tc00 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c00, data.lighting[gx + gz * w].ambient_occlusion));
+            const tc10 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c10, data.lighting[(gx + 1) + gz * w].ambient_occlusion));
+            const tc01 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c01, data.lighting[gx + (gz + 1) * w].ambient_occlusion));
+            const tc11 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c11, data.lighting[(gx + 1) + (gz + 1) * w].ambient_occlusion));
             const top_quad = [4]Vertex{
                 makeLODVertex(.{ wx, h00, wz }, .{ unpackR(tc00), unpackG(tc00), unpackB(tc00) }, .{ 0, 1, 0 }, topFaceUV(.{ wx, h00, wz }, world_x, world_z), top_tile_id),
                 makeLODVertex(.{ wx + size, h10, wz }, .{ unpackR(tc10), unpackG(tc10), unpackB(tc10) }, .{ 0, 1, 0 }, topFaceUV(.{ wx + size, h10, wz }, world_x, world_z), top_tile_id),
@@ -674,19 +683,152 @@ fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
     const idx = clamped_x + clamped_z * data.width;
-    const block = data.top_blocks[idx];
+    const block = data.material_layers[idx].surface;
     if (block != .air) return block;
+    if (data.top_blocks[idx] != .air) return data.top_blocks[idx];
     return data.biomes[idx].getSurfaceBlock();
 }
 
-fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32) TextureAtlas.BlockTiles {
-    const block = blockForLODCell(data, gx, gz);
-    const tiles = atlas.getTilesForBlock(@intFromEnum(block));
+fn blockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
+    if (averageWaterCoverage(data, gx, gz) >= 0.25) return .water;
+    return blockForLODCell(data, gx, gz);
+}
+
+fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32, lod_level: LODLevel) TextureAtlas.BlockTiles {
+    const top_block = blockForLODQuad(data, gx, gz);
+    const side_block = sideBlockForLODQuad(data, gx, gz, top_block);
+    const top_tiles = atlas.getTilesForBlock(@intFromEnum(top_block));
+    const side_tiles = atlas.getTilesForBlock(@intFromEnum(side_block));
     return .{
-        .top = getLodTopTile(block, atlas),
-        .bottom = if (tiles.bottom == 0) Vertex.LOD_TILE_ID else tiles.bottom,
-        .side = if (tiles.side == 0) Vertex.LOD_TILE_ID else tiles.side,
+        .top = getLodTopTile(top_block, atlas, lod_level),
+        .bottom = if (top_tiles.bottom == 0) Vertex.LOD_TILE_ID else top_tiles.bottom,
+        .side = if (side_tiles.side == 0) Vertex.LOD_TILE_ID else side_tiles.side,
     };
+}
+
+fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top_block: BlockType) BlockType {
+    if (top_block != .water) return top_block;
+
+    const x0 = @min(gx, data.width - 1);
+    const z0 = @min(gz, data.width - 1);
+    const x1 = @min(gx + 1, data.width - 1);
+    const z1 = @min(gz + 1, data.width - 1);
+    const indices = [_]u32{
+        x0 + z0 * data.width,
+        x1 + z0 * data.width,
+        x0 + z1 * data.width,
+        x1 + z1 * data.width,
+    };
+
+    for (indices) |idx| {
+        if (data.water[idx].is_surface and data.material_layers[idx].subsurface != .air and data.material_layers[idx].subsurface != .water) {
+            return data.material_layers[idx].subsurface;
+        }
+    }
+
+    return blockForLODCell(data, gx, gz);
+}
+
+fn shouldRenderLODTree(lod_level: LODLevel, top_block: BlockType) bool {
+    if (@intFromEnum(lod_level) < @intFromEnum(LODLevel.lod2)) return false;
+    return top_block != .water and top_block != .air;
+}
+
+fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32) world_core.LODVegetationHint {
+    const x0 = @min(gx, data.width - 1);
+    const z0 = @min(gz, data.width - 1);
+    const x1 = @min(gx + 1, data.width - 1);
+    const z1 = @min(gz + 1, data.width - 1);
+    const indices = [_]u32{
+        x0 + z0 * data.width,
+        x1 + z0 * data.width,
+        x0 + z1 * data.width,
+        x1 + z1 * data.width,
+    };
+
+    var coverage_sum: f32 = 0.0;
+    var height_sum: f32 = 0.0;
+    var height_count: u32 = 0;
+    var best = world_core.LODVegetationHint.empty;
+    for (indices) |idx| {
+        const hint = data.vegetation[idx];
+        coverage_sum += hint.tree_coverage;
+        if (hint.avg_tree_height > 0.0) {
+            height_sum += hint.avg_tree_height;
+            height_count += 1;
+        }
+        if (hint.tree_coverage > best.tree_coverage) best = hint;
+    }
+
+    best.tree_coverage = coverage_sum * 0.25;
+    best.avg_tree_height = if (height_count == 0) 0.0 else height_sum / @as(f32, @floatFromInt(height_count));
+    return best;
+}
+
+fn averageWaterCoverage(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
+    if (data.width == 0) return 0.0;
+    const x0 = @min(gx, data.width - 1);
+    const z0 = @min(gz, data.width - 1);
+    const x1 = @min(gx + 1, data.width - 1);
+    const z1 = @min(gz + 1, data.width - 1);
+    const c00 = data.water[x0 + z0 * data.width].coverage;
+    const c10 = data.water[x1 + z0 * data.width].coverage;
+    const c01 = data.water[x0 + z1 * data.width].coverage;
+    const c11 = data.water[x1 + z1 * data.width].coverage;
+    return (c00 + c10 + c01 + c11) * 0.25;
+}
+
+fn addHeightDeltaFaces(
+    allocator: std.mem.Allocator,
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    data: *const LODSimplifiedData,
+    gx: u32,
+    gz: u32,
+    wx: f32,
+    wz: f32,
+    size: f32,
+    h00: f32,
+    h10: f32,
+    h01: f32,
+    h11: f32,
+    color: u32,
+    side_tile: u16,
+    world_x: i32,
+    world_z: i32,
+) !void {
+    const threshold = @max(2.0, size * 0.12);
+    const west_edge = (h00 + h01) * 0.5;
+    const east_edge = (h10 + h11) * 0.5;
+    const north_edge = (h00 + h10) * 0.5;
+    const south_edge = (h01 + h11) * 0.5;
+    const r = unpackR(color);
+    const g = unpackG(color);
+    const b = unpackB(color);
+
+    if (gx > 0) {
+        const neighbor_edge = (data.getHeight(gx - 1, gz) + data.getHeight(gx - 1, gz + 1)) * 0.5;
+        if (west_edge > neighbor_edge + threshold) {
+            try addSideFaceQuad(allocator, vertices, wx, west_edge, wz, size, neighbor_edge, r * 0.6, g * 0.6, b * 0.6, .west, side_tile, world_x, world_z);
+        }
+    }
+    if (gx + 2 < data.width) {
+        const neighbor_edge = (data.getHeight(gx + 2, gz) + data.getHeight(gx + 2, gz + 1)) * 0.5;
+        if (east_edge > neighbor_edge + threshold) {
+            try addSideFaceQuad(allocator, vertices, wx, east_edge, wz, size, neighbor_edge, r * 0.6, g * 0.6, b * 0.6, .east, side_tile, world_x, world_z);
+        }
+    }
+    if (gz > 0) {
+        const neighbor_edge = (data.getHeight(gx, gz - 1) + data.getHeight(gx + 1, gz - 1)) * 0.5;
+        if (north_edge > neighbor_edge + threshold) {
+            try addSideFaceQuad(allocator, vertices, wx, north_edge, wz, size, neighbor_edge, r * 0.7, g * 0.7, b * 0.7, .north, side_tile, world_x, world_z);
+        }
+    }
+    if (gz + 2 < data.width) {
+        const neighbor_edge = (data.getHeight(gx, gz + 2) + data.getHeight(gx + 1, gz + 2)) * 0.5;
+        if (south_edge > neighbor_edge + threshold) {
+            try addSideFaceQuad(allocator, vertices, wx, south_edge, wz, size, neighbor_edge, r * 0.7, g * 0.7, b * 0.7, .south, side_tile, world_x, world_z);
+        }
+    }
 }
 
 // Helper functions for unpacking colors
@@ -712,7 +854,37 @@ fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     return (r_avg << 16) | (g_avg << 8) | b_avg;
 }
 
-fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
+fn averageAmbientOcclusion(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
+    const x0 = @min(gx, data.width - 1);
+    const z0 = @min(gz, data.width - 1);
+    const x1 = @min(gx + 1, data.width - 1);
+    const z1 = @min(gz + 1, data.width - 1);
+    const a00 = data.lighting[x0 + z0 * data.width].ambient_occlusion;
+    const a10 = data.lighting[x1 + z0 * data.width].ambient_occlusion;
+    const a01 = data.lighting[x0 + z1 * data.width].ambient_occlusion;
+    const a11 = data.lighting[x1 + z1 * data.width].ambient_occlusion;
+    return (a00 + a10 + a01 + a11) * 0.25;
+}
+
+fn applyColorBrightness(color: u32, brightness: f32) u32 {
+    const clamped = std.math.clamp(brightness, 0.0, 1.0);
+    const r: u32 = @intFromFloat(@round(@as(f32, @floatFromInt((color >> 16) & 0xFF)) * clamped));
+    const g: u32 = @intFromFloat(@round(@as(f32, @floatFromInt((color >> 8) & 0xFF)) * clamped));
+    const b: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(color & 0xFF)) * clamped));
+    return (r << 16) | (g << 8) | b;
+}
+
+fn packBlockDefaultColor(block: BlockType, fallback: u32) u32 {
+    if (block == .air) return fallback;
+    const color = world_core.block_registry.getBlockDefinition(block).default_color;
+    const r: u32 = @intFromFloat(@round(std.math.clamp(color[0], 0.0, 1.0) * 255.0));
+    const g: u32 = @intFromFloat(@round(std.math.clamp(color[1], 0.0, 1.0) * 255.0));
+    const b: u32 = @intFromFloat(@round(std.math.clamp(color[2], 0.0, 1.0) * 255.0));
+    return (r << 16) | (g << 8) | b;
+}
+
+fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas, lod_level: LODLevel) u16 {
+    _ = lod_level;
     if (block == .air) return Vertex.LOD_TILE_ID;
 
     const tiles = atlas.getTilesForBlock(@intFromEnum(block));
@@ -724,7 +896,15 @@ fn getLodTopColor(block: BlockType, tile_id: u16, fallback_color: u32) u32 {
     if (tile_id == Vertex.LOD_TILE_ID) return fallback_color;
 
     return switch (block) {
-        .grass, .leaves, .water => fallback_color,
+        .grass,
+        .water,
+        .leaves,
+        .mangrove_leaves,
+        .jungle_leaves,
+        .acacia_leaves,
+        .birch_leaves,
+        .spruce_leaves,
+        => fallback_color,
         else => 0xFFFFFF,
     };
 }
@@ -866,6 +1046,79 @@ fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanag
     try vertices.append(allocator, makeLODVertex(corners[0], color, normal, sideFaceUV(corners[0], dir, world_x, world_z), tile_id));
     try vertices.append(allocator, makeLODVertex(corners[2], color, normal, sideFaceUV(corners[2], dir, world_x, world_z), tile_id));
     try vertices.append(allocator, makeLODVertex(corners[3], color, normal, sideFaceUV(corners[3], dir, world_x, world_z), tile_id));
+}
+
+fn addTreeImpostor(
+    allocator: std.mem.Allocator,
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    center_x: f32,
+    center_z: f32,
+    cell_size: f32,
+    base_height: f32,
+    vegetation: world_core.LODVegetationHint,
+    atlas: *const TextureAtlas,
+    world_x: i32,
+    world_z: i32,
+) !void {
+    if (vegetation.leaves == .air) return;
+
+    const leaf_tiles = atlas.getTilesForBlock(@intFromEnum(vegetation.leaves));
+    const trunk_tiles = atlas.getTilesForBlock(@intFromEnum(vegetation.trunk));
+    const leaf_tile = if (leaf_tiles.top == 0) Vertex.LOD_TILE_ID else leaf_tiles.top;
+    const trunk_tile = if (trunk_tiles.side == 0) Vertex.LOD_TILE_ID else trunk_tiles.side;
+    const leaf_color: u32 = packBlockDefaultColor(vegetation.leaves, 0x2F7D2A);
+    const trunk_color: u32 = if (trunk_tile == Vertex.LOD_TILE_ID) packBlockDefaultColor(vegetation.trunk, 0x6B4A2B) else 0xFFFFFF;
+    const canopy_height = @max(4.0, vegetation.avg_tree_height);
+    const canopy_width = @max(3.0, cell_size * (0.35 + vegetation.tree_coverage * 0.3));
+    const trunk_height = canopy_height * 0.55;
+    const trunk_width = @max(0.75, canopy_width * 0.16);
+
+    try addVerticalCrossQuad(allocator, vertices, center_x, center_z, trunk_width, base_height, trunk_height, trunk_color, trunk_tile, world_x, world_z);
+    try addVerticalCrossQuad(allocator, vertices, center_x, center_z, canopy_width, base_height + trunk_height * 0.45, canopy_height, leaf_color, leaf_tile, world_x, world_z);
+}
+
+fn addVerticalCrossQuad(
+    allocator: std.mem.Allocator,
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    center_x: f32,
+    center_z: f32,
+    width: f32,
+    y_bottom: f32,
+    height: f32,
+    color: u32,
+    tile_id: u16,
+    world_x: i32,
+    world_z: i32,
+) !void {
+    const half = width * 0.5;
+    const y_top = y_bottom + height;
+    try addVerticalBillboardQuad(allocator, vertices, .{ center_x - half, y_bottom, center_z }, .{ center_x + half, y_bottom, center_z }, y_top, color, tile_id, world_x, world_z);
+    try addVerticalBillboardQuad(allocator, vertices, .{ center_x, y_bottom, center_z - half }, .{ center_x, y_bottom, center_z + half }, y_top, color, tile_id, world_x, world_z);
+}
+
+fn addVerticalBillboardQuad(
+    allocator: std.mem.Allocator,
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    bottom_a: [3]f32,
+    bottom_b: [3]f32,
+    y_top: f32,
+    color: u32,
+    tile_id: u16,
+    world_x: i32,
+    world_z: i32,
+) !void {
+    const top_a = [3]f32{ bottom_a[0], y_top, bottom_a[2] };
+    const top_b = [3]f32{ bottom_b[0], y_top, bottom_b[2] };
+    const col = [3]f32{ unpackR(color), unpackG(color), unpackB(color) };
+    const normal = [3]f32{ 0, 0, 1 };
+
+    try vertices.append(allocator, makeLODVertex(bottom_a, col, normal, sideFaceUV(bottom_a, .north, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(bottom_b, col, normal, sideFaceUV(bottom_b, .north, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(top_b, col, normal, sideFaceUV(top_b, .north, world_x, world_z), tile_id));
+
+    try vertices.append(allocator, makeLODVertex(bottom_a, col, normal, sideFaceUV(bottom_a, .north, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(top_b, col, normal, sideFaceUV(top_b, .north, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(top_a, col, normal, sideFaceUV(top_a, .north, world_x, world_z), tile_id));
 }
 
 /// LOD Mesh Builder - builds meshes for LOD regions
@@ -1090,7 +1343,7 @@ test "buildFullDetailHeightmapMesh spans full LOD region" {
     var atlas: TextureAtlas = undefined;
     @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
 
-    var data = try LODSimplifiedData.init(allocator, .lod3);
+    var data = try LODSimplifiedData.init(allocator, .lod2);
     defer data.deinit();
 
     const cell_count: usize = @intCast(data.width * data.width);
@@ -1147,7 +1400,7 @@ test "buildFromSimplifiedData uses atlas tiles and world-scaled UVs" {
     };
     atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
 
-    var data = try LODSimplifiedData.init(allocator, .lod3);
+    var data = try LODSimplifiedData.init(allocator, .lod2);
     defer data.deinit();
 
     for (0..data.width * data.width) |i| {
@@ -1157,7 +1410,7 @@ test "buildFromSimplifiedData uses atlas tiles and world-scaled UVs" {
         data.colors[i] = biome_mod.getBiomeColor(.plains);
     }
 
-    var mesh = LODMesh.init(allocator, .lod3);
+    var mesh = LODMesh.init(allocator, .lod2);
     defer mesh.deinit(testResources());
 
     try mesh.buildFromSimplifiedData(&data, 32, 64, &atlas);
@@ -1199,7 +1452,7 @@ test "buildFromSimplifiedData uses white tint for textured non-biome tops" {
     };
     atlas.tile_mappings[@intFromEnum(BlockType.sand)] = .{ .top = 31, .bottom = 0, .side = 0 };
 
-    var data = try LODSimplifiedData.init(allocator, .lod3);
+    var data = try LODSimplifiedData.init(allocator, .lod2);
     defer data.deinit();
 
     for (0..data.width * data.width) |i| {
@@ -1209,7 +1462,7 @@ test "buildFromSimplifiedData uses white tint for textured non-biome tops" {
         data.colors[i] = 0xD8C76D;
     }
 
-    var mesh = LODMesh.init(allocator, .lod3);
+    var mesh = LODMesh.init(allocator, .lod2);
     defer mesh.deinit(testResources());
 
     try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
@@ -1246,7 +1499,7 @@ test "buildFromSimplifiedData falls back to LOD tile for unmapped top blocks" {
         .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
     };
 
-    var data = try LODSimplifiedData.init(allocator, .lod3);
+    var data = try LODSimplifiedData.init(allocator, .lod2);
     defer data.deinit();
 
     for (0..data.width * data.width) |i| {
@@ -1256,7 +1509,7 @@ test "buildFromSimplifiedData falls back to LOD tile for unmapped top blocks" {
         data.colors[i] = biome_mod.getBiomeColor(.plains);
     }
 
-    var mesh = LODMesh.init(allocator, .lod3);
+    var mesh = LODMesh.init(allocator, .lod2);
     defer mesh.deinit(testResources());
 
     try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
@@ -1265,6 +1518,232 @@ test "buildFromSimplifiedData falls back to LOD tile for unmapped top blocks" {
     try std.testing.expect(verts.len > 0);
 
     for (verts) |v| try std.testing.expectEqual(@as(u16, Vertex.LOD_TILE_ID), vertexTileId(v));
+}
+
+test "buildFromSimplifiedData promotes mixed water cells to water material" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
+    atlas.tile_mappings[@intFromEnum(BlockType.water)] = .{ .top = 41, .bottom = 41, .side = 42 };
+    atlas.tile_mappings[@intFromEnum(BlockType.sand)] = .{ .top = 51, .bottom = 52, .side = 55 };
+
+    var data = try LODSimplifiedData.init(allocator, .lod2);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = 63.0;
+        data.biomes[i] = .plains;
+        data.top_blocks[i] = .grass;
+        data.colors[i] = biome_mod.getBiomeColor(.plains);
+        data.material_layers[i] = .{
+            .surface = .grass,
+            .subsurface = .dirt,
+            .foundation = .stone,
+        };
+    }
+    data.water[0] = .{
+        .is_surface = true,
+        .surface_height = 63.0,
+        .depth = 8.0,
+        .coverage = 1.0,
+    };
+    data.material_layers[0] = .{
+        .surface = .water,
+        .subsurface = .sand,
+        .foundation = .stone,
+    };
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+
+    try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expect(verts.len > 0);
+    try std.testing.expectEqual(@as(u16, 41), vertexTileId(verts[0]));
+
+    var found_floor_side = false;
+    for (verts) |v| {
+        if (vertexTileId(v) == 55) {
+            found_floor_side = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_floor_side);
+}
+
+test "buildFromSimplifiedData uses averaged color tile for far LOD tops" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
+
+    var data = try LODSimplifiedData.init(allocator, .lod3);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = 64.0;
+        data.biomes[i] = .plains;
+        data.top_blocks[i] = .grass;
+        data.colors[i] = 0x3A7D42;
+        data.material_layers[i] = .{
+            .surface = .grass,
+            .subsurface = .dirt,
+            .foundation = .stone,
+        };
+    }
+
+    var mesh = LODMesh.init(allocator, .lod3);
+    defer mesh.deinit(testResources());
+
+    try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expect(verts.len > 0);
+    try std.testing.expectEqual(@as(u16, Vertex.LOD_TILE_ID), vertexTileId(verts[0]));
+    try std.testing.expectEqual(@as(u32, 0x3A7D42), vertexRgb(verts[0]));
+}
+
+test "buildFromSimplifiedData renders tree impostors from vegetation hints" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
+    atlas.tile_mappings[@intFromEnum(BlockType.leaves)] = .{ .top = 70, .bottom = 70, .side = 70 };
+    atlas.tile_mappings[@intFromEnum(BlockType.wood)] = .{ .top = 71, .bottom = 71, .side = 72 };
+
+    var data = try LODSimplifiedData.init(allocator, .lod2);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = 64.0;
+        data.biomes[i] = .forest;
+        data.top_blocks[i] = .grass;
+        data.colors[i] = 0x2D591A;
+        data.material_layers[i] = .{
+            .surface = .grass,
+            .subsurface = .dirt,
+            .foundation = .stone,
+        };
+        data.vegetation[i] = .{
+            .tree_coverage = 0.6,
+            .avg_tree_height = 7.0,
+            .offset_x = 0.0,
+            .offset_z = 0.0,
+            .trunk = .wood,
+            .leaves = .leaves,
+        };
+    }
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+
+    try mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    var found_leaf_impostor = false;
+    for (verts) |v| {
+        if (vertexTileId(v) == 70 and v.pos[1] > 64.0) {
+            found_leaf_impostor = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_leaf_impostor);
+}
+
+test "buildFromSimplifiedData adds internal faces for steep LOD height deltas" {
+    const allocator = std.testing.allocator;
+    const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
+
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.stone)] = .{ .top = 11, .bottom = 12, .side = 13 };
+
+    var flat_data = try LODSimplifiedData.init(allocator, .lod3);
+    defer flat_data.deinit();
+    var cliff_data = try LODSimplifiedData.init(allocator, .lod3);
+    defer cliff_data.deinit();
+
+    for (0..flat_data.width * flat_data.width) |i| {
+        flat_data.heightmap[i] = 64.0;
+        flat_data.biomes[i] = .mountains;
+        flat_data.top_blocks[i] = .stone;
+        flat_data.colors[i] = 0x808080;
+        flat_data.material_layers[i] = .{
+            .surface = .stone,
+            .subsurface = .stone,
+            .foundation = .stone,
+        };
+        cliff_data.heightmap[i] = flat_data.heightmap[i];
+        cliff_data.biomes[i] = flat_data.biomes[i];
+        cliff_data.top_blocks[i] = flat_data.top_blocks[i];
+        cliff_data.colors[i] = flat_data.colors[i];
+        cliff_data.material_layers[i] = flat_data.material_layers[i];
+    }
+
+    cliff_data.setHeight(15, 15, 96.0);
+    cliff_data.setHeight(16, 15, 96.0);
+    cliff_data.setHeight(15, 16, 96.0);
+    cliff_data.setHeight(16, 16, 96.0);
+
+    var flat_mesh = LODMesh.init(allocator, .lod3);
+    defer flat_mesh.deinit(testResources());
+    try flat_mesh.buildFromSimplifiedData(&flat_data, 0, 0, &atlas);
+    const flat_verts = flat_mesh.pending_vertices orelse return error.TestExpectedEqual;
+
+    var cliff_mesh = LODMesh.init(allocator, .lod3);
+    defer cliff_mesh.deinit(testResources());
+    try cliff_mesh.buildFromSimplifiedData(&cliff_data, 0, 0, &atlas);
+    const cliff_verts = cliff_mesh.pending_vertices orelse return error.TestExpectedEqual;
+
+    try std.testing.expect(cliff_verts.len > flat_verts.len);
 }
 
 test "buildFromHeightmap uses biome atlas tiles" {
