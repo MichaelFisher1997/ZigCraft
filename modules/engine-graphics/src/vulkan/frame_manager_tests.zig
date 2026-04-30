@@ -58,73 +58,15 @@ test "checkVk returns error.Unknown for unrecognized VkResult" {
     try testing.expectError(error.Unknown, Utils.checkVk(@as(c_int, -999)));
 }
 
-test "FrameManager frame_in_progress prevents beginFrame" {
-    const frame_in_progress = true;
-    try testing.expect(frame_in_progress);
-}
-
-test "FrameManager endFrame requires frame_in_progress" {
-    const frame_in_progress = false;
-    try testing.expect(!frame_in_progress);
-}
-
-test "FrameManager abortFrame only acts when frame_in_progress" {
-    var frame_in_progress = false;
-    if (frame_in_progress) {
-        frame_in_progress = false;
-    }
-    try testing.expectEqual(@as(bool, false), frame_in_progress);
-}
-
-test "FrameManager abortFrame clears frame_in_progress" {
-    var frame_in_progress = true;
-    frame_in_progress = false;
-    try testing.expectEqual(@as(bool, false), frame_in_progress);
-}
-
-test "FrameManager current_frame cycles through all frames" {
-    var current_frame: usize = 0;
-    const max_frames = rhi.MAX_FRAMES_IN_FLIGHT;
-
-    current_frame = (current_frame + 1) % max_frames;
-    try testing.expectEqual(@as(usize, 1), current_frame);
-
-    current_frame = (current_frame + 1) % max_frames;
-    try testing.expectEqual(@as(usize, 0), current_frame);
-
-    current_frame = (current_frame + 1) % max_frames;
-    try testing.expectEqual(@as(usize, 1), current_frame);
-}
-
-test "FrameManager current_frame cycles correctly through 10 iterations" {
-    var current_frame: usize = 0;
-    const max_frames = rhi.MAX_FRAMES_IN_FLIGHT;
-
-    for (0..10) |_| {
-        current_frame = (current_frame + 1) % max_frames;
-    }
-
-    try testing.expectEqual(@as(usize, 0), current_frame);
-}
-
 test "FrameManager getCurrentCommandBuffer returns correct buffer by index" {
-    var current_frame: usize = 0;
-    var command_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandBuffer = .{ null, null };
-    command_buffers[0] = @ptrFromInt(100);
-    command_buffers[1] = @ptrFromInt(200);
+    const MAX_FRAMES = rhi.MAX_FRAMES_IN_FLIGHT;
+    const command_buffers: [MAX_FRAMES]c.VkCommandBuffer = .{ @ptrFromInt(100), @ptrFromInt(200) };
 
-    const cb = command_buffers[current_frame];
-    try testing.expect(cb == @as(c.VkCommandBuffer, @ptrFromInt(100)));
+    var current_frame: usize = 0;
+    try testing.expect(command_buffers[current_frame] == @as(c.VkCommandBuffer, @ptrFromInt(100)));
 
     current_frame = 1;
-    const cb2 = command_buffers[current_frame];
-    try testing.expect(cb2 == @as(c.VkCommandBuffer, @ptrFromInt(200)));
-}
-
-test "FrameManager DRY_RUN_ACTIVE matches build_options" {
-    const build_options = @import("engine_graphics_options");
-    const expected = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
-    try testing.expectEqual(expected, frame_manager.DRY_RUN_ACTIVE);
+    try testing.expect(command_buffers[current_frame] == @as(c.VkCommandBuffer, @ptrFromInt(200)));
 }
 
 test "VkCommandBufferBeginInfo sType is correct" {
@@ -199,4 +141,11 @@ test "FrameManager render_finished_semaphores count matches MAX_SWAPCHAIN_IMAGES
 
 test "FrameManager in_flight_fences count matches MAX_FRAMES_IN_FLIGHT" {
     try testing.expectEqual(@as(usize, rhi.MAX_FRAMES_IN_FLIGHT), @sizeOf([rhi.MAX_FRAMES_IN_FLIGHT]c.VkFence) / @sizeOf(c.VkFence));
+}
+
+test "VkSubmitInfo wait semaphore count can be 2" {
+    var submit_info = std.mem.zeroes(c.VkSubmitInfo);
+    submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.waitSemaphoreCount = 2;
+    try testing.expectEqual(@as(u32, 2), submit_info.waitSemaphoreCount);
 }

@@ -381,3 +381,33 @@ test "subpass contents inline" {
 test "pipeline bind point graphics" {
     try testing.expectEqual(@as(c.VkPipelineBindPoint, c.VK_PIPELINE_BIND_POINT_GRAPHICS), c.VK_PIPELINE_BIND_POINT_GRAPHICS);
 }
+
+test "clear color configuration for main pass" {
+    var clear_value = std.mem.zeroes(c.VkClearValue);
+    clear_value.color = .{ .float32 = .{ 0.5, 0.5, 0.5, 1.0 } };
+    try testing.expectEqual(@as(f32, 0.5), clear_value.color.float32[0]);
+    try testing.expectEqual(@as(f32, 1.0), clear_value.color.float32[3]);
+}
+
+test "depth stencil clear value" {
+    var clear_value = std.mem.zeroes(c.VkClearValue);
+    clear_value.depthStencil = .{ .depth = 1.0, .stencil = 0 };
+    try testing.expectEqual(@as(f32, 1.0), clear_value.depthStencil.depth);
+    try testing.expectEqual(@as(u32, 0), clear_value.depthStencil.stencil);
+}
+
+test "image memory barrier layout transition" {
+    var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
+    barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.newLayout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    try testing.expectEqual(@as(c.VkImageLayout, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL), barrier.oldLayout);
+    try testing.expectEqual(@as(c.VkImageLayout, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL), barrier.newLayout);
+}
+
+test "image memory barrier subresource range configuration" {
+    var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
+    barrier.subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+    try testing.expectEqual(@as(c.VkImageAspectFlags, c.VK_IMAGE_ASPECT_COLOR_BIT), barrier.subresourceRange.aspectMask);
+    try testing.expectEqual(@as(u32, 1), barrier.subresourceRange.levelCount);
+}
