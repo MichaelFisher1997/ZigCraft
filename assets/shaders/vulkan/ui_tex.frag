@@ -12,8 +12,9 @@ layout(push_constant) uniform PushConstants {
 
 void main() {
     vec4 texColor = texture(uTexture, vTexCoord);
-    // Font atlases use R8 coverage. Regular RGBA UI textures still pass
-    // through because their alpha remains authoritative.
-    float alpha = texColor.a < 1.0 ? texColor.a : texColor.r;
-    FragColor = vec4(pc.tint.rgb, pc.tint.a * alpha);
+    if (pc.tint.a < 0.0) {
+        FragColor = vec4(pc.tint.rgb, -pc.tint.a * texColor.r);
+    } else {
+        FragColor = texColor * pc.tint;
+    }
 }

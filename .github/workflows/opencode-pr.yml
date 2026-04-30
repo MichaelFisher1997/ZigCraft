@@ -71,6 +71,7 @@ jobs:
 
       - name: Run opencode
         id: ai_review
+        timeout-minutes: 25
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -80,6 +81,12 @@ jobs:
           model: kimi-for-coding/k2p6
           use_github_token: true
           prompt: ${{ env.PROMPT }}
+
+      - name: Dump opencode diagnostics
+        if: always()
+        env:
+          AI_REVIEW_OUTCOME: ${{ steps.ai_review.outcome }}
+        run: bash scripts/dump_opencode_diagnostics.sh
 
       - name: Evaluate AI merge gate
         id: ai_merge_gate
