@@ -1,5 +1,6 @@
 pub const screen = @import("screen.zig");
 pub const menu_theme = @import("menu_theme.zig");
+pub const settings_ui = @import("settings_ui.zig");
 
 pub const environment = @import("screens/environment.zig");
 pub const graphics = @import("screens/graphics.zig");

@@ -2,6 +2,7 @@ const std = @import("std");
 const UISystem = @import("engine-ui").UISystem;
 const Font = @import("engine-ui").font;
 const Theme = @import("../menu_theme.zig");
+const SettingsUi = @import("../settings_ui.zig");
 const Color = Theme.Color;
 const Rect = Theme.Rect;
 const Screen = @import("../screen.zig");
@@ -13,7 +14,7 @@ const render_settings_mod = @import("engine-rhi").render_settings;
 const RenderDistancePreset = render_settings_mod.RenderDistancePreset;
 
 const PANEL_WIDTH_MAX = 1280.0;
-const StepResult = enum { none, previous, next };
+const StepResult = SettingsUi.StepResult;
 
 pub const GraphicsScreen = struct {
     context: EngineContext,
@@ -116,19 +117,19 @@ pub const GraphicsScreen = struct {
         if (rowFullyVisible(sy, row_height, content_top, content_bottom)) {
             const preset_idx = if (settings_pkg.json_presets.graphics_presets.items.len > 0) settings_pkg.json_presets.getIndex(settings) else 0;
             const preset_count = settings_pkg.json_presets.graphics_presets.items.len + 1;
-            const step = drawStepperRow(ui, .{ .x = row_x, .y = sy, .width = row_w, .height = row_height }, "OVERALL QUALITY", "Preset target for renderer cost and quality.", getPresetLabel(preset_idx), label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
+            const step = drawStepperRow(ui, .{ .x = row_x, .y = sy, .width = row_w, .height = row_height }, "OVERALL QUALITY", "Preset target for renderer cost and quality.", SettingsUi.getPresetLabel(preset_idx), label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
             if (settings_pkg.json_presets.graphics_presets.items.len > 0) {
                 if (step == .previous) {
                     const prev_idx = if (preset_idx == 0) preset_count - 1 else preset_idx - 1;
                     if (prev_idx < settings_pkg.json_presets.graphics_presets.items.len) {
                         settings_pkg.json_presets.apply(settings, prev_idx);
-                        applyPresetSideEffects(settings, rs);
+                        SettingsUi.applyPresetSideEffects(settings, rs);
                     }
                 } else if (step == .next) {
                     const next_idx = (preset_idx + 1) % preset_count;
                     if (next_idx < settings_pkg.json_presets.graphics_presets.items.len) {
                         settings_pkg.json_presets.apply(settings, next_idx);
-                        applyPresetSideEffects(settings, rs);
+                        SettingsUi.applyPresetSideEffects(settings, rs);
                     }
                 }
             }
@@ -177,12 +178,12 @@ pub const GraphicsScreen = struct {
 
             if (rowFullyVisible(sy, row_height, content_top, content_bottom)) {
                 const row_rect = Rect{ .x = row_x, .y = sy, .width = row_w, .height = row_height };
-                const highlighted = rowHighlight(decl.name, val_ptr.*);
+                const highlighted = SettingsUi.rowHighlight(decl.name, val_ptr.*);
                 Theme.drawOptionRow(ui, row_rect, meta.label, rowDescription(decl.name), label_scale, highlighted, ui_scale);
 
                 switch (meta.kind) {
                     .toggle => {
-                        if (drawToggleControl(ui, row_rect, val_ptr.*, value_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
+                        if (SettingsUi.drawToggleControl(ui, row_rect, val_ptr.*, value_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
                             val_ptr.* = !val_ptr.*;
                         }
                     },
@@ -204,7 +205,7 @@ pub const GraphicsScreen = struct {
                                     break;
                                 }
                             }
-                            const step = drawStepperControl(ui, row_rect, current_label, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
+                            const step = SettingsUi.drawStepperControl(ui, row_rect, current_label, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
                             if (step == .previous) {
                                 const prev_idx = if (current_idx == 0) values.len - 1 else current_idx - 1;
                                 val_ptr.* = @as(val_type, @intCast(values[prev_idx]));
@@ -216,7 +217,7 @@ pub const GraphicsScreen = struct {
                     },
                     .slider => |slider| {
                         const val_str = std.fmt.bufPrint(&buf, "{d:.2}", .{val_ptr.*}) catch "ERR";
-                        const step = drawStepperControl(ui, row_rect, val_str, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
+                        const step = SettingsUi.drawStepperControl(ui, row_rect, val_str, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
                         if (step == .previous) {
                             if (val_ptr.* - slider.step < slider.min - 0.001) {
                                 val_ptr.* = slider.max - slider.step;
@@ -233,7 +234,7 @@ pub const GraphicsScreen = struct {
                     },
                     .int_range => |range| {
                         const val_str = std.fmt.bufPrint(&buf, "{d}", .{val_ptr.*}) catch "ERR";
-                        const step = drawStepperControl(ui, row_rect, val_str, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
+                        const step = SettingsUi.drawStepperControl(ui, row_rect, val_str, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
                         if (step == .previous) {
                             if (val_ptr.* - range.step < range.min) {
                                 val_ptr.* = range.max - range.step;
@@ -250,15 +251,15 @@ pub const GraphicsScreen = struct {
                     },
                 }
 
-                if (std.mem.eql(u8, decl.name, "lpv_quality_preset")) {
-                    const legend = getLPVQualityLegend(settings.lpv_quality_preset);
+                if (comptime std.mem.eql(u8, decl.name, "lpv_quality_preset")) {
+                    const legend = SettingsUi.getLPVQualityLegend(settings.lpv_quality_preset);
                     Font.drawText(ui, legend, row_rect.x + row_rect.width - 398.0 * ui_scale, row_rect.y + row_height - 16.0 * ui_scale, 0.72 * ui_scale, Theme.signal);
                 }
             }
 
             if (val_ptr.* != old_val) {
                 const sanitized_conflict = settings_pkg.sanitizeRuntimeConflicts(settings);
-                applyChangedSetting(decl.name, settings, rs);
+                SettingsUi.applyChangedSetting(decl.name, settings, rs);
                 if (sanitized_conflict) rs.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
             }
 
@@ -310,38 +311,7 @@ fn rowFullyVisible(y: f32, h: f32, top: f32, bottom: f32) bool {
 
 fn drawStepperRow(ui: *UISystem, row: Rect, label: []const u8, description: []const u8, value: []const u8, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) StepResult {
     Theme.drawOptionRow(ui, row, label, description, label_scale, false, scale);
-    return drawStepperControl(ui, row, value, value_scale, button_scale, mx, my, clicked, scale);
-}
-
-fn drawStepperControl(ui: *UISystem, row: Rect, value: []const u8, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) StepResult {
-    const control_h = row.height - 18.0 * scale;
-    const arrow_w = 42.0 * scale;
-    const value_w = @min(190.0 * scale, row.width * 0.32);
-    const control_y = row.y + 9.0 * scale;
-    const right_x = row.x + row.width - arrow_w - 12.0 * scale;
-    const value_x = right_x - value_w - 8.0 * scale;
-    const left_x = value_x - arrow_w - 8.0 * scale;
-    var result: StepResult = .none;
-    if (Theme.drawButton(ui, .{ .x = left_x, .y = control_y, .width = arrow_w, .height = control_h }, "<", button_scale, mx, my, clicked, .ghost, scale)) result = .previous;
-    Theme.drawValueText(ui, .{ .x = value_x, .y = control_y, .width = value_w, .height = control_h }, value, value_scale, scale);
-    if (Theme.drawButton(ui, .{ .x = right_x, .y = control_y, .width = arrow_w, .height = control_h }, ">", button_scale, mx, my, clicked, .ghost, scale)) result = .next;
-    return result;
-}
-
-fn drawToggleControl(ui: *UISystem, row: Rect, enabled: bool, value_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) bool {
-    const toggle_w = 190.0 * scale;
-    const toggle_h = row.height - 18.0 * scale;
-    const toggle_x = row.x + row.width - toggle_w - 12.0 * scale;
-    const toggle_y = row.y + 9.0 * scale;
-    return Theme.drawButton(ui, .{ .x = toggle_x, .y = toggle_y, .width = toggle_w, .height = toggle_h }, if (enabled) "ENABLED" else "DISABLED", value_scale, mx, my, clicked, if (enabled) .secondary else .ghost, scale);
-}
-
-fn rowHighlight(comptime name: []const u8, value: anytype) bool {
-    _ = name;
-    return switch (@TypeOf(value)) {
-        bool => value,
-        else => false,
-    };
+    return SettingsUi.drawStepperControl(ui, row, value, value_scale, button_scale, mx, my, clicked, scale);
 }
 
 fn rowDescription(comptime name: []const u8) []const u8 {
@@ -361,71 +331,4 @@ fn rowDescription(comptime name: []const u8) []const u8 {
         "Fog volume strength."
     else
         "Click arrows to cycle or tune this parameter.";
-}
-
-fn applyChangedSetting(comptime name: []const u8, settings: *Settings, rs: anytype) void {
-    if (std.mem.eql(u8, name, "anisotropic_filtering")) {
-        rs.setAnisotropicFiltering(settings.anisotropic_filtering);
-    } else if (std.mem.eql(u8, name, "textures_enabled")) {
-        rs.setTexturesEnabled(settings.textures_enabled);
-    } else if (std.mem.eql(u8, name, "vsync")) {
-        rs.setVSync(settings.vsync);
-    } else if (std.mem.eql(u8, name, "volumetric_density")) {
-        rs.setVolumetricDensity(settings.volumetric_density);
-    } else if (std.mem.eql(u8, name, "taa_enabled")) {
-        if (settings.taa_enabled) {
-            settings.fxaa_enabled = false;
-            rs.setFXAA(false);
-        }
-    } else if (std.mem.eql(u8, name, "taa_blend_factor")) {
-        rs.setTAABlendFactor(settings.taa_blend_factor);
-    } else if (std.mem.eql(u8, name, "taa_velocity_rejection")) {
-        rs.setTAAVelocityRejection(settings.taa_velocity_rejection);
-    } else if (std.mem.eql(u8, name, "fxaa_enabled")) {
-        if (settings.taa_enabled and settings.fxaa_enabled) {
-            settings.fxaa_enabled = false;
-            rs.setFXAA(false);
-        } else {
-            rs.setFXAA(settings.fxaa_enabled);
-        }
-    } else if (std.mem.eql(u8, name, "bloom_enabled")) {
-        rs.setBloom(settings.bloom_enabled);
-    } else if (std.mem.eql(u8, name, "bloom_intensity")) {
-        rs.setBloomIntensity(settings.bloom_intensity);
-    } else if (std.mem.eql(u8, name, "vignette_enabled")) {
-        rs.setVignetteEnabled(settings.vignette_enabled);
-    } else if (std.mem.eql(u8, name, "vignette_intensity")) {
-        rs.setVignetteIntensity(settings.vignette_intensity);
-    } else if (std.mem.eql(u8, name, "film_grain_enabled")) {
-        rs.setFilmGrainEnabled(settings.film_grain_enabled);
-    } else if (std.mem.eql(u8, name, "film_grain_intensity")) {
-        rs.setFilmGrainIntensity(settings.film_grain_intensity);
-    }
-}
-
-fn applyPresetSideEffects(settings: *Settings, rs: anytype) void {
-    _ = settings_pkg.sanitizeRuntimeConflicts(settings);
-    rs.setAnisotropicFiltering(settings.anisotropic_filtering);
-    rs.setTexturesEnabled(settings.textures_enabled);
-    rs.setTAABlendFactor(settings.taa_blend_factor);
-    rs.setTAAVelocityRejection(settings.taa_velocity_rejection);
-    if (settings.taa_enabled) {
-        settings.fxaa_enabled = false;
-        rs.setFXAA(false);
-    } else {
-        rs.setFXAA(settings.fxaa_enabled);
-    }
-}
-
-fn getPresetLabel(idx: usize) []const u8 {
-    if (idx >= settings_pkg.json_presets.graphics_presets.items.len) return "CUSTOM";
-    return settings_pkg.json_presets.graphics_presets.items[idx].name;
-}
-
-fn getLPVQualityLegend(preset: u32) []const u8 {
-    return switch (preset) {
-        0 => "GRID16  ITER2  TICK8",
-        2 => "GRID64  ITER5  TICK3",
-        else => "GRID32  ITER3  TICK6",
-    };
 }
