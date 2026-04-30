@@ -281,9 +281,9 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
     const dynamic_resolution_settings = .{ "dynamic_resolution_enabled", "dynamic_resolution_min_scale", "dynamic_resolution_max_scale", "target_fps" };
     const left_sections = .{ "BASELINE", "MATERIALS", "SHADOWS" };
     const right_sections = .{ "IMAGE", "ATMOSPHERE AND GI", "DYNAMIC RESOLUTION" };
+    const baseline_rows = .{ "OVERALL QUALITY", "RENDER DISTANCE", "WIREFRAME" };
 
-    const baseline_rows: usize = 3;
-    const left_content_h = renderingContentHeight(left_sections.len, baseline_rows + material_settings.len + shadow_settings.len, row_h, row_gap, section_h, scale) + warning_h;
+    const left_content_h = renderingContentHeight(left_sections.len, baseline_rows.len + material_settings.len + shadow_settings.len, row_h, row_gap, section_h, scale) + warning_h;
     const right_content_h = renderingContentHeight(right_sections.len, image_settings.len + atmosphere_settings.len + dynamic_resolution_settings.len, row_h, row_gap, section_h, scale);
     const total_content_h = @max(left_content_h, right_content_h);
     const max_scroll = @max(0.0, total_content_h - inner.height);
