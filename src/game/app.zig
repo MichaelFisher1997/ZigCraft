@@ -135,7 +135,13 @@ pub const App = struct {
         const initial_window_width: u32 = if (build_options.benchmark) 1920 else settings_manager.settings.window_width;
         const initial_window_height: u32 = if (build_options.benchmark) 1080 else settings_manager.settings.window_height;
         log.log.info("App.init: initializing WindowManager ({}x{})", .{ initial_window_width, initial_window_height });
-        var wm = try WindowManager.init(allocator, true, initial_window_width, initial_window_height, build_options.monitor_index, build_options.monitor_name, build_options.window_video_driver, build_options.window_no_focus, build_options.skip_present);
+        var wm = try WindowManager.init(allocator, true, initial_window_width, initial_window_height, .{
+            .monitor_index = build_options.monitor_index,
+            .monitor_name = build_options.monitor_name,
+            .video_driver = build_options.window_video_driver,
+            .no_focus = build_options.window_no_focus,
+            .hidden = build_options.skip_present,
+        });
         errdefer wm.deinit();
 
         var input = Input.init(allocator);

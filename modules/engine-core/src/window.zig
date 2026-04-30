@@ -2,13 +2,21 @@ const std = @import("std");
 const c = @import("c").c;
 const log = @import("log.zig");
 
+pub const WindowConfig = struct {
+    monitor_index: i32 = -1,
+    monitor_name: []const u8 = "",
+    video_driver: []const u8 = "",
+    no_focus: bool = false,
+    hidden: bool = false,
+};
+
 pub const WindowManager = struct {
     window: *c.SDL_Window,
     is_vulkan: bool = true,
 
-    pub fn init(allocator: std.mem.Allocator, use_vulkan: bool, width: u32, height: u32, monitor_index: i32, monitor_name: []const u8, video_driver: []const u8, window_no_focus: bool, window_hidden: bool) !WindowManager {
+    pub fn init(allocator: std.mem.Allocator, use_vulkan: bool, width: u32, height: u32, config: WindowConfig) !WindowManager {
         _ = use_vulkan;
-        applyVideoDriverHint(video_driver);
+        applyVideoDriverHint(config.video_driver);
         if (c.SDL_Init(c.SDL_INIT_VIDEO) == false) {
             std.debug.print("SDL Init Failed: {s}\n", .{c.SDL_GetError()});
             return error.SDLInitializationFailed;
@@ -18,30 +26,38 @@ pub const WindowManager = struct {
         }
 
         var window_flags: c.SDL_WindowFlags = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIGH_PIXEL_DENSITY | c.SDL_WINDOW_VULKAN;
-        if (window_no_focus) {
+        if (config.no_focus) {
             window_flags |= c.SDL_WINDOW_NOT_FOCUSABLE;
         }
-        if (window_hidden) {
+        if (config.hidden) {
             window_flags |= c.SDL_WINDOW_HIDDEN;
         }
 
-        const window = if (monitor_name.len > 0)
-            createWindowOnHyprlandMonitor(allocator, width, height, window_flags, monitor_name, window_no_focus, window_hidden) orelse if (monitor_index >= 0)
-                createWindowOnMonitor(width, height, window_flags, monitor_index, window_no_focus, window_hidden)
-            else
-                createWindowWithProperties(@intCast(width), @intCast(height), window_flags, null, null, window_no_focus, window_hidden)
-        else if (monitor_index >= 0)
-            createWindowOnMonitor(width, height, window_flags, monitor_index, window_no_focus, window_hidden)
-        else
-            createWindowWithProperties(@intCast(width), @intCast(height), window_flags, null, null, window_no_focus, window_hidden);
+        var placed_on_hyprland_monitor = false;
+        const window = blk: {
+            if (config.monitor_name.len > 0) {
+                if (createWindowOnHyprlandMonitor(allocator, width, height, window_flags, config.monitor_name, config.no_focus, config.hidden)) |created| {
+                    placed_on_hyprland_monitor = true;
+                    break :blk created;
+                }
+            }
+
+            if (config.monitor_index >= 0) {
+                break :blk createWindowOnMonitor(width, height, window_flags, config.monitor_index, config.no_focus, config.hidden);
+            }
+
+            break :blk createWindowWithProperties(@intCast(width), @intCast(height), window_flags, null, null, config.no_focus, config.hidden);
+        };
         if (window == null) {
             log.log.err("Window Creation Failed: {s}", .{c.SDL_GetError()});
             return error.WindowCreationFailed;
         }
-        if (window_no_focus and c.SDL_SetWindowFocusable(window.?, false) == false) {
+        if (config.no_focus and c.SDL_SetWindowFocusable(window.?, false) == false) {
             log.log.warn("SDL_SetWindowFocusable(false) failed: {s}", .{c.SDL_GetError()});
         }
-        moveToHyprlandMonitor(allocator, monitor_name);
+        if (config.monitor_name.len > 0 and !placed_on_hyprland_monitor) {
+            moveToHyprlandMonitor(allocator, config.monitor_name);
+        }
         log.log.info("Window created at {}x{}", .{ width, height });
 
         return WindowManager{

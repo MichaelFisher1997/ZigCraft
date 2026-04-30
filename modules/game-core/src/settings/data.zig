@@ -49,6 +49,15 @@ pub fn clearTerrainDebugViews(settings: *@This().Settings) void {
     settings.debug_outdoor_factor_active = false;
 }
 
+pub fn sanitizeRuntimeConflicts(settings: *@This().Settings) bool {
+    if (settings.lod_enabled and settings.taa_enabled) {
+        settings.taa_enabled = false;
+        settings.fxaa_enabled = true;
+        return true;
+    }
+    return false;
+}
+
 pub const ShadowQuality = struct {
     resolution: u32,
     label: []const u8,

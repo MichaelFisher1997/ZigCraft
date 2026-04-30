@@ -1,5 +1,6 @@
 const std = @import("std");
-const Settings = @import("data.zig").Settings;
+const data = @import("data.zig");
+const Settings = data.Settings;
 const presets = @import("json_presets.zig");
 const persistence = @import("persistence.zig");
 const RenderDistancePreset = @import("engine-rhi").RenderDistancePreset;
@@ -50,4 +51,15 @@ test "Preset Matching" {
     // Modify a value to make it Custom
     settings.shadow_quality = 3;
     try std.testing.expectEqual(presets.graphics_presets.items.len, presets.getIndex(&settings));
+}
+
+test "TAA and LOD conflict sanitization" {
+    var settings = Settings{};
+    settings.lod_enabled = true;
+    settings.taa_enabled = true;
+    settings.fxaa_enabled = false;
+
+    try std.testing.expectEqual(true, data.sanitizeRuntimeConflicts(&settings));
+    try std.testing.expectEqual(false, settings.taa_enabled);
+    try std.testing.expectEqual(true, settings.fxaa_enabled);
 }

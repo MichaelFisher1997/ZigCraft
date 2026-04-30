@@ -174,6 +174,7 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
     settings.bloom_enabled = config.bloom_enabled;
     settings.bloom_intensity = config.bloom_intensity;
+    _ = data.sanitizeRuntimeConflicts(settings);
 }
 
 pub fn getIndex(settings: *const Settings) usize {
