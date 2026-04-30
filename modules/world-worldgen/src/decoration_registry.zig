@@ -82,6 +82,29 @@ pub const DECORATIONS = [_]Decoration{
     },
 };
 
+pub fn chooseStaticSimpleDecoration(biome: BiomeId, surface_block: BlockType, variant: f32, allow_subbiomes: bool, veg_mult: f32, random: std.Random) ?SimpleDecoration {
+    for (DECORATIONS) |deco| {
+        switch (deco) {
+            .simple => |simple| {
+                if (!simple.isAllowed(biome, surface_block)) continue;
+                if (!variantAllowed(variant, allow_subbiomes, simple.variant_min, simple.variant_max)) continue;
+
+                const prob = @min(1.0, simple.probability * veg_mult);
+                if (random.float(f32) >= prob) continue;
+
+                return simple;
+            },
+            .schematic => {},
+        }
+    }
+    return null;
+}
+
+fn variantAllowed(variant: f32, allow_subbiomes: bool, min: f32, max: f32) bool {
+    if (allow_subbiomes) return variant >= min and variant <= max;
+    return min == -1.0 and max == 1.0;
+}
+
 const Chunk = world_core.Chunk;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
@@ -145,25 +168,8 @@ pub const StandardDecorationProvider = struct {
         const random = ctx.random;
 
         // 1. Static decorations (flowers, grass)
-        for (DECORATIONS) |deco| {
-            switch (deco) {
-                .simple => |s| {
-                    if (!s.isAllowed(biome, surface_block)) continue;
-
-                    if (!allow_subbiomes) {
-                        if (s.variant_min != -1.0 or s.variant_max != 1.0) continue;
-                    } else {
-                        if (variant < s.variant_min or variant > s.variant_max) continue;
-                    }
-
-                    const prob = @min(1.0, s.probability * veg_mult);
-                    if (random.float(f32) >= prob) continue;
-
-                    chunk.setBlock(local_x, @intCast(surface_y + 1), local_z, s.block);
-                    break;
-                },
-                .schematic => {},
-            }
+        if (chooseStaticSimpleDecoration(biome, surface_block, variant, allow_subbiomes, veg_mult, random)) |simple| {
+            chunk.setBlock(local_x, @intCast(surface_y + 1), local_z, simple.block);
         }
 
         // 2. Dynamic Tree Registry (from Biome Definition)

@@ -173,6 +173,14 @@ pub const ShadowTestWorldGenerator = struct {
         @memset(data.biomes, .plains);
         @memset(data.top_blocks, .grass);
         @memset(data.colors, GRASS_COLOR);
+        @memset(data.material_layers, .{
+            .surface = .grass,
+            .subsurface = .dirt,
+            .foundation = .stone,
+        });
+        @memset(data.water, world_core.LODWaterState.empty);
+        @memset(data.lighting, world_core.LODLightingHint.daylight);
+        @memset(data.vegetation, world_core.LODVegetationHint.empty);
     }
 
     pub fn maybeRecenterCache(self: *ShadowTestWorldGenerator, player_x: i32, player_z: i32) bool {
