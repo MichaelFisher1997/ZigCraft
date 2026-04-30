@@ -88,6 +88,19 @@ jobs:
           AI_REVIEW_OUTCOME: ${{ steps.ai_review.outcome }}
         run: bash scripts/dump_opencode_diagnostics.sh
 
+      - name: Upload opencode diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/opencode-cache
+            ~/.local/share/opencode
+            ~/.cache/opencode
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 7
+
       - name: Evaluate AI merge gate
         id: ai_merge_gate
         run: bash scripts/publish_ai_merge_gate.sh
