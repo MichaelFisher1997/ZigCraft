@@ -315,3 +315,57 @@ test "IScreen.getWorldStats returns null when not implemented" {
     const stats = screen.getWorldStats();
     try testing.expect(stats == null);
 }
+
+test "IScreen.handle returns correct handle" {
+    var state = MockState{};
+    var mock_screen: MockScreen = .{ .state = &state };
+    const screen = MockScreen.make(&mock_screen);
+
+    const handle = screen.handle();
+    try testing.expectEqual(@as(*anyopaque, @ptrCast(&mock_screen)), handle.ptr);
+}
+
+test "ScreenManager.draw with empty stack does nothing" {
+    const allocator = testing.allocator;
+    var manager = ScreenManager.init(allocator);
+    defer manager.deinit();
+
+    try manager.draw(@ptrCast(@alignCast(&manager)));
+}
+
+test "ScreenManager.drawParentScreen returns early for first screen" {
+    const allocator = testing.allocator;
+    var manager = ScreenManager.init(allocator);
+    defer manager.deinit();
+
+    var state1 = MockState{};
+    var mock_screen1: MockScreen = .{ .state = &state1 };
+    const screen1 = MockScreen.make(&mock_screen1);
+
+    manager.pushScreen(screen1);
+    try manager.update(0.016);
+
+    try manager.drawParentScreen(@ptrCast(@alignCast(&mock_screen1)), @ptrCast(@alignCast(&manager)));
+}
+
+test "ScreenManager.drawParentScreen draws parent when not first" {
+    const allocator = testing.allocator;
+    var manager = ScreenManager.init(allocator);
+    defer manager.deinit();
+
+    var state1 = MockState{};
+    var state2 = MockState{};
+    var mock_screen1: MockScreen = .{ .state = &state1 };
+    var mock_screen2: MockScreen = .{ .state = &state2 };
+    const screen1 = MockScreen.make(&mock_screen1);
+    const screen2 = MockScreen.make(&mock_screen2);
+
+    manager.pushScreen(screen1);
+    try manager.update(0.016);
+
+    manager.pushScreen(screen2);
+    try manager.update(0.016);
+
+    try manager.drawParentScreen(@ptrCast(@alignCast(&mock_screen2)), @ptrCast(@alignCast(&manager)));
+    try testing.expectEqual(@as(usize, 1), state1.draw_count);
+}

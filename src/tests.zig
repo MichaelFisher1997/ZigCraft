@@ -66,6 +66,7 @@ test {
     _ = @import("world-lod").lod_renderer;
     _ = @import("engine-atmosphere").atmosphere_tests;
     _ = @import("game-core").settings_tests;
+    _ = @import("game-core").data_tests;
     _ = @import("game-core").input_settings;
     _ = @import("game/player_tests.zig");
     _ = @import("game/inventory_tests.zig");

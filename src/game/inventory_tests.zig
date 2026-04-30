@@ -320,3 +320,29 @@ test "Inventory constants are valid" {
 test "Inventory.ItemStack.MAX_STACK is reasonable" {
     try testing.expectEqual(@as(u8, 64), Inventory.ItemStack.MAX_STACK);
 }
+
+test "Inventory.scrollSelection single step wraps correctly" {
+    var inv = Inventory.initEmpty();
+
+    inv.selectSlot(0);
+    inv.scrollSelection(1);
+    try testing.expectEqual(@as(u8, 8), inv.selected_slot);
+
+    inv.scrollSelection(-1);
+    try testing.expectEqual(@as(u8, 0), inv.selected_slot);
+}
+
+test "Inventory.init fills hotbar with correct count" {
+    const inv = Inventory.init();
+
+    for (0..9) |i| {
+        try testing.expect(inv.slots[i] != null);
+        try testing.expectEqual(@as(u8, 64), inv.slots[i].?.count);
+    }
+
+    for (9..36) |i| {
+        if (inv.slots[i]) |stack| {
+            try testing.expectEqual(@as(u8, 64), stack.count);
+        }
+    }
+}

@@ -30,3 +30,4 @@ pub const SettingsManager = settings_manager.SettingsManager;
 
 pub const settings_tests = @import("settings/tests.zig");
 pub const settings_persistence_tests = @import("settings/persistence_tests.zig");
+pub const data_tests = @import("settings/data_tests.zig");
