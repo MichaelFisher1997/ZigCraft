@@ -1,7 +1,6 @@
 pub const block_texture_definitions = @import("block_texture_definitions.zig");
 pub const block_outline = @import("block_outline.zig");
 pub const benchmark = @import("benchmark.zig");
-pub const build_options = @import("game_build_options");
 pub const hand_renderer = @import("hand_renderer.zig");
 pub const input_mapper = @import("input_mapper.zig");
 pub const input_settings = @import("input_settings.zig");
@@ -20,6 +19,7 @@ pub const session_hud = @import("ui/session_hud.zig");
 
 pub const BLOCK_TEXTURE_DEFINITIONS = block_texture_definitions.BLOCK_TEXTURE_DEFINITIONS;
 pub const BenchmarkRunner = benchmark.BenchmarkRunner;
+pub const BuildConfig = session.BuildConfig;
 pub const GameSession = session.GameSession;
 pub const InputMapper = input_mapper.InputMapper;
 pub const InputSettings = input_settings.InputSettings;

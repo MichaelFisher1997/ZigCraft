@@ -28,7 +28,6 @@ const log = @import("engine-core").log;
 const CSM = @import("engine-graphics").csm;
 const WorldRenderer = @import("world-runtime").WorldRenderer;
 const settings_data = @import("game-core").settings.data;
-const build_options = @import("game-core").build_options;
 const world_debug = @import("world_debug.zig");
 const world_frame_params = @import("world_frame_params.zig");
 
@@ -76,7 +75,7 @@ pub const WorldScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
         const render_system = context.render_system;
-        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset);
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
         errdefer session.deinit();
         const world = session.world.interface();
 
@@ -112,7 +111,7 @@ pub const WorldScreen = struct {
         const render_system = ctx.render_system;
         const now = ctx.time.elapsed;
         const benchmark_mode = ctx.benchmark_runner != null;
-        const automated_capture = build_options.shadow_test_scene and build_options.screenshot_path.len > 0;
+        const automated_capture = ctx.build_config.shadow_test_scene and ctx.build_config.screenshot_path.len > 0;
 
         if (!benchmark_mode and !automated_capture) {
             if (try self.processControls(now)) return;
@@ -232,9 +231,9 @@ pub const WorldScreen = struct {
     }
 
     fn maybeLogStartupDiagnostic(self: *@This(), now: f32) void {
-        if (build_options.startup_diagnostic_seconds == 0 or self.startup_diagnostic_logged) return;
+        if (self.context.build_config.startup_diagnostic_seconds == 0 or self.startup_diagnostic_logged) return;
 
-        const delay_s: f32 = @floatFromInt(build_options.startup_diagnostic_seconds);
+        const delay_s: f32 = @floatFromInt(self.context.build_config.startup_diagnostic_seconds);
         if (now - self.startup_diagnostic_start < delay_s) return;
 
         const stats = self.session.world.getStats();
@@ -295,11 +294,11 @@ pub const WorldScreen = struct {
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
         const safe_mode = render_system.getSafeMode();
         const startup_busy = self.session.world.isStartupBusy();
-        const startup_loading = build_options.auto_world.len > 0 and startup_busy;
+        const startup_loading = ctx.build_config.auto_world.len > 0 and startup_busy;
         const startup_light_render = startup_loading and !safe_mode;
         const shadow_sandbox_active = ctx.settings.shadow_sandbox_enabled and !render_system.getDisableShadowDraw() and !startup_light_render;
         const shadow_beauty_active = ctx.settings.shadow_beauty_enabled and shadow_sandbox_active;
-        const clean_capture = build_options.shadow_test_scene and build_options.screenshot_path.len > 0;
+        const clean_capture = ctx.build_config.shadow_test_scene and ctx.build_config.screenshot_path.len > 0;
         const shadow_distance_active = if (shadow_sandbox_active) @min(ctx.settings.shadow_distance, 160.0) else ctx.settings.shadow_distance;
         const shadow_caster_distance_active = if (shadow_sandbox_active) @min(ctx.settings.shadow_caster_distance, shadow_distance_active) else ctx.settings.shadow_caster_distance;
         const render_sun_dir = self.session.atmosphere.celestial.sun_dir;

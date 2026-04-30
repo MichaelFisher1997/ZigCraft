@@ -14,6 +14,7 @@ const IRenderSettings = core_interfaces.IRenderSettings;
 const settings_pkg = @import("game-core").settings;
 const Settings = settings_pkg.Settings;
 const BenchmarkRunner = @import("game-core").BenchmarkRunner;
+const BuildConfig = @import("game-core").BuildConfig;
 
 pub const EngineContext = struct {
     allocator: std.mem.Allocator,
@@ -29,6 +30,7 @@ pub const EngineContext = struct {
     skip_world_update: bool,
     render_settings: IRenderSettings,
     benchmark_runner: ?*BenchmarkRunner = null,
+    build_config: BuildConfig = .{},
 
     pub fn saveSettings(self: EngineContext) void {
         saveSettingsShared(self.allocator, self.settings, self.input_mapper);
@@ -96,6 +98,7 @@ pub const EngineContext = struct {
             .screen_manager = self.screen_manager,
             .skip_world_update = self.skip_world_update,
             .benchmark_runner = self.benchmark_runner,
+            .build_config = self.build_config,
         };
     }
 };
@@ -165,6 +168,7 @@ pub const WorldContext = struct {
     screen_manager: *ScreenManager,
     skip_world_update: bool,
     benchmark_runner: ?*BenchmarkRunner = null,
+    build_config: BuildConfig = .{},
 };
 
 fn saveSettingsShared(allocator: std.mem.Allocator, settings: *Settings, input_mapper: IInputMapper) void {

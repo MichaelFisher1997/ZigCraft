@@ -253,7 +253,6 @@ pub fn build(b: *std.Build) void {
     world_runtime.addOptions("world_runtime_options", world_runtime_options);
 
     addSharedImportsNoOptions(game_core, zig_math, zig_noise, fs_module, sync_module, c_module);
-    game_core.addOptions("game_build_options", options);
     addProjectModuleImports(game_core, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
 
     addSharedImportsNoOptions(game_ui, zig_math, zig_noise, fs_module, sync_module, c_module);

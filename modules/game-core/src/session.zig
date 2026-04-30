@@ -22,7 +22,6 @@ const render_settings = @import("engine-rhi").render_settings;
 const RenderDistancePreset = render_settings.RenderDistancePreset;
 const log = @import("engine-core").log;
 const runtime_env = @import("engine-core").runtime_env;
-const build_options = @import("game_build_options");
 const BlockType = @import("world-core").BlockType;
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
@@ -37,6 +36,16 @@ fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
     return std.mem.span(value);
 }
+
+pub const BuildConfig = struct {
+    auto_world: []const u8 = "",
+    chunk_debug_enable: []const u8 = "",
+    chunk_debug_mode: bool = false,
+    screenshot_path: []const u8 = "",
+    shadow_test_scene: bool = false,
+    shadow_test_variant: []const u8 = "dug-cave",
+    startup_diagnostic_seconds: u32 = 0,
+};
 
 const ECSManager = @import("engine-ecs").manager;
 const ECSRegistry = ECSManager.Registry;
@@ -78,16 +87,17 @@ pub const GameSession = struct {
     debug_show_block_info: bool = false,
     debug_shadows: bool = false,
     debug_cascade_idx: usize = 0,
+    build_config: BuildConfig = .{},
 
-    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset) !*GameSession {
+    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
 
         const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
         const effective_render_distance: i32 = render_distance;
-        const chunk_debug_restore_lod = chunkDebugRestoreEnabled("lod");
-        const effective_lod_enabled = if (build_options.chunk_debug_mode)
+        const chunk_debug_restore_lod = chunkDebugRestoreEnabled(build_config, "lod");
+        const effective_lod_enabled = if (build_config.chunk_debug_mode)
             chunk_debug_restore_lod
         else
             lod_enabled;
@@ -97,8 +107,8 @@ pub const GameSession = struct {
         } else if (safe_mode) {
             log.log.warn("Wayland stability profile active: keeping configured render distance {} and LOD behavior", .{effective_render_distance});
         }
-        if (build_options.chunk_debug_mode) {
-            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_options.chunk_debug_enable});
+        if (build_config.chunk_debug_mode) {
+            log.log.warn("CHUNK DEBUG MODE enabled: restore='{s}'", .{build_config.chunk_debug_enable});
         }
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
@@ -171,7 +181,7 @@ pub const GameSession = struct {
         var ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
         errdefer ecs_render_system.deinit();
 
-        const seed_spawn = findSpawnColumn(world, 8, 8);
+        const seed_spawn = findSpawnColumn(world, build_config, 8, 8);
         const spawn = findActualSpawnColumn(world, seed_spawn.x, seed_spawn.z) orelse seed_spawn;
         const spawn_y: f32 = @floatFromInt(spawn.info.height + 16);
         var player = Player.init(Vec3.init(@floatFromInt(spawn.x), spawn_y, @floatFromInt(spawn.z)), true);
@@ -180,14 +190,14 @@ pub const GameSession = struct {
 
         var atmosphere = Atmosphere.init();
         atmosphere.setTimeOfDay(0.5);
-        if (build_options.shadow_test_scene) {
+        if (build_config.shadow_test_scene) {
             atmosphere.time.time_scale = 0.0;
-            player.position = if (std.ascii.eqlIgnoreCase(build_options.shadow_test_variant, "bend"))
+            player.position = if (std.ascii.eqlIgnoreCase(build_config.shadow_test_variant, "bend"))
                 Vec3.init(5.5, 65.0, -14.0)
             else
                 Vec3.init(0.0, 65.0, -16.0);
             player.camera.position = player.getEyePosition();
-            player.camera.setYawPitch(std.math.pi / 2.0, if (std.ascii.eqlIgnoreCase(build_options.shadow_test_variant, "bend")) -std.math.degreesToRadians(8.0) else -std.math.degreesToRadians(5.0));
+            player.camera.setYawPitch(std.math.pi / 2.0, if (std.ascii.eqlIgnoreCase(build_config.shadow_test_variant, "bend")) -std.math.degreesToRadians(8.0) else -std.math.degreesToRadians(5.0));
         }
 
         session.* = .{
@@ -207,6 +217,7 @@ pub const GameSession = struct {
             .atmosphere = atmosphere,
             .lod_config = session.lod_config,
             .creative_mode = true,
+            .build_config = build_config,
         };
 
         const save_env = getenv("ZIGCRAFT_SAVE_DIR");
@@ -325,10 +336,10 @@ pub const GameSession = struct {
     }
 };
 
-fn chunkDebugRestoreEnabled(name: []const u8) bool {
-    if (!build_options.chunk_debug_mode) return false;
+fn chunkDebugRestoreEnabled(build_config: BuildConfig, name: []const u8) bool {
+    if (!build_config.chunk_debug_mode) return false;
 
-    var it = std.mem.tokenizeScalar(u8, build_options.chunk_debug_enable, ',');
+    var it = std.mem.tokenizeScalar(u8, build_config.chunk_debug_enable, ',');
     while (it.next()) |token| {
         const trimmed = std.mem.trim(u8, token, " \t");
         if (std.ascii.eqlIgnoreCase(trimmed, name)) return true;
@@ -336,10 +347,10 @@ fn chunkDebugRestoreEnabled(name: []const u8) bool {
     return false;
 }
 
-fn findSpawnColumn(world: *World, default_x: i32, default_z: i32) SpawnColumn {
+fn findSpawnColumn(world: *World, build_config: BuildConfig, default_x: i32, default_z: i32) SpawnColumn {
     const sea_level = 64;
     const default_info = world.getColumnInfo(default_x, default_z);
-    const needs_dry_spawn = build_options.chunk_debug_mode and (chunkDebugRestoreEnabled("water") or chunkDebugRestoreEnabled("watergen") or chunkDebugRestoreEnabled("waterrender"));
+    const needs_dry_spawn = build_config.chunk_debug_mode and (chunkDebugRestoreEnabled(build_config, "water") or chunkDebugRestoreEnabled(build_config, "watergen") or chunkDebugRestoreEnabled(build_config, "waterrender"));
     if ((!needs_dry_spawn or (!default_info.is_ocean and default_info.height >= sea_level)) and isSpawnPatchStable(world, default_x, default_z, default_info, sea_level)) {
         return .{ .x = default_x, .z = default_z, .info = default_info };
     }

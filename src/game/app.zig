@@ -20,6 +20,7 @@ const json_presets = @import("game-core").settings.json_presets;
 const SettingsManager = @import("game-core").SettingsManager;
 const Settings = @import("game-core").Settings;
 const InputSettings = @import("game-core").InputSettings;
+const BuildConfig = @import("game-core").BuildConfig;
 
 const screen_pkg = @import("game-ui").screen;
 const ScreenManager = screen_pkg.ScreenManager;
@@ -73,6 +74,18 @@ fn renderConfigFromSettings(settings: *const Settings) RenderSystem.Config {
         .block_textures = &BLOCK_TEXTURE_DEFINITIONS,
         .apply_to_rhi = applySettingsToRhi,
         .apply_context = settings,
+    };
+}
+
+fn gameBuildConfig() BuildConfig {
+    return .{
+        .auto_world = build_options.auto_world,
+        .chunk_debug_enable = build_options.chunk_debug_enable,
+        .chunk_debug_mode = build_options.chunk_debug_mode,
+        .screenshot_path = build_options.screenshot_path,
+        .shadow_test_scene = build_options.shadow_test_scene,
+        .shadow_test_variant = build_options.shadow_test_variant,
+        .startup_diagnostic_seconds = build_options.startup_diagnostic_seconds,
     };
 }
 
@@ -272,6 +285,7 @@ pub const App = struct {
             .skip_world_update = self.skip_world_update,
             .render_settings = self.render_settings_adapter.interface(),
             .benchmark_runner = self.benchmark_runner,
+            .build_config = gameBuildConfig(),
         };
     }
 
