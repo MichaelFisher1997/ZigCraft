@@ -483,29 +483,13 @@ fn drawSettingRow(ui: *UISystem, comptime name: []const u8, settings: *Settings,
 
 fn drawStepperRow(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, value: []const u8, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) ?StepResult {
     Theme.drawOptionRow(ui, rect, label, description, label_scale, false, scale);
-
-    const control_h = rect.height - 18.0 * scale;
-    const arrow_w = 42.0 * scale;
-    const value_w = @min(168.0 * scale, rect.width * 0.36);
-    const control_y = rect.y + 9.0 * scale;
-    const right_x = rect.x + rect.width - arrow_w - 12.0 * scale;
-    const value_x = right_x - value_w - 8.0 * scale;
-    const left_x = value_x - arrow_w - 8.0 * scale;
-
-    var result: StepResult = .none;
-    if (Theme.drawButton(ui, .{ .x = left_x, .y = control_y, .width = arrow_w, .height = control_h }, "<", button_scale, mx, my, clicked, .ghost, scale)) result = .previous;
-    Theme.drawValueText(ui, .{ .x = value_x, .y = control_y, .width = value_w, .height = control_h }, value, value_scale, scale);
-    if (Theme.drawButton(ui, .{ .x = right_x, .y = control_y, .width = arrow_w, .height = control_h }, ">", button_scale, mx, my, clicked, .ghost, scale)) result = .next;
+    const result = SettingsUi.drawStepperControl(ui, rect, value, value_scale, button_scale, mx, my, clicked, scale);
     return if (result == .none) null else result;
 }
 
 fn drawToggleRow(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, enabled: bool, label_scale: f32, value_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) bool {
     Theme.drawOptionRow(ui, rect, label, description, label_scale, enabled, scale);
-    const toggle_w = 172.0 * scale;
-    const toggle_h = rect.height - 18.0 * scale;
-    const toggle_x = rect.x + rect.width - toggle_w - 12.0 * scale;
-    const toggle_y = rect.y + 9.0 * scale;
-    return Theme.drawButton(ui, .{ .x = toggle_x, .y = toggle_y, .width = toggle_w, .height = toggle_h }, if (enabled) "ENABLED" else "DISABLED", value_scale, mx, my, clicked, if (enabled) .secondary else .ghost, scale);
+    return SettingsUi.drawToggleControl(ui, rect, enabled, value_scale, mx, my, clicked, scale);
 }
 
 fn settingDescription(comptime name: []const u8) []const u8 {

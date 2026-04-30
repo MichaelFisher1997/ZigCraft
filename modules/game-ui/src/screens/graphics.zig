@@ -99,7 +99,7 @@ pub const GraphicsScreen = struct {
             if (comptime std.mem.eql(u8, decl.name, "render_distance")) continue;
             total_rows += 1;
         }
-        const section_extra = 5.0 * 34.0 * ui_scale;
+        const section_extra = @as(f32, @floatFromInt(countSettingSections())) * 34.0 * ui_scale;
         const warning_extra: f32 = if (render_settings_mod.getPresetConfig(settings.render_distance_preset).show_warning) 38.0 * ui_scale else 0.0;
         const total_content_h: f32 = @as(f32, @floatFromInt(total_rows)) * (row_height + 8.0 * ui_scale) + 40.0 * ui_scale + section_extra + warning_extra;
         const max_scroll = @max(0.0, total_content_h - content_h);
@@ -288,7 +288,14 @@ fn drawSectionIfVisible(ui: *UISystem, x: f32, y: f32, label: []const u8, conten
 }
 
 fn drawSectionBoundary(ui: *UISystem, comptime name: []const u8, x: f32, y: f32, content_top: f32, content_bottom: f32, scale: f32) f32 {
-    const label = if (comptime std.mem.eql(u8, name, "shadow_resolution"))
+    const label = sectionBoundaryLabel(name);
+    if (label.len == 0) return y;
+    drawSectionIfVisible(ui, x, y, label, content_top, content_bottom, scale);
+    return y + 34.0 * scale;
+}
+
+fn sectionBoundaryLabel(comptime name: []const u8) []const u8 {
+    return if (comptime std.mem.eql(u8, name, "shadow_resolution"))
         "SHADOWS"
     else if (comptime std.mem.eql(u8, name, "pbr_enabled"))
         "SURFACES"
@@ -300,9 +307,17 @@ fn drawSectionBoundary(ui: *UISystem, comptime name: []const u8, x: f32, y: f32,
         "GLOBAL LIGHT"
     else
         "";
-    if (label.len == 0) return y;
-    drawSectionIfVisible(ui, x, y, label, content_top, content_bottom, scale);
-    return y + 34.0 * scale;
+}
+
+fn countSettingSections() usize {
+    comptime var count: usize = 0;
+    inline for (comptime std.meta.declarations(Settings.metadata)) |decl| {
+        if (comptime std.mem.eql(u8, decl.name, "msaa_samples")) continue;
+        if (comptime std.mem.eql(u8, decl.name, "render_distance_preset")) continue;
+        if (comptime std.mem.eql(u8, decl.name, "render_distance")) continue;
+        if (comptime sectionBoundaryLabel(decl.name).len > 0) count += 1;
+    }
+    return count;
 }
 
 fn rowFullyVisible(y: f32, h: f32, top: f32, bottom: f32) bool {
