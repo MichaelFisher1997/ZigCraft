@@ -1,24 +1,19 @@
 const std = @import("std");
 const fs = @import("fs");
 const UISystem = @import("engine-ui").UISystem;
-const Color = @import("engine-ui").Color;
 const Font = @import("engine-ui").font;
-const Widgets = @import("engine-ui").widgets;
+const Theme = @import("../menu_theme.zig");
+const Color = Theme.Color;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const EnvironmentContext = Screen.EnvironmentContext;
 const settings_pkg = @import("game-core").settings;
-const Settings = settings_pkg.Settings;
 const Texture = @import("engine-rhi").Texture;
 const log = @import("engine-core").log;
 
-const PANEL_WIDTH_MAX = 750.0;
-const PANEL_HEIGHT_MAX = 800.0;
-const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.95);
-const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.78);
-const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
-const MUTED_COLOR = Color.rgba(0.48, 0.60, 0.70, 0.92);
+const PANEL_WIDTH_MAX = 920.0;
+const PANEL_HEIGHT_MAX = 760.0;
 
 pub const EnvironmentScreen = struct {
     context: EnvironmentContext,
@@ -56,7 +51,6 @@ pub const EnvironmentScreen = struct {
     pub fn update(ptr: *anyopaque, dt: f32) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         _ = dt;
-
         if (self.context.input_mapper.isActionPressed(self.context.input, .ui_back)) {
             self.context.saveSettings();
             self.context.screen_manager.popScreen();
@@ -68,9 +62,6 @@ pub const EnvironmentScreen = struct {
         const ctx = self.context;
         const settings = ctx.settings;
 
-        // Draw background screen if it exists
-        try ctx.screen_manager.drawParentScreen(ptr, ui);
-
         ui.begin();
         defer ui.end();
 
@@ -78,65 +69,54 @@ pub const EnvironmentScreen = struct {
         const mouse_x: f32 = @floatFromInt(mouse_pos.x);
         const mouse_y: f32 = @floatFromInt(mouse_pos.y);
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
-
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
+        const ui_scale = Theme.scaleFor(screen_h, settings.ui_scale);
 
-        const auto_scale: f32 = @max(1.0, screen_h / 720.0);
-        const ui_scale: f32 = auto_scale * settings.ui_scale;
-        const title_scale: f32 = 3.0 * ui_scale;
-        const btn_scale: f32 = 1.55 * ui_scale;
+        Theme.drawBackdrop(ui, screen_w, screen_h, ui_scale, .environment);
+        const margin: f32 = 48.0 * ui_scale;
+        const panel_w: f32 = @min(screen_w - margin * 2.0, PANEL_WIDTH_MAX * ui_scale);
+        const panel_h: f32 = @min(screen_h - margin * 2.0, PANEL_HEIGHT_MAX * ui_scale);
+        const panel_x = (screen_w - panel_w) * 0.5;
+        const panel_y = (screen_h - panel_h) * 0.5;
+        const shell = Theme.drawShell(ui, .{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, ui_scale, "LIGHT PROBE", "ENVIRONMENT", "Choose the sky probe that lights the scene.");
 
-        const pw: f32 = @min(screen_w * 0.75, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = @min(screen_h - 80.0 * ui_scale, PANEL_HEIGHT_MAX * ui_scale);
-        const px: f32 = (screen_w - pw) * 0.5;
-        const py: f32 = (screen_h - ph) * 0.5;
+        const preview_w = @min(260.0 * ui_scale, shell.content.width * 0.34);
+        const list_x = shell.content.x + preview_w + 24.0 * ui_scale;
+        const list_w = shell.content.width - preview_w - 24.0 * ui_scale;
+        drawSkyPreview(ui, shell.content.x, shell.content.y, preview_w, shell.content.height, settings.environment_map, ui_scale);
 
-        drawEnvironmentBackdrop(ui, screen_w, screen_h, ui_scale);
-        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
-        ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
-        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = 72.0 * ui_scale }, Color.rgba(0.12, 0.22, 0.30, 0.64));
-        ui.drawRect(.{ .x = px + pw - 2.0 * ui_scale, .y = py, .width = 2.0 * ui_scale, .height = ph }, Color.rgba(0.48, 0.76, 0.93, 0.62));
-        ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawText(ui, "ENVIRONMENT MAPS", px + 34.0 * ui_scale, py + 24.0 * ui_scale, title_scale, TITLE_COLOR);
-        Font.drawText(ui, "Choose an HDRI sky lighting source.", px + 38.0 * ui_scale, py + 56.0 * ui_scale, 1.05 * ui_scale, MUTED_COLOR);
+        Theme.drawListRail(ui, .{ .x = list_x, .y = shell.content.y, .width = list_w, .height = shell.content.height }, ui_scale);
+        var y = shell.content.y + 18.0 * ui_scale;
+        const row_x = list_x + 18.0 * ui_scale;
+        const row_w = list_w - 36.0 * ui_scale;
+        const row_h = 56.0 * ui_scale;
+        const btn_scale = 1.12 * ui_scale;
 
-        var sy: f32 = py + 102.0 * ui_scale;
-        const btn_width: f32 = pw - 100.0 * ui_scale;
-        const btn_height: f32 = 50.0 * ui_scale;
-        const btn_x: f32 = px + 50.0 * ui_scale;
-
-        // Default (None) button
         const is_default = std.mem.eql(u8, settings.environment_map, "default");
-        const def_label = if (is_default) "None (Default) [SELECTED]" else "None (Default)";
-
-        if (Widgets.drawButton(ui, .{ .x = btn_x, .y = sy, .width = btn_width, .height = btn_height }, def_label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+        if (drawEnvironmentButton(ui, row_x, y, row_w, row_h, "DEFAULT SKY", "Neutral white environment texture.", is_default, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
             if (!is_default) {
                 try settings_pkg.persistence.setEnvironmentMap(settings, ctx.allocator, "default");
                 try self.reloadEnvMap();
             }
         }
-        sy += btn_height + 10.0 * ui_scale;
+        y += row_h + 10.0 * ui_scale;
 
-        var buffer: [128]u8 = undefined;
-
+        var buffer: [160]u8 = undefined;
         for (self.environment_maps.items) |environment_map| {
+            if (y + row_h > shell.content.y + shell.content.height) break;
             const is_selected = std.mem.eql(u8, settings.environment_map, environment_map);
-            const label = try std.fmt.bufPrint(&buffer, "{s}{s}", .{ environment_map, if (is_selected) " [SELECTED]" else "" });
-
-            if (Widgets.drawButton(ui, .{ .x = btn_x, .y = sy, .width = btn_width, .height = btn_height }, label, btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+            const label = std.fmt.bufPrint(&buffer, "{s}", .{environment_map}) catch "ENVIRONMENT";
+            if (drawEnvironmentButton(ui, row_x, y, row_w, row_h, label, "HDR/EXR sky probe from the working directory.", is_selected, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
                 if (!is_selected) {
                     try settings_pkg.persistence.setEnvironmentMap(settings, ctx.allocator, environment_map);
                     try self.reloadEnvMap();
                 }
             }
-            sy += btn_height + 10.0 * ui_scale;
-
-            if (sy > py + ph - 100.0 * ui_scale) break;
+            y += row_h + 10.0 * ui_scale;
         }
 
-        // Back button
-        if (Widgets.drawButton(ui, .{ .x = px + (pw - 150.0 * ui_scale) * 0.5, .y = py + ph - 70.0 * ui_scale, .width = 150.0 * ui_scale, .height = 50.0 * ui_scale }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+        if (Theme.drawButton(ui, .{ .x = panel_x + (panel_w - 180.0 * ui_scale) * 0.5, .y = shell.footer_y, .width = 180.0 * ui_scale, .height = 46.0 * ui_scale }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
             ctx.saveSettings();
             ctx.screen_manager.popScreen();
         }
@@ -203,9 +183,23 @@ pub const EnvironmentScreen = struct {
     }
 };
 
-fn drawEnvironmentBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
-    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.88));
-    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = screen_h * 0.36 }, Color.rgba(0.075, 0.048, 0.028, 0.54));
-    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.92, 0.62, 0.24, 0.42));
-    ui.drawRect(.{ .x = 70.0 * ui_scale, .y = screen_h * 0.64 - 118.0 * ui_scale, .width = 118.0 * ui_scale, .height = 118.0 * ui_scale }, Color.rgba(0.95, 0.61, 0.22, 0.10));
+fn drawSkyPreview(ui: *UISystem, x: f32, y: f32, w: f32, h: f32, active_name: []const u8, scale: f32) void {
+    Theme.drawListRail(ui, .{ .x = x, .y = y, .width = w, .height = h }, scale);
+    Font.drawText(ui, "ACTIVE SKY", x + 18.0 * scale, y + 22.0 * scale, 0.78 * scale, Theme.muted);
+    Font.drawText(ui, active_name, x + 18.0 * scale, y + 52.0 * scale, 1.04 * scale, Theme.title);
+
+    const orb = @min(w - 60.0 * scale, 150.0 * scale);
+    const ox = x + (w - orb) * 0.5;
+    const oy = y + h * 0.44 - orb * 0.5;
+    ui.drawRect(.{ .x = ox - 20.0 * scale, .y = oy - 20.0 * scale, .width = orb + 40.0 * scale, .height = orb + 40.0 * scale }, Color.rgba(0.58, 0.72, 0.82, 0.055));
+    ui.drawRect(.{ .x = ox, .y = oy, .width = orb, .height = orb }, Color.rgba(0.42, 0.54, 0.62, 0.16));
+    ui.drawRect(.{ .x = ox + 22.0 * scale, .y = oy + 22.0 * scale, .width = orb - 44.0 * scale, .height = orb - 44.0 * scale }, Color.rgba(0.82, 0.88, 0.91, 0.12));
+    Font.drawTextCentered(ui, "ACTIVE LIGHT", x + w * 0.5, y + h - 70.0 * scale, 0.86 * scale, Theme.signal);
+}
+
+fn drawEnvironmentButton(ui: *UISystem, x: f32, y: f32, w: f32, h: f32, label: []const u8, description: []const u8, selected: bool, btn_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) bool {
+    Theme.drawOptionRow(ui, .{ .x = x, .y = y, .width = w, .height = h }, label, description, 1.02 * scale, selected, scale);
+    const action_w = 150.0 * scale;
+    const action_x = x + w - action_w - 12.0 * scale;
+    return Theme.drawButton(ui, .{ .x = action_x, .y = y + 9.0 * scale, .width = action_w, .height = h - 18.0 * scale }, if (selected) "ACTIVE" else "SELECT", btn_scale, mx, my, clicked, if (selected) .primary else .secondary, scale);
 }

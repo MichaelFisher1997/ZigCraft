@@ -1,25 +1,35 @@
 const std = @import("std");
 const UISystem = @import("engine-ui").UISystem;
-const Color = @import("engine-ui").Color;
 const Font = @import("engine-ui").font;
-const Widgets = @import("engine-ui").widgets;
+const Theme = @import("../menu_theme.zig");
+const SettingsUi = @import("../settings_ui.zig");
+const Color = Theme.Color;
+const Rect = Theme.Rect;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
 const settings_pkg = @import("game-core").settings;
-const Settings = settings_pkg.Settings;
-const GraphicsScreen = @import("graphics.zig").GraphicsScreen;
 const apply_logic = settings_pkg.apply_logic;
+const Settings = settings_pkg.Settings;
+const render_settings_mod = @import("engine-rhi").render_settings;
+const RenderDistancePreset = render_settings_mod.RenderDistancePreset;
 
-const PANEL_WIDTH_MAX = 900.0;
-const BG_COLOR = Color.rgba(0.025, 0.045, 0.065, 0.95);
-const BORDER_COLOR = Color.rgba(0.42, 0.66, 0.82, 0.78);
-const TITLE_COLOR = Color.rgba(1.0, 0.93, 0.76, 1.0);
-const LABEL_COLOR = Color.rgba(0.72, 0.86, 0.96, 1.0);
-const MUTED_COLOR = Color.rgba(0.48, 0.60, 0.70, 0.92);
+const PANEL_WIDTH_MAX = 1360.0;
+const PANEL_HEIGHT_MAX = 820.0;
+
+const StepResult = SettingsUi.StepResult;
+
+const SettingsTab = enum {
+    display,
+    camera,
+    world,
+    rendering,
+};
 
 pub const SettingsScreen = struct {
     context: EngineContext,
+    active_tab: SettingsTab,
+    render_scroll_offset: f32,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -32,6 +42,8 @@ pub const SettingsScreen = struct {
         const self = try allocator.create(SettingsScreen);
         self.* = .{
             .context = context,
+            .active_tab = .display,
+            .render_scroll_offset = 0.0,
         };
         return self;
     }
@@ -57,7 +69,6 @@ pub const SettingsScreen = struct {
         const settings = ctx.settings;
         const rs = ctx.render_settings;
 
-        try ctx.screen_manager.drawParentScreen(ptr, ui);
         ui.begin();
         defer ui.end();
 
@@ -68,165 +79,49 @@ pub const SettingsScreen = struct {
 
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
+        const ui_scale = Theme.scaleFor(screen_h, settings.ui_scale);
 
-        const auto_scale: f32 = @max(1.0, screen_h / 720.0);
-        const ui_scale: f32 = auto_scale * settings.ui_scale;
-        const label_scale: f32 = 1.55 * ui_scale;
-        const btn_scale: f32 = 1.35 * ui_scale;
-        const title_scale: f32 = 2.8 * ui_scale;
-        const row_height: f32 = 48.0 * ui_scale;
-        const btn_height: f32 = 34.0 * ui_scale;
-        const btn_width: f32 = 38.0 * ui_scale;
-        const toggle_width: f32 = 150.0 * ui_scale;
+        Theme.drawBackdrop(ui, screen_w, screen_h, ui_scale, .settings);
 
-        const margin: f32 = 50.0 * ui_scale;
-        const pw: f32 = @min(screen_w - margin * 2.0, PANEL_WIDTH_MAX * ui_scale);
-        const ph: f32 = screen_h - margin * 2.0;
-        const px: f32 = (screen_w - pw) * 0.5;
-        const py: f32 = margin;
+        const margin: f32 = 24.0 * ui_scale;
+        const panel_w: f32 = @min(screen_w - margin * 2.0, PANEL_WIDTH_MAX * ui_scale);
+        const panel_h: f32 = @min(screen_h - margin * 2.0, PANEL_HEIGHT_MAX * ui_scale);
+        const panel_x: f32 = (screen_w - panel_w) * 0.5;
+        const panel_y: f32 = (screen_h - panel_h) * 0.5;
+        const shell = Theme.drawShell(ui, .{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, ui_scale, "CONTROL", "OPTIONS", tabDescription(self.active_tab));
 
-        const header_h: f32 = 72.0 * ui_scale;
-        const footer_h: f32 = 64.0 * ui_scale;
-        const content_top: f32 = py + header_h;
-        const content_bottom: f32 = py + ph - footer_h;
+        const tab_h: f32 = 38.0 * ui_scale;
+        drawTabs(ui, self, shell.content.x, shell.content.y, shell.content.width, tab_h, mouse_x, mouse_y, mouse_clicked, ui_scale);
 
-        drawSettingsBackdrop(ui, screen_w, screen_h, ui_scale);
-        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = ph }, BG_COLOR);
-        ui.drawRect(.{ .x = px, .y = py, .width = 7.0 * ui_scale, .height = ph }, Color.rgba(0.95, 0.62, 0.24, 0.95));
-        ui.drawRect(.{ .x = px, .y = py, .width = pw, .height = header_h }, Color.rgba(0.12, 0.22, 0.30, 0.64));
-        ui.drawRect(.{ .x = px + pw - 2.0 * ui_scale, .y = py, .width = 2.0 * ui_scale, .height = ph }, Color.rgba(0.48, 0.76, 0.93, 0.62));
-        ui.drawRectOutline(.{ .x = px, .y = py, .width = pw, .height = ph }, BORDER_COLOR, 2.0 * ui_scale);
-        Font.drawText(ui, "SETTINGS", px + 34.0 * ui_scale, py + 20.0 * ui_scale, title_scale, TITLE_COLOR);
-        Font.drawText(ui, "Tune the renderer and input feel.", px + 38.0 * ui_scale, py + 48.0 * ui_scale, 1.0 * ui_scale, MUTED_COLOR);
+        const body = Rect{
+            .x = shell.content.x,
+            .y = shell.content.y + tab_h + 12.0 * ui_scale,
+            .width = shell.content.width,
+            .height = shell.content.height - tab_h - 12.0 * ui_scale,
+        };
+        Theme.drawListRail(ui, body, ui_scale);
 
-        // Layout constants
-        const ix: f32 = px + 40.0 * ui_scale;
-        const vx: f32 = px + pw - 250.0 * ui_scale;
+        const inner = Rect{
+            .x = body.x + 16.0 * ui_scale,
+            .y = body.y + 14.0 * ui_scale,
+            .width = body.width - 32.0 * ui_scale,
+            .height = body.height - 28.0 * ui_scale,
+        };
 
-        // Calculate content start Y to center everything vertically
-        const section_gap: f32 = 20.0 * ui_scale;
-        const label_h: f32 = 20.0 * ui_scale;
-        const total_content: f32 = 2.0 * label_h + 9.0 * row_height + 2.0 * section_gap + 42.0 * ui_scale;
-        var sy: f32 = content_top + @max(10.0 * ui_scale, (content_bottom - content_top - total_content) * 0.4);
+        const layout = columnLayout(inner, ui_scale);
+        const row_h: f32 = 54.0 * ui_scale;
+        const label_scale: f32 = 0.98 * ui_scale;
+        const value_scale: f32 = 0.92 * ui_scale;
+        const button_scale: f32 = 0.94 * ui_scale;
 
-        // DISPLAY section
-        drawSectionLabel(ui, ix, sy, "DISPLAY", ui_scale);
-        sy += label_h + 6.0 * ui_scale;
-
-        // Resolution
-        Font.drawText(ui, "RESOLUTION", ix, sy, label_scale, LABEL_COLOR);
-        const res_idx = settings.getResolutionIndex();
-        const res_label = settings_pkg.RESOLUTIONS[res_idx].label;
-        const res_val_w: f32 = 150.0 * ui_scale;
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "<", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const new_idx = if (res_idx == 0) settings_pkg.RESOLUTIONS.len - 1 else res_idx - 1;
-            settings.setResolutionByIndex(new_idx);
-            ctx.window_manager.setSize(settings.window_width, settings.window_height);
+        switch (self.active_tab) {
+            .display => drawDisplayTab(ui, ctx, settings, rs, layout, row_h, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale),
+            .camera => drawCameraTab(ui, settings, layout, row_h, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale),
+            .world => drawWorldTab(ui, settings, rs, layout, row_h, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale),
+            .rendering => drawRenderingTab(ui, self, ctx, settings, rs, inner, layout, row_h, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale),
         }
-        Font.drawTextCentered(ui, res_label, vx + btn_width + res_val_w * 0.5, sy + (btn_height - 7.0 * btn_scale) * 0.5, btn_scale, TITLE_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx + btn_width + res_val_w, .y = sy - 4.0, .width = btn_width, .height = btn_height }, ">", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const new_idx = (res_idx + 1) % settings_pkg.RESOLUTIONS.len;
-            settings.setResolutionByIndex(new_idx);
-            ctx.window_manager.setSize(settings.window_width, settings.window_height);
-        }
-        sy += row_height;
 
-        // Render Distance
-        Font.drawText(ui, "RENDER DISTANCE", ix, sy, label_scale, LABEL_COLOR);
-        Font.drawNumber(ui, @intCast(settings.render_distance), vx + 70.0 * ui_scale, sy, TITLE_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "-", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            if (settings.render_distance > 1) settings.render_distance -= 1;
-        }
-        if (Widgets.drawButton(ui, .{ .x = vx + 120.0 * ui_scale, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "+", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.render_distance += 1;
-        }
-        sy += row_height;
-
-        // Sensitivity
-        Font.drawText(ui, "SENSITIVITY", ix, sy, label_scale, LABEL_COLOR);
-        Font.drawNumber(ui, @intFromFloat(settings.mouse_sensitivity), vx + 70.0 * ui_scale, sy, TITLE_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "-", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            if (settings.mouse_sensitivity > 10.0) settings.mouse_sensitivity -= 5.0;
-        }
-        if (Widgets.drawButton(ui, .{ .x = vx + 120.0 * ui_scale, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "+", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            if (settings.mouse_sensitivity < 200.0) settings.mouse_sensitivity += 5.0;
-        }
-        sy += row_height;
-
-        // FOV
-        Font.drawText(ui, "FOV", ix, sy, label_scale, LABEL_COLOR);
-        Font.drawNumber(ui, @intFromFloat(settings.fov), vx + 70.0 * ui_scale, sy, TITLE_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "-", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            if (settings.fov > 30.0) settings.fov -= 5.0;
-        }
-        if (Widgets.drawButton(ui, .{ .x = vx + 120.0 * ui_scale, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "+", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            if (settings.fov < 120.0) settings.fov += 5.0;
-        }
-        sy += row_height;
-
-        // VSync
-        Font.drawText(ui, "VSYNC", ix, sy, label_scale, LABEL_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = toggle_width, .height = btn_height }, if (settings.vsync) "ENABLED" else "DISABLED", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.vsync = !settings.vsync;
-            apply_logic.applyToRenderSettings(settings, rs);
-        }
-        sy += row_height + section_gap;
-
-        // Advanced Graphics Button
-        if (Widgets.drawButton(ui, .{ .x = px + (pw - 250.0 * ui_scale) * 0.5, .y = sy, .width = 250.0 * ui_scale, .height = btn_height + 8.0 * ui_scale }, "ADVANCED GRAPHICS...", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const graphics_screen = try GraphicsScreen.init(ctx.allocator, ctx);
-            errdefer graphics_screen.deinit(graphics_screen);
-            ctx.screen_manager.pushScreen(graphics_screen.screen());
-        }
-        sy += row_height + section_gap;
-
-        // SYSTEMS section
-        drawSectionLabel(ui, ix, sy, "SYSTEMS", ui_scale);
-        sy += label_h + 6.0 * ui_scale;
-
-        // UI Scale
-        Font.drawText(ui, "UI SCALE", ix, sy, label_scale, LABEL_COLOR);
-        const ui_scale_label = settings_pkg.ui_helpers.getUIScaleLabel(settings.ui_scale);
-        const ui_val_w: f32 = 90.0 * ui_scale;
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = btn_width, .height = btn_height }, "<", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.ui_scale = settings_pkg.ui_helpers.prevUIScale(settings.ui_scale);
-        }
-        Font.drawTextCentered(ui, ui_scale_label, vx + btn_width + ui_val_w * 0.5, sy + (btn_height - 7.0 * btn_scale) * 0.5, btn_scale, TITLE_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx + btn_width + ui_val_w, .y = sy - 4.0, .width = btn_width, .height = btn_height }, ">", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.ui_scale = settings_pkg.ui_helpers.cycleUIScale(settings.ui_scale);
-        }
-        sy += row_height;
-
-        // LOD System
-        Font.drawText(ui, "LOD SYSTEM", ix, sy, label_scale, LABEL_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = toggle_width, .height = btn_height }, if (settings.lod_enabled) "ENABLED" else "DISABLED", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.lod_enabled = !settings.lod_enabled;
-            if (settings_pkg.sanitizeRuntimeConflicts(settings)) {
-                apply_logic.applyToRenderSettings(settings, rs);
-            }
-        }
-        sy += row_height;
-
-        // Textures
-        Font.drawText(ui, "TEXTURES", ix, sy, label_scale, LABEL_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = toggle_width, .height = btn_height }, if (settings.textures_enabled) "ENABLED" else "DISABLED", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.textures_enabled = !settings.textures_enabled;
-            apply_logic.applyToRenderSettings(settings, rs);
-        }
-        sy += row_height;
-
-        // Wireframe (debug)
-        Font.drawText(ui, "WIREFRAME", ix, sy, label_scale, MUTED_COLOR);
-        if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = toggle_width, .height = btn_height }, if (settings.wireframe_enabled) "ENABLED" else "DISABLED", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            settings.wireframe_enabled = !settings.wireframe_enabled;
-            apply_logic.applyToRenderSettings(settings, rs);
-        }
-        Font.drawText(ui, "(DEBUG)", vx + toggle_width + 10.0, sy, 1.0 * ui_scale, MUTED_COLOR);
-
-        // Footer / Back button
-        const footer_y: f32 = py + ph - footer_h + 10.0 * ui_scale;
-        ui.drawRect(.{ .x = px, .y = py + ph - footer_h, .width = pw, .height = 2.0 * ui_scale }, Color.rgba(0.20, 0.36, 0.48, 0.50));
-        if (Widgets.drawButton(ui, .{ .x = px + (pw - 150.0 * ui_scale) * 0.5, .y = footer_y, .width = 150.0 * ui_scale, .height = 42.0 * ui_scale }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
+        if (Theme.drawButton(ui, .{ .x = panel_x + (panel_w - 164.0 * ui_scale) * 0.5, .y = shell.footer_y + 4.0 * ui_scale, .width = 164.0 * ui_scale, .height = 40.0 * ui_scale }, "BACK", button_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
             ctx.saveSettings();
             ctx.screen_manager.popScreen();
         }
@@ -242,15 +137,382 @@ pub const SettingsScreen = struct {
     }
 };
 
-fn drawSettingsBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
-    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 0.72));
-    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = screen_h * 0.36 }, Color.rgba(0.075, 0.048, 0.028, 0.50));
-    ui.drawRect(.{ .x = 0, .y = screen_h * 0.64, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.92, 0.62, 0.24, 0.38));
-    ui.drawRect(.{ .x = 46.0 * ui_scale, .y = screen_h * 0.64 - 84.0 * ui_scale, .width = 96.0 * ui_scale, .height = 84.0 * ui_scale }, Color.rgba(0.07, 0.14, 0.15, 0.28));
-    ui.drawRect(.{ .x = screen_w - 132.0 * ui_scale, .y = screen_h * 0.64 - 148.0 * ui_scale, .width = 74.0 * ui_scale, .height = 148.0 * ui_scale }, Color.rgba(0.50, 0.29, 0.12, 0.30));
+const ColumnLayout = struct {
+    left_x: f32,
+    right_x: f32,
+    col_w: f32,
+    two_column: bool,
+    top_y: f32,
+};
+
+fn columnLayout(inner: Rect, scale: f32) ColumnLayout {
+    const two_column = inner.width > 760.0 * scale;
+    const gap: f32 = 18.0 * scale;
+    const col_w: f32 = if (two_column) (inner.width - gap) * 0.5 else inner.width;
+    return .{
+        .left_x = inner.x,
+        .right_x = if (two_column) inner.x + col_w + gap else inner.x,
+        .col_w = col_w,
+        .two_column = two_column,
+        .top_y = inner.y,
+    };
 }
 
-fn drawSectionLabel(ui: *UISystem, x: f32, y: f32, label: []const u8, ui_scale: f32) void {
-    ui.drawRect(.{ .x = x, .y = y + 8.0 * ui_scale, .width = 26.0 * ui_scale, .height = 2.0 * ui_scale }, Color.rgba(0.95, 0.62, 0.24, 0.86));
-    Font.drawText(ui, label, x + 36.0 * ui_scale, y, 1.0 * ui_scale, MUTED_COLOR);
+fn drawTabs(ui: *UISystem, self: *SettingsScreen, x: f32, y: f32, w: f32, h: f32, mx: f32, my: f32, clicked: bool, scale: f32) void {
+    const tabs = [_]SettingsTab{ .display, .camera, .world, .rendering };
+    const gap: f32 = 8.0 * scale;
+    const tab_w = (w - gap * @as(f32, @floatFromInt(tabs.len - 1))) / @as(f32, @floatFromInt(tabs.len));
+    for (tabs, 0..) |tab, i| {
+        const tx = x + @as(f32, @floatFromInt(i)) * (tab_w + gap);
+        const active = self.active_tab == tab;
+        if (Theme.drawButton(ui, .{ .x = tx, .y = y, .width = tab_w, .height = h }, tabLabel(tab), 0.82 * scale, mx, my, clicked, if (active) .primary else .ghost, scale)) {
+            self.active_tab = tab;
+        }
+    }
+}
+
+fn tabLabel(tab: SettingsTab) []const u8 {
+    return switch (tab) {
+        .display => "DISPLAY",
+        .camera => "CAMERA",
+        .world => "WORLD",
+        .rendering => "RENDERING",
+    };
+}
+
+fn tabDescription(tab: SettingsTab) []const u8 {
+    return switch (tab) {
+        .display => "Window, presentation, and interface scale.",
+        .camera => "Mouse feel and view framing.",
+        .world => "Terrain distance and world streaming.",
+        .rendering => "Material toggles and advanced renderer settings.",
+    };
+}
+
+fn drawDisplayTab(ui: *UISystem, ctx: EngineContext, settings: anytype, rs: anytype, layout: ColumnLayout, row_h: f32, label_scale: f32, value_scale: f32, button_scale: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, scale: f32) void {
+    var y_left = layout.top_y;
+    Theme.drawSectionLabel(ui, layout.left_x, y_left, "WINDOW", scale);
+    y_left += 28.0 * scale;
+
+    const res_idx = settings.getResolutionIndex();
+    const res_label = settings_pkg.RESOLUTIONS[res_idx].label;
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "RESOLUTION", "Swap the output size instantly.", res_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        const new_idx = switch (step) {
+            .previous => if (res_idx == 0) settings_pkg.RESOLUTIONS.len - 1 else res_idx - 1,
+            .next => (res_idx + 1) % settings_pkg.RESOLUTIONS.len,
+            .none => res_idx,
+        };
+        settings.setResolutionByIndex(new_idx);
+        ctx.window_manager.setSize(settings.window_width, settings.window_height);
+    }
+    y_left += row_h + 8.0 * scale;
+
+    if (drawToggleRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "VSYNC", "Lock presentation to display refresh.", settings.vsync, label_scale, value_scale, mouse_x, mouse_y, mouse_clicked, scale)) {
+        settings.vsync = !settings.vsync;
+        apply_logic.applyToRenderSettings(settings, rs);
+    }
+
+    var y_right = if (layout.two_column) layout.top_y else y_left + row_h + 22.0 * scale;
+    Theme.drawSectionLabel(ui, layout.right_x, y_right, "INTERFACE", scale);
+    y_right += 28.0 * scale;
+
+    const ui_scale_label = settings_pkg.ui_helpers.getUIScaleLabel(settings.ui_scale);
+    if (drawStepperRow(ui, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, "UI SCALE", "Resize the menu system.", ui_scale_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        if (step == .previous) settings.ui_scale = settings_pkg.ui_helpers.prevUIScale(settings.ui_scale);
+        if (step == .next) settings.ui_scale = settings_pkg.ui_helpers.cycleUIScale(settings.ui_scale);
+    }
+}
+
+fn drawCameraTab(ui: *UISystem, settings: anytype, layout: ColumnLayout, row_h: f32, label_scale: f32, value_scale: f32, button_scale: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, scale: f32) void {
+    var num_buf: [32]u8 = undefined;
+
+    var y_left = layout.top_y;
+    Theme.drawSectionLabel(ui, layout.left_x, y_left, "MOUSE", scale);
+    y_left += 28.0 * scale;
+
+    const sensitivity_label = std.fmt.bufPrint(&num_buf, "{d}", .{@as(i32, @intFromFloat(settings.mouse_sensitivity))}) catch "?";
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "SENSITIVITY", "Mouse movement response.", sensitivity_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        if (step == .previous and settings.mouse_sensitivity > 10.0) settings.mouse_sensitivity -= 5.0;
+        if (step == .next and settings.mouse_sensitivity < 200.0) settings.mouse_sensitivity += 5.0;
+    }
+
+    var y_right = if (layout.two_column) layout.top_y else y_left + row_h + 22.0 * scale;
+    Theme.drawSectionLabel(ui, layout.right_x, y_right, "VIEW", scale);
+    y_right += 28.0 * scale;
+
+    const fov_label = std.fmt.bufPrint(&num_buf, "{d} FOV", .{@as(i32, @intFromFloat(settings.fov))}) catch "?";
+    if (drawStepperRow(ui, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, "FIELD OF VIEW", "Camera lens angle.", fov_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        if (step == .previous and settings.fov > 30.0) settings.fov -= 5.0;
+        if (step == .next and settings.fov < 120.0) settings.fov += 5.0;
+    }
+}
+
+fn drawWorldTab(ui: *UISystem, settings: anytype, rs: anytype, layout: ColumnLayout, row_h: f32, label_scale: f32, value_scale: f32, button_scale: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, scale: f32) void {
+    var num_buf: [32]u8 = undefined;
+
+    var y_left = layout.top_y;
+    Theme.drawSectionLabel(ui, layout.left_x, y_left, "DISTANCE", scale);
+    y_left += 28.0 * scale;
+
+    const render_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.render_distance}) catch "?";
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "RENDER DISTANCE", "Near-field chunk budget.", render_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        if (step == .previous and settings.render_distance > 1) settings.render_distance -= 1;
+        if (step == .next) settings.render_distance += 1;
+    }
+
+    var y_right = if (layout.two_column) layout.top_y else y_left + row_h + 22.0 * scale;
+    Theme.drawSectionLabel(ui, layout.right_x, y_right, "STREAMING", scale);
+    y_right += 28.0 * scale;
+
+    if (drawToggleRow(ui, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, "LOD SYSTEM", "Distance terrain streaming.", settings.lod_enabled, label_scale, value_scale, mouse_x, mouse_y, mouse_clicked, scale)) {
+        settings.lod_enabled = !settings.lod_enabled;
+        if (settings_pkg.sanitizeRuntimeConflicts(settings)) apply_logic.applyToRenderSettings(settings, rs);
+    }
+}
+
+fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, settings: *Settings, rs: anytype, inner: Rect, layout: ColumnLayout, row_h: f32, label_scale: f32, value_scale: f32, button_scale: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, scale: f32) void {
+    const row_gap = 8.0 * scale;
+    const section_h = 28.0 * scale;
+    const warning_h: f32 = if (render_settings_mod.getPresetConfig(settings.render_distance_preset).show_warning) 34.0 * scale else 0.0;
+    const material_settings = .{ "textures_enabled", "pbr_enabled", "pbr_quality", "anisotropic_filtering", "max_texture_resolution", "water_quality" };
+    const shadow_settings = .{ "shadow_quality", "shadow_pcf_samples", "shadow_cascade_blend", "shadow_distance", "shadow_caster_distance" };
+    const image_settings = .{ "taa_enabled", "taa_blend_factor", "taa_velocity_rejection", "fxaa_enabled", "ssao_enabled", "bloom_enabled", "bloom_intensity", "vignette_enabled", "vignette_intensity", "film_grain_enabled", "film_grain_intensity" };
+    const atmosphere_settings = .{ "volumetric_density", "volumetric_steps", "volumetric_scattering", "lpv_enabled", "lpv_quality_preset", "lpv_intensity", "lpv_cell_size" };
+    const dynamic_resolution_settings = .{ "dynamic_resolution_enabled", "dynamic_resolution_min_scale", "dynamic_resolution_max_scale", "target_fps" };
+    const left_sections = .{ "BASELINE", "MATERIALS", "SHADOWS" };
+    const right_sections = .{ "IMAGE", "ATMOSPHERE AND GI", "DYNAMIC RESOLUTION" };
+    const baseline_rows = .{ "OVERALL QUALITY", "RENDER DISTANCE", "WIREFRAME" };
+
+    const left_content_h = renderingContentHeight(left_sections.len, baseline_rows.len + material_settings.len + shadow_settings.len, row_h, row_gap, section_h, scale) + warning_h;
+    const right_content_h = renderingContentHeight(right_sections.len, image_settings.len + atmosphere_settings.len + dynamic_resolution_settings.len, row_h, row_gap, section_h, scale);
+    const total_content_h = @max(left_content_h, right_content_h);
+    const max_scroll = @max(0.0, total_content_h - inner.height);
+    self.render_scroll_offset -= ctx.input.getScrollDelta().y * 36.0 * scale;
+    self.render_scroll_offset = @max(0.0, @min(self.render_scroll_offset, max_scroll));
+    Theme.drawScrollbar(ui, inner.x + inner.width - 10.0 * scale, inner.y, inner.height, total_content_h, inner.height, self.render_scroll_offset, max_scroll, scale);
+
+    const top = inner.y;
+    const bottom = inner.y + inner.height;
+    var y_left = layout.top_y - self.render_scroll_offset;
+    var y_right = (if (layout.two_column) layout.top_y else layout.top_y + left_content_h + 28.0 * scale) - self.render_scroll_offset;
+
+    drawRenderSection(ui, layout.left_x, y_left, left_sections[0], top, bottom, scale);
+    y_left += section_h;
+    y_left = drawPresetRow(ui, settings, rs, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    y_left = drawRenderDistancePresetRow(ui, settings, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    if (rowVisible(y_left, row_h, top, bottom)) {
+        if (drawToggleRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "WIREFRAME", "Debug mesh visibility.", settings.wireframe_enabled, label_scale, value_scale, mouse_x, mouse_y, mouse_clicked, scale)) {
+            settings.wireframe_enabled = !settings.wireframe_enabled;
+            apply_logic.applyToRenderSettings(settings, rs);
+        }
+    }
+    y_left += row_h + row_gap;
+    if (render_settings_mod.getPresetConfig(settings.render_distance_preset).show_warning) {
+        if (rowVisible(y_left, warning_h, top, bottom)) {
+            ui.drawRect(.{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = 30.0 * scale }, Color.rgba(0.28, 0.040, 0.030, 0.80));
+            ui.drawRect(.{ .x = layout.left_x, .y = y_left, .width = 5.0 * scale, .height = 30.0 * scale }, Theme.danger);
+            Font.drawText(ui, "EXTREME DISTANCE CAN DESTABILIZE GPUS BELOW 8GB VRAM", layout.left_x + 16.0 * scale, y_left + 8.0 * scale, 0.78 * scale, Theme.title);
+        }
+        y_left += warning_h;
+    }
+
+    drawRenderSection(ui, layout.left_x, y_left, left_sections[1], top, bottom, scale);
+    y_left += section_h;
+    inline for (material_settings) |name| {
+        y_left = drawSettingRow(ui, name, settings, rs, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    }
+
+    drawRenderSection(ui, layout.left_x, y_left, left_sections[2], top, bottom, scale);
+    y_left += section_h;
+    inline for (shadow_settings) |name| {
+        y_left = drawSettingRow(ui, name, settings, rs, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    }
+
+    drawRenderSection(ui, layout.right_x, y_right, right_sections[0], top, bottom, scale);
+    y_right += section_h;
+    inline for (image_settings) |name| {
+        y_right = drawSettingRow(ui, name, settings, rs, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    }
+
+    drawRenderSection(ui, layout.right_x, y_right, right_sections[1], top, bottom, scale);
+    y_right += section_h;
+    inline for (atmosphere_settings) |name| {
+        y_right = drawSettingRow(ui, name, settings, rs, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    }
+
+    drawRenderSection(ui, layout.right_x, y_right, right_sections[2], top, bottom, scale);
+    y_right += section_h;
+    inline for (dynamic_resolution_settings) |name| {
+        y_right = drawSettingRow(ui, name, settings, rs, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
+    }
+}
+
+fn renderingContentHeight(section_count: usize, row_count: usize, row_h: f32, row_gap: f32, section_h: f32, scale: f32) f32 {
+    return @as(f32, @floatFromInt(section_count)) * section_h + @as(f32, @floatFromInt(row_count)) * (row_h + row_gap) + 16.0 * scale;
+}
+
+fn rowVisible(y: f32, h: f32, top: f32, bottom: f32) bool {
+    return y >= top and y + h <= bottom;
+}
+
+fn drawRenderSection(ui: *UISystem, x: f32, y: f32, label: []const u8, top: f32, bottom: f32, scale: f32) void {
+    if (rowVisible(y, 24.0 * scale, top, bottom)) Theme.drawSectionLabel(ui, x, y, label, scale);
+}
+
+fn drawPresetRow(ui: *UISystem, settings: *Settings, rs: anytype, row: Rect, top: f32, bottom: f32, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) f32 {
+    if (!rowVisible(row.y, row.height, top, bottom)) return row.y + row.height;
+    const preset_idx = if (settings_pkg.json_presets.graphics_presets.items.len > 0) settings_pkg.json_presets.getIndex(settings) else 0;
+    const preset_count = settings_pkg.json_presets.graphics_presets.items.len + 1;
+    if (drawStepperRow(ui, row, "OVERALL QUALITY", "Preset target for renderer cost and quality.", SettingsUi.getPresetLabel(preset_idx), label_scale, value_scale, button_scale, mx, my, clicked, scale)) |step| {
+        if (settings_pkg.json_presets.graphics_presets.items.len > 0 and step == .previous) {
+            const prev_idx = if (preset_idx == 0) preset_count - 1 else preset_idx - 1;
+            if (prev_idx < settings_pkg.json_presets.graphics_presets.items.len) {
+                settings_pkg.json_presets.apply(settings, prev_idx);
+                SettingsUi.applyPresetSideEffects(settings, rs);
+            }
+        } else if (settings_pkg.json_presets.graphics_presets.items.len > 0 and step == .next) {
+            const next_idx = (preset_idx + 1) % preset_count;
+            if (next_idx < settings_pkg.json_presets.graphics_presets.items.len) {
+                settings_pkg.json_presets.apply(settings, next_idx);
+                SettingsUi.applyPresetSideEffects(settings, rs);
+            }
+        }
+    }
+    return row.y + row.height;
+}
+
+fn drawRenderDistancePresetRow(ui: *UISystem, settings: *Settings, row: Rect, top: f32, bottom: f32, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) f32 {
+    if (!rowVisible(row.y, row.height, top, bottom)) return row.y + row.height;
+    const current_rdp: u32 = @intFromEnum(settings.render_distance_preset);
+    const rdp_label = settings.render_distance_preset.label();
+    const rdp_count = @as(u32, RenderDistancePreset.count);
+    if (drawStepperRow(ui, row, "RENDER DISTANCE", "LOD radius profile and streamer pressure.", rdp_label, label_scale, value_scale, button_scale, mx, my, clicked, scale)) |step| {
+        const next_value = if (step == .previous) if (current_rdp == 0) rdp_count - 1 else current_rdp - 1 else (current_rdp + 1) % rdp_count;
+        settings.render_distance_preset = @enumFromInt(next_value);
+        const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
+        settings.render_distance = preset_cfg.lod_radii[0];
+    }
+    return row.y + row.height;
+}
+
+fn drawSettingRow(ui: *UISystem, comptime name: []const u8, settings: *Settings, rs: anytype, row: Rect, top: f32, bottom: f32, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) f32 {
+    if (!rowVisible(row.y, row.height, top, bottom)) return row.y + row.height;
+
+    var buf: [64]u8 = undefined;
+    const meta = @field(Settings.metadata, name);
+    const val_ptr = &@field(settings, name);
+    const val_type = @TypeOf(val_ptr.*);
+    const old_val = val_ptr.*;
+
+    Theme.drawOptionRow(ui, row, meta.label, settingDescription(name), label_scale, SettingsUi.rowHighlight(name, val_ptr.*), scale);
+
+    switch (meta.kind) {
+        .toggle => {
+            if (SettingsUi.drawToggleControl(ui, row, val_ptr.*, value_scale, mx, my, clicked, scale)) {
+                val_ptr.* = !val_ptr.*;
+            }
+        },
+        .choice => |choice| {
+            var current_label: []const u8 = "UNKNOWN";
+            var current_idx: usize = 0;
+            if (choice.values) |values| {
+                for (values, 0..) |v, i| {
+                    if (v == val_ptr.*) {
+                        current_idx = i;
+                        if (i < choice.labels.len) current_label = choice.labels[i];
+                        break;
+                    }
+                }
+                const step = SettingsUi.drawStepperControl(ui, row, current_label, value_scale, button_scale, mx, my, clicked, scale);
+                if (step == .previous) {
+                    const prev_idx = if (current_idx == 0) values.len - 1 else current_idx - 1;
+                    val_ptr.* = @as(val_type, @intCast(values[prev_idx]));
+                } else if (step == .next) {
+                    const next_idx = (current_idx + 1) % values.len;
+                    val_ptr.* = @as(val_type, @intCast(values[next_idx]));
+                }
+            }
+        },
+        .slider => |slider| {
+            const val_str = std.fmt.bufPrint(&buf, "{d:.2}", .{val_ptr.*}) catch "ERR";
+            const step = SettingsUi.drawStepperControl(ui, row, val_str, value_scale, button_scale, mx, my, clicked, scale);
+            if (step == .previous) {
+                if (val_ptr.* - slider.step < slider.min - 0.001) {
+                    val_ptr.* = slider.max - slider.step;
+                } else {
+                    val_ptr.* -= slider.step;
+                }
+            } else if (step == .next) {
+                if (val_ptr.* + slider.step > slider.max + 0.001) {
+                    val_ptr.* = slider.max - slider.step;
+                } else {
+                    val_ptr.* += slider.step;
+                }
+            }
+        },
+        .int_range => |range| {
+            const val_str = std.fmt.bufPrint(&buf, "{d}", .{val_ptr.*}) catch "ERR";
+            const step = SettingsUi.drawStepperControl(ui, row, val_str, value_scale, button_scale, mx, my, clicked, scale);
+            if (step == .previous) {
+                if (val_ptr.* - range.step < range.min) {
+                    val_ptr.* = range.max - range.step;
+                } else {
+                    val_ptr.* -= range.step;
+                }
+            } else if (step == .next) {
+                if (val_ptr.* + range.step > range.max) {
+                    val_ptr.* = range.max - range.step;
+                } else {
+                    val_ptr.* += range.step;
+                }
+            }
+        },
+    }
+
+    if (comptime std.mem.eql(u8, name, "lpv_quality_preset")) {
+        const legend = SettingsUi.getLPVQualityLegend(settings.lpv_quality_preset);
+        Font.drawText(ui, legend, row.x + row.width - 338.0 * scale, row.y + row.height - 16.0 * scale, 0.68 * scale, Theme.signal);
+    }
+
+    if (val_ptr.* != old_val) {
+        const sanitized_conflict = settings_pkg.sanitizeRuntimeConflicts(settings);
+        SettingsUi.applyChangedSetting(name, settings, rs);
+        if (sanitized_conflict) rs.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
+    }
+
+    return row.y + row.height;
+}
+
+fn drawStepperRow(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, value: []const u8, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) ?StepResult {
+    Theme.drawOptionRow(ui, rect, label, description, label_scale, false, scale);
+    const result = SettingsUi.drawStepperControl(ui, rect, value, value_scale, button_scale, mx, my, clicked, scale);
+    return if (result == .none) null else result;
+}
+
+fn drawToggleRow(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, enabled: bool, label_scale: f32, value_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) bool {
+    Theme.drawOptionRow(ui, rect, label, description, label_scale, enabled, scale);
+    return SettingsUi.drawToggleControl(ui, rect, enabled, value_scale, mx, my, clicked, scale);
+}
+
+fn settingDescription(comptime name: []const u8) []const u8 {
+    return if (comptime std.mem.eql(u8, name, "textures_enabled"))
+        "Material atlas sampling."
+    else if (comptime std.mem.eql(u8, name, "shadow_quality"))
+        "Depth map budget for directional shadows."
+    else if (comptime std.mem.eql(u8, name, "shadow_pcf_samples"))
+        "PCF sample count and edge softness."
+    else if (comptime std.mem.eql(u8, name, "pbr_enabled"))
+        "Material response and packed surface channels."
+    else if (comptime std.mem.eql(u8, name, "taa_enabled"))
+        "Temporal anti-aliasing pipeline."
+    else if (comptime std.mem.eql(u8, name, "max_texture_resolution"))
+        "Upper bound for atlas texture detail."
+    else if (comptime std.mem.eql(u8, name, "lpv_enabled"))
+        "Light propagation volume GI experiment."
+    else if (comptime std.mem.eql(u8, name, "volumetric_density"))
+        "Fog volume strength."
+    else if (comptime std.mem.eql(u8, name, "dynamic_resolution_enabled"))
+        "Scale rendering resolution to hold target FPS."
+    else
+        @field(Settings.metadata, name).description;
 }
