@@ -12,6 +12,7 @@ You run repeatable ZigCraft performance benchmarks without showing a window or s
 - Always wrap commands in `nix develop --command`.
 - Always set a Bash tool timeout longer than the benchmark duration. Never run benchmarks without a timeout.
 - Use `zig build benchmark`; it is configured for offscreen graphics rendering and skip-present behavior.
+- Use `-Dbenchmark-preset=<preset>` when comparing graphics presets. Valid presets are `low`, `medium`, `high`, `ultra`, and `extreme`.
 - Do not add visible monitor flags for benchmarks unless explicitly requested.
 - Save benchmark output to a JSON file and inspect it before reporting results.
 
@@ -28,12 +29,20 @@ Recommended Bash timeout: `60000` ms.
 Standard benchmark:
 
 ```bash
-nix develop --command zig build benchmark -Dbenchmark-duration=60 -Dbenchmark-output=benchmark_results.json
+nix develop --command zig build benchmark -Dbenchmark-preset=medium -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-medium.json
 ```
 
 Recommended Bash timeout: `120000` ms.
 
-Preset benchmark:
+Low preset benchmark:
+
+```bash
+nix develop --command zig build benchmark -Dbenchmark-preset=low -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-low.json
+```
+
+Recommended Bash timeout: `120000` ms.
+
+High preset benchmark:
 
 ```bash
 nix develop --command zig build benchmark -Dbenchmark-preset=high -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-high.json
@@ -52,6 +61,7 @@ Recommended Bash timeout: `180000` ms.
 ## Reporting
 
 Read the output JSON and report:
+- graphics preset used
 - `frames`
 - average FPS and p95/p99 if relevant
 - average CPU ms

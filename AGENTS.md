@@ -44,6 +44,7 @@ nix develop --command zig fmt src/                   # Format code
 -Ddebug_shadows    # Enable shadow debug visualization
 -Dsmoke-test       # Auto-load world and exit (for automated testing)
 -Dskip-present     # Full offscreen graphics mode (render without showing/presenting a window)
+-Dbenchmark-preset=low  # Graphics preset for benchmark runs (low/medium/high/ultra/extreme)
 -Dauto-world=normal  # Auto-open a generator directly (normal/overworld or flat)
 -Dmonitor-index=1  # Open the game window on a specific 0-based SDL display index
 -Dmonitor-name=DP-2  # Move the game window to a named Hyprland monitor
