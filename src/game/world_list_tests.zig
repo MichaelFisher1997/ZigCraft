@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const fs = @import("fs");
-const world_list = @import("screens/world_list.zig");
+const world_list = @import("game-ui").world_list;
 
 test "writeLevelDat creates valid JSON" {
     const allocator = testing.allocator;

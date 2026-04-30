@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const input_mapper_pkg = @import("input_mapper.zig");
+const input_mapper_pkg = @import("game-core").input_mapper;
 const InputBinding = input_mapper_pkg.InputBinding;
 const ActionBinding = input_mapper_pkg.ActionBinding;
 const InputMapper = input_mapper_pkg.InputMapper;
