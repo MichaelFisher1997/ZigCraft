@@ -447,6 +447,8 @@ pub fn build(b: *std.Build) void {
     integration_root_module.addImport("sync", sync_module);
     integration_root_module.addImport("c", c_module);
     addProjectModuleImports(integration_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    integration_root_module.addImport("game-core", game_core);
+    integration_root_module.addImport("game-ui", game_ui);
     integration_root_module.addOptions("build_options", options);
     integration_root_module.addIncludePath(b.path("libs/stb"));
 

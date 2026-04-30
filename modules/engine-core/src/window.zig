@@ -66,6 +66,13 @@ pub const WindowManager = struct {
     }
 
     const HyprlandMonitor = struct {
+        width: c_int,
+        height: c_int,
+        x: c_int,
+        y: c_int,
+    };
+
+    const HyprlandMonitorJson = struct {
         name: []const u8,
         width: c_int,
         height: c_int,
@@ -106,13 +113,12 @@ pub const WindowManager = struct {
             else => return error.HyprctlFailed,
         }
 
-        const parsed = try std.json.parseFromSlice([]HyprlandMonitor, allocator, result.stdout, .{ .ignore_unknown_fields = true });
+        const parsed = try std.json.parseFromSlice([]HyprlandMonitorJson, allocator, result.stdout, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
         for (parsed.value) |monitor| {
             if (std.mem.eql(u8, monitor.name, monitor_name)) {
                 return .{
-                    .name = monitor.name,
                     .width = monitor.width,
                     .height = monitor.height,
                     .x = monitor.x,
