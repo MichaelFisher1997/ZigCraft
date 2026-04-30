@@ -8,6 +8,7 @@ result
 .direnv/
 *-profile*
 test_output.txt
+benchmark_results*.json
 .env
 .env.*
 !.env.example
