@@ -217,7 +217,7 @@ pub const LODMesh = struct {
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
                 const size = cell_size;
 
-                const material = selectCellMaterial(data, atlas, gx, gz, self.lod_level);
+                const material = selectCellMaterial(data, atlas, gx, gz);
                 const top_tile = material.top;
                 const side_tile = material.side;
                 const top_block = blockForLODQuad(data, gx, gz);
@@ -337,6 +337,7 @@ pub const LODMesh = struct {
         if (indices.len == 0) return;
 
         const expanded = try self.allocator.alloc(Vertex, indices.len);
+        errdefer self.allocator.free(expanded);
         for (expanded, 0..) |*dst, i| {
             const idx = indices[i];
             if (idx >= vertices.len) return error.InvalidIndex;
@@ -559,7 +560,15 @@ fn buildFullDetailHeightmapMesh(
     const w = data.width;
     const grid_total = w * w;
     if (grid_total == 0) return error.EmptyData;
-    std.debug.assert(w <= data.heightmap.len and w <= data.biomes.len);
+    const grid_count: usize = @intCast(grid_total);
+    std.debug.assert(grid_count <= data.heightmap.len and
+        grid_count <= data.biomes.len and
+        grid_count <= data.top_blocks.len and
+        grid_count <= data.colors.len and
+        grid_count <= data.material_layers.len and
+        grid_count <= data.water.len and
+        grid_count <= data.lighting.len and
+        grid_count <= data.vegetation.len);
 
     if (w < 2) return error.EmptyData;
     const cell_size: f32 = @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(lod_level))) / @as(f32, @floatFromInt(w - 1));
@@ -585,10 +594,10 @@ fn buildFullDetailHeightmapMesh(
             const wx = @as(f32, @floatFromInt(gx)) * cell_size;
             const wz = @as(f32, @floatFromInt(gz)) * cell_size;
             const size = cell_size;
-            const material = selectCellMaterial(data, atlas, gx, gz, lod_level);
+            const material = selectCellMaterial(data, atlas, gx, gz);
 
             const top_block = blockForLODQuad(data, gx, gz);
-            const top_tile_id = getLodTopTile(top_block, atlas, lod_level);
+            const top_tile_id = getLodTopTile(top_block, atlas);
             const tc00 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c00, data.lighting[gx + gz * w].ambient_occlusion));
             const tc10 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c10, data.lighting[(gx + 1) + gz * w].ambient_occlusion));
             const tc01 = getLodTopColor(top_block, top_tile_id, applyColorBrightness(c01, data.lighting[gx + (gz + 1) * w].ambient_occlusion));
@@ -694,13 +703,13 @@ fn blockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     return blockForLODCell(data, gx, gz);
 }
 
-fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32, lod_level: LODLevel) TextureAtlas.BlockTiles {
+fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32) TextureAtlas.BlockTiles {
     const top_block = blockForLODQuad(data, gx, gz);
     const side_block = sideBlockForLODQuad(data, gx, gz, top_block);
     const top_tiles = atlas.getTilesForBlock(@intFromEnum(top_block));
     const side_tiles = atlas.getTilesForBlock(@intFromEnum(side_block));
     return .{
-        .top = getLodTopTile(top_block, atlas, lod_level),
+        .top = getLodTopTile(top_block, atlas),
         .bottom = if (top_tiles.bottom == 0) Vertex.LOD_TILE_ID else top_tiles.bottom,
         .side = if (side_tiles.side == 0) Vertex.LOD_TILE_ID else side_tiles.side,
     };
@@ -883,8 +892,7 @@ fn packBlockDefaultColor(block: BlockType, fallback: u32) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
-fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas, lod_level: LODLevel) u16 {
-    _ = lod_level;
+fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     if (block == .air) return Vertex.LOD_TILE_ID;
 
     const tiles = atlas.getTilesForBlock(@intFromEnum(block));

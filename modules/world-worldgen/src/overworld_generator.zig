@@ -546,6 +546,7 @@ pub const OverworldGenerator = struct {
     }
 
     fn consumeStaticDecorationRandom(biome_id: BiomeId, surface_block: BlockType, variant: f32, allow_subbiomes: bool, veg_mult: f32, random: std.Random) void {
+        // Keep this in sync with StandardDecorationProvider.decorate before the tree pass.
         for (decoration_registry.DECORATIONS) |deco| {
             switch (deco) {
                 .simple => |simple| {
@@ -638,18 +639,6 @@ pub const OverworldGenerator = struct {
             .avg_tree_height = treeHeightForType(tree_type),
             .offset_x = 0.0,
             .offset_z = 0.0,
-            .trunk = blocks.trunk,
-            .leaves = blocks.leaves,
-        };
-    }
-
-    fn makeRepresentativeVegetationHint(biome_id: BiomeId, tree_coverage_sum: f32, tree_height_sum: f32, tree_offset_x_sum: f32, tree_offset_z_sum: f32, tree_samples: u32, total_samples: u32) world_core.LODVegetationHint {
-        const blocks = treeBlocksForBiome(biome_id);
-        return .{
-            .tree_coverage = std.math.clamp(tree_coverage_sum / @as(f32, @floatFromInt(@max(total_samples, 1))), 0.0, 1.0),
-            .avg_tree_height = if (tree_samples == 0) 0.0 else tree_height_sum / @as(f32, @floatFromInt(tree_samples)),
-            .offset_x = if (tree_samples == 0) 0.0 else tree_offset_x_sum / @as(f32, @floatFromInt(tree_samples)),
-            .offset_z = if (tree_samples == 0) 0.0 else tree_offset_z_sum / @as(f32, @floatFromInt(tree_samples)),
             .trunk = blocks.trunk,
             .leaves = blocks.leaves,
         };
