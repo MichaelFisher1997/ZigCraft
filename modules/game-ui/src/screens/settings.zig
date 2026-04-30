@@ -279,10 +279,12 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
     const image_settings = .{ "taa_enabled", "taa_blend_factor", "taa_velocity_rejection", "fxaa_enabled", "ssao_enabled", "bloom_enabled", "bloom_intensity", "vignette_enabled", "vignette_intensity", "film_grain_enabled", "film_grain_intensity" };
     const atmosphere_settings = .{ "volumetric_density", "volumetric_steps", "volumetric_scattering", "lpv_enabled", "lpv_quality_preset", "lpv_intensity", "lpv_cell_size" };
     const dynamic_resolution_settings = .{ "dynamic_resolution_enabled", "dynamic_resolution_min_scale", "dynamic_resolution_max_scale", "target_fps" };
+    const left_sections = .{ "BASELINE", "MATERIALS", "SHADOWS" };
+    const right_sections = .{ "IMAGE", "ATMOSPHERE AND GI", "DYNAMIC RESOLUTION" };
 
     const baseline_rows: usize = 3;
-    const left_content_h = renderingContentHeight(3, baseline_rows + material_settings.len + shadow_settings.len, row_h, row_gap, section_h, scale) + warning_h;
-    const right_content_h = renderingContentHeight(3, image_settings.len + atmosphere_settings.len + dynamic_resolution_settings.len, row_h, row_gap, section_h, scale);
+    const left_content_h = renderingContentHeight(left_sections.len, baseline_rows + material_settings.len + shadow_settings.len, row_h, row_gap, section_h, scale) + warning_h;
+    const right_content_h = renderingContentHeight(right_sections.len, image_settings.len + atmosphere_settings.len + dynamic_resolution_settings.len, row_h, row_gap, section_h, scale);
     const total_content_h = @max(left_content_h, right_content_h);
     const max_scroll = @max(0.0, total_content_h - inner.height);
     self.render_scroll_offset -= ctx.input.getScrollDelta().y * 36.0 * scale;
@@ -294,7 +296,7 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
     var y_left = layout.top_y - self.render_scroll_offset;
     var y_right = (if (layout.two_column) layout.top_y else layout.top_y + left_content_h + 28.0 * scale) - self.render_scroll_offset;
 
-    drawRenderSection(ui, layout.left_x, y_left, "BASELINE", top, bottom, scale);
+    drawRenderSection(ui, layout.left_x, y_left, left_sections[0], top, bottom, scale);
     y_left += section_h;
     y_left = drawPresetRow(ui, settings, rs, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
     y_left = drawRenderDistancePresetRow(ui, settings, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
@@ -314,31 +316,31 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
         y_left += warning_h;
     }
 
-    drawRenderSection(ui, layout.left_x, y_left, "MATERIALS", top, bottom, scale);
+    drawRenderSection(ui, layout.left_x, y_left, left_sections[1], top, bottom, scale);
     y_left += section_h;
     inline for (material_settings) |name| {
         y_left = drawSettingRow(ui, name, settings, rs, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
     }
 
-    drawRenderSection(ui, layout.left_x, y_left, "SHADOWS", top, bottom, scale);
+    drawRenderSection(ui, layout.left_x, y_left, left_sections[2], top, bottom, scale);
     y_left += section_h;
     inline for (shadow_settings) |name| {
         y_left = drawSettingRow(ui, name, settings, rs, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
     }
 
-    drawRenderSection(ui, layout.right_x, y_right, "IMAGE", top, bottom, scale);
+    drawRenderSection(ui, layout.right_x, y_right, right_sections[0], top, bottom, scale);
     y_right += section_h;
     inline for (image_settings) |name| {
         y_right = drawSettingRow(ui, name, settings, rs, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
     }
 
-    drawRenderSection(ui, layout.right_x, y_right, "ATMOSPHERE AND GI", top, bottom, scale);
+    drawRenderSection(ui, layout.right_x, y_right, right_sections[1], top, bottom, scale);
     y_right += section_h;
     inline for (atmosphere_settings) |name| {
         y_right = drawSettingRow(ui, name, settings, rs, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
     }
 
-    drawRenderSection(ui, layout.right_x, y_right, "DYNAMIC RESOLUTION", top, bottom, scale);
+    drawRenderSection(ui, layout.right_x, y_right, right_sections[2], top, bottom, scale);
     y_right += section_h;
     inline for (dynamic_resolution_settings) |name| {
         y_right = drawSettingRow(ui, name, settings, rs, .{ .x = layout.right_x, .y = y_right, .width = layout.col_w, .height = row_h }, top, bottom, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale) + row_gap;
