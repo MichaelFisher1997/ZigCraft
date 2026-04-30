@@ -14,6 +14,7 @@ const IRenderSettings = @import("engine-core").interfaces.IRenderSettings;
 /// - `msaa_samples` - Multisample anti-aliasing sample count
 /// - `taa_blend_factor` - TAA history accumulation factor
 /// - `taa_velocity_rejection` - TAA motion rejection threshold
+/// - `fxaa_enabled` - FXAA post-process toggle
 ///
 /// ## Settings NOT Applied Here (consumed elsewhere):
 /// These settings take effect without requiring this function because they are
@@ -43,6 +44,7 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     rhi.setShadowDebugChannel(@intFromEnum(resolveShadowDebugChannel(settings)));
     rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
     rhi.setMSAA(settings.msaa_samples);
+    rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
     rhi.setTAABlendFactor(settings.taa_blend_factor);
     rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
     rhi.setDynamicResolution(settings.dynamic_resolution_enabled, settings.dynamic_resolution_min_scale, settings.dynamic_resolution_max_scale, settings.target_fps);
@@ -55,6 +57,7 @@ pub fn applyToRenderSettings(settings: *const Settings, rs: IRenderSettings) voi
     rs.setDebugShadowView(anyTerrainDebugActive(settings));
     rs.setAnisotropicFiltering(settings.anisotropic_filtering);
     rs.setMSAA(settings.msaa_samples);
+    rs.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
     rs.setTAABlendFactor(settings.taa_blend_factor);
     rs.setTAAVelocityRejection(settings.taa_velocity_rejection);
 }

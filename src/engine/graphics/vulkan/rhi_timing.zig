@@ -133,18 +133,4 @@ pub fn processTimingResults(ctx: anytype) void {
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.bloom_pass_ms;
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.fxaa_pass_ms;
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.post_process_pass_ms;
-
-    if (ctx.timing.timing_enabled) {
-        std.debug.print("GPU Frame Time: {d:.2}ms (Shadow: {d:.2}, G-Pass: {d:.2}, SSAO: {d:.2}, LPV: {d:.2}, Main: {d:.2}, Bloom: {d:.2}, FXAA: {d:.2}, Post: {d:.2})\n", .{
-            ctx.timing.timing_results.total_gpu_ms,
-            ctx.timing.timing_results.shadow_pass_ms[0] + ctx.timing.timing_results.shadow_pass_ms[1] + ctx.timing.timing_results.shadow_pass_ms[2] + ctx.timing.timing_results.shadow_pass_ms[3],
-            ctx.timing.timing_results.g_pass_ms,
-            ctx.timing.timing_results.ssao_pass_ms,
-            ctx.timing.timing_results.lpv_pass_ms,
-            ctx.timing.timing_results.main_pass_ms,
-            ctx.timing.timing_results.bloom_pass_ms,
-            ctx.timing.timing_results.fxaa_pass_ms,
-            ctx.timing.timing_results.post_process_pass_ms,
-        });
-    }
 }

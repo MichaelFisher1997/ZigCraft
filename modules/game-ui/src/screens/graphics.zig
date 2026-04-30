@@ -306,6 +306,7 @@ pub const GraphicsScreen = struct {
 
             // Side effects always run (even if not visible)
             if (val_ptr.* != old_val) {
+                const sanitized_conflict = settings_pkg.sanitizeRuntimeConflicts(settings);
                 if (std.mem.eql(u8, decl.name, "anisotropic_filtering")) {
                     rs.setAnisotropicFiltering(settings.anisotropic_filtering);
                 } else if (std.mem.eql(u8, decl.name, "textures_enabled")) {
@@ -343,6 +344,9 @@ pub const GraphicsScreen = struct {
                 } else if (std.mem.eql(u8, decl.name, "film_grain_intensity")) {
                     rs.setFilmGrainIntensity(settings.film_grain_intensity);
                 }
+                if (sanitized_conflict) {
+                    rs.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
+                }
             }
 
             sy += row_height;
@@ -368,6 +372,7 @@ pub const GraphicsScreen = struct {
 };
 
 fn applyPresetSideEffects(settings: *Settings, rs: anytype) void {
+    _ = settings_pkg.sanitizeRuntimeConflicts(settings);
     rs.setAnisotropicFiltering(settings.anisotropic_filtering);
     rs.setTexturesEnabled(settings.textures_enabled);
     rs.setTAABlendFactor(settings.taa_blend_factor);

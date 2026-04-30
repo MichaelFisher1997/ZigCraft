@@ -105,7 +105,12 @@ To bypass in emergencies: `git push --no-verify`
 
 - **Smoke test**: `nix develop --command zig build run -Dsmoke-test`
 - **Headless / no present**: `nix develop --command zig build run -Dskip-present`
+- **Headless benchmark**: `nix develop --command zig build benchmark -Dbenchmark-preset=low -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-low.json`
 - **Auto-open a world**: `nix develop --command zig build run -Dauto-world=normal`
+- **Open on monitor**: `nix develop --command zig build run -Dmonitor-index=1`
+- **Open on Hyprland monitor**: `nix develop --command zig build run -Dmonitor-name=DP-2`
+- **Force XWayland monitor placement**: `nix develop --command zig build run -Dmonitor-index=1 -Dwindow-video-driver=x11`
+- **Background window launch**: `nix develop --command zig build run -Dmonitor-name=DP-2 -Dwindow-video-driver=x11 -Dwindow-no-focus`
 - **Startup diagnostic**: `nix develop --command zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
 - **Chunk-only debug mode**: `nix develop --command zig build run -Dchunk-debug-mode -Dauto-world=normal`
 - **Shadow/cave lighting capture**: `./scripts/capture_shadow_test.sh screenshots/shadow-test.png`

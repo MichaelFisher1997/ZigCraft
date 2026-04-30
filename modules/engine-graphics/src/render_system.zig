@@ -371,6 +371,12 @@ pub const RenderSystem = struct {
         return self.cloud_system;
     }
 
+    pub fn setCloudsEnabled(self: *RenderSystem, enabled: bool) void {
+        var config = self.cloud_system.config;
+        config.enabled = enabled;
+        self.cloud_system.setConfig(config);
+    }
+
     pub fn getAtlas(self: *RenderSystem) *TextureAtlas {
         return &self.atlas;
     }
@@ -409,6 +415,10 @@ pub const RenderSystem = struct {
 
     pub fn getDisableSSAO(self: *const RenderSystem) bool {
         return !self.ssao_pass.enabled;
+    }
+
+    pub fn getCloudsEnabled(self: *const RenderSystem) bool {
+        return self.cloud_system.config.enabled;
     }
 
     pub fn setDisableGPassDraw(self: *RenderSystem, value: bool) void {

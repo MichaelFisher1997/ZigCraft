@@ -125,6 +125,9 @@ pub const App = struct {
         if (build_options.benchmark) {
             applyBenchmarkPreset(settings_manager.ptr(), build_options.benchmark_preset);
         }
+        if (build_options.auto_preset.len > 0) {
+            _ = applyNamedPreset(settings_manager.ptr(), build_options.auto_preset, "AUTO PRESET");
+        }
         if (build_options.shadow_test_scene) {
             applyShadowTestPreset(settings_manager.ptr());
         }
@@ -132,7 +135,13 @@ pub const App = struct {
         const initial_window_width: u32 = if (build_options.benchmark) 1920 else settings_manager.settings.window_width;
         const initial_window_height: u32 = if (build_options.benchmark) 1080 else settings_manager.settings.window_height;
         log.log.info("App.init: initializing WindowManager ({}x{})", .{ initial_window_width, initial_window_height });
-        var wm = try WindowManager.init(allocator, true, initial_window_width, initial_window_height);
+        var wm = try WindowManager.init(allocator, true, initial_window_width, initial_window_height, .{
+            .monitor_index = build_options.monitor_index,
+            .monitor_name = build_options.monitor_name,
+            .video_driver = build_options.window_video_driver,
+            .no_focus = build_options.window_no_focus,
+            .hidden = build_options.skip_present,
+        });
         errdefer wm.deinit();
 
         var input = Input.init(allocator);
@@ -486,15 +495,22 @@ pub const App = struct {
 };
 
 fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
+    if (applyNamedPreset(settings, preset_name, "BENCHMARK")) {
+        settings.vsync = false;
+    }
+}
+
+fn applyNamedPreset(settings: *Settings, preset_name: []const u8, label: []const u8) bool {
     for (json_presets.graphics_presets.items, 0..) |preset, i| {
         if (std.ascii.eqlIgnoreCase(preset.name, preset_name) or std.ascii.eqlIgnoreCase(@tagName(preset.render_distance_preset), preset_name)) {
             json_presets.apply(settings, i);
-            log.log.info("BENCHMARK: Applied graphics preset '{s}'", .{preset.name});
-            return;
+            log.log.info("{s}: Applied graphics preset '{s}'", .{ label, preset.name });
+            return true;
         }
     }
 
-    log.log.warn("BENCHMARK: Unknown preset '{s}', keeping loaded settings", .{preset_name});
+    log.log.warn("{s}: Unknown preset '{s}', keeping loaded settings", .{ label, preset_name });
+    return false;
 }
 
 fn applyShadowTestPreset(settings: *Settings) void {

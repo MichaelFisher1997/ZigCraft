@@ -201,6 +201,9 @@ pub const SettingsScreen = struct {
         Font.drawText(ui, "LOD SYSTEM", ix, sy, label_scale, LABEL_COLOR);
         if (Widgets.drawButton(ui, .{ .x = vx, .y = sy - 4.0, .width = toggle_width, .height = btn_height }, if (settings.lod_enabled) "ENABLED" else "DISABLED", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
             settings.lod_enabled = !settings.lod_enabled;
+            if (settings_pkg.sanitizeRuntimeConflicts(settings)) {
+                apply_logic.applyToRenderSettings(settings, rs);
+            }
         }
         sy += row_height;
 

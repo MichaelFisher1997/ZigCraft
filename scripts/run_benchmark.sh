@@ -33,5 +33,5 @@ IFS=',' read -r -a preset_list <<< "$presets"
 for preset in "${preset_list[@]}"; do
     output_file="$output_dir/$preset.json"
     printf 'Running benchmark preset %s -> %s\n' "$preset" "$output_file"
-    ZIGCRAFT_SAFE_MODE=1 nix develop --command zig build benchmark -Dbenchmark-preset="$preset" -Dbenchmark-duration="$duration" -Dbenchmark-output="$output_file"
+    ZIGCRAFT_SAFE_MODE=1 nix develop --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset="$preset" -Dbenchmark-duration="$duration" -Dbenchmark-output="$output_file"
 done

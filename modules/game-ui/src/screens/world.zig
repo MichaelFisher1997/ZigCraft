@@ -61,6 +61,7 @@ pub const WorldScreen = struct {
     frustum_initialized: bool = false,
     chunk_inspector_overlay: ChunkInspectorOverlay = .{},
     startup_diagnostic_start: f32 = 0,
+    startup_diagnostic_start_frame: u64 = 0,
     startup_diagnostic_logged: bool = false,
     stable_shadow_sun_dir: Vec3 = Vec3.init(0.0, 1.0, 0.0),
     stable_shadow_sun_initialized: bool = false,
@@ -88,6 +89,7 @@ pub const WorldScreen = struct {
             .last_debug_toggle_time = 0,
             .debug_ui = .{},
             .startup_diagnostic_start = context.time.elapsed,
+            .startup_diagnostic_start_frame = context.time.frame_count,
             .startup_diagnostic_logged = false,
         };
         settings_data.clearTerrainDebugViews(context.settings);
@@ -241,12 +243,18 @@ pub const WorldScreen = struct {
         const state_counts = self.session.world.getChunkStateCounts();
         const lod_stats = self.session.world.getLODStats();
         const lod_radii = self.session.lod_config.radii;
+        const elapsed = now - self.startup_diagnostic_start;
+        const frames_elapsed = self.context.time.frame_count - self.startup_diagnostic_start_frame;
+        const avg_fps = if (elapsed > 0.001) @as(f32, @floatFromInt(frames_elapsed)) / elapsed else self.context.time.fps;
 
         log.log.info(
-            "STARTUP_DIAG: generator='{s}' elapsed={d:.2}s rd={} lod0={} chunks_loaded={} chunks_total={} chunks_rendered={} chunks_culled={} gen_queue={} mesh_queue={} upload_queue={} lod_loaded={}",
+            "STARTUP_DIAG: generator='{s}' elapsed={d:.2}s fps={d:.1} avg_fps={d:.1} frames={} rd={} lod0={} chunks_loaded={} chunks_total={} chunks_rendered={} chunks_culled={} gen_queue={} mesh_queue={} upload_queue={} lod_loaded={}",
             .{
                 self.session.world.generator.info.name,
-                now - self.startup_diagnostic_start,
+                elapsed,
+                self.context.time.fps,
+                avg_fps,
+                frames_elapsed,
                 self.session.world.render_distance,
                 lod_radii[0],
                 stats.chunks_loaded,

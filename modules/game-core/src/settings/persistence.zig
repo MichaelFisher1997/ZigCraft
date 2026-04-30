@@ -79,6 +79,10 @@ pub fn load(allocator: std.mem.Allocator) Settings {
     settings.texture_pack = texture_pack;
     settings.environment_map = environment_map;
 
+    if (data.sanitizeRuntimeConflicts(&settings)) {
+        log.log.warn("Disabling TAA for loaded settings because it currently jitters distant LOD terrain", .{});
+    }
+
     log.log.info("Settings loaded from ~/{s}", .{config_path});
     return settings;
 }

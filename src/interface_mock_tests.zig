@@ -351,9 +351,10 @@ test "Render settings interface applies settings" {
     try testing.expectEqual(true, mock.debug_shadow_view);
     try testing.expectEqual(@as(u8, 8), mock.anisotropic_filtering);
     try testing.expectEqual(@as(u8, 2), mock.msaa_samples);
+    try testing.expectEqual(true, mock.fxaa);
     try testing.expectApproxEqAbs(@as(f32, 0.75), mock.taa_blend_factor, 0.0001);
     try testing.expectApproxEqAbs(@as(f32, 0.11), mock.taa_velocity_rejection, 0.0001);
-    try testing.expectEqual(@as(usize, 8), mock.call_count);
+    try testing.expectEqual(@as(usize, 9), mock.call_count);
 }
 
 test "IWorld mock dispatch" {

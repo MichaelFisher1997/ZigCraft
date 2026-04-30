@@ -18,3 +18,4 @@ pub const PresetConfig = json_presets.PresetConfig;
 
 // Data-driven settings support
 pub const SettingMetadata = data.SettingMetadata;
+pub const sanitizeRuntimeConflicts = data.sanitizeRuntimeConflicts;

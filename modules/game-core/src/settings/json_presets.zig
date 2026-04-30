@@ -13,6 +13,7 @@ pub const PresetConfig = struct {
     shadow_pcf_samples: u8,
     shadow_cascade_blend: bool,
     shadow_caster_distance: f32 = 250.0,
+    shadows_enabled: bool = true,
     pbr_enabled: bool,
     pbr_quality: u8,
     msaa_samples: u8,
@@ -21,6 +22,7 @@ pub const PresetConfig = struct {
     taa_velocity_rejection: f32 = 0.02,
     anisotropic_filtering: u8,
     max_texture_resolution: u32,
+    vsync: ?bool = null,
     exposure: f32,
     saturation: f32,
     volumetric_lighting_enabled: bool,
@@ -36,6 +38,8 @@ pub const PresetConfig = struct {
     lpv_cell_size: f32 = 2.0,
     lpv_grid_size: u32 = 32,
     lpv_propagation_iterations: u32 = 3,
+    clouds_enabled: bool = true,
+    clouds_3d_enabled: bool = true,
     lod_enabled: bool,
     render_distance: i32,
     render_distance_preset: RenderDistancePreset = .high,
@@ -136,6 +140,8 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.shadow_pcf_samples = config.shadow_pcf_samples;
     settings.shadow_cascade_blend = config.shadow_cascade_blend;
     settings.shadow_caster_distance = config.shadow_caster_distance;
+    settings.shadow_sandbox_enabled = config.shadows_enabled;
+    settings.shadow_beauty_enabled = config.shadows_enabled;
     settings.pbr_enabled = config.pbr_enabled;
     settings.pbr_quality = config.pbr_quality;
     settings.msaa_samples = config.msaa_samples;
@@ -144,6 +150,7 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.taa_velocity_rejection = config.taa_velocity_rejection;
     settings.anisotropic_filtering = config.anisotropic_filtering;
     settings.max_texture_resolution = config.max_texture_resolution;
+    if (config.vsync) |vsync| settings.vsync = vsync;
     settings.exposure = config.exposure;
     settings.saturation = config.saturation;
     settings.volumetric_lighting_enabled = config.volumetric_lighting_enabled;
@@ -159,11 +166,15 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.lpv_cell_size = config.lpv_cell_size;
     settings.lpv_grid_size = config.lpv_grid_size;
     settings.lpv_propagation_iterations = config.lpv_propagation_iterations;
+    settings.clouds_enabled = config.clouds_enabled;
+    settings.clouds_3d_enabled = config.clouds_3d_enabled;
+    settings.lod_enabled = config.lod_enabled;
     settings.render_distance = config.render_distance;
     settings.render_distance_preset = config.render_distance_preset;
     settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
     settings.bloom_enabled = config.bloom_enabled;
     settings.bloom_intensity = config.bloom_intensity;
+    _ = data.sanitizeRuntimeConflicts(settings);
 }
 
 pub fn getIndex(settings: *const Settings) usize {
@@ -180,6 +191,8 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         settings.shadow_pcf_samples == preset.shadow_pcf_samples and
         settings.shadow_cascade_blend == preset.shadow_cascade_blend and
         std.math.approxEqAbs(f32, settings.shadow_caster_distance, preset.shadow_caster_distance, epsilon) and
+        settings.shadow_sandbox_enabled == preset.shadows_enabled and
+        settings.shadow_beauty_enabled == preset.shadows_enabled and
         settings.pbr_enabled == preset.pbr_enabled and
         settings.pbr_quality == preset.pbr_quality and
         settings.msaa_samples == preset.msaa_samples and
@@ -188,6 +201,7 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.taa_velocity_rejection, preset.taa_velocity_rejection, epsilon) and
         settings.anisotropic_filtering == preset.anisotropic_filtering and
         settings.max_texture_resolution == preset.max_texture_resolution and
+        (preset.vsync == null or settings.vsync == preset.vsync.?) and
         std.math.approxEqAbs(f32, settings.exposure, preset.exposure, epsilon) and
         std.math.approxEqAbs(f32, settings.saturation, preset.saturation, epsilon) and
         settings.render_distance == preset.render_distance and
@@ -204,6 +218,9 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.lpv_cell_size, preset.lpv_cell_size, epsilon) and
         settings.lpv_grid_size == preset.lpv_grid_size and
         settings.lpv_propagation_iterations == preset.lpv_propagation_iterations and
+        settings.clouds_enabled == preset.clouds_enabled and
+        settings.clouds_3d_enabled == preset.clouds_3d_enabled and
+        settings.lod_enabled == preset.lod_enabled and
         settings.fxaa_enabled == preset.fxaa_enabled and
         settings.bloom_enabled == preset.bloom_enabled and
         std.math.approxEqAbs(f32, settings.bloom_intensity, preset.bloom_intensity, epsilon);
