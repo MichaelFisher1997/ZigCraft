@@ -64,6 +64,9 @@ jobs:
       - name: Prepare opencode cache
         run: bash scripts/prepare_opencode_cache.sh
 
+      - name: Configure opencode CI permissions
+        run: bash scripts/configure_opencode_ci_permissions.sh
+
       - uses: ./.github/actions/load-prompt
         with:
           prompt-file: .github/prompts/pr-review.md
