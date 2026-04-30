@@ -11,8 +11,8 @@ const WorldStatsData = @import("world-runtime").WorldStatsData;
 const RenderStats = @import("world-runtime").RenderStats;
 const shadow_scene = @import("engine/graphics/shadow_scene.zig");
 const ShadowConfig = @import("engine/graphics/rhi_types.zig").ShadowConfig;
-const Settings = @import("game/settings/data.zig").Settings;
-const settings_apply = @import("game/settings/apply.zig");
+const Settings = @import("game-core").settings.data.Settings;
+const settings_apply = @import("game-core").settings.apply_logic;
 
 pub const std_options: std.Options = .{ .log_level = .err };
 

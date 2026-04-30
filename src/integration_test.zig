@@ -11,8 +11,8 @@ const testing = std.testing;
 
 const App = @import("game/app.zig").App;
 
-const WorldScreen = @import("game/screens/world.zig").WorldScreen;
-const Screen = @import("game/screen.zig");
+const WorldScreen = @import("game-ui").WorldScreen;
+const Screen = @import("game-ui").screen;
 const rhi = @import("engine/graphics/rhi.zig");
 const UISystem = @import("engine/ui/ui_system.zig").UISystem;
 const c = @import("c").c;
