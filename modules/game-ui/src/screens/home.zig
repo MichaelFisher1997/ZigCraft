@@ -2,7 +2,8 @@ const std = @import("std");
 const UISystem = @import("engine-ui").UISystem;
 const Color = @import("engine-ui").Color;
 const Font = @import("engine-ui").font;
-const Widgets = @import("engine-ui").widgets;
+const Theme = @import("../menu_theme.zig");
+const Rect = Theme.Rect;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
@@ -10,11 +11,6 @@ const SingleplayerScreen = @import("singleplayer.zig").SingleplayerScreen;
 const SettingsScreen = @import("settings.zig").SettingsScreen;
 const ResourcePacksScreen = @import("resource_packs.zig").ResourcePacksScreen;
 const EnvironmentScreen = @import("environment.zig").EnvironmentScreen;
-
-const TITLE_COLOR = Color.rgba(1.0, 0.94, 0.78, 1.0);
-const BUTTON_WIDTH_MAX = 430.0;
-const BUTTON_HEIGHT_BASE = 56.0;
-const BUTTON_SPACING_BASE = 14.0;
 
 pub const HomeScreen = struct {
     context: EngineContext,
@@ -27,9 +23,7 @@ pub const HomeScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*HomeScreen {
         const self = try allocator.create(HomeScreen);
-        self.* = .{
-            .context = context,
-        };
+        self.* = .{ .context = context };
         return self;
     }
 
@@ -52,65 +46,17 @@ pub const HomeScreen = struct {
 
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
+        const ui_scale = Theme.scaleFor(screen_h, ctx.settings.ui_scale);
+        const compact = screen_w < 980.0 * ui_scale;
 
-        // Scale UI based on screen height for better readability at high resolutions
-        const auto_scale: f32 = @max(1.0, screen_h / 720.0);
-        const ui_scale: f32 = auto_scale * ctx.settings.ui_scale;
-        const title_scale: f32 = 4.8 * ui_scale;
-        const subtitle_scale: f32 = 1.18 * ui_scale;
-        const btn_scale: f32 = 2.25 * ui_scale;
-        const btn_height: f32 = BUTTON_HEIGHT_BASE * ui_scale;
-        const btn_spacing: f32 = BUTTON_SPACING_BASE * ui_scale;
+        Theme.drawBackdrop(ui, screen_w, screen_h, ui_scale, .home);
 
-        drawHomeBackdrop(ui, screen_w, screen_h, ui_scale);
+        const hero_x = if (compact) 34.0 * ui_scale else 88.0 * ui_scale;
+        const hero_y = if (compact) 82.0 * ui_scale else 112.0 * ui_scale;
+        Theme.drawHeroTitle(ui, hero_x, hero_y, ui_scale, compact);
 
-        const rail_w = @min(screen_w * 0.36, 470.0 * ui_scale);
-        const rail_x = screen_w - rail_w - 64.0 * ui_scale;
-        const rail_y = 86.0 * ui_scale;
-        const rail_h = screen_h - 172.0 * ui_scale;
-        ui.drawRect(.{ .x = rail_x, .y = rail_y, .width = rail_w, .height = rail_h }, Color.rgba(0.03, 0.055, 0.085, 0.80));
-        ui.drawRect(.{ .x = rail_x, .y = rail_y, .width = 6.0 * ui_scale, .height = rail_h }, Color.rgba(0.92, 0.62, 0.24, 0.95));
-        ui.drawRect(.{ .x = rail_x + rail_w - 2.0 * ui_scale, .y = rail_y, .width = 2.0 * ui_scale, .height = rail_h }, Color.rgba(0.48, 0.76, 0.93, 0.65));
-        ui.drawRectOutline(.{ .x = rail_x, .y = rail_y, .width = rail_w, .height = rail_h }, Color.rgba(0.44, 0.64, 0.76, 0.50), 2.0 * ui_scale);
-
-        const title_x = 76.0 * ui_scale;
-        const title_y = screen_h * 0.18;
-        Font.drawText(ui, "ZIGCRAFT", title_x, title_y, title_scale, TITLE_COLOR);
-        Font.drawText(ui, "Chunk streams. Vulkan light.", title_x + 4.0 * ui_scale, title_y + 56.0 * ui_scale, subtitle_scale, Color.rgba(0.72, 0.86, 0.95, 0.96));
-        Font.drawText(ui, "Sharp-edged worlds from Zig.", title_x + 4.0 * ui_scale, title_y + 78.0 * ui_scale, subtitle_scale, Color.rgba(0.58, 0.72, 0.82, 0.92));
-        Font.drawText(ui, "v0.1 / Vulkan", title_x + 4.0 * ui_scale, screen_h - 72.0 * ui_scale, subtitle_scale, Color.rgba(0.45, 0.62, 0.76, 0.86));
-
-        const bw: f32 = @min(rail_w - 74.0 * ui_scale, BUTTON_WIDTH_MAX * ui_scale);
-        const bx: f32 = rail_x + 42.0 * ui_scale;
-        var by: f32 = rail_y + 94.0 * ui_scale;
-
-        if (Widgets.drawButton(ui, .{ .x = bx, .y = by, .width = bw, .height = btn_height }, "SINGLEPLAYER", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const sp_screen = try SingleplayerScreen.init(ctx.allocator, ctx);
-            errdefer sp_screen.deinit(sp_screen);
-            ctx.screen_manager.pushScreen(sp_screen.screen());
-        }
-        by += btn_height + btn_spacing;
-        if (Widgets.drawButton(ui, .{ .x = bx, .y = by, .width = bw, .height = btn_height }, "TEXTURE PACKS", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const rp_screen = try ResourcePacksScreen.init(ctx.allocator, ctx);
-            errdefer rp_screen.deinit(rp_screen);
-            ctx.screen_manager.pushScreen(rp_screen.screen());
-        }
-        by += btn_height + btn_spacing;
-        if (Widgets.drawButton(ui, .{ .x = bx, .y = by, .width = bw, .height = btn_height }, "ENVIRONMENT", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const env_screen = try EnvironmentScreen.init(ctx.allocator, ctx);
-            errdefer env_screen.deinit(env_screen);
-            ctx.screen_manager.pushScreen(env_screen.screen());
-        }
-        by += btn_height + btn_spacing;
-        if (Widgets.drawButton(ui, .{ .x = bx, .y = by, .width = bw, .height = btn_height }, "SETTINGS", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            const settings_screen = try SettingsScreen.init(ctx.allocator, ctx);
-            errdefer settings_screen.deinit(settings_screen);
-            ctx.screen_manager.pushScreen(settings_screen.screen());
-        }
-        by += btn_height + btn_spacing;
-        if (Widgets.drawButton(ui, .{ .x = bx, .y = by, .width = bw, .height = btn_height }, "QUIT", btn_scale, mouse_x, mouse_y, mouse_clicked)) {
-            ctx.input.setShouldQuit(true);
-        }
+        try drawLaunchPanel(ui, screen_w, screen_h, ui_scale, compact, mouse_x, mouse_y, mouse_clicked, ctx);
+        drawFooter(ui, screen_w, screen_h, ui_scale);
     }
 
     pub fn onEnter(ptr: *anyopaque) void {
@@ -123,25 +69,81 @@ pub const HomeScreen = struct {
     }
 };
 
-fn drawHomeBackdrop(ui: *UISystem, screen_w: f32, screen_h: f32, ui_scale: f32) void {
-    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.010, 0.018, 0.030, 1.0));
-    ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h * 0.55 }, Color.rgba(0.04, 0.10, 0.16, 0.70));
-    ui.drawRect(.{ .x = 0, .y = screen_h * 0.55, .width = screen_w, .height = screen_h * 0.45 }, Color.rgba(0.08, 0.055, 0.030, 0.82));
+fn drawLaunchPanel(ui: *UISystem, screen_w: f32, screen_h: f32, scale: f32, compact: bool, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, ctx: EngineContext) !void {
+    const panel_w: f32 = if (compact) @min(screen_w - 44.0 * scale, 600.0 * scale) else @min(screen_w * 0.43, 620.0 * scale);
+    const panel_h: f32 = if (compact) 398.0 * scale else 486.0 * scale;
+    const panel_x: f32 = if (compact) (screen_w - panel_w) * 0.5 else screen_w - panel_w - 82.0 * scale;
+    const panel_y: f32 = if (compact) screen_h * 0.46 else screen_h * 0.24;
+    const panel = Rect{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h };
+    const row_h: f32 = if (compact) 50.0 * scale else 58.0 * scale;
+    const gap: f32 = 12.0 * scale;
+    const text_scale: f32 = if (compact) 1.22 * scale else 1.42 * scale;
 
-    const horizon = screen_h * 0.58;
-    ui.drawRect(.{ .x = 0, .y = horizon, .width = screen_w, .height = 2.0 * ui_scale }, Color.rgba(0.96, 0.65, 0.26, 0.68));
-    ui.drawRect(.{ .x = 70.0 * ui_scale, .y = horizon - 118.0 * ui_scale, .width = 118.0 * ui_scale, .height = 118.0 * ui_scale }, Color.rgba(0.95, 0.61, 0.22, 0.16));
+    drawOuterGlow(ui, panel, scale);
+    ui.drawRect(.{ .x = panel.x + 18.0 * scale, .y = panel.y + 22.0 * scale, .width = panel.width, .height = panel.height }, Color.rgba(0, 0, 0, 0.28));
+    ui.drawRect(panel, Color.rgba(0.060, 0.095, 0.125, 0.58));
+    ui.drawRect(.{ .x = panel.x, .y = panel.y, .width = panel.width, .height = 1.0 * scale }, Color.rgba(0.94, 0.98, 1.0, 0.20));
+    ui.drawRect(.{ .x = panel.x, .y = panel.y + 42.0 * scale, .width = panel.width, .height = 1.0 * scale }, Color.rgba(0.58, 0.72, 0.82, 0.42));
+    ui.drawRect(.{ .x = panel.x, .y = panel.y, .width = 4.0 * scale, .height = panel.height }, Theme.signal);
+    ui.drawRectOutline(panel, Color.rgba(0.54, 0.66, 0.74, 0.58), 1.0 * scale);
+    drawPanelNoise(ui, panel, scale);
 
-    drawVoxelColumn(ui, 36.0 * ui_scale, horizon - 54.0 * ui_scale, 84.0 * ui_scale, 54.0 * ui_scale, Color.rgba(0.07, 0.14, 0.15, 0.58));
-    drawVoxelColumn(ui, 126.0 * ui_scale, horizon - 122.0 * ui_scale, 112.0 * ui_scale, 122.0 * ui_scale, Color.rgba(0.50, 0.29, 0.12, 0.78));
-    drawVoxelColumn(ui, 250.0 * ui_scale, horizon - 76.0 * ui_scale, 94.0 * ui_scale, 76.0 * ui_scale, Color.rgba(0.07, 0.13, 0.14, 0.54));
-    drawVoxelColumn(ui, 356.0 * ui_scale, horizon - 48.0 * ui_scale, 88.0 * ui_scale, 48.0 * ui_scale, Color.rgba(0.05, 0.10, 0.12, 0.48));
-    drawVoxelColumn(ui, 476.0 * ui_scale, horizon - 68.0 * ui_scale, 90.0 * ui_scale, 68.0 * ui_scale, Color.rgba(0.05, 0.10, 0.12, 0.42));
+    Font.drawText(ui, "LAUNCH", panel.x + 30.0 * scale, panel.y + 17.0 * scale, 0.88 * scale, Theme.signal);
+    Font.drawText(ui, "READY", panel.x + panel.width - 104.0 * scale, panel.y + 17.0 * scale, 0.78 * scale, Theme.amber);
 
-    ui.drawRect(.{ .x = 0, .y = horizon + 2.0 * ui_scale, .width = screen_w, .height = 84.0 * ui_scale }, Color.rgba(0.02, 0.04, 0.045, 0.42));
+    var y = panel.y + 68.0 * scale;
+    const x = panel.x + 28.0 * scale;
+    const w = panel.width - 56.0 * scale;
+
+    if (Theme.drawButton(ui, .{ .x = x, .y = y, .width = w, .height = row_h + 8.0 * scale }, "PLAY WORLD", text_scale, mouse_x, mouse_y, mouse_clicked, .primary, scale)) {
+        const sp_screen = try SingleplayerScreen.init(ctx.allocator, ctx);
+        errdefer sp_screen.deinit(sp_screen);
+        ctx.screen_manager.pushScreen(sp_screen.screen());
+    }
+    y += row_h + 8.0 * scale + gap;
+
+    if (Theme.drawButton(ui, .{ .x = x, .y = y, .width = w, .height = row_h }, "RESOURCE PACKS", text_scale, mouse_x, mouse_y, mouse_clicked, .secondary, scale)) {
+        const rp_screen = try ResourcePacksScreen.init(ctx.allocator, ctx);
+        errdefer rp_screen.deinit(rp_screen);
+        ctx.screen_manager.pushScreen(rp_screen.screen());
+    }
+    y += row_h + gap;
+
+    if (Theme.drawButton(ui, .{ .x = x, .y = y, .width = w, .height = row_h }, "ENVIRONMENT", text_scale, mouse_x, mouse_y, mouse_clicked, .secondary, scale)) {
+        const env_screen = try EnvironmentScreen.init(ctx.allocator, ctx);
+        errdefer env_screen.deinit(env_screen);
+        ctx.screen_manager.pushScreen(env_screen.screen());
+    }
+    y += row_h + gap;
+
+    if (Theme.drawButton(ui, .{ .x = x, .y = y, .width = w, .height = row_h }, "SETTINGS", text_scale, mouse_x, mouse_y, mouse_clicked, .ghost, scale)) {
+        const settings_screen = try SettingsScreen.init(ctx.allocator, ctx);
+        errdefer settings_screen.deinit(settings_screen);
+        ctx.screen_manager.pushScreen(settings_screen.screen());
+    }
+    y += row_h + gap;
+
+    if (Theme.drawButton(ui, .{ .x = x, .y = y, .width = w, .height = row_h }, "EXIT", text_scale, mouse_x, mouse_y, mouse_clicked, .ghost, scale)) {
+        ctx.input.setShouldQuit(true);
+    }
 }
 
-fn drawVoxelColumn(ui: *UISystem, x: f32, y: f32, w: f32, h: f32, color: Color) void {
-    ui.drawRect(.{ .x = x, .y = y, .width = w, .height = h }, color);
-    ui.drawRect(.{ .x = x, .y = y, .width = w, .height = @min(h, 16.0) }, Color.rgba(0.68, 0.43, 0.16, color.a * 0.34));
+fn drawOuterGlow(ui: *UISystem, rect: Rect, scale: f32) void {
+    ui.drawRect(.{ .x = rect.x - 22.0 * scale, .y = rect.y - 22.0 * scale, .width = rect.width + 44.0 * scale, .height = rect.height + 44.0 * scale }, Color.rgba(0.58, 0.72, 0.82, 0.018));
+    ui.drawRect(.{ .x = rect.x - 8.0 * scale, .y = rect.y - 8.0 * scale, .width = rect.width + 16.0 * scale, .height = rect.height + 16.0 * scale }, Color.rgba(0.84, 0.90, 0.94, 0.026));
+}
+
+fn drawPanelNoise(ui: *UISystem, rect: Rect, scale: f32) void {
+    var i: usize = 0;
+    while (i < 16) : (i += 1) {
+        const px = rect.x + 20.0 * scale + (@as(f32, @floatFromInt((i * 113) % 1000)) / 1000.0) * (rect.width - 40.0 * scale);
+        const py = rect.y + 54.0 * scale + (@as(f32, @floatFromInt((i * 271) % 1000)) / 1000.0) * (rect.height - 74.0 * scale);
+        const w_base: f32 = if (i % 3 == 0) 34.0 else if (i % 3 == 1) 16.0 else 8.0;
+        ui.drawRect(.{ .x = px, .y = py, .width = w_base * scale, .height = 1.0 * scale }, Color.rgba(0.94, 0.98, 1.0, 0.045));
+    }
+}
+
+fn drawFooter(ui: *UISystem, screen_w: f32, screen_h: f32, scale: f32) void {
+    ui.drawRect(.{ .x = screen_w * 0.36, .y = screen_h - 38.0 * scale, .width = screen_w * 0.28, .height = 1.0 * scale }, Color.rgba(0.58, 0.72, 0.82, 0.24));
+    Font.drawTextCentered(ui, "ZIGCRAFT ENGINE 0.1", screen_w * 0.5, screen_h - 25.0 * scale, 0.66 * scale, Theme.dim);
 }
