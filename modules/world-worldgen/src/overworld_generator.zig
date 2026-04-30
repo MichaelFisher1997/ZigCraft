@@ -492,7 +492,7 @@ pub const OverworldGenerator = struct {
                 const sample = self.classifyLODSample(@floatFromInt(wx_i), @floatFromInt(wz_i), sea_level, controls);
                 const column_controls = controls.sample(wx_i, wz_i);
                 const variant = self.terrain_shape.getNoiseSampler().variant_noise.get2D(@floatFromInt(wx_i), @floatFromInt(wz_i));
-                consumeStaticDecorationRandom(sample.biome, sample.surface_block, variant, column_controls.subbiome_mask > 0.5, column_controls.vegetation_mult, random);
+                _ = decoration_registry.chooseStaticSimpleDecoration(sample.biome, sample.surface_block, variant, column_controls.subbiome_mask > 0.5, column_controls.vegetation_mult, random);
 
                 const placed_tree = choosePlacedTree(sample.biome, sample.surface_block, variant, column_controls.subbiome_mask > 0.5, column_controls.vegetation_mult, lx, lz, sample.terrain_height_i, &tree_occupancy, random);
                 if (placed_tree) |tree| {
@@ -543,21 +543,6 @@ pub const OverworldGenerator = struct {
             };
         }
         return null;
-    }
-
-    fn consumeStaticDecorationRandom(biome_id: BiomeId, surface_block: BlockType, variant: f32, allow_subbiomes: bool, veg_mult: f32, random: std.Random) void {
-        // Keep this in sync with StandardDecorationProvider.decorate before the tree pass.
-        for (decoration_registry.DECORATIONS) |deco| {
-            switch (deco) {
-                .simple => |simple| {
-                    if (!simple.isAllowed(biome_id, surface_block)) continue;
-                    if (!variantAllowed(variant, allow_subbiomes, simple.variant_min, simple.variant_max)) continue;
-                    const prob = @min(1.0, simple.probability * veg_mult);
-                    if (random.float(f32) < prob) break;
-                },
-                .schematic => {},
-            }
-        }
     }
 
     fn variantAllowed(variant: f32, allow_subbiomes: bool, min: f32, max: f32) bool {
