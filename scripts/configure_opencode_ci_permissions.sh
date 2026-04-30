@@ -8,12 +8,7 @@ mkdir -p "$config_dir"
 cat > "$config_dir/opencode.json" <<'JSON'
 {
   "$schema": "https://opencode.ai/config.json",
-  "permission": {
-    "external_directory": {
-      "/tmp/*": "allow",
-      "/tmp/**": "allow"
-    }
-  }
+  "permission": "allow"
 }
 JSON
 
