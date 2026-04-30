@@ -55,7 +55,7 @@ pub const WorldMap = struct {
                 const wx = start_x + @as(f32, @floatFromInt(px)) * scale;
 
                 const info = generator.getColumnInfo(wx, wz);
-                const color = getBiomeColor(info);
+                const color = shadeColor(getBiomeColor(info), info.height);
 
                 const idx = (px + py * self.width) * 4;
                 pixels[idx + 0] = @intFromFloat(color[0] * 255.0);
@@ -72,27 +72,43 @@ pub const WorldMap = struct {
         if (info.is_ocean) {
             const depth = @as(f32, @floatFromInt(64 - info.height));
             const t = std.math.clamp(depth / 40.0, 0.0, 1.0);
-            // Deep blue to light blue
             return .{
-                std.math.lerp(0.2, 0.05, t),
-                std.math.lerp(0.4, 0.1, t),
-                std.math.lerp(0.8, 0.4, t),
+                std.math.lerp(0.18, 0.02, t),
+                std.math.lerp(0.48, 0.16, t),
+                std.math.lerp(0.86, 0.52, t),
             };
         }
 
         return switch (info.biome) {
-            .beach => .{ 0.9, 0.85, 0.6 },
-            .desert => .{ 0.8, 0.7, 0.4 },
-            .badlands => .{ 0.7, 0.4, 0.2 },
-            .snow_tundra, .snowy_mountains => .{ 0.9, 0.9, 1.0 },
-            .mountains => .{ 0.5, 0.5, 0.5 },
-            .forest, .jungle => .{ 0.1, 0.4, 0.1 },
-            .taiga => .{ 0.2, 0.3, 0.2 },
-            .savanna => .{ 0.6, 0.6, 0.3 },
-            .swamp, .mangrove_swamp => .{ 0.2, 0.3, 0.2 },
-            .river => .{ 0.2, 0.4, 0.8 },
-            .mushroom_fields => .{ 0.5, 0.4, 0.5 },
-            else => .{ 0.3, 0.6, 0.2 }, // Plains/Default green
+            .deep_ocean => .{ 0.03, 0.18, 0.48 },
+            .ocean => .{ 0.06, 0.34, 0.72 },
+            .river => .{ 0.12, 0.46, 0.86 },
+            .beach, .coastal_plains => .{ 0.90, 0.78, 0.48 },
+            .desert => .{ 0.86, 0.66, 0.30 },
+            .badlands => .{ 0.76, 0.34, 0.16 },
+            .snow_tundra => .{ 0.78, 0.88, 0.92 },
+            .snowy_mountains => .{ 0.90, 0.94, 0.98 },
+            .mountains => .{ 0.47, 0.38, 0.27 },
+            .foothills => .{ 0.40, 0.56, 0.26 },
+            .plains => .{ 0.38, 0.68, 0.25 },
+            .dry_plains => .{ 0.64, 0.62, 0.31 },
+            .forest => .{ 0.13, 0.43, 0.17 },
+            .jungle => .{ 0.08, 0.50, 0.18 },
+            .taiga => .{ 0.18, 0.38, 0.31 },
+            .savanna => .{ 0.68, 0.66, 0.28 },
+            .swamp, .marsh => .{ 0.20, 0.34, 0.18 },
+            .mangrove_swamp => .{ 0.16, 0.30, 0.22 },
+            .mushroom_fields => .{ 0.56, 0.38, 0.62 },
+        };
+    }
+
+    fn shadeColor(color: [3]f32, height: i32) [3]f32 {
+        const normalized_height = std.math.clamp((@as(f32, @floatFromInt(height)) - 48.0) / 96.0, 0.0, 1.0);
+        const shade = std.math.lerp(0.82, 1.18, normalized_height);
+        return .{
+            std.math.clamp(color[0] * shade, 0.0, 1.0),
+            std.math.clamp(color[1] * shade, 0.0, 1.0),
+            std.math.clamp(color[2] * shade, 0.0, 1.0),
         };
     }
 };

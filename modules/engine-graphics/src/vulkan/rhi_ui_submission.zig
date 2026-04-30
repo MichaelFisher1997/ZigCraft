@@ -180,18 +180,21 @@ pub fn drawTexture2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect) v
 pub fn drawTextureRegion2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect, uv: rhi.UVRect, color: rhi.Color) void {
     if (!ctx.frames.frame_in_progress or !ctx.ui.ui_in_progress) return;
 
-    const tint = [_]f32{ color.r, color.g, color.b, color.a };
-    const needs_bind = !ctx.ui.ui_active_textured or ctx.ui.ui_active_texture != texture or !sameTint(ctx.ui.ui_active_tint, tint);
-    if (needs_bind) {
-        flushUI(ctx);
-    }
-
     const tex_opt = ctx.resources.textures.get(texture);
     if (tex_opt == null) {
         log.log.err("drawTexture2D: Texture handle {} not found in textures map!", .{texture});
         return;
     }
     const tex = tex_opt.?;
+
+    // Red-channel UI textures are font/coverage atlases. RGBA textures must
+    // preserve their sampled color, otherwise map/image widgets render grayscale.
+    const alpha = if (tex.format == .red) -color.a else color.a;
+    const tint = [_]f32{ color.r, color.g, color.b, alpha };
+    const needs_bind = !ctx.ui.ui_active_textured or ctx.ui.ui_active_texture != texture or !sameTint(ctx.ui.ui_active_tint, tint);
+    if (needs_bind) {
+        flushUI(ctx);
+    }
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     if (needs_bind) {
