@@ -1,0 +1,207 @@
+name: Build (Self-Hosted Tests)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or ref to build/test'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  changes:
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    outputs:
+      code_changes: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.code_changes }}
+    steps:
+    - uses: actions/checkout@v4
+      if: github.event_name != 'workflow_dispatch'
+
+    - name: Detect build-relevant changes
+      id: filter
+      if: github.event_name != 'workflow_dispatch'
+      uses: dorny/paths-filter@v4
+      with:
+        filters: |
+          code_changes:
+            - 'src/**'
+            - 'modules/**'
+            - 'libs/**'
+            - 'assets/shaders/**'
+            - 'scripts/**'
+            - 'build.zig'
+            - 'build.zig.zon'
+            - 'flake.nix'
+            - 'flake.lock'
+            - '.github/actions/setup-nix/**'
+            - '.github/actions/setup-zig-cache/**'
+
+  build:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: [self-hosted, linux, x64, railway]
+    timeout-minutes: 30
+    needs: changes
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+
+    - name: Skip build for workflow-only changes
+      if: needs.changes.outputs.code_changes != 'true'
+      run: |
+        echo "No build-relevant changes detected. Skipping binary build."
+
+    - name: Setup Nix
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-nix
+
+    - name: Build
+      if: needs.changes.outputs.code_changes == 'true'
+      run: nix build -L
+
+    - name: Prepare Artifact
+      if: needs.changes.outputs.code_changes == 'true'
+      run: |
+        mkdir -p dist
+        cp -L result/bin/zigcraft dist/zigcraft-linux
+
+    - name: Upload Artifact
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: zigcraft-selfhosted
+        path: dist/
+        retention-days: 7
+
+  unit-test:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: [self-hosted, linux, x64, railway]
+    timeout-minutes: 30
+    needs: [changes, build]
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+
+    - name: Skip unit tests for workflow-only changes
+      if: needs.changes.outputs.code_changes != 'true'
+      run: |
+        echo "No build-relevant changes detected. Skipping unit tests."
+
+    - name: Setup Nix
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-nix
+
+    - name: Setup Zig cache
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-zig-cache
+      with:
+        cache-key-prefix: zig-ci-unit-selfhosted
+
+    - name: Run unit tests
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/run-with-log
+      with:
+        name: Unit Test
+        timeout: 25m
+        log-file: unit-test.log
+        command: nix develop .#ci-unit --command zig build test
+
+    - name: Upload unit test log
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: unit-test-log-selfhosted
+        path: unit-test.log
+        if-no-files-found: ignore
+        retention-days: 7
+
+  integration-test:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: [self-hosted, linux, x64, railway]
+    timeout-minutes: 30
+    needs: [changes, unit-test]
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+
+    - name: Skip integration tests for workflow-only changes
+      if: needs.changes.outputs.code_changes != 'true'
+      run: |
+        echo "No build-relevant changes detected. Skipping integration tests."
+
+    - name: Setup Nix
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-nix
+
+    - name: Setup Zig cache
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-zig-cache
+      with:
+        cache-key-prefix: zig-ci-graphics-selfhosted
+
+    - name: Start headless Wayland compositor
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/start-weston
+
+    - name: Run integration smoke test
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/run-with-log
+      with:
+        name: Integration Test
+        timeout: 15m
+        log-file: integration-test.log
+        command: nix develop .#ci-graphics --command zig build test-integration
+
+    - name: Setup Lavapipe Vulkan
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/setup-lavapipe
+
+    - name: Run world load smoke test (headless)
+      if: needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/run-with-log
+      with:
+        name: World Smoke Test
+        timeout: 15m
+        log-file: world-smoke-test.log
+        command: nix develop .#ci-graphics --command zig build run -Dsmoke-test=true -Dskip-present=true
+      env:
+        XDG_RUNTIME_DIR: /tmp/runtime-runner
+        WAYLAND_DISPLAY: headless
+        ZIGCRAFT_SMOKE_FRAMES: "3"
+        ZIGCRAFT_SAFE_MODE: "1"
+
+    - name: Stop headless Wayland compositor
+      if: always() && needs.changes.outputs.code_changes == 'true'
+      uses: ./.github/actions/stop-weston
+
+    - name: Upload integration logs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: integration-test-logs-selfhosted
+        path: |
+          integration-test.log
+          world-smoke-test.log
+          weston.log
+        if-no-files-found: ignore
+        retention-days: 7
