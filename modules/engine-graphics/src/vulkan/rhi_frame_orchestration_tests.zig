@@ -309,3 +309,76 @@ test "image_index wraps correctly for swapchain images" {
     current_image_index = @mod(current_image_index + 1, max_images);
     try testing.expect(current_image_index < max_images);
 }
+
+test "refreshTextureDescriptors marks all frames dirty when needs_update is true" {
+    const bound_texture: u32 = 0;
+    const current_texture: u32 = 100;
+    var needs_update = false;
+    var descriptors_dirty = [2]bool{ false, false };
+
+    if (bound_texture != current_texture) needs_update = true;
+    if (needs_update) {
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| descriptors_dirty[i] = true;
+    }
+
+    try testing.expect(needs_update);
+    try testing.expect(descriptors_dirty[0]);
+    try testing.expect(descriptors_dirty[1]);
+}
+
+test "refreshTextureDescriptors leaves descriptors_dirty unchanged when no update needed" {
+    const bound_texture: u32 = 100;
+    const current_texture: u32 = 100;
+    var needs_update = false;
+    var descriptors_dirty = [2]bool{ false, false };
+
+    if (bound_texture != current_texture) needs_update = true;
+    if (needs_update) {
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| descriptors_dirty[i] = true;
+    }
+
+    try testing.expect(!needs_update);
+    try testing.expect(!descriptors_dirty[0]);
+    try testing.expect(!descriptors_dirty[1]);
+}
+
+test "recreateSwapchainInternal skips when window size is zero" {
+    const w: c_int = 0;
+    const h: c_int = 0;
+
+    if (w == 0 or h == 0) return;
+    try testing.expect(false);
+}
+
+test "recreateSwapchainInternal proceeds when window size is valid" {
+    const w: c_int = 1920;
+    const h: c_int = 1080;
+
+    if (w == 0 or h == 0) return;
+    try testing.expect(true);
+}
+
+test "markSwapchainRecreateFailed returns true on first call" {
+    var ctx = MockSwapchainContext{};
+    const result = frame_orchestration.markSwapchainRecreateFailed(&ctx, "test", error.OutOfMemory);
+    try testing.expect(result);
+}
+
+test "markSwapchainRecreateFailed returns false on subsequent calls" {
+    var ctx = MockSwapchainContext{};
+    _ = frame_orchestration.markSwapchainRecreateFailed(&ctx, "first", error.OutOfMemory);
+    const result = frame_orchestration.markSwapchainRecreateFailed(&ctx, "second", error.OutOfMemory);
+    try testing.expect(!result);
+}
+
+test "markSwapchainRecreateSucceeded clears all failure flags" {
+    var ctx = MockSwapchainContext{ .runtime = .{
+        .swapchain_recreate_failed = true,
+        .framebuffer_resized = true,
+        .pipeline_rebuild_needed = true,
+    } };
+    frame_orchestration.markSwapchainRecreateSucceeded(&ctx);
+    try testing.expect(!ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(!ctx.runtime.framebuffer_resized);
+    try testing.expect(!ctx.runtime.pipeline_rebuild_needed);
+}

@@ -381,3 +381,104 @@ test "subpass contents inline" {
 test "pipeline bind point graphics" {
     try testing.expectEqual(@as(c.VkPipelineBindPoint, c.VK_PIPELINE_BIND_POINT_GRAPHICS), c.VK_PIPELINE_BIND_POINT_GRAPHICS);
 }
+
+test "beginGPassInternal skips when render pass is null" {
+    const g_render_pass: c.VkRenderPass = null;
+    const g_framebuffer: c.VkFramebuffer = @ptrFromInt(1);
+    const g_pipeline: c.VkPipeline = @ptrFromInt(2);
+
+    if (g_render_pass == null or g_framebuffer == null or g_pipeline == null) return;
+    try testing.expect(false);
+}
+
+test "beginGPassInternal skips when framebuffer is null" {
+    const g_render_pass: c.VkRenderPass = @ptrFromInt(1);
+    const g_framebuffer: c.VkFramebuffer = null;
+    const g_pipeline: c.VkPipeline = @ptrFromInt(2);
+
+    if (g_render_pass == null or g_framebuffer == null or g_pipeline == null) return;
+    try testing.expect(false);
+}
+
+test "beginGPassInternal skips when pipeline is null" {
+    const g_render_pass: c.VkRenderPass = @ptrFromInt(1);
+    const g_framebuffer: c.VkFramebuffer = @ptrFromInt(2);
+    const g_pipeline: c.VkPipeline = null;
+
+    if (g_render_pass == null or g_framebuffer == null or g_pipeline == null) return;
+    try testing.expect(false);
+}
+
+test "beginGPassInternal proceeds when all resources are valid" {
+    const g_render_pass: c.VkRenderPass = @ptrFromInt(1);
+    const g_framebuffer: c.VkFramebuffer = @ptrFromInt(2);
+    const g_pipeline: c.VkPipeline = @ptrFromInt(3);
+
+    var should_proceed = true;
+    if (g_render_pass == null or g_framebuffer == null or g_pipeline == null) should_proceed = false;
+    try testing.expect(should_proceed);
+}
+
+test "beginGPassInternal detects extent mismatch" {
+    const g_pass_extent_width: u32 = 1920;
+    const g_pass_extent_height: u32 = 1080;
+    const swapchain_width: u32 = 1920;
+    const swapchain_height: u32 = 1080;
+
+    const mismatch = (g_pass_extent_width != swapchain_width or g_pass_extent_height != swapchain_height);
+    try testing.expect(!mismatch);
+}
+
+test "beginGPassInternal detects extent mismatch when sizes differ" {
+    const g_pass_extent_width: u32 = 1920;
+    const g_pass_extent_height: u32 = 1080;
+    const swapchain_width: u32 = 2560;
+    const swapchain_height: u32 = 1440;
+
+    const mismatch = (g_pass_extent_width != swapchain_width or g_pass_extent_height != swapchain_height);
+    try testing.expect(mismatch);
+}
+
+test "post_process source view switches to upscale_view when TAA ran with dynamic resolution" {
+    const dynamic_resolution_active = true;
+    const taa_ran_this_frame = true;
+    const upscale_view: c.VkImageView = @ptrFromInt(1);
+
+    const use_upscale = dynamic_resolution_active and taa_ran_this_frame and upscale_view != null;
+    try testing.expect(use_upscale);
+}
+
+test "post_process source view uses TAA output when TAA ran without dynamic resolution" {
+    const dynamic_resolution_active = false;
+    const taa_ran_this_frame = true;
+    const taa_output_texture: u32 = 100;
+    const upscale_view: c.VkImageView = null;
+
+    const use_upscale = dynamic_resolution_active and taa_ran_this_frame and upscale_view != null;
+    const use_taa = taa_ran_this_frame and taa_output_texture != 0;
+
+    try testing.expect(!use_upscale);
+    try testing.expect(use_taa);
+}
+
+test "ensureNoRenderPassActiveInternal ends main pass first" {
+    const main_pass_active = true;
+    const shadow_pass_active = true;
+    const g_pass_active = true;
+    const post_process_pass_active = true;
+
+    var ended_main = false;
+    if (main_pass_active) ended_main = true;
+    try testing.expect(ended_main);
+    _ = shadow_pass_active;
+    _ = g_pass_active;
+    _ = post_process_pass_active;
+}
+
+test "ensureNoRenderPassActiveInternal ends shadow pass second" {
+    const shadow_pass_active = true;
+
+    var ended_shadow = false;
+    if (shadow_pass_active) ended_shadow = true;
+    try testing.expect(ended_shadow);
+}

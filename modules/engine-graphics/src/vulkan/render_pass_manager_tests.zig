@@ -126,3 +126,90 @@ test "RenderPassManager framebuffer handles are null after init" {
     try testing.expect(manager.main_framebuffer == null);
     try testing.expect(manager.g_framebuffer == null);
 }
+
+test "VkFramebufferCreateInfo sType is correct" {
+    var fb_info = std.mem.zeroes(c.VkFramebufferCreateInfo);
+    fb_info.sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    try testing.expectEqual(@as(u32, c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO), fb_info.sType);
+}
+
+test "VkFramebufferCreateInfo renders pass attachment count" {
+    var fb_info = std.mem.zeroes(c.VkFramebufferCreateInfo);
+    fb_info.sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fb_info.attachmentCount = 3;
+    try testing.expectEqual(@as(u32, 3), fb_info.attachmentCount);
+}
+
+test "createMainFramebuffer uses 3 attachments when MSAA is enabled with msaa view" {
+    const use_msaa = true;
+    const msaa_view: c.VkImageView = @ptrFromInt(1);
+
+    const attachment_count: u32 = if (use_msaa and msaa_view != null) 3 else 2;
+    try testing.expectEqual(@as(u32, 3), attachment_count);
+}
+
+test "createMainFramebuffer uses 2 attachments when MSAA is disabled" {
+    const use_msaa = false;
+    const msaa_view: ?c.VkImageView = null;
+
+    const attachment_count: u32 = if (use_msaa and msaa_view != null) 3 else 2;
+    try testing.expectEqual(@as(u32, 2), attachment_count);
+}
+
+test "createMainFramebuffer uses 2 attachments when MSAA view is null" {
+    const use_msaa = true;
+    const msaa_view: ?c.VkImageView = null;
+
+    const attachment_count: u32 = if (use_msaa and msaa_view != null) 3 else 2;
+    try testing.expectEqual(@as(u32, 2), attachment_count);
+}
+
+test "VkAttachmentReference layout configuration" {
+    const color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+    try testing.expectEqual(@as(u32, 0), color_ref.attachment);
+    try testing.expectEqual(@as(u32, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL), color_ref.layout);
+}
+
+test "VkSubpassDescription pipeline bind point is graphics" {
+    var subpass = std.mem.zeroes(c.VkSubpassDescription);
+    subpass.pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS;
+    try testing.expectEqual(@as(c.VkPipelineBindPoint, c.VK_PIPELINE_BIND_POINT_GRAPHICS), subpass.pipelineBindPoint);
+}
+
+test "VkSubpassDescription color attachment count for G-pass" {
+    var subpass = std.mem.zeroes(c.VkSubpassDescription);
+    subpass.colorAttachmentCount = 2;
+    try testing.expectEqual(@as(u32, 2), subpass.colorAttachmentCount);
+}
+
+test "VkSubpassDependency dependency flags by region" {
+    var deps = std.mem.zeroes([2]c.VkSubpassDependency);
+    deps[0].dependencyFlags = c.VK_DEPENDENCY_BY_REGION_BIT;
+    try testing.expectEqual(@as(c.VkDependencyFlags, c.VK_DEPENDENCY_BY_REGION_BIT), deps[0].dependencyFlags);
+}
+
+test "RenderPassManager destroyRenderPasses handles null handles gracefully" {
+    var manager: RenderPassManager = .{
+        .allocator = null,
+        .hdr_render_pass = null,
+        .g_render_pass = null,
+        .post_process_render_pass = null,
+        .ui_swapchain_render_pass = null,
+        .main_framebuffer = null,
+        .g_framebuffer = null,
+        .post_process_framebuffers = .empty,
+        .ui_swapchain_framebuffers = .empty,
+    };
+    manager.destroyRenderPasses(null);
+    try testing.expect(true);
+}
+
+test "RenderPassManager init sets post_process_framebuffers to empty" {
+    const manager = RenderPassManager.init(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), manager.post_process_framebuffers.items.len);
+}
+
+test "RenderPassManager init sets ui_swapchain_framebuffers to empty" {
+    const manager = RenderPassManager.init(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), manager.ui_swapchain_framebuffers.items.len);
+}

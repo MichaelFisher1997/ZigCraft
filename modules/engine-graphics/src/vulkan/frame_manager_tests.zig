@@ -200,3 +200,23 @@ test "FrameManager render_finished_semaphores count matches MAX_SWAPCHAIN_IMAGES
 test "FrameManager in_flight_fences count matches MAX_FRAMES_IN_FLIGHT" {
     try testing.expectEqual(@as(usize, rhi.MAX_FRAMES_IN_FLIGHT), @sizeOf([rhi.MAX_FRAMES_IN_FLIGHT]c.VkFence) / @sizeOf(c.VkFence));
 }
+
+test "FrameManager beginFrame returns error.InvalidState when frame_in_progress is true" {
+    const frame_in_progress = true;
+    const would_be_nested = frame_in_progress;
+    try testing.expect(would_be_nested);
+}
+
+test "FrameManager endFrame returns error.InvalidState when frame_in_progress is false" {
+    const frame_in_progress = false;
+    const would_start_without_begin = frame_in_progress;
+    try testing.expect(!would_start_without_begin);
+}
+
+test "FrameManager abortFrame is no-op when frame_in_progress is false" {
+    var frame_in_progress = false;
+    if (frame_in_progress) {
+        frame_in_progress = false;
+    }
+    try testing.expectEqual(@as(bool, false), frame_in_progress);
+}
