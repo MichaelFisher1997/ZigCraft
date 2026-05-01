@@ -22,7 +22,9 @@ ZigCraft is a high-performance Minecraft-style voxel engine built with:
 | Command | Purpose |
 |---|---|
 | `nix develop --command zig build test` | Unit tests + shader validation |
-| `nix develop --command zig fmt src/` | Format code |
+| `nix develop --command zig fmt src/ modules/` | Format code |
+| `nix develop --command zig build test -- --test-filter "test name"` | Verify a specific new test is discovered and runnable |
+| `nix develop --command zig build test-integration` | Integration smoke tests for game/graphics/runtime-adjacent changes |
 | `nix develop --command zig build -Doptimize=ReleaseFast` | Release build |
 
 ### Project Structure (testing-relevant)
@@ -68,6 +70,29 @@ src/
 
 ## What to Test — Priorities
 
+### Quality Gate
+
+Every new test must protect real production behavior. A reviewer should be able to point to the function, method, layout, encoding, state transition, or error path that would regress if the implementation changed.
+
+Acceptable tests do at least one of the following:
+- Call a real production function/method and assert externally observable behavior
+- Exercise a real production error path with `expectError`
+- Validate a real packed/extern layout, field offset, alignment, bit encoding, or serialized format
+- Prove deterministic behavior for production code with fixed inputs
+- Verify state transitions on a production type without reaching GPU/window APIs
+
+Forbidden tests:
+- Tests that only assign a local variable or struct field and assert the assigned value
+- Tests that only prove Zig, `std.ArrayListUnmanaged`, atomics, enums, or C constants work
+- Tautologies such as `FOO == FOO`
+- Tests named after a production function that never call that function
+- Tests that copy production branch logic into local booleans instead of exercising production code
+- Helpers that simulate the behavior under test rather than invoking the real function
+- Tests for private functions from another file unless an existing valid test import pattern already exposes them
+- Tests that document behavior production code does not implement
+- Bulk low-value test dumps; keep each run to 3-8 focused tests
+- Duplicate tests that already exist nearby
+
 ### For ALL modules
 1. **Untested public functions** — Any `pub fn` with no corresponding test
 2. **Error paths** — Functions returning `!T` or `RhiError!T` with no error branch tests
@@ -102,11 +127,13 @@ src/
 Many Vulkan types are opaque pointers that can be `null` in tests:
 
 1. **Test pure logic**: Functions not calling Vulkan APIs directly (e.g., `checkVk`, struct constructors, validation, math).
-2. **Partial struct initialization**: Initialize structs with `null` Vulkan handles and test non-Vulkan fields.
+2. **Partial struct initialization**: Initialize structs with `null` Vulkan handles and test non-Vulkan fields, but do not call methods that could reach Vulkan APIs.
 3. **Mock interfaces**: Follow `modules/engine-graphics/src/rhi_tests.zig` patterns — create mock structs with function pointers.
 4. **Error mapping tests**: Call `checkVk` with specific `VkResult` constants.
 5. **Struct layout tests**: Verify `@sizeOf`, `@offsetOf`, `@bitSizeOf` for GPU-facing structs.
-6. **State machine tests**: Test state transitions without calling Vulkan functions.
+6. **State machine tests**: Test state transitions only when the inputs return before any Vulkan call.
+
+Do not call real Vulkan APIs with null or fake handles. If a function could reach `vkCreate*`, `vkDestroy*`, queue submit, presentation, or device wait calls, do not test it without an existing safe mock/stub.
 
 ### Example Patterns
 
@@ -143,9 +170,11 @@ You are running inside the opencode GitHub Action. The infrastructure auto-creat
 
 1. Write your test files
 2. Register new test files in `src/tests.zig`
-3. Format: `nix develop --command zig fmt src/`
+3. Format: `nix develop --command zig fmt src/ modules/`
 4. Run tests: `nix develop --command zig build test` — ALL tests must pass, not just yours
-5. Commit your changes with message: `test: add {area} tests for {module}`
+5. Run at least one new test by filter: `nix develop --command zig build test -- --test-filter "<new test name>"`
+6. Self-review the diff and remove any fake, tautological, misleading, or unsafe test before committing
+7. Commit your changes with message: `test: add {area} tests for {module}`
 
 The infrastructure will push the branch and create the PR automatically.
 
@@ -154,10 +183,23 @@ The infrastructure will push the branch and create the PR automatically.
 - Only write tests for logic testable WITHOUT a real GPU/window. Use mocks, stubs, or test pure logic only.
 - Do NOT modify any non-test source files. Only add or modify test files (and `src/tests.zig` for registration).
 - Tests MUST pass before committing. This is non-negotiable.
-- Format before commit: `nix develop --command zig fmt src/`.
+- A filtered run for at least one newly added test MUST pass before committing.
+- The new tests MUST be semantically analyzed and executed by `zig build test`; do not rely on registrations that hide test blocks from the test runner.
+- Format before commit: `nix develop --command zig fmt src/ modules/`.
 - 3-8 tests per run. Quality over quantity.
-- If the module has no testable logic, write what you can and note limitations.
+- If the module has no testable logic, stop without committing and note limitations.
 - Skip if nothing to test — do not create trivial tests just to create a PR.
+- For game, graphics, windowing-adjacent, or runtime initialization tests, run `nix develop --command zig build test-integration` when feasible and report if it was not feasible.
+
+## Stop Conditions
+
+Stop without committing if any of these are true:
+- `zig build test` fails
+- A newly added test cannot be run by `--test-filter`
+- Tests require a real GPU, Vulkan device, SDL window, network, wall-clock timing, or nondeterministic scheduler behavior
+- Tests only check local assignments, copied branch logic, C constants, or standard library behavior
+- Tests require modifying production code only to expose private internals
+- The diff changes non-test production files except necessary test registration exports/imports
 
 ## PR Body Template
 
@@ -178,7 +220,8 @@ The PR body should follow this format:
 - Functions or paths that still need tests and why
 
 ## Verification
-- [x] `nix develop --command zig fmt src/` passes
+- [x] `nix develop --command zig fmt src/ modules/` passes
 - [x] `nix develop --command zig build test` passes (all tests, not just new ones)
+- [x] `nix develop --command zig build test -- --test-filter "..."` passes for a newly added test
 - [x] No non-test source files were modified
 ```
