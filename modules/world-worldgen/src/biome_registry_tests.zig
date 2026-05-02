@@ -251,10 +251,48 @@ test "getBiomeDefinition ocean biomes have correct continentalness ranges" {
     try testing.expect(warm.vegetation.coral_density > 0.0);
 }
 
+test "getBiomeDefinition cold ocean variants have expected identity" {
+    const frozen = getBiomeDefinition(.frozen_ocean);
+    try testing.expectEqualStrings("Frozen Ocean", frozen.name);
+    try testing.expectEqual(.packed_ice, frozen.surface.top);
+    try testing.expect(frozen.temperature.max <= 0.15);
+    try testing.expect(frozen.continentalness.max <= 0.35);
+
+    const cold = getBiomeDefinition(.cold_ocean);
+    try testing.expectEqualStrings("Cold Ocean", cold.name);
+    try testing.expectEqual(.gravel, cold.surface.top);
+    try testing.expect(cold.temperature.min >= 0.15);
+    try testing.expect(cold.temperature.max <= 0.30);
+    try testing.expect(cold.vegetation.kelp_density > 0.0);
+}
+
 test "getBiomeDefinition beach has narrow continentalness band" {
     const beach = getBiomeDefinition(.beach);
     try testing.expect(beach.continentalness.min >= 0.30);
     try testing.expect(beach.continentalness.max <= 0.45);
+}
+
+test "getBiomeDefinition cold coastal variants have expected surfaces" {
+    const stony = getBiomeDefinition(.stony_shore);
+    try testing.expectEqualStrings("Stony Shore", stony.name);
+    try testing.expectEqual(.stone, stony.surface.top);
+    try testing.expectEqual(.gravel, stony.surface.filler);
+    try testing.expect(stony.continentalness.min >= 0.35);
+    try testing.expect(stony.continentalness.max <= 0.45);
+
+    const snowy = getBiomeDefinition(.snowy_beach);
+    try testing.expectEqualStrings("Snowy Beach", snowy.name);
+    try testing.expectEqual(.snow_block, snowy.surface.top);
+    try testing.expectEqual(.sand, snowy.surface.filler);
+    try testing.expect(snowy.temperature.max <= 0.20);
+}
+
+test "getBiomeDefinition frozen river is river override only" {
+    const frozen_river = getBiomeDefinition(.frozen_river);
+    try testing.expectEqualStrings("Frozen River", frozen_river.name);
+    try testing.expectEqual(.ice, frozen_river.surface.top);
+    try testing.expectEqual(.gravel, frozen_river.surface.filler);
+    try testing.expect(frozen_river.continentalness.max < 0.0);
 }
 
 test "getBiomeDefinition tropical has aquatic vegetation and coastal range" {

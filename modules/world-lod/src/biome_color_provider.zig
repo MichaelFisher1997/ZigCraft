@@ -3,10 +3,14 @@ const BiomeId = @import("world-core").BiomeId;
 pub fn getBiomeColor(biome_id: BiomeId) u32 {
     return switch (biome_id) {
         .deep_ocean => 0x1A3380,
+        .frozen_ocean => 0x9FCBE0,
+        .cold_ocean => 0x295C99,
         .ocean => 0x3366CC,
         .warm_ocean => 0x1F8FCC,
         .tropical => 0x2BBF9A,
         .beach => 0xDDBB88,
+        .stony_shore => 0x7A7D78,
+        .snowy_beach => 0xE5EEF2,
         .plains => 0x4D8033,
         .forest => 0x2D591A,
         .birch_forest => 0x3DA62E,
@@ -26,6 +30,7 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
         .frozen_peaks => 0xB8DFF5,
         .stony_peaks => 0x9C9278,
         .river => 0x4488CC,
+        .frozen_river => 0xA8D2E8,
         .swamp => 0x334D33,
         .mangrove_swamp => 0x264026,
         .jungle => 0x1A661A,
