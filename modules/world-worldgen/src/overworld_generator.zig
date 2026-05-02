@@ -1000,6 +1000,7 @@ pub const OverworldGenerator = struct {
             .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes => .snow,
             .mountains, .jagged_peaks, .stony_peaks => if (height > 120) .rock else .stone,
             .frozen_peaks => .snow,
+            .grove => .dirt,
             .deep_ocean, .ocean => .sand,
             else => .grass,
         };
