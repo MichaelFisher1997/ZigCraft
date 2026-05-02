@@ -82,6 +82,15 @@ pub const DECORATIONS = [_]Decoration{
         .probability = 0.18,
     } },
     .{ .simple = .{
+        .block = .tall_seagrass,
+        .place_on = &.{ .sand, .gravel, .clay },
+        .biomes = &.{ .ocean, .warm_ocean, .tropical },
+        .requires_water = true,
+        .min_water_depth = 4,
+        .max_water_depth = 14,
+        .probability = 0.08,
+    } },
+    .{ .simple = .{
         .block = .kelp,
         .place_on = &.{ .sand, .gravel, .clay },
         .biomes = &.{ .ocean, .warm_ocean },

@@ -153,6 +153,7 @@ pub const BlockType = enum(u8) {
     seaweed = 73,
     coral_block = 74,
     coral_fan = 75,
+    tall_seagrass = 76,
 
     _,
 };

@@ -180,7 +180,7 @@ pub const BIOME_POINTS = [_]BiomePoint{
     .{ .id = .deep_ocean, .heat = 50, .humidity = 50, .weight = 1.5, .max_continental = 0.20 },
     .{ .id = .ocean, .heat = 50, .humidity = 50, .weight = 1.5, .min_continental = 0.20, .max_continental = 0.35 },
     .{ .id = .warm_ocean, .heat = 85, .humidity = 75, .weight = 0.9, .min_continental = 0.20, .max_continental = 0.35 },
-    .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.42, .max_slope = 3, .y_max = 72 },
+    .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.48, .max_slope = 3, .y_max = 72 },
 
     // === Coastal Biomes ===
     .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.35, .max_continental = 0.42, .y_max = 70 },

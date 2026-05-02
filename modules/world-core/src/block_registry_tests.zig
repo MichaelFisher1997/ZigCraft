@@ -159,6 +159,11 @@ test "aquatic vegetation blocks use cutout shapes" {
     try testing.expectEqual(block_registry.RenderPass.cutout, seagrass.render_pass);
     try testing.expectEqual(block_registry.RenderShape.cross, seagrass.render_shape);
 
+    const tall_seagrass = block_registry.getBlockDefinition(.tall_seagrass);
+    try testing.expect(!tall_seagrass.is_solid);
+    try testing.expectEqual(block_registry.RenderPass.cutout, tall_seagrass.render_pass);
+    try testing.expectEqual(block_registry.RenderShape.tall_cross, tall_seagrass.render_shape);
+
     const kelp = block_registry.getBlockDefinition(.kelp);
     try testing.expect(!kelp.is_solid);
     try testing.expectEqual(block_registry.RenderShape.tall_cross, kelp.render_shape);
