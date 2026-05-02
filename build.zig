@@ -412,6 +412,27 @@ pub fn build(b: *std.Build) void {
     const worldgen_report_step = b.step("worldgen-report", "Print deterministic worldgen baseline report");
     worldgen_report_step.dependOn(&worldgen_report_run_cmd.step);
 
+    const worldgen_climate_snapshot_root_module = b.createModule(.{
+        .root_source_file = b.path("src/worldgen_climate_snapshot_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    worldgen_climate_snapshot_root_module.addImport("fs", fs_module);
+    worldgen_climate_snapshot_root_module.addImport("world-core", world_core);
+    worldgen_climate_snapshot_root_module.addImport("world-worldgen", world_worldgen);
+
+    const worldgen_climate_snapshot_exe = b.addExecutable(.{
+        .name = "worldgen-climate-snapshot",
+        .root_module = worldgen_climate_snapshot_root_module,
+    });
+
+    const worldgen_climate_snapshot_run_cmd = b.addRunArtifact(worldgen_climate_snapshot_exe);
+    if (b.args) |args| {
+        worldgen_climate_snapshot_run_cmd.addArgs(args);
+    }
+    const worldgen_climate_snapshot_step = b.step("worldgen-climate-snapshot", "Write deterministic worldgen climate snapshot JSON or heatmap");
+    worldgen_climate_snapshot_step.dependOn(&worldgen_climate_snapshot_run_cmd.step);
+
     const test_root_module = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,

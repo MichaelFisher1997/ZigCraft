@@ -112,6 +112,8 @@ To bypass in emergencies: `git push --no-verify`
 - **Force XWayland monitor placement**: `nix develop --command zig build run -Dmonitor-index=1 -Dwindow-video-driver=x11`
 - **Background window launch**: `nix develop --command zig build run -Dmonitor-name=DP-2 -Dwindow-video-driver=x11 -Dwindow-no-focus`
 - **Startup diagnostic**: `nix develop --command zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
+- **Worldgen climate snapshot JSON**: `nix develop --command zig build worldgen-climate-snapshot -- --seed 42 --origin-x -256 --origin-z -256 --width 128 --depth 128 --step 4 --output zig-out/climate-42.json`
+- **Worldgen climate heatmap**: `nix develop --command zig build worldgen-climate-snapshot -- --format ppm --field temperature --output zig-out/temperature-42.ppm`
 - **Chunk-only debug mode**: `nix develop --command zig build run -Dchunk-debug-mode -Dauto-world=normal`
 - **Shadow/cave lighting capture**: `./scripts/capture_shadow_test.sh screenshots/shadow-test.png`
 

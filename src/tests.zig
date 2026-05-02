@@ -55,6 +55,7 @@ test {
     _ = @import("world-meshing").world_tests;
     _ = @import("world-worldgen").schematics;
     _ = @import("world-worldgen").tree_registry;
+    _ = @import("world-worldgen").climate_snapshot;
     _ = @import("world-worldgen").caves_tests;
     _ = @import("world-worldgen").coastal_generator_tests;
     _ = @import("world-worldgen").biome_registry_tests;
