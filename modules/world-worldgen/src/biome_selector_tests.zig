@@ -15,6 +15,7 @@ const BiomeId = registry.BiomeId;
 const ClimateParams = registry.ClimateParams;
 const StructuralParams = registry.StructuralParams;
 const selectBiomeVoronoi = selector.selectBiomeVoronoi;
+const selectBiomeVoronoiMultiParam = selector.selectBiomeVoronoiMultiParam;
 const selectBiomeVoronoiWithRiver = selector.selectBiomeVoronoiWithRiver;
 const selectBiome = selector.selectBiome;
 const selectBiomeMultiParam = selector.selectBiomeMultiParam;
@@ -26,6 +27,7 @@ const selectBiomeWithConstraintsAndRiver = selector.selectBiomeWithConstraintsAn
 const selectBiomeSimple = selector.selectBiomeSimple;
 const computeClimateParams = selector.computeClimateParams;
 const BiomeSelection = selector.BiomeSelection;
+const BIOME_POINTS = registry.BIOME_POINTS;
 
 // ============================================================================
 // computeClimateParams Tests
@@ -443,6 +445,35 @@ test "selectBiomeMultiParam uses ruggedness and ridge mask" {
 
 test "selectBiomeVoronoi falls back to plains when structural filters exclude all points" {
     try testing.expectEqual(BiomeId.plains, selectBiomeVoronoi(50, 50, 300, 1.1, 255));
+}
+
+test "selectBiomeVoronoiMultiParam keeps migrated biome points selectable" {
+    for (BIOME_POINTS) |point| {
+        const height = @divFloor(point.y_min + point.y_max, 2);
+        const biome = selectBiomeVoronoiMultiParam(
+            point.heat,
+            point.humidity,
+            height,
+            point.continentalnessCenter(),
+            point.ruggedness,
+            point.ridge_mask,
+            @min(point.max_slope, 1),
+        );
+
+        errdefer std.debug.print(
+            "migrated biome point {s} selected {s}\n",
+            .{ @tagName(point.id), @tagName(biome) },
+        );
+        try testing.expectEqual(point.id, biome);
+    }
+}
+
+test "selectBiomeVoronoiMultiParam separates equal heat humidity by continentalness" {
+    const deep = selectBiomeVoronoiMultiParam(50, 50, 50, 0.10, 0.35, 0.0, 1);
+    const shallow = selectBiomeVoronoiMultiParam(50, 50, 50, 0.28, 0.35, 0.0, 1);
+
+    try testing.expectEqual(BiomeId.deep_ocean, deep);
+    try testing.expectEqual(BiomeId.ocean, shallow);
 }
 
 // ============================================================================
