@@ -27,6 +27,12 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
         .snow_tundra => 0xDDEEFF, // Snow
         .mountains => 0x888888, // Stone grey
         .snowy_mountains => 0xCCDDEE, // Snowy stone
+        .meadow => 0x66AA44, // Alpine meadow
+        .grove => 0x345C38, // High spruce grove
+        .snowy_slopes => 0xD6E6F2, // Snowy slope
+        .jagged_peaks => 0x8F8F8A, // Exposed stone peak
+        .frozen_peaks => 0xB8DFF5, // Ice peak
+        .stony_peaks => 0x9C9278, // Warm stony peak
         .river => 0x4488CC, // River blue
         .frozen_river => 0xA8D2E8, // Frozen river ice
         .swamp => 0x334D33, // Dark swamp green
