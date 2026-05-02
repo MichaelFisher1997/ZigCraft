@@ -108,3 +108,21 @@ test "RenderShape enum has expected variants" {
     try testing.expectEqual(@as(u2, 2), @intFromEnum(block_registry.RenderShape.flat_quad));
     try testing.expectEqual(@as(u2, 3), @intFromEnum(block_registry.RenderShape.tall_cross));
 }
+
+test "core natural block pack registry properties" {
+    try testing.expectEqual(block_registry.RenderShape.flat_quad, block_registry.getBlockDefinition(.snow_layer).render_shape);
+    try testing.expectEqual(block_registry.RenderPass.cutout, block_registry.getBlockDefinition(.snow_layer).render_pass);
+    try testing.expect(!block_registry.getBlockDefinition(.snow_layer).is_solid);
+
+    try testing.expectEqual(block_registry.RenderPass.translucent, block_registry.getBlockDefinition(.ice).render_pass);
+    try testing.expect(block_registry.getBlockDefinition(.ice).is_solid);
+    try testing.expect(block_registry.getBlockDefinition(.blue_ice).is_transparent);
+
+    try testing.expectEqualStrings("podzol_top", block_registry.getBlockDefinition(.podzol).texture_top);
+    try testing.expectEqualStrings("dirt", block_registry.getBlockDefinition(.podzol).texture_bottom);
+    try testing.expectEqualStrings("podzol_side", block_registry.getBlockDefinition(.podzol).texture_side);
+
+    try testing.expectEqual(block_registry.RenderPass.solid, block_registry.getBlockDefinition(.mossy_cobblestone).render_pass);
+    try testing.expectEqual(block_registry.RenderPass.solid, block_registry.getBlockDefinition(.red_terracotta).render_pass);
+    try testing.expectEqual(block_registry.RenderPass.solid, block_registry.getBlockDefinition(.white_terracotta).render_pass);
+}
