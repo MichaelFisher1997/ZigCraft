@@ -232,3 +232,29 @@ test "getBiomeDefinition tropical has aquatic vegetation and coastal range" {
     try testing.expect(tropical.vegetation.coral_density > 0.0);
     try testing.expect(tropical.vegetation.decoration_rules.len > 0);
 }
+
+test "forest and taiga variants have distinct vegetation profiles" {
+    const birch = getBiomeDefinition(.birch_forest);
+    try testing.expectEqualStrings("Birch Forest", birch.name);
+    try testing.expectEqual(BiomeId.birch_forest, birch.id);
+    try testing.expect(birch.vegetation.tree_types.len >= 2);
+
+    const dark = getBiomeDefinition(.dark_forest);
+    try testing.expectEqualStrings("Dark Forest", dark.name);
+    try testing.expect(dark.vegetation.tree_types.len >= 2);
+    try testing.expect(dark.vegetation.decoration_rules.len >= 2);
+
+    const flower = getBiomeDefinition(.flower_forest);
+    try testing.expectEqualStrings("Flower Forest", flower.name);
+    try testing.expect(flower.vegetation.decoration_rules.len >= 3);
+
+    const snowy = getBiomeDefinition(.snowy_taiga);
+    try testing.expectEqualStrings("Snowy Taiga", snowy.name);
+    try testing.expectEqual(.snow_block, snowy.surface.top);
+    try testing.expect(snowy.vegetation.tree_types.len > 0);
+
+    const old_growth = getBiomeDefinition(.old_growth_taiga);
+    try testing.expectEqualStrings("Old Growth Taiga", old_growth.name);
+    try testing.expect(old_growth.vegetation.tree_types.len >= 2);
+    try testing.expect(old_growth.terrain.height_amplitude > getBiomeDefinition(.taiga).terrain.height_amplitude);
+}

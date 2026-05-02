@@ -22,6 +22,8 @@ pub const TreeType = enum {
     // Variants
     dense_oak,
     sparse_oak,
+    dense_birch,
+    dense_spruce,
     /// Null-type used to represent no tree placement
     none,
 };
@@ -110,6 +112,17 @@ pub fn getTreeDefinition(tree_type: TreeType) ?TreeDefinition {
             .schematic = schematics.OAK_TREE,
             .probability = 0.002,
             .spacing_radius = 4,
+        },
+        .dense_birch => .{
+            .schematic = schematics.BIRCH_TREE,
+            .probability = 0.09,
+            .spacing_radius = 2,
+        },
+        .dense_spruce => .{
+            .schematic = schematics.SPRUCE_TREE,
+            .place_on = &.{ .grass, .dirt, .snow_block },
+            .probability = 0.14,
+            .spacing_radius = 2,
         },
         .none => null,
     };
