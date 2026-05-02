@@ -8,6 +8,8 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
     return switch (biome_id) {
         .deep_ocean => 0x1A3380, // Darker blue
         .ocean => 0x3366CC, // Standard ocean blue
+        .warm_ocean => 0x1F8FCC, // Brighter warm ocean
+        .tropical => 0x2BBF9A, // Tropical shallows
         .beach => 0xDDBB88, // Sand color
         .plains => 0x4D8033, // Darker grass green
         .forest => 0x2D591A, // Darker forest green

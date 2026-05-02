@@ -19,6 +19,7 @@ pub const DecorationProvider = struct {
         local_z: u32,
         surface_y: i32,
         surface_block: BlockType,
+        water_depth: u8,
         biome: BiomeId,
         variant: f32,
         allow_subbiomes: bool,

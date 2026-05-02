@@ -46,6 +46,10 @@ pub const ColorTints = struct {
 pub const VegetationProfile = struct {
     tree_types: []const TreeType = &.{},
     decoration_rules: []const DecorationRule = &.{},
+    seagrass_density: f32 = 0.0,
+    kelp_density: f32 = 0.0,
+    coral_density: f32 = 0.0,
+    seaweed_density: f32 = 0.0,
 };
 
 /// Terrain modifiers applied during height computation
@@ -175,6 +179,8 @@ pub const BIOME_POINTS = [_]BiomePoint{
     // === Ocean Biomes (continental < 0.35) ===
     .{ .id = .deep_ocean, .heat = 50, .humidity = 50, .weight = 1.5, .max_continental = 0.20 },
     .{ .id = .ocean, .heat = 50, .humidity = 50, .weight = 1.5, .min_continental = 0.20, .max_continental = 0.35 },
+    .{ .id = .warm_ocean, .heat = 85, .humidity = 75, .weight = 0.9, .min_continental = 0.20, .max_continental = 0.35 },
+    .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.42, .max_slope = 3, .y_max = 72 },
 
     // === Coastal Biomes ===
     .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.35, .max_continental = 0.42, .y_max = 70 },
@@ -239,6 +245,49 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 1,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{} },
+    },
+    .{
+        .id = .warm_ocean,
+        .name = "Warm Ocean",
+        .temperature = .{ .min = 0.70, .max = 1.0 },
+        .humidity = .{ .min = 0.50, .max = 1.0 },
+        .elevation = .{ .min = 0.0, .max = 0.32 },
+        .continentalness = .{ .min = 0.20, .max = 0.35 },
+        .priority = 3,
+        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
+        .vegetation = .{
+            .tree_types = &.{},
+            .seagrass_density = 0.18,
+            .kelp_density = 0.06,
+            .coral_density = 0.08,
+            .decoration_rules = &.{
+                .{ .block = .seaweed, .place_on = &.{ .sand, .gravel, .clay }, .chance = 0.08, .requires_water = true, .min_water_depth = 3, .max_water_depth = 16 },
+                .{ .block = .coral_block, .place_on = &.{ .sand, .gravel }, .chance = 0.025, .requires_water = true, .min_water_depth = 2, .max_water_depth = 10 },
+            },
+        },
+        .colors = .{ .water = .{ 0.08, 0.50, 0.82 } },
+    },
+    .{
+        .id = .tropical,
+        .name = "Tropical",
+        .temperature = .{ .min = 0.85, .max = 1.0 },
+        .humidity = .{ .min = 0.75, .max = 1.0 },
+        .elevation = .{ .min = 0.25, .max = 0.42 },
+        .continentalness = .{ .min = 0.32, .max = 0.48 },
+        .max_slope = 3,
+        .priority = 8,
+        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
+        .vegetation = .{
+            .tree_types = &.{.jungle},
+            .seagrass_density = 0.14,
+            .coral_density = 0.12,
+            .seaweed_density = 0.06,
+            .decoration_rules = &.{
+                .{ .block = .coral_block, .place_on = &.{ .sand, .gravel }, .chance = 0.04, .requires_water = true, .min_water_depth = 2, .max_water_depth = 8 },
+                .{ .block = .seaweed, .place_on = &.{ .sand, .gravel }, .chance = 0.06, .requires_water = true, .min_water_depth = 2, .max_water_depth = 12 },
+            },
+        },
+        .colors = .{ .grass = .{ 0.18, 0.74, 0.18 }, .foliage = .{ 0.10, 0.62, 0.10 }, .water = .{ 0.05, 0.55, 0.85 } },
     },
     .{
         .id = .beach,
@@ -533,16 +582,18 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
 };
 
 /// Comptime-generated lookup table for O(1) BiomeDefinition access by BiomeId.
-const BIOME_LOOKUP: [21]*const BiomeDefinition = blk: {
-    var table: [21]*const BiomeDefinition = undefined;
-    var filled = [_]bool{false} ** 21;
+const BIOME_COUNT = @typeInfo(BiomeId).@"enum".fields.len;
+
+const BIOME_LOOKUP: [BIOME_COUNT]*const BiomeDefinition = blk: {
+    var table: [BIOME_COUNT]*const BiomeDefinition = undefined;
+    var filled = [_]bool{false} ** BIOME_COUNT;
     for (BIOME_REGISTRY) |*def| {
         const idx = @intFromEnum(def.id);
         table[idx] = def;
         filled[idx] = true;
     }
     // Verify every BiomeId has a definition
-    for (0..21) |i| {
+    for (0..BIOME_COUNT) |i| {
         if (!filled[i]) {
             @compileError("BIOME_REGISTRY is missing a BiomeDefinition entry");
         }

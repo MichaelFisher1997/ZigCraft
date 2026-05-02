@@ -71,6 +71,35 @@ pub const DECORATIONS = [_]Decoration{
         .probability = 0.01,
     } },
 
+    // === Aquatic vegetation ===
+    .{ .simple = .{
+        .block = .seagrass,
+        .place_on = &.{ .sand, .gravel, .clay },
+        .biomes = &.{ .ocean, .warm_ocean, .tropical },
+        .requires_water = true,
+        .min_water_depth = 2,
+        .max_water_depth = 12,
+        .probability = 0.18,
+    } },
+    .{ .simple = .{
+        .block = .kelp,
+        .place_on = &.{ .sand, .gravel, .clay },
+        .biomes = &.{ .ocean, .warm_ocean },
+        .requires_water = true,
+        .min_water_depth = 6,
+        .max_water_depth = 30,
+        .probability = 0.08,
+    } },
+    .{ .simple = .{
+        .block = .coral_fan,
+        .place_on = &.{ .sand, .gravel, .coral_block },
+        .biomes = &.{ .warm_ocean, .tropical },
+        .requires_water = true,
+        .min_water_depth = 2,
+        .max_water_depth = 10,
+        .probability = 0.06,
+    } },
+
     // === Boulders (Rocky Patches: Variant > 0.6) ===
     .{
         .simple = .{
@@ -83,11 +112,11 @@ pub const DECORATIONS = [_]Decoration{
     },
 };
 
-pub fn chooseStaticSimpleDecoration(biome: BiomeId, surface_block: BlockType, variant: f32, allow_subbiomes: bool, veg_mult: f32, random: std.Random) ?SimpleDecoration {
+pub fn chooseStaticSimpleDecoration(biome: BiomeId, surface_block: BlockType, variant: f32, allow_subbiomes: bool, veg_mult: f32, water_depth: u8, random: std.Random) ?SimpleDecoration {
     for (DECORATIONS) |deco| {
         switch (deco) {
             .simple => |simple| {
-                if (!simple.isAllowed(biome, surface_block)) continue;
+                if (!simple.isAllowed(biome, surface_block, water_depth)) continue;
                 if (!variantAllowed(variant, allow_subbiomes, simple.variant_min, simple.variant_max)) continue;
 
                 const prob = @min(1.0, simple.probability * veg_mult);
@@ -167,13 +196,18 @@ pub const StandardDecorationProvider = struct {
         const variant = ctx.variant;
         const allow_subbiomes = ctx.allow_subbiomes;
         const veg_mult = ctx.veg_mult;
+        const water_depth = ctx.water_depth;
         const random = ctx.random;
 
         // 1. Static decorations (flowers, grass)
-        if (chooseStaticSimpleDecoration(biome, surface_block, variant, allow_subbiomes, veg_mult, random)) |simple| {
+        if (chooseStaticSimpleDecoration(biome, surface_block, variant, allow_subbiomes, veg_mult, water_depth, random)) |simple| {
             const place_y = surface_y + 1;
             if (place_y >= 0 and place_y < CHUNK_SIZE_Y) {
-                chunk.setBlock(local_x, @intCast(place_y), local_z, simple.block);
+                const target = chunk.getBlock(local_x, @intCast(place_y), local_z);
+                const required_target: BlockType = if (simple.requires_water) .water else .air;
+                if (target == required_target) {
+                    chunk.setBlock(local_x, @intCast(place_y), local_z, simple.block);
+                }
             }
         }
 
@@ -182,14 +216,16 @@ pub const StandardDecorationProvider = struct {
         const vegetation = biome_def.vegetation;
 
         for (vegetation.decoration_rules) |rule| {
-            if (!rule.isAllowed(surface_block, surface_y, variant, allow_subbiomes)) continue;
+            if (!rule.isAllowed(surface_block, surface_y, variant, allow_subbiomes, water_depth)) continue;
 
             const prob = @min(1.0, rule.chance * veg_mult);
             if (random.float(f32) >= prob) continue;
 
             const place_y = surface_y + 1;
             if (place_y < 0 or place_y >= CHUNK_SIZE_Y) continue;
-            if (chunk.getBlockSafe(@intCast(local_x), place_y, @intCast(local_z)) != .air) continue;
+            const target = chunk.getBlockSafe(@intCast(local_x), place_y, @intCast(local_z));
+            const required_target: BlockType = if (rule.requires_water) .water else .air;
+            if (target != required_target) continue;
 
             chunk.setBlock(local_x, @intCast(place_y), local_z, rule.block);
             break;

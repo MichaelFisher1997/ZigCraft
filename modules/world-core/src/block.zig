@@ -29,12 +29,15 @@ pub const Biome = enum(u8) {
     marsh = 18,
     dry_plains = 19,
     coastal_plains = 20,
+    warm_ocean = 21,
+    tropical = 22,
 
     /// Get surface block for this biome
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
     pub fn getSurfaceBlock(self: Biome) BlockType {
         return switch (self) {
-            .deep_ocean, .ocean => .gravel,
+            .deep_ocean, .ocean, .warm_ocean => .gravel,
+            .tropical => .sand,
             .beach => .sand,
             .plains, .forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains => .grass,
             .taiga => .grass,
@@ -53,7 +56,7 @@ pub const Biome = enum(u8) {
     pub fn getFillerBlock(self: Biome) BlockType {
         return switch (self) {
             .deep_ocean => .gravel,
-            .ocean => .sand,
+            .ocean, .warm_ocean, .tropical => .sand,
             .beach, .desert, .river => .sand,
             .plains, .forest, .taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains => .dirt,
             .snow_tundra => .dirt,
@@ -121,6 +124,11 @@ pub const BlockType = enum(u8) {
     vine = 44,
     torch = 45,
     lava = 46,
+    seagrass = 47,
+    kelp = 48,
+    seaweed = 49,
+    coral_block = 50,
+    coral_fan = 51,
 
     _,
 };

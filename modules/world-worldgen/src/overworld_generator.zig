@@ -492,7 +492,7 @@ pub const OverworldGenerator = struct {
                 const sample = self.classifyLODSample(@floatFromInt(wx_i), @floatFromInt(wz_i), sea_level, controls);
                 const column_controls = controls.sample(wx_i, wz_i);
                 const variant = self.terrain_shape.getNoiseSampler().variant_noise.get2D(@floatFromInt(wx_i), @floatFromInt(wz_i));
-                _ = decoration_registry.chooseStaticSimpleDecoration(sample.biome, sample.surface_block, variant, column_controls.subbiome_mask > 0.5, column_controls.vegetation_mult, random);
+                _ = decoration_registry.chooseStaticSimpleDecoration(sample.biome, sample.surface_block, variant, column_controls.subbiome_mask > 0.5, column_controls.vegetation_mult, 0, random);
 
                 const placed_tree = choosePlacedTree(sample.biome, sample.surface_block, variant, column_controls.subbiome_mask > 0.5, column_controls.vegetation_mult, lx, lz, sample.terrain_height_i, &tree_occupancy, random);
                 if (placed_tree) |tree| {

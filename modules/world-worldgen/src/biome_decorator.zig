@@ -86,6 +86,7 @@ pub const BiomeDecorator = struct {
                 const variant_val = noise_sampler.variant_noise.get2D(wx, wz);
                 const column_controls = controls.sample(wx_i, wz_i);
                 const surface_block = chunk.getBlock(local_x, @intCast(surface_y), local_z);
+                const water_depth = columnWaterDepth(chunk, local_x, local_z, @intCast(surface_y));
 
                 self.decoration_provider.decorate(.{
                     .chunk = chunk,
@@ -93,6 +94,7 @@ pub const BiomeDecorator = struct {
                     .local_z = local_z,
                     .surface_y = @intCast(surface_y),
                     .surface_block = surface_block,
+                    .water_depth = water_depth,
                     .biome = biome,
                     .variant = variant_val,
                     .allow_subbiomes = column_controls.subbiome_mask > 0.5,
@@ -101,5 +103,15 @@ pub const BiomeDecorator = struct {
                 });
             }
         }
+    }
+
+    fn columnWaterDepth(chunk: *const Chunk, local_x: u32, local_z: u32, surface_y: i32) u8 {
+        var depth: u8 = 0;
+        var y = surface_y + 1;
+        while (y < CHUNK_SIZE_Y and depth < std.math.maxInt(u8)) : (y += 1) {
+            if (chunk.getBlock(local_x, @intCast(y), local_z) != .water) break;
+            depth += 1;
+        }
+        return depth;
     }
 };

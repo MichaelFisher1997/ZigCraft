@@ -108,3 +108,24 @@ test "RenderShape enum has expected variants" {
     try testing.expectEqual(@as(u2, 2), @intFromEnum(block_registry.RenderShape.flat_quad));
     try testing.expectEqual(@as(u2, 3), @intFromEnum(block_registry.RenderShape.tall_cross));
 }
+
+test "aquatic vegetation blocks use cutout shapes" {
+    const seagrass = block_registry.getBlockDefinition(.seagrass);
+    try testing.expect(!seagrass.is_solid);
+    try testing.expectEqual(block_registry.RenderPass.cutout, seagrass.render_pass);
+    try testing.expectEqual(block_registry.RenderShape.cross, seagrass.render_shape);
+
+    const kelp = block_registry.getBlockDefinition(.kelp);
+    try testing.expect(!kelp.is_solid);
+    try testing.expectEqual(block_registry.RenderShape.tall_cross, kelp.render_shape);
+
+    const coral_fan = block_registry.getBlockDefinition(.coral_fan);
+    try testing.expect(!coral_fan.is_solid);
+    try testing.expectEqual(block_registry.RenderShape.flat_quad, coral_fan.render_shape);
+}
+
+test "coral block is a solid underwater block" {
+    const coral = block_registry.getBlockDefinition(.coral_block);
+    try testing.expect(coral.is_solid);
+    try testing.expectEqual(block_registry.RenderPass.solid, coral.render_pass);
+}
