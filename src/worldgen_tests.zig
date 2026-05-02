@@ -429,7 +429,7 @@ test "Biome structural constraints - desert elevation limit" {
 // Biome Edge Detection Tests (Issue #102)
 // ============================================================================
 
-test "needsTransition returns true for desert-forest pair" {
+test "needsTransition returns true for important harsh boundary pairs" {
     const biome_mod = world_worldgen.biome;
 
     try testing.expect(biome_mod.needsTransition(.desert, .forest) == true);
@@ -441,6 +441,14 @@ test "needsTransition returns true for desert-forest pair" {
     try testing.expect(biome_mod.needsTransition(.snow_tundra, .forest) == true);
 
     try testing.expect(biome_mod.needsTransition(.mountains, .plains) == true);
+    try testing.expect(biome_mod.needsTransition(.jagged_peaks, .forest) == true);
+
+    try testing.expect(biome_mod.needsTransition(.swamp, .dark_forest) == true);
+
+    try testing.expect(biome_mod.needsTransition(.badlands, .dark_forest) == true);
+    try testing.expect(biome_mod.needsTransition(.wooded_badlands, .plains) == true);
+    try testing.expect(biome_mod.needsTransition(.eroded_badlands, .forest) == true);
+    try testing.expect(biome_mod.needsTransition(.old_growth_taiga, .dark_forest) == true);
 }
 
 test "needsTransition returns false for compatible biomes" {
@@ -466,8 +474,14 @@ test "getTransitionBiome returns correct biome for pairs" {
     try testing.expectEqual(biome_mod.getTransitionBiome(.snow_tundra, .forest), .taiga);
 
     try testing.expectEqual(biome_mod.getTransitionBiome(.mountains, .plains), .foothills);
+    try testing.expectEqual(biome_mod.getTransitionBiome(.jagged_peaks, .forest), .foothills);
 
     try testing.expectEqual(biome_mod.getTransitionBiome(.swamp, .forest), .marsh);
+
+    try testing.expectEqual(biome_mod.getTransitionBiome(.badlands, .dark_forest), .dry_plains);
+    try testing.expectEqual(biome_mod.getTransitionBiome(.wooded_badlands, .plains), .dry_plains);
+    try testing.expectEqual(biome_mod.getTransitionBiome(.eroded_badlands, .forest), .dry_plains);
+    try testing.expectEqual(biome_mod.getTransitionBiome(.old_growth_taiga, .dark_forest), .taiga);
 }
 
 test "getTransitionBiome returns null for compatible pairs" {
@@ -494,12 +508,23 @@ test "Edge detection constants are properly defined" {
 
     try testing.expectEqual(biome_mod.EDGE_STEP, 4);
 
-    try testing.expectEqual(biome_mod.EDGE_WIDTH, 8);
+    try testing.expectEqual(biome_mod.EDGE_WIDTH, 12);
 
     try testing.expectEqual(biome_mod.EDGE_CHECK_RADII.len, 3);
     try testing.expectEqual(biome_mod.EDGE_CHECK_RADII[0], 4);
     try testing.expectEqual(biome_mod.EDGE_CHECK_RADII[1], 8);
     try testing.expectEqual(biome_mod.EDGE_CHECK_RADII[2], 12);
+}
+
+test "transition micro biomes are edge injected only" {
+    const biome_mod = world_worldgen.biome;
+    const transition_biomes = [_]world_worldgen.BiomeId{ .foothills, .marsh, .dry_plains, .coastal_plains };
+
+    for (transition_biomes) |biome_id| {
+        const definition = biome_mod.getBiomeDefinition(biome_id);
+        try testing.expect(definition.continentalness.min < 0.0);
+        try testing.expect(definition.continentalness.max < 0.0);
+    }
 }
 
 test "BiomeEdgeInfo struct fields" {
