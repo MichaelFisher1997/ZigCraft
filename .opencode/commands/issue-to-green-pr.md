@@ -16,7 +16,7 @@ Use this workflow:
 6. Format changed Zig files with `nix develop --command zig fmt <paths>`.
 7. Sanity check with the most relevant commands, including `nix develop --command zig build test` unless there is a clear reason to run a narrower or broader verification.
 8. Create a branch if needed, commit the relevant changes with a conventional commit message, and open a pull request targeting `dev`.
-9. Include `Fixes #<issue-number>` or `Closes #<issue-number>` in the PR body when the implementation fully resolves the issue.
+9. Include `Fixes #<issue-number>` in the PR body so GitHub links and auto-closes the implemented issue when the PR merges.
 10. Load and follow the `pr-autopilot` skill for the created PR.
 11. Watch AI/human review comments, GitHub checks, workflow runs, and other runners; fix actionable failures; commit and push follow-up fixes to the PR branch; repeat until the PR is green and mergeable.
 12. Auto-merge the PR when the `pr-autopilot` merge criteria are satisfied.
