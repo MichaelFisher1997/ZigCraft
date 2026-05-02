@@ -183,11 +183,11 @@ pub const SurfaceBuilder = struct {
                 if (y > 90) return .gravel; // Transition
             }
             // Forest -> Standard -> Rocky peaks
-            if (biome == .forest) {
+            if (biome == .forest or biome == .birch_forest or biome == .dark_forest or biome == .flower_forest) {
                 if (y > 120) return .stone;
             }
 
-            if (biome == .snowy_mountains or biome == .snow_tundra or biome == .snowy_slopes) return .snow_block;
+            if (biome == .snowy_mountains or biome == .snow_tundra or biome == .snowy_taiga or biome == .snowy_slopes) return .snow_block;
             return biome.getSurfaceBlock();
         }
 

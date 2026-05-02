@@ -13,7 +13,12 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
         .beach => 0xDDBB88, // Sand color
         .plains => 0x4D8033, // Darker grass green
         .forest => 0x2D591A, // Darker forest green
+        .birch_forest => 0x3DA62E, // Bright birch canopy
+        .dark_forest => 0x1F3D17, // Dense dark forest
+        .flower_forest => 0x55A83D, // Flower meadow forest
         .taiga => 0x476647, // Muted taiga green
+        .snowy_taiga => 0x9AB8AA, // Snowy evergreen
+        .old_growth_taiga => 0x33593D, // Ancient spruce green
         .desert => 0xD4B36A, // Warm desert sand
         .snow_tundra => 0xDDEEFF, // Snow
         .mountains => 0x888888, // Stone grey

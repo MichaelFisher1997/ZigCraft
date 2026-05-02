@@ -86,7 +86,7 @@ pub fn deriveSurfaceType(
     // Biome-based surface
     return switch (biome_id) {
         .desert, .badlands, .beach => .sand,
-        .snow_tundra, .snowy_mountains, .snowy_slopes, .frozen_peaks => .snow,
+        .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes, .frozen_peaks => .snow,
         .mountains, .jagged_peaks, .stony_peaks => if (height > 120) .rock else .stone,
         .grove => .dirt,
         .deep_ocean, .ocean, .warm_ocean, .tropical => .sand,
