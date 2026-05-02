@@ -345,6 +345,21 @@ test "adjacent transparent blocks share face" {
     try testing.expect(total_verts < 72);
 }
 
+test "tall cross block generates cutout billboard vertices only" {
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(8, 64, 8, .tall_grass);
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+    try mesh.buildWithNeighbors(&chunk, .empty, &atlas);
+
+    try testing.expectEqual(null, mesh.pending_solid);
+    try testing.expectEqual(@as(usize, 12), mesh.pending_cutout.?.len);
+}
+
 // ============================================================================
 // Meshing Stage Module Tests
 // ============================================================================

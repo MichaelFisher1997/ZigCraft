@@ -105,4 +105,6 @@ test "RenderPass enum has expected variants" {
 test "RenderShape enum has expected variants" {
     try testing.expectEqual(@as(u2, 0), @intFromEnum(block_registry.RenderShape.cube));
     try testing.expectEqual(@as(u2, 1), @intFromEnum(block_registry.RenderShape.cross));
+    try testing.expectEqual(@as(u2, 2), @intFromEnum(block_registry.RenderShape.flat_quad));
+    try testing.expectEqual(@as(u2, 3), @intFromEnum(block_registry.RenderShape.tall_cross));
 }
