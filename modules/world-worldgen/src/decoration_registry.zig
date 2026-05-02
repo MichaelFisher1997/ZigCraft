@@ -29,7 +29,7 @@ pub const DECORATIONS = [_]Decoration{
     .{ .simple = .{
         .block = .tall_grass,
         .place_on = &.{.grass},
-        .biomes = &.{ .plains, .forest, .savanna, .swamp, .jungle, .taiga },
+        .biomes = &.{ .plains, .forest, .savanna, .swamp, .jungle, .bamboo_jungle, .sparse_jungle, .taiga },
         .probability = 0.5,
     } },
 
@@ -59,7 +59,7 @@ pub const DECORATIONS = [_]Decoration{
     .{ .simple = .{
         .block = .dead_bush,
         .place_on = &.{ .sand, .red_sand },
-        .biomes = &.{ .desert, .badlands },
+        .biomes = &.{ .desert, .badlands, .eroded_badlands },
         .probability = 0.02,
     } },
 
@@ -114,7 +114,7 @@ pub const DECORATIONS = [_]Decoration{
         .simple = .{
             .block = .cobblestone,
             .place_on = &.{.grass},
-            .biomes = &.{ .plains, .mountains, .taiga },
+            .biomes = &.{ .plains, .mountains, .taiga, .windswept_savanna },
             .probability = 0.05,
             .variant_min = 0.6,
         },

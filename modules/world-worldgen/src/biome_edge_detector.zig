@@ -45,6 +45,27 @@ pub const TRANSITION_RULES = [_]TransitionRule{
     .{ .biome_a = .desert, .biome_b = .plains, .transition = .dry_plains },
     .{ .biome_a = .desert, .biome_b = .taiga, .transition = .dry_plains },
     .{ .biome_a = .desert, .biome_b = .jungle, .transition = .savanna },
+    .{ .biome_a = .desert, .biome_b = .sparse_jungle, .transition = .savanna },
+
+    // Badlands <-> Temperate/Non-arid
+    .{ .biome_a = .badlands, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .badlands, .biome_b = .plains, .transition = .dry_plains },
+    .{ .biome_a = .badlands, .biome_b = .jungle, .transition = .savanna },
+    .{ .biome_a = .badlands, .biome_b = .sparse_jungle, .transition = .savanna },
+
+    // Wooded/Eroded badlands transitions
+    .{ .biome_a = .wooded_badlands, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .eroded_badlands, .biome_b = .plains, .transition = .dry_plains },
+
+    // Savanna variant transitions
+    .{ .biome_a = .windswept_savanna, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna_plateau, .biome_b = .mountains, .transition = .foothills },
+
+    // Jungle variant <-> Temperate
+    .{ .biome_a = .bamboo_jungle, .biome_b = .plains, .transition = .sparse_jungle },
+    .{ .biome_a = .bamboo_jungle, .biome_b = .forest, .transition = .sparse_jungle },
+    .{ .biome_a = .jungle, .biome_b = .plains, .transition = .sparse_jungle },
+    .{ .biome_a = .jungle, .biome_b = .forest, .transition = .sparse_jungle },
 
     // Cold <-> Temperate
     .{ .biome_a = .snow_tundra, .biome_b = .plains, .transition = .taiga },

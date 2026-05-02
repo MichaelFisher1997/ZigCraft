@@ -31,6 +31,12 @@ pub const Biome = enum(u8) {
     coastal_plains = 20,
     warm_ocean = 21,
     tropical = 22,
+    bamboo_jungle = 23,
+    sparse_jungle = 24,
+    wooded_badlands = 25,
+    eroded_badlands = 26,
+    savanna_plateau = 27,
+    windswept_savanna = 28,
 
     /// Get surface block for this biome
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
@@ -39,7 +45,8 @@ pub const Biome = enum(u8) {
             .deep_ocean, .ocean, .warm_ocean => .gravel,
             .tropical => .sand,
             .beach => .sand,
-            .plains, .forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains => .grass,
+            .plains, .forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .bamboo_jungle, .sparse_jungle, .savanna_plateau, .windswept_savanna => .grass,
+            .wooded_badlands, .eroded_badlands => .red_sand,
             .taiga => .grass,
             .desert => .sand,
             .snow_tundra, .snowy_mountains => .snow_block,
@@ -58,11 +65,11 @@ pub const Biome = enum(u8) {
             .deep_ocean => .gravel,
             .ocean, .warm_ocean, .tropical => .sand,
             .beach, .desert, .river => .sand,
-            .plains, .forest, .taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains => .dirt,
+            .plains, .forest, .taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .bamboo_jungle, .sparse_jungle, .savanna_plateau, .windswept_savanna => .dirt,
             .snow_tundra => .dirt,
             .mountains, .snowy_mountains => .stone,
             .mangrove_swamp => .mud,
-            .badlands => .terracotta,
+            .badlands, .wooded_badlands, .eroded_badlands => .terracotta,
             .mushroom_fields => .dirt,
         };
     }
