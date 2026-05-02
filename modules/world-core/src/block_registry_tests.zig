@@ -135,6 +135,32 @@ test "RenderShapeData can represent custom mesh variants" {
     try testing.expectEqual(null, data.attachment);
 }
 
+test "custom mesh fixture blocks use slab and stair variants" {
+    const slab = block_registry.getBlockDefinition(.stone_slab);
+    try testing.expectEqual(block_registry.RenderShape.custom_mesh, slab.render_shape);
+    try testing.expectEqual(block_registry.CustomMeshVariant.slab, slab.render_shape_data.custom_mesh);
+    try testing.expectEqual(block_registry.RenderPass.solid, slab.render_pass);
+    try testing.expect(slab.is_solid);
+    try testing.expect(!slab.isFullCubeOccluder());
+
+    const stairs = block_registry.getBlockDefinition(.stone_stairs);
+    try testing.expectEqual(block_registry.RenderShape.custom_mesh, stairs.render_shape);
+    try testing.expectEqual(block_registry.CustomMeshVariant.stairs, stairs.render_shape_data.custom_mesh);
+    try testing.expectEqual(block_registry.RenderPass.solid, stairs.render_pass);
+    try testing.expect(stairs.is_solid);
+    try testing.expect(!stairs.isFullCubeOccluder());
+}
+
+test "custom mesh blocks do not fully occlude neighboring cube faces" {
+    const stone = block_registry.getBlockDefinition(.stone);
+    const slab = block_registry.getBlockDefinition(.stone_slab);
+    const stairs = block_registry.getBlockDefinition(.stone_stairs);
+
+    try testing.expect(stone.occludes(slab, .top));
+    try testing.expect(!slab.occludes(stone, .top));
+    try testing.expect(!stairs.occludes(stone, .north));
+}
+
 test "core natural block pack registry properties" {
     try testing.expectEqual(block_registry.RenderShape.flat_quad, block_registry.getBlockDefinition(.snow_layer).render_shape);
     try testing.expectEqual(block_registry.RenderPass.cutout, block_registry.getBlockDefinition(.snow_layer).render_pass);

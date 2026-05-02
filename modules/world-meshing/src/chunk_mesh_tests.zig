@@ -79,3 +79,37 @@ test "ChunkMesh emits wall-attached fixture cutout quad" {
     try testing.expectEqual(null, mesh.pending_solid);
     try testing.expectEqual(null, mesh.pending_fluid);
 }
+
+test "ChunkMesh emits custom slab fixture solid mesh" {
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 1, 1, .stone_slab);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    try testing.expectEqual(@as(usize, 36), mesh.pending_solid.?.len);
+    try testing.expectEqual(null, mesh.pending_cutout);
+    try testing.expectEqual(null, mesh.pending_fluid);
+}
+
+test "ChunkMesh emits custom stair fixture solid mesh" {
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 1, 1, .stone_stairs);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    try testing.expectEqual(@as(usize, 72), mesh.pending_solid.?.len);
+    try testing.expectEqual(null, mesh.pending_cutout);
+    try testing.expectEqual(null, mesh.pending_fluid);
+}
