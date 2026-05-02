@@ -140,6 +140,20 @@ pub const TerrainShapeGenerator = struct {
     }
 
     pub fn sampleColumnDataWithControls(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8, controls: region_pkg.RegionControls) ColumnData {
+        const base_column = self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, null);
+        const preliminary_biome = self.selectBiomeForColumn(base_column, 1);
+        const biome_def = biome_mod.getBiomeDefinition(preliminary_biome);
+        return self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, biome_def.terrain);
+    }
+
+    fn sampleColumnDataWithControlsAndTerrainModifier(
+        self: *const TerrainShapeGenerator,
+        wx: f32,
+        wz: f32,
+        reduction: u8,
+        controls: region_pkg.RegionControls,
+        terrain_modifier: ?biome_mod.TerrainModifier,
+    ) ColumnData {
         const sea: f32 = @floatFromInt(self.params.sea_level);
         var noise = self.noise_sampler.sampleColumn(wx, wz, reduction);
         const cj_octaves: u16 = if (2 > reduction) 2 - @as(u16, reduction) else 1;
@@ -159,8 +173,7 @@ pub const TerrainShapeGenerator = struct {
             .sparsity = self.params.ridge_sparsity,
         };
         const ridge_mask = self.noise_sampler.getRidgeFactor(noise.warped_x, noise.warped_z, c_jittered, reduction, ridge_params);
-        var terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, controls, path_info, reduction);
-        terrain_height = self.applyMountainTerrainModifier(terrain_height, noise.temperature, noise.humidity, c_jittered, noise.erosion, ridge_mask, noise.river_mask);
+        const terrain_height = self.height_sampler.computeHeightWithTerrainModifier(&self.noise_sampler, noise, controls, path_info, reduction, terrain_modifier);
         const terrain_height_i: i32 = @intFromFloat(terrain_height);
 
         const altitude_offset: f32 = @max(0, terrain_height - sea);
@@ -180,6 +193,24 @@ pub const TerrainShapeGenerator = struct {
             .is_ocean = c_jittered < self.params.ocean_threshold,
             .cave_region = self.cave_system.getCaveRegionValue(wx, wz),
         };
+    }
+
+    fn selectBiomeForColumn(self: *const TerrainShapeGenerator, column: ColumnData, slope: i32) BiomeId {
+        const climate = self.biome_source.computeClimate(
+            column.temperature,
+            column.humidity,
+            column.terrain_height_i,
+            column.continentalness,
+            column.erosion,
+            CHUNK_SIZE_Y,
+        );
+        const structural = biome_mod.StructuralParams{
+            .height = column.terrain_height_i,
+            .slope = slope,
+            .continentalness = column.continentalness,
+            .ridge_mask = column.ridge_mask,
+        };
+        return self.biome_source.selectBiome(climate, structural, column.river_mask);
     }
 
     pub fn prepareChunkPhaseData(
@@ -209,7 +240,7 @@ pub const TerrainShapeGenerator = struct {
                 const wz_i = world_z + @as(i32, @intCast(local_z));
                 const wx: f32 = @floatFromInt(wx_i);
                 const wz: f32 = @floatFromInt(wz_i);
-                const column = self.sampleColumnDataWithControls(wx, wz, 0, controls.sample(wx_i, wz_i));
+                const column = self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, 0, controls.sample(wx_i, wz_i), null);
 
                 phase_data.surface_heights[idx] = column.terrain_height_i;
                 phase_data.is_underwater_flags[idx] = column.is_underwater;
@@ -266,6 +297,43 @@ pub const TerrainShapeGenerator = struct {
                 phase_data.biome_ids[idx] = biome_id;
                 phase_data.secondary_biome_ids[idx] = biome_id;
                 phase_data.biome_blends[idx] = 0.0;
+
+                const biome_def = biome_mod.getBiomeDefinition(biome_id);
+                const wx_i = world_x + @as(i32, @intCast(local_x));
+                const wz_i = world_z + @as(i32, @intCast(local_z));
+                const column = self.sampleColumnDataWithControlsAndTerrainModifier(
+                    @floatFromInt(wx_i),
+                    @floatFromInt(wz_i),
+                    0,
+                    controls.sample(wx_i, wz_i),
+                    biome_def.terrain,
+                );
+                phase_data.surface_heights[idx] = column.terrain_height_i;
+                phase_data.is_underwater_flags[idx] = column.is_underwater;
+                phase_data.is_ocean_water_flags[idx] = column.is_ocean;
+                phase_data.cave_region_values[idx] = column.cave_region;
+                phase_data.temperatures[idx] = column.temperature;
+                phase_data.humidities[idx] = column.humidity;
+                phase_data.continentalness_values[idx] = column.continentalness;
+                phase_data.erosion_values[idx] = column.erosion;
+                phase_data.ridge_masks[idx] = column.ridge_mask;
+                phase_data.river_masks[idx] = column.river_mask;
+            }
+        }
+
+        local_z = 0;
+        while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
+            if (stop_flag) |sf| if (sf.*) return false;
+            var local_x: u32 = 0;
+            while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
+                const idx = local_x + local_z * CHUNK_SIZE_X;
+                const terrain_h = phase_data.surface_heights[idx];
+                var max_slope: i32 = 0;
+                if (local_x > 0) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx - 1]))));
+                if (local_x < CHUNK_SIZE_X - 1) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx + 1]))));
+                if (local_z > 0) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx - CHUNK_SIZE_X]))));
+                if (local_z < CHUNK_SIZE_Z - 1) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx + CHUNK_SIZE_X]))));
+                phase_data.slopes[idx] = max_slope;
             }
         }
 
@@ -404,57 +472,9 @@ pub const TerrainShapeGenerator = struct {
     pub fn sampleBiomeAtWorld(self: *const TerrainShapeGenerator, wx: i32, wz: i32) BiomeId {
         const wxf: f32 = @floatFromInt(wx);
         const wzf: f32 = @floatFromInt(wz);
-        const column = self.sampleColumnData(wxf, wzf, 0);
-        const climate = self.biome_source.computeClimate(
-            column.temperature,
-            column.humidity,
-            column.terrain_height_i,
-            column.continentalness,
-            column.erosion,
-            CHUNK_SIZE_Y,
-        );
-        const structural = biome_mod.StructuralParams{
-            .height = column.terrain_height_i,
-            .slope = 1,
-            .continentalness = column.continentalness,
-            .ridge_mask = column.ridge_mask,
-        };
-        return self.biome_source.selectBiome(climate, structural, column.river_mask);
-    }
-
-    fn applyMountainTerrainModifier(
-        self: *const TerrainShapeGenerator,
-        terrain_height: f32,
-        temperature: f32,
-        humidity: f32,
-        continentalness: f32,
-        erosion: f32,
-        ridge_mask: f32,
-        river_mask: f32,
-    ) f32 {
-        const terrain_height_i: i32 = @intFromFloat(terrain_height);
-        const sea: f32 = @floatFromInt(self.params.sea_level);
-        const altitude_offset: f32 = @max(0, terrain_height - sea);
-        const adjusted_temperature = clamp01(temperature - (altitude_offset / 512.0) * self.params.temp_lapse);
-        const climate = self.biome_source.computeClimate(
-            adjusted_temperature,
-            humidity,
-            terrain_height_i,
-            continentalness,
-            erosion,
-            CHUNK_SIZE_Y,
-        );
-        const structural = biome_mod.StructuralParams{
-            .height = terrain_height_i,
-            .slope = 0,
-            .continentalness = continentalness,
-            .ridge_mask = ridge_mask,
-        };
-        const biome_id = self.biome_source.selectBiome(climate, structural, river_mask);
-        if (!biome_mod.isMountainFamilyTerrainBiome(biome_id)) return terrain_height;
-
-        const modified = biome_mod.getBiomeDefinition(biome_id).terrain.applyHeight(terrain_height, sea);
-        return self.height_sampler.compressPeakHeight(modified);
+        const controls = region_pkg.getBlendedControls(self.getRegionSeed(), wx, wz);
+        const column = self.sampleColumnDataWithControlsAndTerrainModifier(wxf, wzf, 0, controls, null);
+        return self.selectBiomeForColumn(column, 1);
     }
 
     pub fn detectBiomeEdge(

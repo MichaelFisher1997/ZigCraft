@@ -16,6 +16,7 @@ const ColumnNoiseValues = noise_sampler_mod.ColumnNoiseValues;
 const region_pkg = @import("region.zig");
 const PathInfo = region_pkg.PathInfo;
 const RegionControls = region_pkg.RegionControls;
+const TerrainModifier = @import("biome_registry.zig").TerrainModifier;
 const world_class = @import("world_class.zig");
 const ContinentalZone = world_class.ContinentalZone;
 
@@ -195,6 +196,17 @@ pub const HeightSampler = struct {
         return std.math.lerp(base_modulated, alt_modulated, blend) * mood_mult;
     }
 
+    pub fn compressPeakHeight(self: *const HeightSampler, height: f32) f32 {
+        const p = self.params;
+        const sea: f32 = @floatFromInt(p.sea_level);
+        const peak_start = sea + p.peak_compression_offset;
+        if (height <= peak_start) return height;
+
+        const h_above = height - peak_start;
+        const compressed = p.peak_compression_range * (1.0 - std.math.exp(-h_above / p.peak_compression_range));
+        return peak_start + compressed;
+    }
+
     /// STRUCTURE-FIRST height computation with V7-style multi-layer terrain.
     ///
     /// The KEY change: Ocean is decided by continentalness ALONE.
@@ -212,6 +224,18 @@ pub const HeightSampler = struct {
         controls: RegionControls,
         path_info: PathInfo,
         reduction: u8,
+    ) f32 {
+        return self.computeHeightWithTerrainModifier(noise_sampler, noise, controls, path_info, reduction, null);
+    }
+
+    pub fn computeHeightWithTerrainModifier(
+        self: *const HeightSampler,
+        noise_sampler: *const NoiseSampler,
+        noise: ColumnNoiseValues,
+        controls: RegionControls,
+        path_info: PathInfo,
+        reduction: u8,
+        terrain_modifier: ?TerrainModifier,
     ) f32 {
         // Validate reduction is in expected range (0-4 for LOD0-LOD3)
         std.debug.assert(reduction <= 4);
@@ -290,6 +314,9 @@ pub const HeightSampler = struct {
         // ============================================================
         // STEP 7: Post-Processing - Peak compression
         // ============================================================
+        if (terrain_modifier) |modifier| {
+            height = modifier.applyHeight(height, sea);
+        }
         height = self.compressPeakHeight(height);
 
         // ============================================================
@@ -342,17 +369,6 @@ pub const HeightSampler = struct {
         height = self.compressPeakHeight(height);
 
         return height;
-    }
-
-    pub fn compressPeakHeight(self: *const HeightSampler, height: f32) f32 {
-        const p = self.params;
-        const sea: f32 = @floatFromInt(p.sea_level);
-        const peak_start = sea + p.peak_compression_offset;
-        if (height <= peak_start) return height;
-
-        const h_above = height - peak_start;
-        const compressed = p.peak_compression_range * (1.0 - std.math.exp(-h_above / p.peak_compression_range));
-        return peak_start + compressed;
     }
 };
 
@@ -409,4 +425,65 @@ test "HeightSampler peak compression caps extreme mountain output" {
 
     try std.testing.expect(compressed < 320.0);
     try std.testing.expect(compressed < max_asymptote);
+}
+
+fn testNoiseValues(continentalness: f32, terrain: f32) ColumnNoiseValues {
+    return .{
+        .warp = .{ .x = 0.0, .z = 0.0 },
+        .warped_x = 128.0,
+        .warped_z = 256.0,
+        .continentalness = continentalness,
+        .erosion = 0.5,
+        .peaks_valleys = 0.75,
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .river_mask = 0.0,
+        .terrain_base = terrain,
+        .terrain_alt = terrain,
+        .height_select = 0.0,
+        .terrain_persist = 1.0,
+        .variant = 0.0,
+    };
+}
+
+const test_controls = RegionControls{
+    .height_mult = 1.0,
+    .vegetation_mult = 1.0,
+    .drama_mask = 0.0,
+    .river_mask = 0.0,
+    .subbiome_mask = 0.0,
+};
+
+const test_path = PathInfo{
+    .path_type = .none,
+    .influence = 0.0,
+    .direction = .{ 0.0, 0.0 },
+};
+
+test "HeightSampler applies biome terrain modifiers to land height" {
+    const sampler = HeightSampler.init();
+    const noise_sampler = NoiseSampler.init(1234);
+    const noise = testNoiseValues(0.55, 20.0);
+    const sea = sampler.getSeaLevelFloat();
+
+    const base = sampler.computeHeight(&noise_sampler, noise, test_controls, test_path, 0);
+    const flattened = sampler.computeHeightWithTerrainModifier(&noise_sampler, noise, test_controls, test_path, 0, .{ .smoothing = 1.0 });
+    const amplified = sampler.computeHeightWithTerrainModifier(&noise_sampler, noise, test_controls, test_path, 0, .{ .height_amplitude = 1.25 });
+    const clamped = sampler.computeHeightWithTerrainModifier(&noise_sampler, noise, test_controls, test_path, 0, .{ .clamp_to_sea_level = true, .height_offset = -2.0 });
+
+    try std.testing.expect(base > sea);
+    try std.testing.expectApproxEqAbs(sea, flattened, 0.0001);
+    try std.testing.expect(amplified > base);
+    try std.testing.expectApproxEqAbs(sea - 2.0, clamped, 0.0001);
+}
+
+test "HeightSampler applies peak compression after terrain amplification" {
+    const sampler = HeightSampler.init();
+    const noise_sampler = NoiseSampler.init(5678);
+    const noise = testNoiseValues(0.9, 300.0);
+    const peak_limit = sampler.getSeaLevelFloat() + sampler.params.peak_compression_offset + sampler.params.peak_compression_range;
+
+    const amplified = sampler.computeHeightWithTerrainModifier(&noise_sampler, noise, test_controls, test_path, 0, .{ .height_amplitude = 2.0 });
+
+    try std.testing.expect(amplified < peak_limit);
 }

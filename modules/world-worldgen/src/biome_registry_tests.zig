@@ -196,6 +196,31 @@ fn mountainsAmplitude() f32 {
     return getBiomeDefinition(.mountains).terrain.height_amplitude;
 }
 
+test "hot dry biome terrain modifiers define distinct relief profiles" {
+    const desert = getBiomeDefinition(.desert);
+    const savanna = getBiomeDefinition(.savanna);
+    const savanna_plateau = getBiomeDefinition(.savanna_plateau);
+    const windswept_savanna = getBiomeDefinition(.windswept_savanna);
+    const badlands = getBiomeDefinition(.badlands);
+    const wooded_badlands = getBiomeDefinition(.wooded_badlands);
+    const eroded_badlands = getBiomeDefinition(.eroded_badlands);
+
+    try testing.expect(desert.terrain.height_amplitude < savanna.terrain.height_amplitude);
+    try testing.expect(desert.terrain.smoothing > savanna.terrain.smoothing);
+
+    try testing.expectApproxEqAbs(@as(f32, 0.6), savanna_plateau.terrain.height_amplitude, 0.0001);
+    try testing.expect(savanna_plateau.terrain.smoothing > savanna.terrain.smoothing);
+    try testing.expect(savanna_plateau.terrain.height_offset > 0.0);
+
+    try testing.expect(windswept_savanna.terrain.height_amplitude > savanna.terrain.height_amplitude);
+    try testing.expect(windswept_savanna.terrain.smoothing < savanna.terrain.smoothing);
+
+    try testing.expect(badlands.terrain.height_amplitude > 1.0);
+    try testing.expect(wooded_badlands.terrain.height_amplitude > 1.0);
+    try testing.expect(eroded_badlands.terrain.height_amplitude > badlands.terrain.height_amplitude);
+    try testing.expect(eroded_badlands.terrain.height_offset > wooded_badlands.terrain.height_offset);
+}
+
 // ============================================================================
 // BiomeDefinition Climate Scoring Tests
 // ============================================================================

@@ -218,9 +218,9 @@ test "WorldGen stable chunk fingerprints for known seed" {
     };
 
     const expected = [_]u64{
-        16067496184749289293,
+        1589085686761579315,
         10106071382427144696,
-        12094872152942993063,
+        12283863255206387139,
     };
 
     for (positions, 0..) |pos, i| {

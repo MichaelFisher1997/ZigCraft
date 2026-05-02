@@ -786,6 +786,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
             .{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.5 },
             .{ .block = .dead_bush, .place_on = &.{.grass}, .chance = 0.01 },
         } },
+        .terrain = .{ .height_amplitude = 0.8, .smoothing = 0.15 },
         .colors = .{ .grass = .{ 0.55, 0.55, 0.30 }, .foliage = .{ 0.50, 0.50, 0.28 } },
     },
     .{
@@ -803,7 +804,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
             .{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.4 },
             .{ .block = .dead_bush, .place_on = &.{.grass}, .chance = 0.02 },
         } },
-        .terrain = .{ .height_amplitude = 0.6, .smoothing = 0.3, .height_offset = 8.0 },
+        .terrain = .{ .height_amplitude = 0.6, .smoothing = 0.35, .height_offset = 10.0 },
         .colors = .{ .grass = .{ 0.58, 0.56, 0.30 }, .foliage = .{ 0.52, 0.50, 0.28 } },
     },
     .{
@@ -821,7 +822,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
             .{ .block = .dead_bush, .place_on = &.{.grass}, .chance = 0.04 },
             .{ .block = .cobblestone, .place_on = &.{.grass}, .chance = 0.02 },
         } },
-        .terrain = .{ .height_amplitude = 1.3, .smoothing = 0.0 },
+        .terrain = .{ .height_amplitude = 1.35, .smoothing = 0.05 },
         .colors = .{ .grass = .{ 0.48, 0.50, 0.28 }, .foliage = .{ 0.44, 0.46, 0.26 } },
     },
     .{
@@ -835,6 +836,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 6,
         .surface = .{ .top = .red_sand, .filler = .terracotta, .depth_range = 5 },
         .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{.{ .block = .cactus, .place_on = &.{.red_sand}, .chance = 0.02 }} },
+        .terrain = .{ .height_amplitude = 1.35, .smoothing = 0.08, .height_offset = 3.0 },
         .colors = .{ .grass = .{ 0.5, 0.4, 0.3 } },
     },
     .{
@@ -853,7 +855,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
             .{ .block = .dead_bush, .place_on = &.{.red_sand}, .chance = 0.03 },
             .{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.15 },
         } },
-        .terrain = .{ .height_amplitude = 1.0, .smoothing = 0.1 },
+        .terrain = .{ .height_amplitude = 1.15, .smoothing = 0.12, .height_offset = 4.0 },
         .colors = .{ .grass = .{ 0.52, 0.42, 0.32 }, .foliage = .{ 0.46, 0.38, 0.28 } },
     },
     .{
@@ -870,7 +872,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
             .{ .block = .cactus, .place_on = &.{.red_sand}, .chance = 0.025 },
             .{ .block = .dead_bush, .place_on = &.{.red_sand}, .chance = 0.02 },
         } },
-        .terrain = .{ .height_amplitude = 1.8, .smoothing = 0.0 },
+        .terrain = .{ .height_amplitude = 1.85, .smoothing = 0.0, .height_offset = 6.0 },
         .colors = .{ .grass = .{ 0.48, 0.38, 0.28 } },
     },
     .{
