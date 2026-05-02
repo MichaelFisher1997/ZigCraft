@@ -38,25 +38,25 @@ pub const HeightParams = struct {
     // Continental zone thresholds
     ocean_threshold: f32 = 0.35,
     continental_deep_ocean_max: f32 = 0.20,
-    continental_coast_max: f32 = 0.42,
-    continental_inland_low_max: f32 = 0.60,
-    continental_inland_high_max: f32 = 0.75,
+    continental_coast_max: f32 = 0.44,
+    continental_inland_low_max: f32 = 0.58,
+    continental_inland_high_max: f32 = 0.72,
 
     // Mountains
-    mount_amp: f32 = 60.0,
-    mount_cap: f32 = 120.0,
-    mount_inland_min: f32 = 0.60,
-    mount_inland_max: f32 = 0.80,
-    mount_peak_min: f32 = 0.55,
-    mount_peak_max: f32 = 0.85,
-    mount_rugged_min: f32 = 0.35,
-    mount_rugged_max: f32 = 0.75,
+    mount_amp: f32 = 78.0,
+    mount_cap: f32 = 140.0,
+    mount_inland_min: f32 = 0.56,
+    mount_inland_max: f32 = 0.76,
+    mount_peak_min: f32 = 0.50,
+    mount_peak_max: f32 = 0.82,
+    mount_rugged_min: f32 = 0.32,
+    mount_rugged_max: f32 = 0.72,
 
     // Ridges
-    ridge_amp: f32 = 25.0,
-    ridge_inland_min: f32 = 0.50,
-    ridge_inland_max: f32 = 0.70,
-    ridge_sparsity: f32 = 0.50,
+    ridge_amp: f32 = 34.0,
+    ridge_inland_min: f32 = 0.48,
+    ridge_inland_max: f32 = 0.68,
+    ridge_sparsity: f32 = 0.46,
 
     // Detail
     highland_range: f32 = 80.0,

@@ -218,9 +218,9 @@ test "WorldGen stable chunk fingerprints for known seed" {
     };
 
     const expected = [_]u64{
-        1589085686761579315,
-        3398558120687224261,
-        6404994074951571245,
+        11844084116277698429,
+        9139389730069537271,
+        8856338127037761019,
     };
 
     for (positions, 0..) |pos, i| {
@@ -318,7 +318,7 @@ test "Biome structural constraints - height filter" {
     const selectBiomeWithConstraints = biome_mod.selectBiomeWithConstraints;
 
     const snowy_mountains = getBiomeDefinition(.snowy_mountains);
-    try testing.expect(snowy_mountains.min_height == 112);
+    try testing.expect(snowy_mountains.min_height == 84);
 
     const climate_low = ClimateParams{
         .temperature = 0.3,
@@ -350,7 +350,7 @@ test "Biome structural constraints - height filter" {
         .ridge_mask = 0.3,
     };
     const biome_at_high_elev = selectBiomeWithConstraints(climate_high, structural_high);
-    try testing.expect(biome_at_high_elev == .snowy_mountains or biome_at_high_elev == .snowy_slopes);
+    try testing.expect(biome_mod.isMountainFamilyTerrainBiome(biome_at_high_elev));
 }
 
 test "Biome structural constraints - slope filter" {

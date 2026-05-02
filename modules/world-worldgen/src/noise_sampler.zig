@@ -39,7 +39,7 @@ pub const ClimateConfig = struct {
     temperature_local_scale: f32 = 1.0 / 200.0,
     humidity_macro_scale: f32 = 1.0 / 2000.0,
     humidity_local_scale: f32 = 1.0 / 200.0,
-    climate_macro_weight: f32 = 0.75,
+    climate_macro_weight: f32 = 0.65,
 };
 
 /// Configuration parameters for terrain noise
@@ -54,8 +54,8 @@ pub const TerrainConfig = struct {
     seabed_scale: f32 = 1.0 / 100.0,
     seabed_amp: f32 = 2.0,
     river_scale: f32 = 1.0 / 800.0,
-    river_min: f32 = 0.90,
-    river_max: f32 = 0.95,
+    river_min: f32 = 0.86,
+    river_max: f32 = 0.93,
     ridge_scale: f32 = 1.0 / 400.0,
 };
 
@@ -164,26 +164,26 @@ pub const NoiseSampler = struct {
             .warp_noise_z = ConfiguredNoise.init(makeNoiseParams(seed, 11, 200, tc.warp_amplitude, 0, 3, 0.5)),
 
             // Continental structure
-            .continentalness_noise = ConfiguredNoise.init(makeNoiseParams(seed, 20, 1500, 1.0, 0, 4, 0.5)),
-            .erosion_noise = ConfiguredNoise.init(makeNoiseParams(seed, 30, 400, 1.0, 0, 4, 0.5)),
-            .peaks_noise = ConfiguredNoise.init(makeNoiseParams(seed, 40, 300, 1.0, 0, 5, 0.5)),
+            .continentalness_noise = ConfiguredNoise.init(makeNoiseParams(seed, 20, 900, 1.0, 0, 4, 0.5)),
+            .erosion_noise = ConfiguredNoise.init(makeNoiseParams(seed, 30, 360, 1.0, 0, 4, 0.5)),
+            .peaks_noise = ConfiguredNoise.init(makeNoiseParams(seed, 40, 260, 1.0, 0, 5, 0.5)),
 
             // Climate
-            .temperature_noise = ConfiguredNoise.init(makeNoiseParams(seed, 50, 2000, 1.0, 0, 3, 0.5)),
-            .humidity_noise = ConfiguredNoise.init(makeNoiseParams(seed, 60, 2000, 1.0, 0, 3, 0.5)),
+            .temperature_noise = ConfiguredNoise.init(makeNoiseParams(seed, 50, 1400, 1.0, 0, 3, 0.5)),
+            .humidity_noise = ConfiguredNoise.init(makeNoiseParams(seed, 60, 1400, 1.0, 0, 3, 0.5)),
             .temperature_local_noise = ConfiguredNoise.init(makeNoiseParams(seed, 70, 200, 1.0, 0, 3, 0.5)),
             .humidity_local_noise = ConfiguredNoise.init(makeNoiseParams(seed, 80, 200, 1.0, 0, 3, 0.5)),
 
             // Terrain detail
             .detail_noise = ConfiguredNoise.init(makeNoiseParams(seed, 90, 32, tc.detail_amp, 0, 3, 0.5)),
-            .coast_jitter_noise = ConfiguredNoise.init(makeNoiseParams(seed, 100, 150, 0.03, 0, 2, 0.5)),
+            .coast_jitter_noise = ConfiguredNoise.init(makeNoiseParams(seed, 100, 130, 0.035, 0, 2, 0.5)),
             .seabed_noise = ConfiguredNoise.init(makeNoiseParams(seed, 110, 100, tc.seabed_amp, 0, 2, 0.5)),
             .beach_exposure_noise = ConfiguredNoise.init(makeNoiseParams(seed, 130, 100, 1.0, 0, 3, 0.5)),
             .filler_depth_noise = ConfiguredNoise.init(makeNoiseParams(seed, 140, 64, 1.0, 0, 3, 0.5)),
 
             // Mountains & ridges
-            .mountain_lift_noise = ConfiguredNoise.init(makeNoiseParams(seed, 150, 400, 1.0, 0, 3, 0.5)),
-            .ridge_noise = ConfiguredNoise.init(makeNoiseParams(seed, 160, 400, 1.0, 0, 5, 0.5)),
+            .mountain_lift_noise = ConfiguredNoise.init(makeNoiseParams(seed, 150, 340, 1.0, 0, 3, 0.5)),
+            .ridge_noise = ConfiguredNoise.init(makeNoiseParams(seed, 160, 340, 1.0, 0, 5, 0.5)),
 
             // Rivers
             .river_noise = ConfiguredNoise.init(makeNoiseParams(seed, 120, 800, 1.0, 0, 4, 0.5)),
@@ -247,7 +247,7 @@ pub const NoiseSampler = struct {
         const macro = self.temperature_noise.get2DNormalizedOctaves(x, z, macro_octaves);
         const local = self.temperature_local_noise.get2DNormalizedOctaves(x, z, local_octaves);
         var t = cc.climate_macro_weight * macro + (1.0 - cc.climate_macro_weight) * local;
-        t = (t - 0.5) * 2.2 + 0.5;
+        t = (t - 0.5) * 2.45 + 0.5;
         return clamp01(t);
     }
 
@@ -260,7 +260,7 @@ pub const NoiseSampler = struct {
         const macro = self.humidity_noise.get2DNormalizedOctaves(x, z, macro_octaves);
         const local = self.humidity_local_noise.get2DNormalizedOctaves(x, z, local_octaves);
         var h = cc.climate_macro_weight * macro + (1.0 - cc.climate_macro_weight) * local;
-        h = (h - 0.5) * 2.2 + 0.5;
+        h = (h - 0.5) * 2.45 + 0.5;
         return clamp01(h);
     }
 
