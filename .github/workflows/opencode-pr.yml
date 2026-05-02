@@ -24,7 +24,7 @@ jobs:
       (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
       github.event_name == 'workflow_dispatch'
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       id-token: write
       contents: write
@@ -74,7 +74,7 @@ jobs:
 
       - name: Run opencode
         id: ai_review
-        timeout-minutes: 25
+        timeout-minutes: 40
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ github.token }}
