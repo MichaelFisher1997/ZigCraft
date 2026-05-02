@@ -24,8 +24,12 @@ pub const ALL_FACES = block.ALL_FACES;
 
 pub const BlockDefinition = block_registry.BlockDefinition;
 pub const BLOCK_REGISTRY = block_registry.BLOCK_REGISTRY;
+pub const AttachmentFaces = block_registry.AttachmentFaces;
+pub const AttachmentSpec = block_registry.AttachmentSpec;
+pub const CustomMeshVariant = block_registry.CustomMeshVariant;
 pub const RenderPass = block_registry.RenderPass;
 pub const RenderShape = block_registry.RenderShape;
+pub const RenderShapeData = block_registry.RenderShapeData;
 pub const getBlockDefinition = block_registry.getBlockDefinition;
 
 pub const CHUNK_SIZE_X = chunk_constants.CHUNK_SIZE_X;

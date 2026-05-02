@@ -103,10 +103,36 @@ test "RenderPass enum has expected variants" {
 }
 
 test "RenderShape enum has expected variants" {
-    try testing.expectEqual(@as(u2, 0), @intFromEnum(block_registry.RenderShape.cube));
-    try testing.expectEqual(@as(u2, 1), @intFromEnum(block_registry.RenderShape.cross));
-    try testing.expectEqual(@as(u2, 2), @intFromEnum(block_registry.RenderShape.flat_quad));
-    try testing.expectEqual(@as(u2, 3), @intFromEnum(block_registry.RenderShape.tall_cross));
+    try testing.expectEqual(@as(u3, 0), @intFromEnum(block_registry.RenderShape.cube));
+    try testing.expectEqual(@as(u3, 1), @intFromEnum(block_registry.RenderShape.cross));
+    try testing.expectEqual(@as(u3, 2), @intFromEnum(block_registry.RenderShape.flat_quad));
+    try testing.expectEqual(@as(u3, 3), @intFromEnum(block_registry.RenderShape.tall_cross));
+    try testing.expectEqual(@as(u3, 4), @intFromEnum(block_registry.RenderShape.wall_attached));
+    try testing.expectEqual(@as(u3, 5), @intFromEnum(block_registry.RenderShape.custom_mesh));
+}
+
+test "AttachmentFaces walls contains only cardinal faces" {
+    const walls = block_registry.AttachmentFaces.walls();
+    try testing.expect(walls.contains(.north));
+    try testing.expect(walls.contains(.south));
+    try testing.expect(walls.contains(.east));
+    try testing.expect(walls.contains(.west));
+    try testing.expect(!walls.contains(.top));
+    try testing.expect(!walls.contains(.bottom));
+}
+
+test "vine is wall-attached render shape fixture" {
+    const vine = block_registry.getBlockDefinition(.vine);
+    try testing.expectEqual(block_registry.RenderShape.wall_attached, vine.render_shape);
+    const attachment = vine.render_shape_data.attachment orelse return error.TestExpectedEqual;
+    try testing.expectEqual(Face.north, attachment.default_face);
+    try testing.expect(attachment.allowed_faces.contains(attachment.default_face));
+}
+
+test "RenderShapeData can represent custom mesh variants" {
+    const data = block_registry.RenderShapeData{ .custom_mesh = .stairs };
+    try testing.expectEqual(block_registry.CustomMeshVariant.stairs, data.custom_mesh);
+    try testing.expectEqual(null, data.attachment);
 }
 
 test "core natural block pack registry properties" {
