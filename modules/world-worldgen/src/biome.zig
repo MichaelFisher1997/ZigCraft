@@ -48,6 +48,7 @@ pub const BIOME_REGISTRY = biome_registry.BIOME_REGISTRY;
 // ============================================================================
 
 pub const getBiomeDefinition = biome_registry.getBiomeDefinition;
+pub const isMountainFamilyTerrainBiome = biome_registry.isMountainFamilyTerrainBiome;
 
 // ============================================================================
 // Types from biome_edge_detector.zig

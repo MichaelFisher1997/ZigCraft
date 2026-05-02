@@ -290,12 +290,7 @@ pub const HeightSampler = struct {
         // ============================================================
         // STEP 7: Post-Processing - Peak compression
         // ============================================================
-        const peak_start = sea + p.peak_compression_offset;
-        if (height > peak_start) {
-            const h_above = height - peak_start;
-            const compressed = p.peak_compression_range * (1.0 - std.math.exp(-h_above / p.peak_compression_range));
-            height = peak_start + compressed;
-        }
+        height = self.compressPeakHeight(height);
 
         // ============================================================
         // STEP 8: River Carving - REGION-CONSTRAINED
@@ -344,14 +339,20 @@ pub const HeightSampler = struct {
         }
 
         // Peak compression
-        const peak_start = sea + p.peak_compression_offset;
-        if (height > peak_start) {
-            const h_above = height - peak_start;
-            const compressed = p.peak_compression_range * (1.0 - std.math.exp(-h_above / p.peak_compression_range));
-            height = peak_start + compressed;
-        }
+        height = self.compressPeakHeight(height);
 
         return height;
+    }
+
+    pub fn compressPeakHeight(self: *const HeightSampler, height: f32) f32 {
+        const p = self.params;
+        const sea: f32 = @floatFromInt(p.sea_level);
+        const peak_start = sea + p.peak_compression_offset;
+        if (height <= peak_start) return height;
+
+        const h_above = height - peak_start;
+        const compressed = p.peak_compression_range * (1.0 - std.math.exp(-h_above / p.peak_compression_range));
+        return peak_start + compressed;
     }
 };
 
@@ -399,4 +400,13 @@ test "HeightSampler mountain mask range" {
 
     const m2 = sampler.getMountainMask(0.2, 0.8, 0.4);
     try std.testing.expect(m2 >= 0.0 and m2 <= 1.0);
+}
+
+test "HeightSampler peak compression caps extreme mountain output" {
+    const sampler = HeightSampler.init();
+    const compressed = sampler.compressPeakHeight(320.0);
+    const max_asymptote = @as(f32, @floatFromInt(sampler.params.sea_level)) + sampler.params.peak_compression_offset + sampler.params.peak_compression_range;
+
+    try std.testing.expect(compressed < 320.0);
+    try std.testing.expect(compressed < max_asymptote);
 }

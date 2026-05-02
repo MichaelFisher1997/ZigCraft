@@ -153,19 +153,19 @@ pub const TerrainShapeGenerator = struct {
         const wz_i: i32 = @intFromFloat(@floor(wz));
         const region = region_pkg.getRegion(region_seed, wx_i, wz_i);
         const path_info = region_pkg.getPathInfo(region_seed, wx_i, wz_i, region);
-        const terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, controls, path_info, reduction);
-        const terrain_height_i: i32 = @intFromFloat(terrain_height);
-
-        const altitude_offset: f32 = @max(0, terrain_height - sea);
-        var temperature = noise.temperature;
-        temperature = clamp01(temperature - (altitude_offset / 512.0) * self.params.temp_lapse);
-
         const ridge_params = NoiseSampler.RidgeParams{
             .inland_min = self.params.ridge_inland_min,
             .inland_max = self.params.ridge_inland_max,
             .sparsity = self.params.ridge_sparsity,
         };
         const ridge_mask = self.noise_sampler.getRidgeFactor(noise.warped_x, noise.warped_z, c_jittered, reduction, ridge_params);
+        var terrain_height = self.height_sampler.computeHeight(&self.noise_sampler, noise, controls, path_info, reduction);
+        terrain_height = self.applyMountainTerrainModifier(terrain_height, noise.temperature, noise.humidity, c_jittered, noise.erosion, ridge_mask, noise.river_mask);
+        const terrain_height_i: i32 = @intFromFloat(terrain_height);
+
+        const altitude_offset: f32 = @max(0, terrain_height - sea);
+        var temperature = noise.temperature;
+        temperature = clamp01(temperature - (altitude_offset / 512.0) * self.params.temp_lapse);
 
         return .{
             .terrain_height = terrain_height,
@@ -420,6 +420,41 @@ pub const TerrainShapeGenerator = struct {
             .ridge_mask = column.ridge_mask,
         };
         return self.biome_source.selectBiome(climate, structural, column.river_mask);
+    }
+
+    fn applyMountainTerrainModifier(
+        self: *const TerrainShapeGenerator,
+        terrain_height: f32,
+        temperature: f32,
+        humidity: f32,
+        continentalness: f32,
+        erosion: f32,
+        ridge_mask: f32,
+        river_mask: f32,
+    ) f32 {
+        const terrain_height_i: i32 = @intFromFloat(terrain_height);
+        const sea: f32 = @floatFromInt(self.params.sea_level);
+        const altitude_offset: f32 = @max(0, terrain_height - sea);
+        const adjusted_temperature = clamp01(temperature - (altitude_offset / 512.0) * self.params.temp_lapse);
+        const climate = self.biome_source.computeClimate(
+            adjusted_temperature,
+            humidity,
+            terrain_height_i,
+            continentalness,
+            erosion,
+            CHUNK_SIZE_Y,
+        );
+        const structural = biome_mod.StructuralParams{
+            .height = terrain_height_i,
+            .slope = 0,
+            .continentalness = continentalness,
+            .ridge_mask = ridge_mask,
+        };
+        const biome_id = self.biome_source.selectBiome(climate, structural, river_mask);
+        if (!biome_mod.isMountainFamilyTerrainBiome(biome_id)) return terrain_height;
+
+        const modified = biome_mod.getBiomeDefinition(biome_id).terrain.applyHeight(terrain_height, sea);
+        return self.height_sampler.compressPeakHeight(modified);
     }
 
     pub fn detectBiomeEdge(
