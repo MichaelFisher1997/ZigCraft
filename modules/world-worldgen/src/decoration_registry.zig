@@ -59,7 +59,7 @@ pub const DECORATIONS = [_]Decoration{
     .{ .simple = .{
         .block = .dead_bush,
         .place_on = &.{ .sand, .red_sand },
-        .biomes = &.{ .desert, .badlands, .eroded_badlands },
+        .biomes = &.{ .desert, .badlands, .wooded_badlands, .eroded_badlands },
         .probability = 0.02,
     } },
 
