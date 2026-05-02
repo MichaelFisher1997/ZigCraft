@@ -34,6 +34,7 @@ pub const Field = enum {
     ruggedness,
     river_mask,
     ridge_mask,
+    cave_region,
     elevation,
     height,
 };
@@ -209,6 +210,7 @@ fn fieldValue(sample: Sample, field: Field) f32 {
         .ruggedness => sample.ruggedness,
         .river_mask => sample.river_mask,
         .ridge_mask => sample.ridge_mask,
+        .cave_region => sample.cave_region,
         .elevation => sample.elevation,
         .height => @floatFromInt(sample.height),
     };

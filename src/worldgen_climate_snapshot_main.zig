@@ -16,7 +16,13 @@ pub fn main(init: std.process.Init) !void {
     var args = std.process.Args.Iterator.init(init.minimal.args);
     _ = args.skip();
 
-    const options = try parseArgs(&args);
+    const options = parseArgs(&args) catch |err| switch (err) {
+        error.HelpRequested => {
+            try writeUsage(init);
+            return;
+        },
+        else => return err,
+    };
     var snapshot = try climate_snapshot.capture(allocator, options.config);
     defer snapshot.deinit(allocator);
 
@@ -42,6 +48,29 @@ pub fn main(init: std.process.Init) !void {
     var file = try fs.cwd().createFile(options.output_path, .{ .truncate = true });
     defer file.close();
     try file.writeAll(aw.written());
+}
+
+fn writeUsage(init: std.process.Init) !void {
+    var stderr_buffer: [2048]u8 = undefined;
+    var stderr_writer = std.Io.File.stderr().writer(init.io, &stderr_buffer);
+    const stderr = &stderr_writer.interface;
+    try stderr.writeAll(
+        \\Usage: zig build worldgen-climate-snapshot -- [options]
+        \\
+        \\Options:
+        \\  --seed <u64>           World seed (default: 42)
+        \\  --origin-x <i32>       Snapshot origin X (default: -256)
+        \\  --origin-z <i32>       Snapshot origin Z (default: -256)
+        \\  --width <u32>          Sample width (default: 128)
+        \\  --depth <u32>          Sample depth (default: 128)
+        \\  --step <f32>           World-space distance between samples (default: 4)
+        \\  --reduction <u8>       LOD noise reduction level (default: 0)
+        \\  --format <json|ppm>    Output format (default: json)
+        \\  --field <name>         PPM field: temperature, humidity, continentalness, erosion, ruggedness, river_mask, ridge_mask, cave_region, elevation, height
+        \\  --output <path|->      Output file or stdout (default: zig-out/worldgen-climate-snapshot.json)
+        \\
+    );
+    try stderr.flush();
 }
 
 fn parseArgs(args: *std.process.Args.Iterator) !CliOptions {
