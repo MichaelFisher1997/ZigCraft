@@ -4,6 +4,8 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
     return switch (biome_id) {
         .deep_ocean => 0x1A3380,
         .ocean => 0x3366CC,
+        .warm_ocean => 0x1F8FCC,
+        .tropical => 0x2BBF9A,
         .beach => 0xDDBB88,
         .plains => 0x4D8033,
         .forest => 0x2D591A,

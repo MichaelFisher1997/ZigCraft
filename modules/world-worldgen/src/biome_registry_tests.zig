@@ -193,7 +193,7 @@ test "BiomeDefinition scoreClimate priority bonus" {
 // ============================================================================
 
 test "getBiomeDefinition returns valid pointer for all ids" {
-    inline for (0..21) |i| {
+    inline for (0..@typeInfo(BiomeId).@"enum".fields.len) |i| {
         const id: BiomeId = @enumFromInt(i);
         const def = getBiomeDefinition(id);
         try testing.expectEqual(id, def.id);
@@ -212,10 +212,23 @@ test "getBiomeDefinition ocean biomes have correct continentalness ranges" {
     const ocean = getBiomeDefinition(.ocean);
     try testing.expect(ocean.continentalness.max <= 0.35);
     try testing.expect(ocean.continentalness.min < 0.35);
+
+    const warm = getBiomeDefinition(.warm_ocean);
+    try testing.expect(warm.continentalness.max <= 0.35);
+    try testing.expect(warm.vegetation.seagrass_density > 0.0);
+    try testing.expect(warm.vegetation.coral_density > 0.0);
 }
 
 test "getBiomeDefinition beach has narrow continentalness band" {
     const beach = getBiomeDefinition(.beach);
     try testing.expect(beach.continentalness.min >= 0.30);
     try testing.expect(beach.continentalness.max <= 0.45);
+}
+
+test "getBiomeDefinition tropical has aquatic vegetation and coastal range" {
+    const tropical = getBiomeDefinition(.tropical);
+    try testing.expect(tropical.continentalness.min >= 0.30);
+    try testing.expect(tropical.continentalness.max <= 0.50);
+    try testing.expect(tropical.vegetation.coral_density > 0.0);
+    try testing.expect(tropical.vegetation.decoration_rules.len > 0);
 }

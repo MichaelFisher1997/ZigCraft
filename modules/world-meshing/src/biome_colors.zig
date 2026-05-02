@@ -9,6 +9,8 @@ pub const BiomeColors = struct {
 pub fn getBiomeColors(id: BiomeId) BiomeColors {
     return switch (id) {
         .deep_ocean => .{ .water = .{ 0.1, 0.2, 0.5 } },
+        .warm_ocean => .{ .water = .{ 0.08, 0.50, 0.82 } },
+        .tropical => .{ .grass = .{ 0.18, 0.74, 0.18 }, .foliage = .{ 0.10, 0.62, 0.10 }, .water = .{ 0.05, 0.55, 0.85 } },
         .plains => .{},
         .forest => .{ .grass = .{ 0.18, 0.64, 0.16 }, .foliage = .{ 0.12, 0.52, 0.12 } },
         .taiga => .{ .grass = .{ 0.24, 0.56, 0.24 }, .foliage = .{ 0.18, 0.46, 0.18 } },

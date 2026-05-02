@@ -152,3 +152,29 @@ test "core natural block pack registry properties" {
     try testing.expectEqual(block_registry.RenderPass.solid, block_registry.getBlockDefinition(.red_terracotta).render_pass);
     try testing.expectEqual(block_registry.RenderPass.solid, block_registry.getBlockDefinition(.white_terracotta).render_pass);
 }
+
+test "aquatic vegetation blocks use cutout shapes" {
+    const seagrass = block_registry.getBlockDefinition(.seagrass);
+    try testing.expect(!seagrass.is_solid);
+    try testing.expectEqual(block_registry.RenderPass.cutout, seagrass.render_pass);
+    try testing.expectEqual(block_registry.RenderShape.cross, seagrass.render_shape);
+
+    const tall_seagrass = block_registry.getBlockDefinition(.tall_seagrass);
+    try testing.expect(!tall_seagrass.is_solid);
+    try testing.expectEqual(block_registry.RenderPass.cutout, tall_seagrass.render_pass);
+    try testing.expectEqual(block_registry.RenderShape.tall_cross, tall_seagrass.render_shape);
+
+    const kelp = block_registry.getBlockDefinition(.kelp);
+    try testing.expect(!kelp.is_solid);
+    try testing.expectEqual(block_registry.RenderShape.tall_cross, kelp.render_shape);
+
+    const coral_fan = block_registry.getBlockDefinition(.coral_fan);
+    try testing.expect(!coral_fan.is_solid);
+    try testing.expectEqual(block_registry.RenderShape.flat_quad, coral_fan.render_shape);
+}
+
+test "coral block is a solid underwater block" {
+    const coral = block_registry.getBlockDefinition(.coral_block);
+    try testing.expect(coral.is_solid);
+    try testing.expectEqual(block_registry.RenderPass.solid, coral.render_pass);
+}

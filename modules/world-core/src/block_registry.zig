@@ -342,6 +342,12 @@ pub const BLOCK_REGISTRY = blk: {
             .vine => .{ 0.12, 0.56, 0.08 },
             .torch => .{ 1.0, 0.8, 0.4 },
             .lava => .{ 1.0, 0.4, 0.1 },
+            .seagrass => .{ 0.12, 0.55, 0.16 },
+            .tall_seagrass => .{ 0.10, 0.50, 0.14 },
+            .kelp => .{ 0.08, 0.36, 0.12 },
+            .seaweed => .{ 0.18, 0.42, 0.16 },
+            .coral_block => .{ 0.95, 0.35, 0.45 },
+            .coral_fan => .{ 1.0, 0.45, 0.50 },
             .snow_layer => .{ 0.95, 0.95, 1.0 },
             .ice => .{ 0.65, 0.85, 1.0 },
             .packed_ice => .{ 0.45, 0.70, 0.95 },
@@ -371,19 +377,19 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 2. Solid
         def.is_solid = switch (id) {
-            .air, .water, .lava, .snow_layer, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch => false,
+            .air, .water, .lava, .snow_layer, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch, .seagrass, .tall_seagrass, .kelp, .seaweed, .coral_fan => false,
             else => true,
         };
 
         // 3. Transparent
         def.is_transparent = switch (id) {
-            .air, .water, .lava, .glass, .ice, .packed_ice, .blue_ice, .snow_layer, .leaves, .mangrove_leaves, .mangrove_roots, .jungle_leaves, .bamboo, .acacia_leaves, .acacia_sapling, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch => true,
+            .air, .water, .lava, .glass, .ice, .packed_ice, .blue_ice, .snow_layer, .leaves, .mangrove_leaves, .mangrove_roots, .jungle_leaves, .bamboo, .acacia_leaves, .acacia_sapling, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch, .seagrass, .tall_seagrass, .kelp, .seaweed, .coral_fan => true,
             else => false,
         };
 
         // 4. Tintable
         def.is_tintable = switch (id) {
-            .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .water => true,
+            .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .seagrass, .tall_seagrass, .kelp, .seaweed, .water => true,
             else => false,
         };
 
@@ -397,7 +403,7 @@ pub const BLOCK_REGISTRY = blk: {
         def.render_pass = switch (id) {
             .water, .lava => .fluid,
             .glass, .ice, .packed_ice, .blue_ice => .translucent,
-            .snow_layer, .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .mangrove_roots, .bamboo, .acacia_sapling, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch => .cutout,
+            .snow_layer, .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .mangrove_roots, .bamboo, .acacia_sapling, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch, .seagrass, .tall_seagrass, .kelp, .seaweed, .coral_fan => .cutout,
             else => .solid,
         };
 
@@ -411,9 +417,10 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 8. Render Shape
         def.render_shape = switch (id) {
+            .tall_grass, .tall_seagrass, .kelp => .tall_cross,
+            .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch, .seagrass, .seaweed => .cross,
+            .coral_fan => .flat_quad,
             .snow_layer => .flat_quad,
-            .tall_grass => .tall_cross,
-            .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch => .cross,
             .vine => .wall_attached,
             else => .cube,
         };

@@ -253,8 +253,11 @@ pub fn selectBiomeSimple(climate: ClimateParams) BiomeId {
     // Ocean check
     if (continental < 0.35) {
         if (continental < 0.20) return .deep_ocean;
+        if (heat > 75 and humidity > 55) return .warm_ocean;
         return .ocean;
     }
+
+    if (continental < 0.48 and heat > 85 and humidity > 70) return .tropical;
 
     // Simple land biome selection based on heat/humidity
     if (heat < 20) {

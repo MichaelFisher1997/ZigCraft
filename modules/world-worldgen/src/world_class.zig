@@ -88,7 +88,7 @@ pub fn deriveSurfaceType(
         .desert, .badlands, .beach => .sand,
         .snow_tundra, .snowy_mountains => .snow,
         .mountains => if (height > 120) .rock else .stone,
-        .deep_ocean, .ocean => .sand,
+        .deep_ocean, .ocean, .warm_ocean, .tropical => .sand,
         else => .grass,
     };
 }

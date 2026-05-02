@@ -24,6 +24,9 @@ pub const SimpleDecoration = struct {
     biomes: []const BiomeId, // Empty = all (but usually restricted)
     y_min: i32 = 1,
     y_max: i32 = 256,
+    requires_water: bool = false,
+    min_water_depth: u8 = 0,
+    max_water_depth: u8 = 255,
     probability: f32, // Chance per column (0.0 - 1.0)
 
     // Variant noise constraints (Issue #110)
@@ -31,9 +34,10 @@ pub const SimpleDecoration = struct {
     variant_min: f32 = -1.0,
     variant_max: f32 = 1.0,
 
-    pub fn isAllowed(self: SimpleDecoration, biome: BiomeId, surface_block: BlockType) bool {
+    pub fn isAllowed(self: SimpleDecoration, biome: BiomeId, surface_block: BlockType, water_depth: u8) bool {
         if (!isBiomeAllowed(self.biomes, biome)) return false;
         if (!isBlockAllowed(self.place_on, surface_block)) return false;
+        if (!waterAllowed(self.requires_water, self.min_water_depth, self.max_water_depth, water_depth)) return false;
         return true;
     }
 };
@@ -65,12 +69,16 @@ pub const DecorationRule = struct {
     chance: f32,
     y_min: i32 = 1,
     y_max: i32 = 256,
+    requires_water: bool = false,
+    min_water_depth: u8 = 0,
+    max_water_depth: u8 = 255,
     variant_min: f32 = -1.0,
     variant_max: f32 = 1.0,
 
-    pub fn isAllowed(self: DecorationRule, surface_block: BlockType, surface_y: i32, variant: f32, allow_subbiomes: bool) bool {
+    pub fn isAllowed(self: DecorationRule, surface_block: BlockType, surface_y: i32, variant: f32, allow_subbiomes: bool, water_depth: u8) bool {
         if (!isBlockAllowed(self.place_on, surface_block)) return false;
         if (surface_y + 1 < self.y_min or surface_y + 1 > self.y_max) return false;
+        if (!waterAllowed(self.requires_water, self.min_water_depth, self.max_water_depth, water_depth)) return false;
         if (allow_subbiomes) return variant >= self.variant_min and variant <= self.variant_max;
         return self.variant_min == -1.0 and self.variant_max == 1.0;
     }
@@ -94,4 +102,9 @@ fn isBlockAllowed(allowed: []const BlockType, current: BlockType) bool {
         if (b == current) return true;
     }
     return false;
+}
+
+fn waterAllowed(requires_water: bool, min_depth: u8, max_depth: u8, water_depth: u8) bool {
+    if (!requires_water) return water_depth == 0;
+    return water_depth >= min_depth and water_depth <= max_depth;
 }
