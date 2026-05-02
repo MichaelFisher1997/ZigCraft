@@ -15,11 +15,27 @@ const BLEND_EPSILON = registry.BLEND_EPSILON;
 // Voronoi Biome Selection (Issue #106)
 // ============================================================================
 
-/// Select biome using Voronoi diagram in heat/humidity space
-/// Returns the biome whose point is closest to the given heat/humidity values
+/// Select biome using Voronoi diagram in heat/humidity space.
+/// Compatibility wrapper for callers that do not have erosion/ridge data.
 pub fn selectBiomeVoronoi(heat: f32, humidity: f32, height: i32, continentalness: f32, slope: i32) BiomeId {
+    return selectBiomeVoronoiMultiParam(heat, humidity, height, continentalness, 0.35, 0.0, slope);
+}
+
+/// Select biome using multi-parameter Voronoi distance.
+/// Heat/humidity preserve their historical 0-100 scale; normalized dimensions
+/// are scaled to the same range so each axis can materially affect selection.
+pub fn selectBiomeVoronoiMultiParam(
+    heat: f32,
+    humidity: f32,
+    height: i32,
+    continentalness: f32,
+    ruggedness: f32,
+    ridge_mask: f32,
+    slope: i32,
+) BiomeId {
     var min_dist: f32 = std.math.inf(f32);
     var closest: BiomeId = .plains;
+    const elevation = normalizedHeight(height);
 
     for (BIOME_POINTS) |point| {
         // Check height constraint
@@ -31,10 +47,21 @@ pub fn selectBiomeVoronoi(heat: f32, humidity: f32, height: i32, continentalness
         // Check continentalness constraint
         if (continentalness < point.min_continental or continentalness > point.max_continental) continue;
 
-        // Calculate weighted Euclidean distance in heat/humidity space
+        // Calculate weighted Euclidean distance in multi-parameter climate space.
         const d_heat = heat - point.heat;
         const d_humidity = humidity - point.humidity;
-        var dist = @sqrt(d_heat * d_heat + d_humidity * d_humidity);
+        const d_elevation = (elevation - point.elevationCenter()) * 100.0;
+        const d_continentalness = (continentalness - point.continentalnessCenter()) * 100.0;
+        const d_ruggedness = (ruggedness - point.ruggedness) * 100.0;
+        const d_ridge_mask = (ridge_mask - point.ridge_mask) * 100.0;
+        var dist = @sqrt(
+            d_heat * d_heat +
+                d_humidity * d_humidity +
+                d_elevation * d_elevation +
+                d_continentalness * d_continentalness +
+                d_ruggedness * d_ruggedness +
+                d_ridge_mask * d_ridge_mask,
+        );
 
         // Weight adjusts effective cell size (larger weight = closer distance = more likely)
         dist /= point.weight;
@@ -46,6 +73,10 @@ pub fn selectBiomeVoronoi(heat: f32, humidity: f32, height: i32, continentalness
     }
 
     return closest;
+}
+
+fn normalizedHeight(height: i32) f32 {
+    return std.math.clamp(@as(f32, @floatFromInt(height)) / 256.0, 0.0, 1.0);
 }
 
 /// Select biome using Voronoi with river override
@@ -63,7 +94,7 @@ pub fn selectBiomeVoronoiWithRiver(
         if (heat <= 20.0) return .frozen_river;
         return .river;
     }
-    return selectBiomeVoronoi(heat, humidity, height, continentalness, slope);
+    return selectBiomeVoronoiMultiParam(heat, humidity, height, continentalness, 0.35, 0.0, slope);
 }
 
 // ============================================================================

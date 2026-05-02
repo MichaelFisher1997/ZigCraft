@@ -163,12 +163,19 @@ pub const ClimateParams = struct {
 /// Biome identifiers - shared with core chunk storage.
 pub const BiomeId = @import("world-core").BiomeId;
 
-/// Voronoi point defining a biome's position in climate space
-/// Biomes are selected by finding the closest point to the sampled heat/humidity
+/// Voronoi point defining a biome's position in multi-parameter climate space.
+/// Biomes are selected by finding the closest point to sampled climate and
+/// terrain-shape values after structural filters are applied.
 pub const BiomePoint = struct {
     id: BiomeId,
     heat: f32, // 0-100 scale (cold to hot)
     humidity: f32, // 0-100 scale (dry to wet)
+    /// Optional normalized center values. When omitted, the selector derives
+    /// continentalness and elevation from the structural constraint ranges.
+    elevation: ?f32 = null,
+    continentalness: ?f32 = null,
+    ruggedness: f32 = 0.35,
+    ridge_mask: f32 = 0.0,
     weight: f32 = 1.0, // Cell size multiplier (larger = bigger biome regions)
     y_min: i32 = 0, // Minimum Y level
     y_max: i32 = 256, // Maximum Y level
@@ -178,6 +185,18 @@ pub const BiomePoint = struct {
     min_continental: f32 = 0.0,
     /// Maximum continentalness. Set < 0.35 for ocean-only biomes
     max_continental: f32 = 1.0,
+
+    pub fn elevationCenter(self: BiomePoint) f32 {
+        if (self.elevation) |value| return value;
+        if (self.y_min > 0) return std.math.clamp(@as(f32, @floatFromInt(self.y_min)) / 256.0, 0.0, 1.0);
+        if (self.y_max < 256) return std.math.clamp(@as(f32, @floatFromInt(self.y_max)) / 256.0, 0.0, 1.0);
+        return 0.5;
+    }
+
+    pub fn continentalnessCenter(self: BiomePoint) f32 {
+        if (self.continentalness) |value| return value;
+        return (self.min_continental + self.max_continental) * 0.5;
+    }
 };
 
 /// Structural constraints for biome selection
@@ -214,7 +233,7 @@ pub const BIOME_POINTS = [_]BiomePoint{
     .{ .id = .taiga, .heat = 20, .humidity = 60, .weight = 1.0, .min_continental = 0.42 },
     .{ .id = .snowy_taiga, .heat = 8, .humidity = 72, .weight = 0.5, .min_continental = 0.48 },
     .{ .id = .old_growth_taiga, .heat = 30, .humidity = 86, .weight = 0.45, .min_continental = 0.55 },
-    .{ .id = .snowy_mountains, .heat = 10, .humidity = 40, .weight = 0.8, .min_continental = 0.68, .y_min = 112 },
+    .{ .id = .snowy_mountains, .heat = 10, .humidity = 40, .continentalness = 0.72, .weight = 0.8, .min_continental = 0.68, .y_min = 112 },
     .{ .id = .grove, .heat = 18, .humidity = 65, .weight = 0.75, .min_continental = 0.66, .y_min = 88, .y_max = 132, .max_slope = 12 },
     .{ .id = .snowy_slopes, .heat = 8, .humidity = 45, .weight = 0.7, .min_continental = 0.72, .y_min = 112, .y_max = 165 },
     .{ .id = .frozen_peaks, .heat = 4, .humidity = 35, .weight = 0.55, .min_continental = 0.78, .y_min = 138 },
