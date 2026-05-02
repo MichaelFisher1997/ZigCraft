@@ -32,6 +32,7 @@ pub const shadow_test_world = @import("shadow_test_world.zig");
 pub const surface_builder = @import("surface_builder.zig");
 pub const terrain_shape_generator = @import("terrain_shape_generator.zig");
 pub const terrain_shape_generator_tests = @import("terrain_shape_generator_tests.zig");
+pub const terrain_modifier_tests = @import("terrain_modifier_tests.zig");
 pub const tree_registry = @import("tree_registry.zig");
 pub const world_class = @import("world_class.zig");
 pub const world_map = @import("world_map.zig");
