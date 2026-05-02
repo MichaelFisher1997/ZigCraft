@@ -19,6 +19,7 @@ pub const SimpleDecoration = types.SimpleDecoration;
 pub const SchematicBlock = types.SchematicBlock;
 pub const Schematic = types.Schematic;
 pub const SchematicDecoration = types.SchematicDecoration;
+pub const DecorationRule = types.DecorationRule;
 pub const Decoration = types.Decoration;
 pub const DecorationProvider = @import("decoration_provider.zig").DecorationProvider;
 pub const DecorationContext = @import("decoration_provider.zig").DecorationProvider.DecorationContext;
@@ -172,10 +173,24 @@ pub const StandardDecorationProvider = struct {
             chunk.setBlock(local_x, @intCast(surface_y + 1), local_z, simple.block);
         }
 
-        // 2. Dynamic Tree Registry (from Biome Definition)
+        // 2. Biome-defined block decoration rules
         const biome_def = biome_mod.getBiomeDefinition(biome);
         const vegetation = biome_def.vegetation;
 
+        for (vegetation.decoration_rules) |rule| {
+            if (!rule.isAllowed(surface_block, surface_y, variant, allow_subbiomes)) continue;
+
+            const prob = @min(1.0, rule.chance * veg_mult);
+            if (random.float(f32) >= prob) continue;
+
+            const place_y = surface_y + 1;
+            if (chunk.getBlockSafe(@intCast(local_x), place_y, @intCast(local_z)) != .air) continue;
+
+            chunk.setBlock(local_x, @intCast(place_y), local_z, rule.block);
+            break;
+        }
+
+        // 3. Dynamic Tree Registry (from Biome Definition)
         if (vegetation.tree_types.len > 0) {
             for (vegetation.tree_types) |tree_type| {
                 if (tree_registry.getTreeDefinition(tree_type)) |tree_def| {

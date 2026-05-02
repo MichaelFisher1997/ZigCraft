@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const BlockType = @import("world-core").BlockType;
+const DecorationRule = @import("decoration_types.zig").DecorationRule;
 const tree_registry = @import("tree_registry.zig");
 pub const TreeType = tree_registry.TreeType;
 
@@ -43,16 +44,8 @@ pub const ColorTints = struct {
 
 /// Vegetation profile for biome-driven placement
 pub const VegetationProfile = struct {
-    tree_types: []const TreeType = &.{.oak},
-    tree_density: f32 = 0.05, // Probability per attempt
-    bush_density: f32 = 0.0,
-    grass_density: f32 = 0.0,
-    cactus_density: f32 = 0.0,
-    dead_bush_density: f32 = 0.0,
-    bamboo_density: f32 = 0.0,
-    melon_density: f32 = 0.0,
-    red_mushroom_density: f32 = 0.0,
-    brown_mushroom_density: f32 = 0.0,
+    tree_types: []const TreeType = &.{},
+    decoration_rules: []const DecorationRule = &.{},
 };
 
 /// Terrain modifiers applied during height computation
@@ -233,7 +226,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = 0.0, .max = 0.20 },
         .priority = 2,
         .surface = .{ .top = .gravel, .filler = .gravel, .depth_range = 4 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0 },
+        .vegetation = .{ .tree_types = &.{} },
         .colors = .{ .water = .{ 0.1, 0.2, 0.5 } },
     },
     .{
@@ -245,7 +238,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = 0.0, .max = 0.35 },
         .priority = 1,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0 },
+        .vegetation = .{ .tree_types = &.{} },
     },
     .{
         .id = .beach,
@@ -257,7 +250,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .max_slope = 2,
         .priority = 10,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0 },
+        .vegetation = .{ .tree_types = &.{} },
     },
 
     // === Land Biomes (continentalness > 0.45) ===
@@ -271,7 +264,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = Range.any(),
         .priority = 0, // Fallback
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{.sparse_oak}, .tree_density = 0.02, .grass_density = 0.3 },
+        .vegetation = .{ .tree_types = &.{.sparse_oak}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.3 }} },
         .terrain = .{ .height_amplitude = 0.7, .smoothing = 0.2 },
     },
     .{
@@ -284,7 +277,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = .{ .min = 0.0, .max = 0.60 },
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{ .oak, .birch, .dense_oak }, .tree_density = 0.12, .bush_density = 0.05, .grass_density = 0.4 },
+        .vegetation = .{ .tree_types = &.{ .oak, .birch, .dense_oak }, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.4 }} },
         .colors = .{ .grass = .{ 0.18, 0.64, 0.16 }, .foliage = .{ 0.12, 0.52, 0.12 } },
     },
     .{
@@ -296,7 +289,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = 0.45, .max = 1.0 },
         .priority = 6,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{.spruce}, .tree_density = 0.10, .grass_density = 0.2 },
+        .vegetation = .{ .tree_types = &.{.spruce}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.2 }} },
         .colors = .{ .grass = .{ 0.24, 0.56, 0.24 }, .foliage = .{ 0.18, 0.46, 0.18 } },
     },
     .{
@@ -311,7 +304,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .max_slope = 4,
         .priority = 6,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 6 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0, .cactus_density = 0.015, .dead_bush_density = 0.02 },
+        .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{
+            .{ .block = .cactus, .place_on = &.{.sand}, .chance = 0.015 },
+            .{ .block = .dead_bush, .place_on = &.{.sand}, .chance = 0.02 },
+        } },
         .terrain = .{ .height_amplitude = 0.5, .smoothing = 0.4 },
         .colors = .{ .grass = .{ 0.75, 0.70, 0.35 } },
     },
@@ -326,7 +322,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .max_slope = 3,
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{.swamp_oak}, .tree_density = 0.08 },
+        .vegetation = .{ .tree_types = &.{.swamp_oak} },
         .terrain = .{ .clamp_to_sea_level = true, .height_offset = -2 },
         .colors = .{
             .grass = .{ 0.24, 0.54, 0.20 },
@@ -345,7 +341,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .max_slope = 255,
         .priority = 4,
         .surface = .{ .top = .snow_block, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{.spruce}, .tree_density = 0.01 },
+        .vegetation = .{ .tree_types = &.{.spruce} },
         .colors = .{ .grass = .{ 0.7, 0.75, 0.8 } },
     },
 
@@ -362,7 +358,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .min_ridge_mask = 0.1,
         .priority = 2,
         .surface = .{ .top = .stone, .filler = .stone, .depth_range = 1 },
-        .vegetation = .{ .tree_types = &.{.sparse_oak}, .tree_density = 0 },
+        .vegetation = .{ .tree_types = &.{.sparse_oak} },
         .terrain = .{ .height_amplitude = 1.5 },
     },
     .{
@@ -377,7 +373,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .max_slope = 255,
         .priority = 2,
         .surface = .{ .top = .snow_block, .filler = .stone, .depth_range = 1 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0 },
+        .vegetation = .{ .tree_types = &.{} },
         .terrain = .{ .height_amplitude = 1.4 },
         .colors = .{ .grass = .{ 0.85, 0.90, 0.95 } },
     },
@@ -392,7 +388,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = 0.45, .max = 0.60 }, // Coastal swamp
         .priority = 6,
         .surface = .{ .top = .mud, .filler = .mud, .depth_range = 4 },
-        .vegetation = .{ .tree_types = &.{.mangrove}, .tree_density = 0.15 },
+        .vegetation = .{ .tree_types = &.{.mangrove} },
         .terrain = .{ .clamp_to_sea_level = true, .height_offset = -1 },
         .colors = .{ .grass = .{ 0.26, 0.58, 0.18 }, .foliage = .{ 0.22, 0.52, 0.16 }, .water = .{ 0.16, 0.38, 0.30 } },
     },
@@ -405,7 +401,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = 0.60, .max = 1.0 }, // Inland
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{.jungle}, .tree_density = 0.20, .bamboo_density = 0.08, .melon_density = 0.04 },
+        .vegetation = .{ .tree_types = &.{.jungle}, .decoration_rules = &.{
+            .{ .block = .bamboo, .place_on = &.{.grass}, .chance = 0.08 },
+            .{ .block = .melon, .place_on = &.{.grass}, .chance = 0.04 },
+        } },
         .colors = .{ .grass = .{ 0.10, 0.76, 0.08 }, .foliage = .{ 0.08, 0.62, 0.08 } },
     },
     .{
@@ -417,7 +416,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = 0.55, .max = 1.0 }, // Inland (less restrictive)
         .priority = 5, // Higher priority to win over plains in hot zones
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{.acacia}, .tree_density = 0.015, .grass_density = 0.5, .dead_bush_density = 0.01 },
+        .vegetation = .{ .tree_types = &.{.acacia}, .decoration_rules = &.{
+            .{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.5 },
+            .{ .block = .dead_bush, .place_on = &.{.grass}, .chance = 0.01 },
+        } },
         .colors = .{ .grass = .{ 0.55, 0.55, 0.30 }, .foliage = .{ 0.50, 0.50, 0.28 } },
     },
     .{
@@ -430,7 +432,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = .{ .min = 0.4, .max = 1.0 },
         .priority = 6,
         .surface = .{ .top = .red_sand, .filler = .terracotta, .depth_range = 5 },
-        .vegetation = .{ .cactus_density = 0.02 },
+        .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{.{ .block = .cactus, .place_on = &.{.red_sand}, .chance = 0.02 }} },
         .colors = .{ .grass = .{ 0.5, 0.4, 0.3 } },
     },
     .{
@@ -442,7 +444,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .max_height = 50,
         .priority = 20,
         .surface = .{ .top = .mycelium, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{ .huge_red_mushroom, .huge_brown_mushroom }, .tree_density = 0.05, .red_mushroom_density = 0.1, .brown_mushroom_density = 0.1 },
+        .vegetation = .{ .tree_types = &.{ .huge_red_mushroom, .huge_brown_mushroom }, .decoration_rules = &.{
+            .{ .block = .red_mushroom_block, .place_on = &.{.mycelium}, .chance = 0.1 },
+            .{ .block = .brown_mushroom_block, .place_on = &.{.mycelium}, .chance = 0.1 },
+        } },
         .colors = .{ .grass = .{ 0.4, 0.8, 0.4 } },
     },
     .{
@@ -455,7 +460,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = -1.0, .max = -0.5 },
         .priority = 15,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0 },
+        .vegetation = .{ .tree_types = &.{} },
     },
 
     // === Transition Micro-Biomes ===
@@ -472,7 +477,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = .{ .min = 0.30, .max = 0.80 },
         .priority = 0, // Lowest priority
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{ .sparse_oak, .spruce }, .tree_density = 0.08, .grass_density = 0.4 },
+        .vegetation = .{ .tree_types = &.{ .sparse_oak, .spruce }, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.4 }} },
         .terrain = .{ .height_amplitude = 1.1, .smoothing = 0.1 },
         .colors = .{ .grass = .{ 0.24, 0.62, 0.22 }, .foliage = .{ 0.18, 0.50, 0.16 } },
     },
@@ -486,7 +491,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = .{ .min = 0.0, .max = 0.30 },
         .priority = 0, // Lowest priority
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{.swamp_oak}, .tree_density = 0.04, .grass_density = 0.5 },
+        .vegetation = .{ .tree_types = &.{.swamp_oak}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.5 }} },
         .terrain = .{ .height_offset = -1, .smoothing = 0.3 },
         .colors = .{
             .grass = .{ 0.20, 0.58, 0.20 },
@@ -504,7 +509,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = .{ .min = 0.0, .max = 0.40 },
         .priority = 0, // Lowest priority
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{.acacia}, .tree_density = 0.005, .grass_density = 0.3, .dead_bush_density = 0.02 },
+        .vegetation = .{ .tree_types = &.{.acacia}, .decoration_rules = &.{
+            .{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.3 },
+            .{ .block = .dead_bush, .place_on = &.{.grass}, .chance = 0.02 },
+        } },
         .terrain = .{ .height_amplitude = 0.6, .smoothing = 0.25 },
         .colors = .{ .grass = .{ 0.55, 0.50, 0.28 } }, // Less yellow, more natural
     },
@@ -518,7 +526,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .ruggedness = .{ .min = 0.0, .max = 0.35 },
         .priority = 0, // Lowest priority
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{}, .tree_density = 0, .grass_density = 0.4 }, // No trees
+        .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.4 }} }, // No trees
         .terrain = .{ .height_amplitude = 0.5, .smoothing = 0.3 },
         .colors = .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
     },
