@@ -3,6 +3,7 @@
 const std = @import("std");
 const world_core = @import("world-core");
 const biome_mod = @import("biome.zig");
+const region_mod = @import("region.zig");
 const TerrainShapeGenerator = @import("terrain_shape_generator.zig").TerrainShapeGenerator;
 
 const Allocator = std.mem.Allocator;
@@ -16,6 +17,38 @@ pub const default_width: u32 = 512;
 pub const default_depth: u32 = 512;
 
 const BIOME_COUNT = @typeInfo(BiomeId).@"enum".fields.len;
+const ROLE_PROFILE_COUNT = 5;
+
+pub const RoleEffectProfileId = enum {
+    transit,
+    lake_destination,
+    forest_destination,
+    mountain_destination,
+    boundary,
+};
+
+pub const RoleEffectProfile = struct {
+    id: RoleEffectProfileId,
+    sample_count: u32,
+    min_height: i32,
+    max_height: i32,
+    average_height: f64,
+    average_slope: f64,
+    mountain_coverage: f64,
+    vegetation_multiplier: f32,
+    drama_mask: f32,
+    river_mask: f32,
+    subbiome_mask: f32,
+    biome_counts: [BIOME_COUNT]u32,
+
+    pub fn biomeCount(self: RoleEffectProfile, biome_id: BiomeId) u32 {
+        return self.biome_counts[@intFromEnum(biome_id)];
+    }
+
+    pub fn heightRange(self: RoleEffectProfile) i32 {
+        return self.max_height - self.min_height;
+    }
+};
 
 pub const TerrainReport = struct {
     seed: u64,
@@ -32,6 +65,7 @@ pub const TerrainReport = struct {
     ocean_ratio: f64,
     land_ratio: f64,
     mountain_coverage: f64,
+    role_effect_profiles: [ROLE_PROFILE_COUNT]RoleEffectProfile,
 
     pub fn biomeCount(self: TerrainReport, biome_id: BiomeId) u32 {
         return self.biome_counts[@intFromEnum(biome_id)];
@@ -84,6 +118,7 @@ pub fn sampleRegion(
         .ocean_ratio = 0.0,
         .land_ratio = 0.0,
         .mountain_coverage = 0.0,
+        .role_effect_profiles = undefined,
     };
 
     var height_sum: i64 = 0;
@@ -154,6 +189,7 @@ pub fn sampleRegion(
     report.ocean_ratio = @as(f64, @floatFromInt(ocean_count)) / denominator;
     report.land_ratio = 1.0 - report.ocean_ratio;
     report.mountain_coverage = @as(f64, @floatFromInt(mountain_count)) / denominator;
+    report.role_effect_profiles = try sampleRoleEffectProfiles(allocator, &generator);
 
     return report;
 }
@@ -191,6 +227,158 @@ pub fn writeReport(writer: anytype, report: TerrainReport) !void {
         const percent = @as(f64, @floatFromInt(count)) * 100.0 / @as(f64, @floatFromInt(report.sample_count));
         try writer.print("  {s}: {d} ({d:.2}%)\n", .{ @tagName(biome_id), count, percent });
     }
+
+    try writer.print("region role effects:\n", .{});
+    for (report.role_effect_profiles) |profile| {
+        try writer.print(
+            "  {s}: height_range={d} avg_height={d:.2} avg_slope={d:.2} mountain={d:.4} vegetation_mult={d:.2} drama={d:.2} river={d:.2} subbiome={d:.2}\n",
+            .{
+                @tagName(profile.id),
+                profile.heightRange(),
+                profile.average_height,
+                profile.average_slope,
+                profile.mountain_coverage,
+                profile.vegetation_multiplier,
+                profile.drama_mask,
+                profile.river_mask,
+                profile.subbiome_mask,
+            },
+        );
+    }
+}
+
+fn sampleRoleEffectProfiles(allocator: Allocator, generator: *const TerrainShapeGenerator) ![ROLE_PROFILE_COUNT]RoleEffectProfile {
+    const profile_ids = [_]RoleEffectProfileId{ .transit, .lake_destination, .forest_destination, .mountain_destination, .boundary };
+    var profiles: [ROLE_PROFILE_COUNT]RoleEffectProfile = undefined;
+    for (profile_ids, 0..) |profile_id, i| {
+        profiles[i] = try sampleRoleEffectProfile(allocator, generator, profile_id);
+    }
+    return profiles;
+}
+
+fn sampleRoleEffectProfile(allocator: Allocator, generator: *const TerrainShapeGenerator, profile_id: RoleEffectProfileId) !RoleEffectProfile {
+    const width: u32 = 64;
+    const depth: u32 = 64;
+    const origin_x: i32 = 96;
+    const origin_z: i32 = 96;
+    const sample_count = try std.math.mul(u32, width, depth);
+    const controls = controlsForProfile(profile_id);
+
+    const samples = try allocator.alloc(ColumnSample, sample_count);
+    defer allocator.free(samples);
+
+    var profile = RoleEffectProfile{
+        .id = profile_id,
+        .sample_count = sample_count,
+        .min_height = std.math.maxInt(i32),
+        .max_height = std.math.minInt(i32),
+        .average_height = 0.0,
+        .average_slope = 0.0,
+        .mountain_coverage = 0.0,
+        .vegetation_multiplier = controls.vegetation_mult,
+        .drama_mask = controls.drama_mask,
+        .river_mask = controls.river_mask,
+        .subbiome_mask = controls.subbiome_mask,
+        .biome_counts = [_]u32{0} ** BIOME_COUNT,
+    };
+
+    var height_sum: i64 = 0;
+    var mountain_count: u32 = 0;
+    const sea_level = generator.getSeaLevel();
+
+    var z: u32 = 0;
+    while (z < depth) : (z += 1) {
+        var x: u32 = 0;
+        while (x < width) : (x += 1) {
+            const idx = index(x, z, width);
+            const wx_i = origin_x + @as(i32, @intCast(x));
+            const wz_i = origin_z + @as(i32, @intCast(z));
+            const column = generator.sampleColumnDataWithControls(@floatFromInt(wx_i), @floatFromInt(wz_i), 0, controls);
+            const height = column.terrain_height_i;
+
+            samples[idx] = .{
+                .height = height,
+                .continentalness = column.continentalness,
+                .erosion = column.erosion,
+                .ridge_mask = column.ridge_mask,
+                .river_mask = column.river_mask,
+                .temperature = column.temperature,
+                .humidity = column.humidity,
+                .is_ocean = column.is_ocean,
+            };
+
+            profile.min_height = @min(profile.min_height, height);
+            profile.max_height = @max(profile.max_height, height);
+            height_sum += height;
+            if (height >= sea_level + 48 or column.ridge_mask >= 0.65) mountain_count += 1;
+        }
+    }
+
+    var slope_sum: i64 = 0;
+    z = 0;
+    while (z < depth) : (z += 1) {
+        var x: u32 = 0;
+        while (x < width) : (x += 1) {
+            const idx = index(x, z, width);
+            const sample = samples[idx];
+            const slope = maxNeighborSlope(samples, x, z, width, depth);
+            slope_sum += slope;
+            const climate = generator.getBiomeSource().computeClimate(
+                sample.temperature,
+                sample.humidity,
+                sample.height,
+                sample.continentalness,
+                sample.erosion,
+                CHUNK_SIZE_Y,
+            );
+            const structural = biome_mod.StructuralParams{
+                .height = sample.height,
+                .slope = slope,
+                .continentalness = sample.continentalness,
+                .ridge_mask = sample.ridge_mask,
+            };
+            const biome_id = generator.getBiomeSource().selectBiome(climate, structural, sample.river_mask);
+            profile.biome_counts[@intFromEnum(biome_id)] += 1;
+        }
+    }
+
+    const denominator: f64 = @floatFromInt(sample_count);
+    profile.average_height = @as(f64, @floatFromInt(height_sum)) / denominator;
+    profile.average_slope = @as(f64, @floatFromInt(slope_sum)) / denominator;
+    profile.mountain_coverage = @as(f64, @floatFromInt(mountain_count)) / denominator;
+    return profile;
+}
+
+fn controlsForProfile(profile_id: RoleEffectProfileId) region_mod.RegionControls {
+    const info = regionInfoForProfile(profile_id);
+    return .{
+        .height_mult = region_mod.getHeightMultiplier(info),
+        .vegetation_mult = region_mod.getVegetationMultiplier(info),
+        .drama_mask = if (region_mod.allowHeightDrama(info)) 1.0 else 0.0,
+        .river_mask = if (region_mod.allowRiver(info)) 1.0 else 0.0,
+        .subbiome_mask = if (region_mod.allowSubBiomes(info)) 1.0 else 0.0,
+    };
+}
+
+fn regionInfoForProfile(profile_id: RoleEffectProfileId) region_mod.RegionInfo {
+    const role: region_mod.RegionRole = switch (profile_id) {
+        .transit => .transit,
+        .lake_destination, .forest_destination, .mountain_destination => .destination,
+        .boundary => .boundary,
+    };
+    const focus: region_mod.FeatureFocus = switch (profile_id) {
+        .transit, .boundary => .none,
+        .lake_destination => .lake,
+        .forest_destination => .forest,
+        .mountain_destination => .mountain,
+    };
+    return .{
+        .mood = .calm,
+        .role = role,
+        .focus = focus,
+        .center_x = 0,
+        .center_z = 0,
+    };
 }
 
 fn maxNeighborSlope(samples: []const ColumnSample, x: u32, z: u32, width: u32, depth: u32) i32 {
@@ -231,6 +419,16 @@ test "TerrainReport is deterministic for fixed seed and region" {
     try std.testing.expectEqual(first.ocean_ratio, second.ocean_ratio);
     try std.testing.expectEqual(first.land_ratio, second.land_ratio);
     try std.testing.expectEqual(first.mountain_coverage, second.mountain_coverage);
+    for (first.role_effect_profiles, second.role_effect_profiles) |a, b| {
+        try std.testing.expectEqual(a.id, b.id);
+        try std.testing.expectEqual(a.sample_count, b.sample_count);
+        try std.testing.expectEqual(a.min_height, b.min_height);
+        try std.testing.expectEqual(a.max_height, b.max_height);
+        try std.testing.expectEqual(a.average_height, b.average_height);
+        try std.testing.expectEqual(a.average_slope, b.average_slope);
+        try std.testing.expectEqual(a.mountain_coverage, b.mountain_coverage);
+        try std.testing.expectEqualSlices(u32, &a.biome_counts, &b.biome_counts);
+    }
 }
 
 test "TerrainReport metrics cover the full sample area" {
@@ -250,4 +448,33 @@ test "TerrainReport metrics cover the full sample area" {
     try std.testing.expect(report.land_ratio >= 0.0 and report.land_ratio <= 1.0);
     try std.testing.expect(report.mountain_coverage >= 0.0 and report.mountain_coverage <= 1.0);
     try std.testing.expectApproxEqAbs(1.0, report.ocean_ratio + report.land_ratio, 0.000001);
+    for (report.role_effect_profiles) |profile| {
+        var profile_biome_total: u32 = 0;
+        for (profile.biome_counts) |count| profile_biome_total += count;
+
+        try std.testing.expectEqual(profile.sample_count, profile_biome_total);
+        try std.testing.expect(profile.min_height <= profile.max_height);
+        try std.testing.expect(profile.average_height >= @as(f64, @floatFromInt(profile.min_height)));
+        try std.testing.expect(profile.average_height <= @as(f64, @floatFromInt(profile.max_height)));
+        try std.testing.expect(profile.average_slope >= 0.0);
+        try std.testing.expect(profile.mountain_coverage >= 0.0 and profile.mountain_coverage <= 1.0);
+    }
+}
+
+test "TerrainReport role profiles preserve region pacing controls" {
+    const allocator = std.testing.allocator;
+
+    const report = try sampleRegion(allocator, 424242, -64, 16, 64, 64);
+    const transit = report.role_effect_profiles[@intFromEnum(RoleEffectProfileId.transit)];
+    const forest = report.role_effect_profiles[@intFromEnum(RoleEffectProfileId.forest_destination)];
+    const mountain = report.role_effect_profiles[@intFromEnum(RoleEffectProfileId.mountain_destination)];
+    const boundary = report.role_effect_profiles[@intFromEnum(RoleEffectProfileId.boundary)];
+
+    try std.testing.expect(transit.heightRange() < boundary.heightRange());
+    try std.testing.expect(transit.average_slope < boundary.average_slope);
+    try std.testing.expect(mountain.heightRange() > boundary.heightRange());
+    try std.testing.expect(mountain.mountain_coverage >= boundary.mountain_coverage);
+    try std.testing.expect(forest.vegetation_multiplier > transit.vegetation_multiplier);
+    try std.testing.expect(forest.vegetation_multiplier > boundary.vegetation_multiplier);
+    try std.testing.expect(forest.subbiome_mask > transit.subbiome_mask);
 }
