@@ -320,3 +320,39 @@ test "Inventory constants are valid" {
 test "Inventory.ItemStack.MAX_STACK is reasonable" {
     try testing.expectEqual(@as(u8, 64), Inventory.ItemStack.MAX_STACK);
 }
+
+test "Inventory.scrollSelection wraps past boundary with large positive delta" {
+    var inv = Inventory.initEmpty();
+    inv.selectSlot(3);
+
+    inv.scrollSelection(100);
+    try testing.expectEqual(@as(u8, 2), inv.selected_slot);
+}
+
+test "Inventory.scrollSelection wraps past boundary with large negative delta" {
+    var inv = Inventory.initEmpty();
+    inv.selectSlot(3);
+
+    inv.scrollSelection(-100);
+    try testing.expectEqual(@as(u8, 4), inv.selected_slot);
+}
+
+test "Inventory.addItem fills exactly to max stack then overflows" {
+    var inv = Inventory.initEmpty();
+    inv.slots[0] = .{ .block_type = .stone, .count = 1 };
+
+    const result = inv.addItem(.stone, 63);
+    try testing.expect(result);
+    try testing.expectEqual(@as(u8, 64), inv.slots[0].?.count);
+    try testing.expect(inv.slots[1] == null);
+}
+
+test "Inventory.addItem single item fills remaining space then uses next slot" {
+    var inv = Inventory.initEmpty();
+    inv.slots[0] = .{ .block_type = .stone, .count = 1 };
+
+    const result = inv.addItem(.stone, 64);
+    try testing.expect(result);
+    try testing.expectEqual(@as(u8, 64), inv.slots[0].?.count);
+    try testing.expectEqual(@as(u8, 1), inv.slots[1].?.count);
+}
