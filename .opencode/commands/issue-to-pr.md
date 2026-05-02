@@ -2,7 +2,9 @@
 description: Implement a GitHub issue and open a PR to dev
 agent: build
 ---
-Implement GitHub issue `$ARGUMENTS`, defaulting to issue `647` if no issue number is provided.
+Implement GitHub issue `$ARGUMENTS`.
+
+If no issue number is provided, stop and ask the user which GitHub issue to implement before taking any other action.
 
 Use this workflow:
 

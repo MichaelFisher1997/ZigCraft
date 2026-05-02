@@ -2,7 +2,9 @@
 description: Implement an issue, open a PR, and autopilot it to green
 agent: build
 ---
-Implement GitHub issue `$ARGUMENTS`, defaulting to issue `647` if no issue number is provided, then keep working until the pull request is green and merged.
+Implement GitHub issue `$ARGUMENTS`, then keep working until the pull request is green and merged.
+
+If no issue number is provided, stop and ask the user which GitHub issue to implement before taking any other action.
 
 Use this workflow:
 
