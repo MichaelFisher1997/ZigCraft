@@ -10,9 +10,10 @@ The current block registry lives in `modules/world-core/src/block.zig` and `modu
 
 - `BlockType` is `enum(u8)`.
 - `MAX_BLOCK_TYPES` is 256 in `modules/world-core/src/chunk_constants.zig`.
-- The registry currently defines 47 enum entries including `air`, leaving 209 ID slots before the current cap.
-- `RenderShape` currently supports `.cube` and `.cross`.
+- The registry currently defines 79 concrete enum entries including `air`, leaving 177 ID slots before the current cap.
+- `RenderShape` currently supports `.cube`, `.cross`, `.flat_quad`, `.tall_cross`, `.wall_attached`, and `.custom_mesh`.
 - Cross-billboard vegetation is already implemented by `modules/world-meshing/src/meshing/cross_mesher.zig`.
+- Flat quads, tall crosses, wall-attached quads, and custom slab/stair meshes are implemented under `modules/world-meshing/src/meshing/`.
 
 ## Implemented Blocks
 
@@ -32,6 +33,11 @@ These are present in the current `BlockType` enum and registered in `BLOCK_REGIS
 | Cross vegetation | `tall_grass`, `flower_red`, `flower_yellow`, `dead_bush` |
 | Temperate/cold trees | `birch_log`, `birch_leaves`, `spruce_log`, `spruce_leaves` |
 | Attachments/lights | `vine`, `torch` |
+| Ice/cold surfaces | `snow_layer`, `ice`, `packed_ice`, `blue_ice` |
+| Dirt/stone variants | `coarse_dirt`, `rooted_dirt`, `podzol`, `mossy_cobblestone` |
+| Terracotta colors | `white_terracotta`, `orange_terracotta`, `magenta_terracotta`, `light_blue_terracotta`, `yellow_terracotta`, `lime_terracotta`, `pink_terracotta`, `gray_terracotta`, `light_gray_terracotta`, `cyan_terracotta`, `purple_terracotta`, `blue_terracotta`, `brown_terracotta`, `green_terracotta`, `red_terracotta`, `black_terracotta` |
+| Aquatic foundation | `seagrass`, `tall_seagrass`, `kelp`, `seaweed`, `coral_block`, `coral_fan` |
+| Custom mesh fixtures | `stone_slab`, `stone_stairs` |
 
 ## Stale Entries From #138
 
@@ -45,11 +51,11 @@ These are present in the current `BlockType` enum and registered in `BLOCK_REGIS
 | `birch_leaves` | Missing | Implemented | Present as ID 41. |
 | `spruce_log` | Missing | Implemented | Present as ID 42. |
 | `spruce_leaves` | Missing | Implemented | Present as ID 43. |
-| `vine` | Missing wall-attached block | Implemented with interim shape | Present as ID 44 and currently uses `.cube`; #627 should decide wall-attached geometry/state. |
+| `vine` | Missing wall-attached block | Implemented with wall-attached shape | Present as ID 44 and uses `.wall_attached`; per-block attachment state remains future work. |
 | `torch` | Missing special placement | Implemented with interim shape | Present as ID 45, emits light, and currently uses `.cross`; #627 should decide custom/attachment geometry. |
 | `lava` | Missing | Implemented | Present as ID 46, fluid pass, emits light. |
 | 322-block roadmap total | Future target | Exceeds current cap if fully adopted | #621 should decide if/when to widen IDs or introduce palette storage. |
-| #138 summary counts | 40 implemented / 282 planned | Out of date | Current baseline is 47 registry entries including `air`, or 46 non-air blocks. |
+| #138 summary counts | 40 implemented / 282 planned | Out of date | Current baseline is 79 registry entries including `air`, or 78 non-air blocks. |
 
 #138 also omits implemented ore blocks from its terrain/building catalogue: `coal_ore`, `iron_ore`, and `gold_ore`.
 
@@ -88,3 +94,14 @@ The unchecked #138 list is still valid as a catalogue only after removing the st
 ## #616 Impact
 
 No scope, ordering, or block-family name changes are required for #616. The epic already accounts for the important corrections: #138 is superseded, current paths use `modules/*`, cross rendering exists, and the 322-block catalogue exceeds the current `u8`/256-ID architecture.
+
+## #616 Completion Boundary
+
+The remaining #616 gaps are resolved by the current implementation baseline:
+
+- #623 is complete: `.flat_quad` and `.tall_cross` exist and are meshed.
+- #625 is complete: the core natural pack exists, including snow/ice, dirt variants, mossy cobblestone, and badlands terracotta colors.
+- #626 is complete: aquatic vegetation and coral foundation blocks exist, and water-constrained decoration rules can place them.
+- #627 is complete for the roadmap foundation: `.wall_attached` exists with a vine fixture, and `.custom_mesh` exists with slab/stair fixture meshers.
+
+Future work remains outside #616 for per-block orientation/state, accurate partial-block collision volumes, doors, fences, panes, walls, and broad decorative/building parity.

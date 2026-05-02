@@ -183,6 +183,8 @@ pub const BlockType = enum(u8) {
     coral_block = 74,
     coral_fan = 75,
     tall_seagrass = 76,
+    stone_slab = 77,
+    stone_stairs = 78,
 
     _,
 };

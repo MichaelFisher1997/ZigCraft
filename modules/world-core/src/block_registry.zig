@@ -39,7 +39,7 @@ pub const RenderShape = enum {
     tall_cross,
     /// Face-attached non-cube geometry driven by RenderShapeData.attachment
     wall_attached,
-    /// Placeholder for block-specific custom mesh variants (slabs, stairs, doors, fences)
+    /// Block-specific custom mesh variants (slabs, stairs, doors, fences)
     custom_mesh,
 };
 
@@ -112,10 +112,14 @@ pub const BlockDefinition = struct {
         // Same transparent types occlude each other (no internal glass faces)
         if (self.is_transparent and self.id == other_def.id) return true;
 
-        // Non-transparent solid blocks occlude everything
-        if (self.is_solid and !self.is_transparent) return true;
+        // Only full cubes fully occlude neighboring cube faces.
+        if (self.isFullCubeOccluder()) return true;
 
         return false;
+    }
+
+    pub fn isFullCubeOccluder(self: BlockDefinition) bool {
+        return self.is_solid and !self.is_transparent and self.render_shape == .cube;
     }
 
     /// Get face color with shading based on normal direction
@@ -290,6 +294,11 @@ pub const BLOCK_REGISTRY = blk: {
                 def.texture_bottom = "dirt";
                 def.texture_side = "podzol_side";
             },
+            .stone_slab, .stone_stairs => {
+                def.texture_top = "stone";
+                def.texture_bottom = "stone";
+                def.texture_side = "stone";
+            },
             else => {},
         }
 
@@ -372,6 +381,7 @@ pub const BLOCK_REGISTRY = blk: {
             .green_terracotta => .{ 0.30, 0.35, 0.18 },
             .red_terracotta => .{ 0.56, 0.24, 0.18 },
             .black_terracotta => .{ 0.16, 0.10, 0.08 },
+            .stone_slab, .stone_stairs => .{ 0.5, 0.5, 0.5 },
             else => .{ 1, 0, 1 },
         };
 
@@ -422,6 +432,7 @@ pub const BLOCK_REGISTRY = blk: {
             .coral_fan => .flat_quad,
             .snow_layer => .flat_quad,
             .vine => .wall_attached,
+            .stone_slab, .stone_stairs => .custom_mesh,
             else => .cube,
         };
 
@@ -432,6 +443,8 @@ pub const BLOCK_REGISTRY = blk: {
                     .allowed_faces = AttachmentFaces.walls(),
                 },
             },
+            .stone_slab => .{ .custom_mesh = .slab },
+            .stone_stairs => .{ .custom_mesh = .stairs },
             else => .{},
         };
 

@@ -28,6 +28,7 @@ const cross_mesher = @import("meshing/cross_mesher.zig");
 const flat_quad_mesher = @import("meshing/flat_quad_mesher.zig");
 const tall_cross_mesher = @import("meshing/tall_cross_mesher.zig");
 const wall_attached_mesher = @import("meshing/wall_attached_mesher.zig");
+const custom_mesh_mesher = @import("meshing/custom_mesh_mesher.zig");
 const boundary = @import("meshing/boundary.zig");
 
 // Re-export public types for external consumers
@@ -152,11 +153,12 @@ pub const ChunkMesh = struct {
             try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .south, sz, si, &solid_verts, &cutout_verts, &fluid_verts, atlas);
         }
 
-        // Mesh non-cube cutout shapes (flowers, saplings, flat floor quads, tall plants, attached quads)
+        // Mesh non-cube shapes (plants, attached quads, and custom solid geometry)
         try cross_mesher.meshCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
         try flat_quad_mesher.meshFlatQuadBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
         try tall_cross_mesher.meshTallCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
         try wall_attached_mesher.meshWallAttachedBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
+        try custom_mesh_mesher.meshCustomMeshBlocks(self.allocator, chunk, neighbors, si, &solid_verts, atlas);
 
         // Store subchunk data temporarily (will be merged later)
         self.mutex.lock();
