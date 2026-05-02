@@ -25,6 +25,8 @@ const VertexAllocation = chunk_alloc_mod.VertexAllocation;
 // Meshing stage modules
 const greedy_mesher = @import("meshing/greedy_mesher.zig");
 const cross_mesher = @import("meshing/cross_mesher.zig");
+const flat_quad_mesher = @import("meshing/flat_quad_mesher.zig");
+const tall_cross_mesher = @import("meshing/tall_cross_mesher.zig");
 const boundary = @import("meshing/boundary.zig");
 
 // Re-export public types for external consumers
@@ -149,8 +151,10 @@ pub const ChunkMesh = struct {
             try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .south, sz, si, &solid_verts, &cutout_verts, &fluid_verts, atlas);
         }
 
-        // Mesh cross/billboard blocks (flowers, saplings, etc.)
+        // Mesh non-cube cutout shapes (flowers, saplings, flat floor quads, tall plants)
         try cross_mesher.meshCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
+        try flat_quad_mesher.meshFlatQuadBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
+        try tall_cross_mesher.meshTallCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
 
         // Store subchunk data temporarily (will be merged later)
         self.mutex.lock();

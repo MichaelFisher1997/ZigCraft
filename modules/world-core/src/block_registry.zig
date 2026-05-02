@@ -33,6 +33,10 @@ pub const RenderShape = enum {
     cube,
     /// 2 diagonal quads crossing at center (flowers, saplings, dead bush)
     cross,
+    /// Single horizontal quad (carpet, snow layers, floor vegetation)
+    flat_quad,
+    /// 2-block-high X-shaped billboard (tall plants)
+    tall_cross,
 };
 
 pub const BlockDefinition = struct {
@@ -324,7 +328,8 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 8. Render Shape
         def.render_shape = switch (id) {
-            .flower_red, .flower_yellow, .tall_grass, .dead_bush, .acacia_sapling, .bamboo, .torch => .cross,
+            .tall_grass => .tall_cross,
+            .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch => .cross,
             else => .cube,
         };
 

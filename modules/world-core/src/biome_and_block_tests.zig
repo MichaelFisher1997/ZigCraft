@@ -142,11 +142,14 @@ test "BlockType render_pass for cutout blocks" {
 test "BlockType render_shape for cross blocks" {
     try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.flower_red).render_shape);
     try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.flower_yellow).render_shape);
-    try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.tall_grass).render_shape);
     try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.dead_bush).render_shape);
     try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.acacia_sapling).render_shape);
     try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.bamboo).render_shape);
     try testing.expectEqual(block_registry.RenderShape.cross, getBlockDefinition(.torch).render_shape);
+}
+
+test "BlockType render_shape for tall cross blocks" {
+    try testing.expectEqual(block_registry.RenderShape.tall_cross, getBlockDefinition(.tall_grass).render_shape);
 }
 
 test "BlockType render_shape for cube blocks" {

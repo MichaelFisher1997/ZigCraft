@@ -85,16 +85,16 @@ pub fn meshSlice(
             const b1_emits = b1_def.is_solid or (b1_def.is_fluid and !b2_def.is_fluid);
             const b2_emits = b2_def.is_solid or (b2_def.is_fluid and !b1_def.is_fluid);
 
-            const b1_cross = b1_def.render_shape == .cross;
-            const b2_cross = b2_def.render_shape == .cross;
+            const b1_cube = b1_def.render_shape == .cube;
+            const b2_cube = b2_def.render_shape == .cube;
 
-            if (boundary.isEmittingSubchunk(axis, s - 1, u, v, y_min, y_max) and b1_emits and !b1_cross and !b2_def.occludes(b1_def, axis)) {
+            if (boundary.isEmittingSubchunk(axis, s - 1, u, v, y_min, y_max) and b1_emits and b1_cube and !b2_def.occludes(b1_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s - 1, u, v, b1);
                 mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
-            } else if (boundary.isEmittingSubchunk(axis, s, u, v, y_min, y_max) and b2_emits and !b2_cross and !b1_def.occludes(b2_def, axis)) {
+            } else if (boundary.isEmittingSubchunk(axis, s, u, v, y_min, y_max) and b2_emits and b2_cube and !b1_def.occludes(b2_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
