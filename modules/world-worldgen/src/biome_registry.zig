@@ -62,6 +62,15 @@ pub const TerrainModifier = struct {
     clamp_to_sea_level: bool = false,
     /// Additional height offset
     height_offset: f32 = 0.0,
+
+    /// Apply biome terrain shaping to a sampled height without mutating the
+    /// live generation pipeline.
+    pub fn applyHeight(self: TerrainModifier, base_height: f32, sea_level: f32) f32 {
+        var height = sea_level + (base_height - sea_level) * self.height_amplitude;
+        height += (sea_level - height) * self.smoothing;
+        if (self.clamp_to_sea_level) height = sea_level;
+        return height + self.height_offset;
+    }
 };
 
 /// Surface block configuration
