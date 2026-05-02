@@ -368,6 +368,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.38 },
         .continentalness = .{ .min = 0.35, .max = 0.42 }, // NARROW beach band
+        .max_height = 70,
         .max_slope = 2,
         .priority = 10,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 2 },
@@ -380,6 +381,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.45 },
         .continentalness = .{ .min = 0.35, .max = 0.45 },
+        .max_height = 82,
         .max_slope = 8,
         .priority = 11,
         .surface = .{ .top = .stone, .filler = .gravel, .depth_range = 2 },
@@ -394,6 +396,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.38 },
         .continentalness = .{ .min = 0.35, .max = 0.42 },
+        .max_height = 70,
         .max_slope = 2,
         .priority = 12,
         .surface = .{ .top = .snow_block, .filler = .sand, .depth_range = 2 },

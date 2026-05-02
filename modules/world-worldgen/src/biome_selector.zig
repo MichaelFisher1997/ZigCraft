@@ -11,6 +11,9 @@ const BIOME_REGISTRY = registry.BIOME_REGISTRY;
 const BIOME_POINTS = registry.BIOME_POINTS;
 const BLEND_EPSILON = registry.BLEND_EPSILON;
 
+const OCEAN_CONTINENTALNESS_MAX: f32 = 0.35;
+const NORMALIZED_SEA_LEVEL: f32 = 0.30;
+
 // ============================================================================
 // Voronoi Biome Selection (Issue #106)
 // ============================================================================
@@ -98,6 +101,7 @@ pub fn selectBiomeMultiParam(climate: ClimateParams, structural: StructuralParam
     var best_biome: BiomeId = .plains;
 
     for (BIOME_REGISTRY) |biome| {
+        if (isOceanBiome(biome.id) and !isOceanStructure(params, structural)) continue;
         if (!biome.meetsStructuralConstraints(structural.height, structural.slope, structural.continentalness, structural.ridge_mask)) continue;
 
         const s = biome.scoreClimate(params);
@@ -108,6 +112,17 @@ pub fn selectBiomeMultiParam(climate: ClimateParams, structural: StructuralParam
     }
 
     return best_biome;
+}
+
+fn isOceanStructure(climate: ClimateParams, structural: StructuralParams) bool {
+    return structural.continentalness < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL;
+}
+
+fn isOceanBiome(biome: BiomeId) bool {
+    return switch (biome) {
+        .deep_ocean, .ocean, .frozen_ocean, .cold_ocean, .warm_ocean => true,
+        else => false,
+    };
 }
 
 /// Select biome with river override
