@@ -18,8 +18,9 @@ Use this workflow:
 8. Create a branch if needed, commit the relevant changes with a conventional commit message, and open a pull request targeting `dev`.
 9. Include `Fixes #<issue-number>` in the PR body so GitHub links and auto-closes the implemented issue when the PR merges.
 10. Load and follow the `pr-autopilot` skill for the created PR.
-11. Watch AI/human review comments, GitHub checks, workflow runs, and other runners; fix actionable failures; commit and push follow-up fixes to the PR branch; repeat until the PR is green and mergeable.
+11. Watch AI/human review comments, merge-conflict state, GitHub checks, workflow runs, and other runners; fix actionable failures; commit and push follow-up fixes to the PR branch; repeat until the PR is green and mergeable.
 12. Auto-merge the PR when the `pr-autopilot` merge criteria are satisfied.
-13. Return the PR URL, merge result, and a concise summary of implementation and verification results.
+13. As soon as the PR is merged, stop and ignore any still-running runners/checks for that PR.
+14. Return the PR URL, merge result, and a concise summary of implementation and verification results.
 
 Follow the repository `AGENTS.md` instructions. Do not force push, skip hooks, push directly to `dev`, or modify unrelated user changes.

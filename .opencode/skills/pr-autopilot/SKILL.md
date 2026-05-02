@@ -19,21 +19,24 @@ Use this skill after creating a PR, or when the user explicitly asks you to moni
 - Do not modify unrelated user changes in the worktree.
 - Run all Zig build/test commands through `nix develop --command`.
 - Continue the loop until the PR is green and merged, or until blocked by permissions, merge conflicts requiring user judgment, missing secrets, unavailable runners, or an explicitly failing external requirement you cannot fix.
+- As soon as GitHub reports the PR is merged, stop immediately and ignore any still-running runners/checks for that PR.
 - Only enable or perform auto-merge when the user requested autonomous merge behavior for this PR or workflow.
 
 ## Watch Loop
 
 Repeat this loop until the PR is merged or blocked:
 
-1. Inspect the PR state with `gh pr view <pr> --json number,url,state,mergeStateStatus,isDraft,reviewDecision,headRefName,baseRefName,headRefOid,statusCheckRollup,comments,reviews,latestReviews,autoMergeRequest`.
-2. Inspect review comments with `gh api repos/:owner/:repo/pulls/<pr>/comments`.
-3. Inspect issue-style PR comments with `gh api repos/:owner/:repo/issues/<pr>/comments`.
-4. Inspect check runs and workflow runs for the PR head SHA with `gh pr checks <pr>` and `gh run list --branch <head-branch> --limit 20`.
-5. If checks are pending or queued, wait and poll again after a bounded delay.
-6. If an AI code review or human review reports issues, fix every actionable issue, run relevant local verification, commit, push, and continue watching.
-7. If CI or another runner fails, fetch logs, diagnose the root cause, fix it locally, run relevant verification, commit, push, and continue watching.
-8. If the branch is out of date and GitHub requires it, update the branch using non-destructive git commands or `gh pr update-branch <pr>` when safe, then continue watching.
-9. If all required reviews and checks are passing and the PR is mergeable, enable or perform auto-merge.
+1. Inspect the PR state with `gh pr view <pr> --json number,url,state,mergedAt,mergeStateStatus,isDraft,reviewDecision,headRefName,baseRefName,headRefOid,statusCheckRollup,comments,reviews,latestReviews,autoMergeRequest`.
+2. If `state` is `MERGED` or `mergedAt` is set, stop immediately and do not inspect or wait for any still-running runners/checks.
+3. Check for merge conflicts using `mergeStateStatus`. If it is `DIRTY`, `UNKNOWN`, `BLOCKED`, or otherwise indicates conflicts, inspect and resolve conflicts when the fix is mechanical and safe; stop and report when conflict resolution requires product or architectural judgment.
+4. Inspect review comments with `gh api repos/:owner/:repo/pulls/<pr>/comments`.
+5. Inspect issue-style PR comments with `gh api repos/:owner/:repo/issues/<pr>/comments`.
+6. Inspect check runs and workflow runs for the PR head SHA with `gh pr checks <pr>` and `gh run list --branch <head-branch> --limit 20`.
+7. If checks are pending or queued, wait and poll again after a bounded delay.
+8. If an AI code review or human review reports issues, fix every actionable issue, run relevant local verification, commit, push, and continue watching.
+9. If CI or another runner fails, fetch logs, diagnose the root cause, fix it locally, run relevant verification, commit, push, and continue watching.
+10. If the branch is out of date and GitHub requires it, update the branch using non-destructive git commands or `gh pr update-branch <pr>` when safe, then continue watching.
+11. If all required reviews and checks are passing and the PR is mergeable, enable or perform auto-merge.
 
 Use bounded sleeps between polling attempts. Prefer a 60 second delay for normal CI polling and a shorter delay only for quick local status refreshes.
 
