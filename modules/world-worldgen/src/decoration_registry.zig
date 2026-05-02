@@ -29,7 +29,7 @@ pub const DECORATIONS = [_]Decoration{
     .{ .simple = .{
         .block = .tall_grass,
         .place_on = &.{.grass},
-        .biomes = &.{ .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .savanna, .swamp, .jungle, .taiga, .snowy_taiga, .old_growth_taiga },
+        .biomes = &.{ .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .savanna, .swamp, .jungle, .bamboo_jungle, .sparse_jungle, .taiga, .snowy_taiga, .old_growth_taiga },
         .probability = 0.5,
     } },
 
@@ -59,7 +59,7 @@ pub const DECORATIONS = [_]Decoration{
     .{ .simple = .{
         .block = .dead_bush,
         .place_on = &.{ .sand, .red_sand },
-        .biomes = &.{ .desert, .badlands },
+        .biomes = &.{ .desert, .badlands, .wooded_badlands, .eroded_badlands },
         .probability = 0.02,
     } },
 
@@ -114,7 +114,7 @@ pub const DECORATIONS = [_]Decoration{
         .simple = .{
             .block = .cobblestone,
             .place_on = &.{.grass},
-            .biomes = &.{ .plains, .mountains, .taiga, .old_growth_taiga },
+            .biomes = &.{ .plains, .mountains, .taiga, .old_growth_taiga, .windswept_savanna },
             .probability = 0.05,
             .variant_min = 0.6,
         },

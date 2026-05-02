@@ -272,8 +272,18 @@ pub fn selectBiomeSimple(climate: ClimateParams) BiomeId {
     } else if (heat < 60) {
         return if (humidity > 70) .forest else .plains;
     } else if (heat < 80) {
-        return if (humidity > 60) .jungle else if (humidity > 30) .savanna else .desert;
+        if (humidity > 70) {
+            return if (humidity > 85) .bamboo_jungle else .jungle;
+        }
+        if (humidity > 30) return if (climate.elevation > 0.55) .savanna_plateau else .savanna;
+        return .desert;
     } else {
-        return if (humidity > 40) .badlands else .desert;
+        if (humidity > 85) return .bamboo_jungle;
+        if (humidity > 70) return .jungle;
+        if (humidity > 50) return .sparse_jungle;
+        if (humidity > 15 and humidity <= 30 and climate.elevation > 0.55) return .windswept_savanna;
+        if (humidity > 25) return .wooded_badlands;
+        if (humidity > 10) return .badlands;
+        return .desert;
     }
 }

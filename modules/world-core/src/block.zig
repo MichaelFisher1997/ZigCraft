@@ -47,6 +47,12 @@ pub const Biome = enum(u8) {
     stony_shore = 36,
     snowy_beach = 37,
     frozen_river = 38,
+    bamboo_jungle = 39,
+    sparse_jungle = 40,
+    wooded_badlands = 41,
+    eroded_badlands = 42,
+    savanna_plateau = 43,
+    windswept_savanna = 44,
 
     /// Get surface block for this biome
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
@@ -58,7 +64,7 @@ pub const Biome = enum(u8) {
             .beach => .sand,
             .snowy_beach => .snow_block,
             .stony_shore => .stone,
-            .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .meadow => .grass,
+            .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .meadow, .bamboo_jungle, .sparse_jungle, .savanna_plateau, .windswept_savanna => .grass,
             .taiga, .old_growth_taiga => .grass,
             .desert => .sand,
             .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes => .snow_block,
@@ -68,7 +74,7 @@ pub const Biome = enum(u8) {
             .river => .sand,
             .frozen_river => .gravel,
             .mangrove_swamp => .mud,
-            .badlands => .red_sand,
+            .badlands, .wooded_badlands, .eroded_badlands => .red_sand,
             .mushroom_fields => .mycelium,
         };
     }
@@ -81,11 +87,11 @@ pub const Biome = enum(u8) {
             .ocean, .warm_ocean, .tropical => .sand,
             .beach, .snowy_beach, .desert, .river => .sand,
             .stony_shore, .frozen_river => .gravel,
-            .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .taiga, .snowy_taiga, .old_growth_taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .meadow, .grove => .dirt,
+            .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .taiga, .snowy_taiga, .old_growth_taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .meadow, .grove, .bamboo_jungle, .sparse_jungle, .savanna_plateau, .windswept_savanna => .dirt,
             .snow_tundra => .dirt,
             .mountains, .snowy_mountains, .snowy_slopes, .jagged_peaks, .frozen_peaks, .stony_peaks => .stone,
             .mangrove_swamp => .mud,
-            .badlands => .terracotta,
+            .badlands, .wooded_badlands, .eroded_badlands => .terracotta,
             .mushroom_fields => .dirt,
         };
     }
