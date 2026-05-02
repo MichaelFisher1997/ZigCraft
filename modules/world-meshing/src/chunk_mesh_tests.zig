@@ -1,7 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const ChunkMesh = @import("chunk_mesh.zig").ChunkMesh;
+const NeighborChunks = @import("chunk_mesh.zig").NeighborChunks;
 const NUM_SUBCHUNKS = @import("chunk_mesh.zig").NUM_SUBCHUNKS;
+const world_core = @import("world-core");
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 const RenderContext = @import("engine-rhi").RenderContext;
 
 test "ChunkMesh.init creates mesh with null allocations" {
@@ -58,4 +61,21 @@ test "ChunkMesh subchunk arrays are initially null" {
         try testing.expectEqual(null, mesh.subchunk_cutout[i]);
         try testing.expectEqual(null, mesh.subchunk_fluid[i]);
     }
+}
+
+test "ChunkMesh emits wall-attached fixture cutout quad" {
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 1, 1, .vine);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    try testing.expectEqual(@as(usize, 6), mesh.pending_cutout.?.len);
+    try testing.expectEqual(null, mesh.pending_solid);
+    try testing.expectEqual(null, mesh.pending_fluid);
 }

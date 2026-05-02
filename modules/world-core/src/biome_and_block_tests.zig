@@ -152,6 +152,10 @@ test "BlockType render_shape for tall cross blocks" {
     try testing.expectEqual(block_registry.RenderShape.tall_cross, getBlockDefinition(.tall_grass).render_shape);
 }
 
+test "BlockType render_shape for wall attached blocks" {
+    try testing.expectEqual(block_registry.RenderShape.wall_attached, getBlockDefinition(.vine).render_shape);
+}
+
 test "BlockType render_shape for cube blocks" {
     try testing.expectEqual(block_registry.RenderShape.cube, getBlockDefinition(.stone).render_shape);
     try testing.expectEqual(block_registry.RenderShape.cube, getBlockDefinition(.grass).render_shape);

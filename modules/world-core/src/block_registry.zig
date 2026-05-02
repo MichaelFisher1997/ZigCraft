@@ -37,6 +37,52 @@ pub const RenderShape = enum {
     flat_quad,
     /// 2-block-high X-shaped billboard (tall plants)
     tall_cross,
+    /// Face-attached non-cube geometry driven by RenderShapeData.attachment
+    wall_attached,
+    /// Placeholder for block-specific custom mesh variants (slabs, stairs, doors, fences)
+    custom_mesh,
+};
+
+pub const AttachmentFaces = packed struct {
+    top: bool = false,
+    bottom: bool = false,
+    north: bool = false,
+    south: bool = false,
+    east: bool = false,
+    west: bool = false,
+
+    pub fn walls() AttachmentFaces {
+        return .{ .north = true, .south = true, .east = true, .west = true };
+    }
+
+    pub fn contains(self: AttachmentFaces, face: Face) bool {
+        return switch (face) {
+            .top => self.top,
+            .bottom => self.bottom,
+            .north => self.north,
+            .south => self.south,
+            .east => self.east,
+            .west => self.west,
+        };
+    }
+};
+
+pub const AttachmentSpec = struct {
+    default_face: Face,
+    allowed_faces: AttachmentFaces,
+};
+
+pub const CustomMeshVariant = enum {
+    none,
+    slab,
+    stairs,
+    door,
+    fence,
+};
+
+pub const RenderShapeData = struct {
+    attachment: ?AttachmentSpec = null,
+    custom_mesh: CustomMeshVariant = .none,
 };
 
 pub const BlockDefinition = struct {
@@ -48,6 +94,7 @@ pub const BlockDefinition = struct {
     is_fluid: bool,
     render_pass: RenderPass,
     render_shape: RenderShape,
+    render_shape_data: RenderShapeData,
     light_emission: [3]u4,
     default_color: [3]f32,
     texture_top: []const u8,
@@ -117,6 +164,7 @@ pub const BLOCK_REGISTRY = blk: {
             .is_fluid = false,
             .render_pass = .solid,
             .render_shape = .cube,
+            .render_shape_data = .{},
             .light_emission = .{ 0, 0, 0 },
             .default_color = .{ 1, 0, 1 },
             .texture_top = "unknown",
@@ -145,6 +193,7 @@ pub const BLOCK_REGISTRY = blk: {
             .is_fluid = false,
             .render_pass = .solid,
             .render_shape = .cube,
+            .render_shape_data = .{},
             .light_emission = .{ 0, 0, 0 },
             .default_color = .{ 1, 1, 1 },
             .texture_top = field.name,
@@ -231,6 +280,16 @@ pub const BLOCK_REGISTRY = blk: {
                 def.texture_bottom = "lava";
                 def.texture_side = "lava";
             },
+            .snow_layer => {
+                def.texture_top = "snow";
+                def.texture_bottom = "snow";
+                def.texture_side = "snow";
+            },
+            .podzol => {
+                def.texture_top = "podzol_top";
+                def.texture_bottom = "dirt";
+                def.texture_side = "podzol_side";
+            },
             else => {},
         }
 
@@ -288,18 +347,42 @@ pub const BLOCK_REGISTRY = blk: {
             .seaweed => .{ 0.18, 0.42, 0.16 },
             .coral_block => .{ 0.95, 0.35, 0.45 },
             .coral_fan => .{ 1.0, 0.45, 0.50 },
+            .snow_layer => .{ 0.95, 0.95, 1.0 },
+            .ice => .{ 0.65, 0.85, 1.0 },
+            .packed_ice => .{ 0.45, 0.70, 0.95 },
+            .blue_ice => .{ 0.25, 0.55, 1.0 },
+            .coarse_dirt => .{ 0.48, 0.32, 0.18 },
+            .rooted_dirt => .{ 0.42, 0.30, 0.18 },
+            .podzol => .{ 0.36, 0.24, 0.14 },
+            .mossy_cobblestone => .{ 0.32, 0.42, 0.28 },
+            .white_terracotta => .{ 0.82, 0.68, 0.61 },
+            .orange_terracotta => .{ 0.64, 0.32, 0.16 },
+            .magenta_terracotta => .{ 0.58, 0.32, 0.39 },
+            .light_blue_terracotta => .{ 0.45, 0.42, 0.55 },
+            .yellow_terracotta => .{ 0.73, 0.52, 0.22 },
+            .lime_terracotta => .{ 0.40, 0.48, 0.24 },
+            .pink_terracotta => .{ 0.63, 0.30, 0.32 },
+            .gray_terracotta => .{ 0.22, 0.18, 0.16 },
+            .light_gray_terracotta => .{ 0.53, 0.42, 0.36 },
+            .cyan_terracotta => .{ 0.34, 0.36, 0.36 },
+            .purple_terracotta => .{ 0.45, 0.25, 0.36 },
+            .blue_terracotta => .{ 0.30, 0.22, 0.42 },
+            .brown_terracotta => .{ 0.30, 0.18, 0.12 },
+            .green_terracotta => .{ 0.30, 0.35, 0.18 },
+            .red_terracotta => .{ 0.56, 0.24, 0.18 },
+            .black_terracotta => .{ 0.16, 0.10, 0.08 },
             else => .{ 1, 0, 1 },
         };
 
         // 2. Solid
         def.is_solid = switch (id) {
-            .air, .water, .lava, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch, .seagrass, .kelp, .seaweed, .coral_fan => false,
+            .air, .water, .lava, .snow_layer, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch, .seagrass, .kelp, .seaweed, .coral_fan => false,
             else => true,
         };
 
         // 3. Transparent
         def.is_transparent = switch (id) {
-            .air, .water, .lava, .glass, .leaves, .mangrove_leaves, .mangrove_roots, .jungle_leaves, .bamboo, .acacia_leaves, .acacia_sapling, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch, .seagrass, .kelp, .seaweed, .coral_fan => true,
+            .air, .water, .lava, .glass, .ice, .packed_ice, .blue_ice, .snow_layer, .leaves, .mangrove_leaves, .mangrove_roots, .jungle_leaves, .bamboo, .acacia_leaves, .acacia_sapling, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch, .seagrass, .kelp, .seaweed, .coral_fan => true,
             else => false,
         };
 
@@ -318,8 +401,8 @@ pub const BLOCK_REGISTRY = blk: {
         // 6. Render Pass
         def.render_pass = switch (id) {
             .water, .lava => .fluid,
-            .glass => .translucent,
-            .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .mangrove_roots, .bamboo, .acacia_sapling, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch, .seagrass, .kelp, .seaweed, .coral_fan => .cutout,
+            .glass, .ice, .packed_ice, .blue_ice => .translucent,
+            .snow_layer, .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .mangrove_roots, .bamboo, .acacia_sapling, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch, .seagrass, .kelp, .seaweed, .coral_fan => .cutout,
             else => .solid,
         };
 
@@ -336,7 +419,19 @@ pub const BLOCK_REGISTRY = blk: {
             .tall_grass, .kelp => .tall_cross,
             .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch, .seagrass, .seaweed => .cross,
             .coral_fan => .flat_quad,
+            .snow_layer => .flat_quad,
+            .vine => .wall_attached,
             else => .cube,
+        };
+
+        def.render_shape_data = switch (id) {
+            .vine => .{
+                .attachment = .{
+                    .default_face = .north,
+                    .allowed_faces = AttachmentFaces.walls(),
+                },
+            },
+            else => .{},
         };
 
         definitions[int_id] = def;
