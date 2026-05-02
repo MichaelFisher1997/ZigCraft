@@ -19,6 +19,7 @@ pub const SimpleDecoration = types.SimpleDecoration;
 pub const SchematicBlock = types.SchematicBlock;
 pub const Schematic = types.Schematic;
 pub const SchematicDecoration = types.SchematicDecoration;
+pub const DecorationRule = types.DecorationRule;
 pub const Decoration = types.Decoration;
 pub const DecorationProvider = @import("decoration_provider.zig").DecorationProvider;
 pub const DecorationContext = @import("decoration_provider.zig").DecorationProvider.DecorationContext;
@@ -107,6 +108,7 @@ fn variantAllowed(variant: f32, allow_subbiomes: bool, min: f32, max: f32) bool 
 
 const Chunk = world_core.Chunk;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
+const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 
 pub const StandardDecorationProvider = struct {
@@ -169,13 +171,31 @@ pub const StandardDecorationProvider = struct {
 
         // 1. Static decorations (flowers, grass)
         if (chooseStaticSimpleDecoration(biome, surface_block, variant, allow_subbiomes, veg_mult, random)) |simple| {
-            chunk.setBlock(local_x, @intCast(surface_y + 1), local_z, simple.block);
+            const place_y = surface_y + 1;
+            if (place_y >= 0 and place_y < CHUNK_SIZE_Y) {
+                chunk.setBlock(local_x, @intCast(place_y), local_z, simple.block);
+            }
         }
 
-        // 2. Dynamic Tree Registry (from Biome Definition)
+        // 2. Biome-defined block decoration rules
         const biome_def = biome_mod.getBiomeDefinition(biome);
         const vegetation = biome_def.vegetation;
 
+        for (vegetation.decoration_rules) |rule| {
+            if (!rule.isAllowed(surface_block, surface_y, variant, allow_subbiomes)) continue;
+
+            const prob = @min(1.0, rule.chance * veg_mult);
+            if (random.float(f32) >= prob) continue;
+
+            const place_y = surface_y + 1;
+            if (place_y < 0 or place_y >= CHUNK_SIZE_Y) continue;
+            if (chunk.getBlockSafe(@intCast(local_x), place_y, @intCast(local_z)) != .air) continue;
+
+            chunk.setBlock(local_x, @intCast(place_y), local_z, rule.block);
+            break;
+        }
+
+        // 3. Dynamic Tree Registry (from Biome Definition)
         if (vegetation.tree_types.len > 0) {
             for (vegetation.tree_types) |tree_type| {
                 if (tree_registry.getTreeDefinition(tree_type)) |tree_def| {

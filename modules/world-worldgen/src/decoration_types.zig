@@ -59,6 +59,23 @@ pub const SchematicDecoration = struct {
     }
 };
 
+pub const DecorationRule = struct {
+    block: BlockType,
+    place_on: []const BlockType,
+    chance: f32,
+    y_min: i32 = 1,
+    y_max: i32 = 256,
+    variant_min: f32 = -1.0,
+    variant_max: f32 = 1.0,
+
+    pub fn isAllowed(self: DecorationRule, surface_block: BlockType, surface_y: i32, variant: f32, allow_subbiomes: bool) bool {
+        if (!isBlockAllowed(self.place_on, surface_block)) return false;
+        if (surface_y + 1 < self.y_min or surface_y + 1 > self.y_max) return false;
+        if (allow_subbiomes) return variant >= self.variant_min and variant <= self.variant_max;
+        return self.variant_min == -1.0 and self.variant_max == 1.0;
+    }
+};
+
 pub const Decoration = union(enum) {
     simple: SimpleDecoration,
     schematic: SchematicDecoration,
