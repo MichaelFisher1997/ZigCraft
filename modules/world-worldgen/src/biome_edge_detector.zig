@@ -14,7 +14,7 @@ pub const EDGE_STEP: u32 = 4;
 pub const EDGE_CHECK_RADII = [_]u32{ 4, 8, 12 };
 
 /// Target width of transition bands (blocks)
-pub const EDGE_WIDTH: u32 = 8;
+pub const EDGE_WIDTH: u32 = 12;
 
 /// Represents proximity to a biome boundary
 pub const EdgeBand = enum(u2) {
@@ -54,16 +54,42 @@ pub const TRANSITION_RULES = [_]TransitionRule{
 
     // Badlands <-> Temperate/Non-arid
     .{ .biome_a = .badlands, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .badlands, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .badlands, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .badlands, .biome_b = .flower_forest, .transition = .dry_plains },
     .{ .biome_a = .badlands, .biome_b = .plains, .transition = .dry_plains },
     .{ .biome_a = .badlands, .biome_b = .jungle, .transition = .savanna },
     .{ .biome_a = .badlands, .biome_b = .sparse_jungle, .transition = .savanna },
 
     // Wooded/Eroded badlands transitions
     .{ .biome_a = .wooded_badlands, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .wooded_badlands, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .wooded_badlands, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .wooded_badlands, .biome_b = .flower_forest, .transition = .dry_plains },
+    .{ .biome_a = .wooded_badlands, .biome_b = .plains, .transition = .dry_plains },
+    .{ .biome_a = .wooded_badlands, .biome_b = .jungle, .transition = .savanna },
+    .{ .biome_a = .wooded_badlands, .biome_b = .sparse_jungle, .transition = .savanna },
     .{ .biome_a = .eroded_badlands, .biome_b = .plains, .transition = .dry_plains },
+    .{ .biome_a = .eroded_badlands, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .eroded_badlands, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .eroded_badlands, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .eroded_badlands, .biome_b = .flower_forest, .transition = .dry_plains },
+    .{ .biome_a = .eroded_badlands, .biome_b = .jungle, .transition = .savanna },
+    .{ .biome_a = .eroded_badlands, .biome_b = .sparse_jungle, .transition = .savanna },
 
     // Savanna variant transitions
+    .{ .biome_a = .savanna, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna, .biome_b = .flower_forest, .transition = .dry_plains },
     .{ .biome_a = .windswept_savanna, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .windswept_savanna, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .windswept_savanna, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .windswept_savanna, .biome_b = .flower_forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna_plateau, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna_plateau, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna_plateau, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .savanna_plateau, .biome_b = .flower_forest, .transition = .dry_plains },
     .{ .biome_a = .savanna_plateau, .biome_b = .mountains, .transition = .foothills },
 
     // Jungle variant <-> Temperate
@@ -79,6 +105,7 @@ pub const TRANSITION_RULES = [_]TransitionRule{
     .{ .biome_a = .snow_tundra, .biome_b = .dark_forest, .transition = .snowy_taiga },
     .{ .biome_a = .snow_tundra, .biome_b = .flower_forest, .transition = .taiga },
     .{ .biome_a = .snow_tundra, .biome_b = .old_growth_taiga, .transition = .snowy_taiga },
+    .{ .biome_a = .old_growth_taiga, .biome_b = .dark_forest, .transition = .taiga },
 
     // Cold/coastal <-> temperate/coastal
     .{ .biome_a = .frozen_ocean, .biome_b = .ocean, .transition = .cold_ocean },
@@ -101,10 +128,18 @@ pub const TRANSITION_RULES = [_]TransitionRule{
     .{ .biome_a = .mountains, .biome_b = .dark_forest, .transition = .foothills },
     .{ .biome_a = .mountains, .biome_b = .flower_forest, .transition = .foothills },
     .{ .biome_a = .mountains, .biome_b = .old_growth_taiga, .transition = .foothills },
+    .{ .biome_a = .mountains, .biome_b = .meadow, .transition = .foothills },
+    .{ .biome_a = .mountains, .biome_b = .swamp, .transition = .foothills },
     .{ .biome_a = .snowy_mountains, .biome_b = .taiga, .transition = .foothills },
     .{ .biome_a = .snowy_mountains, .biome_b = .snowy_taiga, .transition = .foothills },
     .{ .biome_a = .snowy_mountains, .biome_b = .old_growth_taiga, .transition = .foothills },
     .{ .biome_a = .snowy_mountains, .biome_b = .snow_tundra, .transition = .foothills },
+    .{ .biome_a = .jagged_peaks, .biome_b = .plains, .transition = .foothills },
+    .{ .biome_a = .jagged_peaks, .biome_b = .forest, .transition = .foothills },
+    .{ .biome_a = .frozen_peaks, .biome_b = .snow_tundra, .transition = .foothills },
+    .{ .biome_a = .frozen_peaks, .biome_b = .snowy_taiga, .transition = .foothills },
+    .{ .biome_a = .stony_peaks, .biome_b = .plains, .transition = .foothills },
+    .{ .biome_a = .stony_peaks, .biome_b = .forest, .transition = .foothills },
 };
 
 /// Check if two biomes need a transition zone between them
