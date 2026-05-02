@@ -285,6 +285,8 @@ For rendering changes:
 4. Standardize PBR textures: `./scripts/process_textures.sh`
 5. Update `modules/world-meshing/src/chunk_mesh.zig` for special face/transparency logic
 
+Keep the block catalog under the current `u8` capacity policy documented in [`docs/roadmap/block-id-capacity.md`](docs/roadmap/block-id-capacity.md). Open or update a follow-up issue before adding large block families that would push the catalog toward the documented threshold.
+
 ### Modifying Shaders
 1. GLSL sources in `assets/shaders/` (Vulkan shaders in `vulkan/` subdirectory)
 2. Vulkan SPIR-V validated during `zig build test` via `glslangValidator`
