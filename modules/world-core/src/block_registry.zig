@@ -231,6 +231,16 @@ pub const BLOCK_REGISTRY = blk: {
                 def.texture_bottom = "lava";
                 def.texture_side = "lava";
             },
+            .snow_layer => {
+                def.texture_top = "snow";
+                def.texture_bottom = "snow";
+                def.texture_side = "snow";
+            },
+            .podzol => {
+                def.texture_top = "podzol_top";
+                def.texture_bottom = "dirt";
+                def.texture_side = "podzol_side";
+            },
             else => {},
         }
 
@@ -283,18 +293,42 @@ pub const BLOCK_REGISTRY = blk: {
             .vine => .{ 0.12, 0.56, 0.08 },
             .torch => .{ 1.0, 0.8, 0.4 },
             .lava => .{ 1.0, 0.4, 0.1 },
+            .snow_layer => .{ 0.95, 0.95, 1.0 },
+            .ice => .{ 0.65, 0.85, 1.0 },
+            .packed_ice => .{ 0.45, 0.70, 0.95 },
+            .blue_ice => .{ 0.25, 0.55, 1.0 },
+            .coarse_dirt => .{ 0.48, 0.32, 0.18 },
+            .rooted_dirt => .{ 0.42, 0.30, 0.18 },
+            .podzol => .{ 0.36, 0.24, 0.14 },
+            .mossy_cobblestone => .{ 0.32, 0.42, 0.28 },
+            .white_terracotta => .{ 0.82, 0.68, 0.61 },
+            .orange_terracotta => .{ 0.64, 0.32, 0.16 },
+            .magenta_terracotta => .{ 0.58, 0.32, 0.39 },
+            .light_blue_terracotta => .{ 0.45, 0.42, 0.55 },
+            .yellow_terracotta => .{ 0.73, 0.52, 0.22 },
+            .lime_terracotta => .{ 0.40, 0.48, 0.24 },
+            .pink_terracotta => .{ 0.63, 0.30, 0.32 },
+            .gray_terracotta => .{ 0.22, 0.18, 0.16 },
+            .light_gray_terracotta => .{ 0.53, 0.42, 0.36 },
+            .cyan_terracotta => .{ 0.34, 0.36, 0.36 },
+            .purple_terracotta => .{ 0.45, 0.25, 0.36 },
+            .blue_terracotta => .{ 0.30, 0.22, 0.42 },
+            .brown_terracotta => .{ 0.30, 0.18, 0.12 },
+            .green_terracotta => .{ 0.30, 0.35, 0.18 },
+            .red_terracotta => .{ 0.56, 0.24, 0.18 },
+            .black_terracotta => .{ 0.16, 0.10, 0.08 },
             else => .{ 1, 0, 1 },
         };
 
         // 2. Solid
         def.is_solid = switch (id) {
-            .air, .water, .lava, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch => false,
+            .air, .water, .lava, .snow_layer, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .vine, .torch => false,
             else => true,
         };
 
         // 3. Transparent
         def.is_transparent = switch (id) {
-            .air, .water, .lava, .glass, .leaves, .mangrove_leaves, .mangrove_roots, .jungle_leaves, .bamboo, .acacia_leaves, .acacia_sapling, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch => true,
+            .air, .water, .lava, .glass, .ice, .packed_ice, .blue_ice, .snow_layer, .leaves, .mangrove_leaves, .mangrove_roots, .jungle_leaves, .bamboo, .acacia_leaves, .acacia_sapling, .birch_leaves, .spruce_leaves, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch => true,
             else => false,
         };
 
@@ -313,8 +347,8 @@ pub const BLOCK_REGISTRY = blk: {
         // 6. Render Pass
         def.render_pass = switch (id) {
             .water, .lava => .fluid,
-            .glass => .translucent,
-            .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .mangrove_roots, .bamboo, .acacia_sapling, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch => .cutout,
+            .glass, .ice, .packed_ice, .blue_ice => .translucent,
+            .snow_layer, .leaves, .mangrove_leaves, .jungle_leaves, .acacia_leaves, .birch_leaves, .spruce_leaves, .mangrove_roots, .bamboo, .acacia_sapling, .vine, .tall_grass, .flower_red, .flower_yellow, .dead_bush, .cactus, .melon, .torch => .cutout,
             else => .solid,
         };
 
@@ -328,6 +362,7 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 8. Render Shape
         def.render_shape = switch (id) {
+            .snow_layer => .flat_quad,
             .tall_grass => .tall_cross,
             .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch => .cross,
             else => .cube,
