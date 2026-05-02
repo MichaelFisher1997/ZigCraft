@@ -986,7 +986,7 @@ test "BiomeSource selectBiomeSimplified returns valid biome" {
     const climate2 = biome_mod.ClimateParams{
         .temperature = 0.5,
         .humidity = 0.5,
-        .elevation = 0.4,
+        .elevation = 0.2,
         .continentalness = 0.1,
         .ruggedness = 0.2,
     };

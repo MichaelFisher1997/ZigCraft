@@ -11,6 +11,9 @@ pub const TreeType = tree_registry.TreeType;
 /// Minimum sum threshold for biome blend calculation to avoid division by near-zero values
 pub const BLEND_EPSILON: f32 = 0.0001;
 
+/// Normalized elevation produced by computeClimateParams at sea level.
+pub const NORMALIZED_SEA_LEVEL: f32 = 0.30;
+
 /// Represents a range of values for biome parameter matching
 pub const Range = struct {
     min: f32,

@@ -10,9 +10,9 @@ const StructuralParams = registry.StructuralParams;
 const BIOME_REGISTRY = registry.BIOME_REGISTRY;
 const BIOME_POINTS = registry.BIOME_POINTS;
 const BLEND_EPSILON = registry.BLEND_EPSILON;
+const NORMALIZED_SEA_LEVEL = registry.NORMALIZED_SEA_LEVEL;
 
 const OCEAN_CONTINENTALNESS_MAX: f32 = 0.35;
-const NORMALIZED_SEA_LEVEL: f32 = 0.30;
 
 // ============================================================================
 // Voronoi Biome Selection (Issue #106)
@@ -145,18 +145,18 @@ pub fn computeClimateParams(
     sea_level: i32,
     max_height: i32,
 ) ClimateParams {
-    // Normalize elevation: 0 = below sea, 0.3 = sea level, 1.0 = max height
+    // Normalize elevation: 0 = below sea, NORMALIZED_SEA_LEVEL = sea level, 1.0 = max height
     // Use conditional to avoid integer overflow when height < sea_level
     const height_above_sea: i32 = if (height > sea_level) height - sea_level else 0;
     const elevation_range = max_height - sea_level;
     const elevation = if (elevation_range > 0)
-        0.3 + 0.7 * @as(f32, @floatFromInt(height_above_sea)) / @as(f32, @floatFromInt(elevation_range))
+        NORMALIZED_SEA_LEVEL + 0.7 * @as(f32, @floatFromInt(height_above_sea)) / @as(f32, @floatFromInt(elevation_range))
     else
-        0.3;
+        NORMALIZED_SEA_LEVEL;
 
-    // For underwater: scale 0-0.3
+    // For underwater: scale 0-NORMALIZED_SEA_LEVEL
     const final_elevation = if (height < sea_level)
-        0.3 * @as(f32, @floatFromInt(@max(0, height))) / @as(f32, @floatFromInt(sea_level))
+        NORMALIZED_SEA_LEVEL * @as(f32, @floatFromInt(@max(0, height))) / @as(f32, @floatFromInt(sea_level))
     else
         elevation;
 
@@ -286,7 +286,7 @@ pub fn selectBiomeSimple(climate: ClimateParams) BiomeId {
     const continental = climate.continentalness;
 
     // Ocean check
-    if (continental < 0.35) {
+    if (continental < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL) {
         if (heat <= 15) return .frozen_ocean;
         if (heat <= 30) return .cold_ocean;
         if (continental < 0.20) return .deep_ocean;

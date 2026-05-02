@@ -624,6 +624,22 @@ test "selectBiomeSimple returns ocean for low continentalness" {
     try testing.expect(biome == .deep_ocean or biome == .ocean);
 }
 
+test "selectBiomeSimple does not return ocean above sea level" {
+    const params = ClimateParams{
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .elevation = 0.31,
+        .continentalness = 0.15,
+        .ruggedness = 0.3,
+    };
+    const biome = selectBiomeSimple(params);
+    try testing.expect(biome != .deep_ocean);
+    try testing.expect(biome != .ocean);
+    try testing.expect(biome != .frozen_ocean);
+    try testing.expect(biome != .cold_ocean);
+    try testing.expect(biome != .warm_ocean);
+}
+
 test "selectBiomeSimple returns deep_ocean for very low continentalness" {
     const params = ClimateParams{
         .temperature = 0.5,
