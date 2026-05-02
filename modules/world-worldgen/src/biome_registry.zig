@@ -541,7 +541,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 2 },
         .vegetation = .{ .tree_types = &.{.swamp_oak} },
-        .terrain = .{ .clamp_to_sea_level = true, .height_offset = -2 },
+        .terrain = .{ .clamp_to_sea_level = true },
         .colors = .{
             .grass = .{ 0.24, 0.54, 0.20 },
             .foliage = .{ 0.18, 0.46, 0.16 },
@@ -722,7 +722,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 6,
         .surface = .{ .top = .mud, .filler = .mud, .depth_range = 4 },
         .vegetation = .{ .tree_types = &.{.mangrove} },
-        .terrain = .{ .clamp_to_sea_level = true, .height_offset = -1 },
+        .terrain = .{ .clamp_to_sea_level = true },
         .colors = .{ .grass = .{ 0.26, 0.58, 0.18 }, .foliage = .{ 0.22, 0.52, 0.16 }, .water = .{ 0.16, 0.38, 0.30 } },
     },
     .{
@@ -942,7 +942,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 0, // Lowest priority
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 2 },
         .vegetation = .{ .tree_types = &.{.swamp_oak}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.5 }} },
-        .terrain = .{ .height_offset = -1, .smoothing = 0.3 },
+        .terrain = .{ .height_amplitude = 0.25, .smoothing = 0.65 },
         .colors = .{
             .grass = .{ 0.20, 0.58, 0.20 },
             .foliage = .{ 0.16, 0.50, 0.16 },

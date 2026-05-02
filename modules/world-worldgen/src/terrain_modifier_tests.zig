@@ -2,7 +2,9 @@
 
 const std = @import("std");
 const testing = std.testing;
-const TerrainModifier = @import("biome_registry.zig").TerrainModifier;
+const biome_registry = @import("biome_registry.zig");
+const TerrainModifier = biome_registry.TerrainModifier;
+const getBiomeDefinition = biome_registry.getBiomeDefinition;
 
 const SEA_LEVEL: f32 = 62.0;
 
@@ -53,4 +55,31 @@ test "TerrainModifier combines amplitude smoothing clamp and offset deterministi
 
     try testing.expectApproxEqAbs(@as(f32, 96.0), shaped.applyHeight(102.0, SEA_LEVEL), 0.0001);
     try testing.expectApproxEqAbs(@as(f32, 66.0), clamped.applyHeight(102.0, SEA_LEVEL), 0.0001);
+}
+
+test "wetland terrain modifiers flatten and lower sampled heights" {
+    const base_low: f32 = 80.0;
+    const base_high: f32 = 112.0;
+    const plains = getBiomeDefinition(.plains).terrain;
+    const swamp = getBiomeDefinition(.swamp).terrain;
+    const mangrove = getBiomeDefinition(.mangrove_swamp).terrain;
+    const marsh = getBiomeDefinition(.marsh).terrain;
+
+    try testing.expectApproxEqAbs(SEA_LEVEL, swamp.applyHeight(base_high, SEA_LEVEL), 0.0001);
+    try testing.expectApproxEqAbs(SEA_LEVEL, mangrove.applyHeight(base_high, SEA_LEVEL), 0.0001);
+
+    const plains_relief = plains.applyHeight(base_high, SEA_LEVEL) - plains.applyHeight(base_low, SEA_LEVEL);
+    const marsh_relief = marsh.applyHeight(base_high, SEA_LEVEL) - marsh.applyHeight(base_low, SEA_LEVEL);
+    try testing.expect(marsh.applyHeight(base_high, SEA_LEVEL) < plains.applyHeight(base_high, SEA_LEVEL));
+    try testing.expect(marsh_relief < plains_relief);
+}
+
+test "wetland terrain keeps swamp and mangrove surfaces vegetation-compatible" {
+    const swamp = getBiomeDefinition(.swamp);
+    const mangrove = getBiomeDefinition(.mangrove_swamp);
+
+    try testing.expectApproxEqAbs(SEA_LEVEL, swamp.terrain.applyHeight(96.0, SEA_LEVEL), 0.0001);
+    try testing.expectApproxEqAbs(SEA_LEVEL, mangrove.terrain.applyHeight(96.0, SEA_LEVEL), 0.0001);
+    try testing.expectEqual(.grass, swamp.surface.top);
+    try testing.expectEqual(.mud, mangrove.surface.top);
 }

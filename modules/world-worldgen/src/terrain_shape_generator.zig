@@ -115,6 +115,48 @@ pub const TerrainShapeGenerator = struct {
         return self.height_sampler.getContinentalZone(c);
     }
 
+    fn updateSlopes(phase_data: *ChunkPhaseData) void {
+        var local_z: u32 = 0;
+        while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
+            var local_x: u32 = 0;
+            while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
+                const idx = local_x + local_z * CHUNK_SIZE_X;
+                const terrain_h = phase_data.surface_heights[idx];
+                var max_slope: i32 = 0;
+                if (local_x > 0) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx - 1]))));
+                if (local_x < CHUNK_SIZE_X - 1) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx + 1]))));
+                if (local_z > 0) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx - CHUNK_SIZE_X]))));
+                if (local_z < CHUNK_SIZE_Z - 1) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx + CHUNK_SIZE_X]))));
+                phase_data.slopes[idx] = max_slope;
+            }
+        }
+    }
+
+    fn applyWetlandTerrainModifiers(self: *const TerrainShapeGenerator, phase_data: *ChunkPhaseData) void {
+        const sea: f32 = @floatFromInt(self.params.sea_level);
+
+        var local_z: u32 = 0;
+        while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
+            var local_x: u32 = 0;
+            while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
+                const idx = local_x + local_z * CHUNK_SIZE_X;
+                const biome_id = phase_data.biome_ids[idx];
+                const biome_tag = @intFromEnum(biome_id);
+                const is_wetland = biome_tag == @intFromEnum(BiomeId.swamp) or
+                    biome_tag == @intFromEnum(BiomeId.mangrove_swamp) or
+                    biome_tag == @intFromEnum(BiomeId.marsh);
+                if (!is_wetland) continue;
+
+                const biome_def = biome_mod.getBiomeDefinition(biome_id);
+                const base_height: f32 = @floatFromInt(phase_data.surface_heights[idx]);
+                const terrain_height = biome_def.terrain.applyHeight(base_height, sea);
+
+                phase_data.surface_heights[idx] = @intFromFloat(terrain_height);
+                phase_data.is_underwater_flags[idx] = terrain_height < sea;
+            }
+        }
+    }
+
     pub fn getNoiseSampler(self: *const TerrainShapeGenerator) *const NoiseSampler {
         return &self.noise_sampler;
     }
@@ -224,21 +266,10 @@ pub const TerrainShapeGenerator = struct {
             }
         }
 
-        local_z = 0;
-        while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
-            if (stop_flag) |sf| if (sf.*) return false;
-            var local_x: u32 = 0;
-            while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
-                const idx = local_x + local_z * CHUNK_SIZE_X;
-                const terrain_h = phase_data.surface_heights[idx];
-                var max_slope: i32 = 0;
-                if (local_x > 0) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx - 1]))));
-                if (local_x < CHUNK_SIZE_X - 1) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx + 1]))));
-                if (local_z > 0) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx - CHUNK_SIZE_X]))));
-                if (local_z < CHUNK_SIZE_Z - 1) max_slope = @max(max_slope, @as(i32, @intCast(@abs(terrain_h - phase_data.surface_heights[idx + CHUNK_SIZE_X]))));
-                phase_data.slopes[idx] = max_slope;
-            }
-        }
+        updateSlopes(phase_data);
+
+        self.applyWetlandTerrainModifiers(phase_data);
+        updateSlopes(phase_data);
 
         local_z = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
