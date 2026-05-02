@@ -238,6 +238,46 @@ test "BiomeDefinition scoreClimate returns zero outside climate range" {
     try testing.expectEqual(@as(f32, 0), score);
 }
 
+test "BiomeDefinition scoreClimate returns zero outside continentalness range" {
+    const def = getBiomeDefinition(.desert);
+    const params = ClimateParams{
+        .temperature = 0.9,
+        .humidity = 0.1,
+        .elevation = 0.5,
+        .continentalness = 0.2,
+        .ruggedness = 0.2,
+    };
+    const score = def.scoreClimate(params);
+    try testing.expectEqual(@as(f32, 0), score);
+}
+
+test "BiomeDefinition scoreClimate returns zero outside ruggedness range" {
+    const def = getBiomeDefinition(.meadow);
+    const params = ClimateParams{
+        .temperature = 0.45,
+        .humidity = 0.55,
+        .elevation = 0.5,
+        .continentalness = 0.7,
+        .ruggedness = 0.9,
+    };
+    const score = def.scoreClimate(params);
+    try testing.expectEqual(@as(f32, 0), score);
+}
+
+test "BiomeDefinition scoreClimate returns zero outside ridge mask range" {
+    const def = getBiomeDefinition(.jagged_peaks);
+    const params = ClimateParams{
+        .temperature = 0.32,
+        .humidity = 0.45,
+        .elevation = 0.85,
+        .continentalness = 0.85,
+        .ruggedness = 0.85,
+        .ridge_mask = 0.1,
+    };
+    const score = def.scoreClimate(params);
+    try testing.expectEqual(@as(f32, 0), score);
+}
+
 test "BiomeDefinition scoreClimate returns positive for matching" {
     const def = getBiomeDefinition(.plains);
     const params = ClimateParams{

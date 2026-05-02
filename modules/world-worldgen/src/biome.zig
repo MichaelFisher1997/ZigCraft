@@ -81,6 +81,7 @@ pub const getTransitionBiome = biome_edge_detector.getTransitionBiome;
 pub const selectBiomeVoronoi = biome_selector.selectBiomeVoronoi;
 pub const selectBiomeVoronoiWithRiver = biome_selector.selectBiomeVoronoiWithRiver;
 pub const selectBiome = biome_selector.selectBiome;
+pub const selectBiomeMultiParam = biome_selector.selectBiomeMultiParam;
 pub const selectBiomeWithRiver = biome_selector.selectBiomeWithRiver;
 pub const computeClimateParams = biome_selector.computeClimateParams;
 pub const BiomeSelection = biome_selector.BiomeSelection;

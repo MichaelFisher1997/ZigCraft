@@ -67,7 +67,7 @@ pub fn selectBiomeVoronoiWithRiver(
 }
 
 // ============================================================================
-// Score-based Biome Selection
+// Multi-parameter Biome Selection
 // ============================================================================
 
 /// Select the best matching biome for given climate parameters
@@ -76,6 +76,30 @@ pub fn selectBiome(params: ClimateParams) BiomeId {
     var best_biome: BiomeId = .plains; // Default fallback
 
     for (BIOME_REGISTRY) |biome| {
+        const s = biome.scoreClimate(params);
+        if (s > best_score) {
+            best_score = s;
+            best_biome = biome.id;
+        }
+    }
+
+    return best_biome;
+}
+
+/// Select the best matching biome using climate and structural parameters.
+/// This is the full six-parameter path: temperature, humidity, elevation,
+/// continentalness, ruggedness, and ridge mask all influence eligibility or score.
+pub fn selectBiomeMultiParam(climate: ClimateParams, structural: StructuralParams) BiomeId {
+    var params = climate;
+    params.continentalness = structural.continentalness;
+    params.ridge_mask = structural.ridge_mask;
+
+    var best_score: f32 = 0;
+    var best_biome: BiomeId = .plains;
+
+    for (BIOME_REGISTRY) |biome| {
+        if (!biome.meetsStructuralConstraints(structural.height, structural.slope, structural.continentalness, structural.ridge_mask)) continue;
+
         const s = biome.scoreClimate(params);
         if (s > best_score) {
             best_score = s;
@@ -212,29 +236,22 @@ pub fn selectBiomeWithRiverBlended(params: ClimateParams, river_mask: f32) Biome
 }
 
 // ============================================================================
-// Constraint-based Selection (Voronoi + structural filtering)
+// Constraint-based Selection (multi-parameter + structural filtering)
 // ============================================================================
 
-/// Select biome using Voronoi diagram in heat/humidity space (Issue #106)
-/// Climate temperature/humidity are converted to heat/humidity scale (0-100)
-/// Structural constraints (height, continentalness) filter eligible biomes
+/// Select biome using the full climate and terrain parameter set.
+/// Structural constraints filter eligibility before the soft climate score runs.
 pub fn selectBiomeWithConstraints(climate: ClimateParams, structural: StructuralParams) BiomeId {
-    // Convert climate params to Voronoi heat/humidity scale (0-100)
-    // Temperature 0-1 -> Heat 0-100
-    // Humidity 0-1 -> Humidity 0-100
-    const heat = climate.temperature * 100.0;
-    const humidity = climate.humidity * 100.0;
-
-    return selectBiomeVoronoi(heat, humidity, structural.height, structural.continentalness, structural.slope);
+    return selectBiomeMultiParam(climate, structural);
 }
 
 /// Select biome with structural constraints and river override
 pub fn selectBiomeWithConstraintsAndRiver(climate: ClimateParams, structural: StructuralParams, river_mask: f32) BiomeId {
-    // Convert climate params to Voronoi heat/humidity scale (0-100)
-    const heat = climate.temperature * 100.0;
-    const humidity = climate.humidity * 100.0;
-
-    return selectBiomeVoronoiWithRiver(heat, humidity, structural.height, structural.continentalness, structural.slope, river_mask);
+    if (river_mask > 0.5 and structural.height < 120) {
+        if (climate.temperature <= 0.20) return .frozen_river;
+        return .river;
+    }
+    return selectBiomeWithConstraints(climate, structural);
 }
 
 // ============================================================================
