@@ -29,7 +29,7 @@ pub const DECORATIONS = [_]Decoration{
     .{ .simple = .{
         .block = .tall_grass,
         .place_on = &.{.grass},
-        .biomes = &.{ .plains, .forest, .savanna, .swamp, .jungle, .taiga },
+        .biomes = &.{ .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .savanna, .swamp, .jungle, .taiga, .snowy_taiga, .old_growth_taiga },
         .probability = 0.5,
     } },
 
@@ -38,7 +38,7 @@ pub const DECORATIONS = [_]Decoration{
         .simple = .{
             .block = .flower_red,
             .place_on = &.{.grass},
-            .biomes = &.{ .plains, .forest },
+            .biomes = &.{ .plains, .forest, .birch_forest, .flower_forest },
             .probability = 0.02,
             .variant_min = -0.6, // Normal distribution
         },
@@ -49,7 +49,7 @@ pub const DECORATIONS = [_]Decoration{
         .simple = .{
             .block = .flower_yellow,
             .place_on = &.{.grass},
-            .biomes = &.{ .plains, .forest },
+            .biomes = &.{ .plains, .forest, .birch_forest, .flower_forest },
             .probability = 0.4, // Dense!
             .variant_max = -0.6,
         },
@@ -114,7 +114,7 @@ pub const DECORATIONS = [_]Decoration{
         .simple = .{
             .block = .cobblestone,
             .place_on = &.{.grass},
-            .biomes = &.{ .plains, .mountains, .taiga },
+            .biomes = &.{ .plains, .mountains, .taiga, .old_growth_taiga },
             .probability = 0.05,
             .variant_min = 0.6,
         },

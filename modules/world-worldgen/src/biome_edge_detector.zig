@@ -42,13 +42,22 @@ pub const TransitionRule = struct {
 pub const TRANSITION_RULES = [_]TransitionRule{
     // Hot/dry <-> Temperate
     .{ .biome_a = .desert, .biome_b = .forest, .transition = .dry_plains },
+    .{ .biome_a = .desert, .biome_b = .birch_forest, .transition = .dry_plains },
+    .{ .biome_a = .desert, .biome_b = .dark_forest, .transition = .dry_plains },
+    .{ .biome_a = .desert, .biome_b = .flower_forest, .transition = .dry_plains },
     .{ .biome_a = .desert, .biome_b = .plains, .transition = .dry_plains },
     .{ .biome_a = .desert, .biome_b = .taiga, .transition = .dry_plains },
+    .{ .biome_a = .desert, .biome_b = .snowy_taiga, .transition = .dry_plains },
+    .{ .biome_a = .desert, .biome_b = .old_growth_taiga, .transition = .dry_plains },
     .{ .biome_a = .desert, .biome_b = .jungle, .transition = .savanna },
 
     // Cold <-> Temperate
     .{ .biome_a = .snow_tundra, .biome_b = .plains, .transition = .taiga },
     .{ .biome_a = .snow_tundra, .biome_b = .forest, .transition = .taiga },
+    .{ .biome_a = .snow_tundra, .biome_b = .birch_forest, .transition = .taiga },
+    .{ .biome_a = .snow_tundra, .biome_b = .dark_forest, .transition = .snowy_taiga },
+    .{ .biome_a = .snow_tundra, .biome_b = .flower_forest, .transition = .taiga },
+    .{ .biome_a = .snow_tundra, .biome_b = .old_growth_taiga, .transition = .snowy_taiga },
 
     // Cold/coastal <-> temperate/coastal
     .{ .biome_a = .frozen_ocean, .biome_b = .ocean, .transition = .cold_ocean },
@@ -59,12 +68,21 @@ pub const TRANSITION_RULES = [_]TransitionRule{
 
     // Wetland <-> Forest
     .{ .biome_a = .swamp, .biome_b = .forest, .transition = .marsh },
+    .{ .biome_a = .swamp, .biome_b = .birch_forest, .transition = .marsh },
+    .{ .biome_a = .swamp, .biome_b = .dark_forest, .transition = .marsh },
+    .{ .biome_a = .swamp, .biome_b = .flower_forest, .transition = .marsh },
     .{ .biome_a = .swamp, .biome_b = .plains, .transition = .marsh },
 
     // Mountain <-> Lowland
     .{ .biome_a = .mountains, .biome_b = .plains, .transition = .foothills },
     .{ .biome_a = .mountains, .biome_b = .forest, .transition = .foothills },
+    .{ .biome_a = .mountains, .biome_b = .birch_forest, .transition = .foothills },
+    .{ .biome_a = .mountains, .biome_b = .dark_forest, .transition = .foothills },
+    .{ .biome_a = .mountains, .biome_b = .flower_forest, .transition = .foothills },
+    .{ .biome_a = .mountains, .biome_b = .old_growth_taiga, .transition = .foothills },
     .{ .biome_a = .snowy_mountains, .biome_b = .taiga, .transition = .foothills },
+    .{ .biome_a = .snowy_mountains, .biome_b = .snowy_taiga, .transition = .foothills },
+    .{ .biome_a = .snowy_mountains, .biome_b = .old_growth_taiga, .transition = .foothills },
     .{ .biome_a = .snowy_mountains, .biome_b = .snow_tundra, .transition = .foothills },
 };
 
