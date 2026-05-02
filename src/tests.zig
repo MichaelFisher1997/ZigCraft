@@ -60,6 +60,7 @@ test {
     _ = @import("world-worldgen").biome_registry_tests;
     _ = @import("world-worldgen").biome_selector_tests;
     _ = @import("world-worldgen").height_sampler_tests;
+    _ = @import("world-worldgen").terrain_modifier_tests;
     _ = @import("world-worldgen").terrain_shape_generator_tests;
     _ = @import("world-worldgen").terrain_report;
     _ = @import("world-lod").lod_manager_tests;
@@ -72,6 +73,7 @@ test {
     _ = @import("game/inventory_tests.zig");
     _ = @import("game/screen_tests.zig");
     _ = @import("game/world_list_tests.zig");
+    _ = @import("game/session_tests.zig");
     _ = @import("game/input_mapper_tests.zig");
     _ = @import("game-core").settings_persistence_tests;
     _ = @import("world-persistence").region_file;

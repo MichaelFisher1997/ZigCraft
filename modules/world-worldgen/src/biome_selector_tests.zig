@@ -223,6 +223,202 @@ test "selectBiomeWithConstraintsAndRiver handles river override" {
     try testing.expectEqual(BiomeId.river, biome);
 }
 
+test "selectBiomeWithConstraints locks baseline climate and structural selections" {
+    const Case = struct {
+        name: []const u8,
+        climate: ClimateParams,
+        structural: StructuralParams,
+        expected: BiomeId,
+    };
+
+    const cases = [_]Case{
+        .{
+            .name = "ocean",
+            .climate = .{ .temperature = 0.5, .humidity = 0.5, .elevation = 0.2, .continentalness = 0.25, .ruggedness = 0.1 },
+            .structural = .{ .height = 50, .slope = 1, .continentalness = 0.25, .ridge_mask = 0.0 },
+            .expected = .ocean,
+        },
+        .{
+            .name = "coast",
+            .climate = .{ .temperature = 0.6, .humidity = 0.5, .elevation = 0.3, .continentalness = 0.38, .ruggedness = 0.1 },
+            .structural = .{ .height = 64, .slope = 1, .continentalness = 0.38, .ridge_mask = 0.1 },
+            .expected = .beach,
+        },
+        .{
+            .name = "frozen ocean",
+            .climate = .{ .temperature = 0.05, .humidity = 0.55, .elevation = 0.2, .continentalness = 0.25, .ruggedness = 0.1 },
+            .structural = .{ .height = 50, .slope = 1, .continentalness = 0.25, .ridge_mask = 0.0 },
+            .expected = .frozen_ocean,
+        },
+        .{
+            .name = "lowland",
+            .climate = .{ .temperature = 0.5, .humidity = 0.45, .elevation = 0.35, .continentalness = 0.6, .ruggedness = 0.1 },
+            .structural = .{ .height = 70, .slope = 2, .continentalness = 0.6, .ridge_mask = 0.1 },
+            .expected = .plains,
+        },
+        .{
+            .name = "mountain",
+            .climate = .{ .temperature = 0.4, .humidity = 0.5, .elevation = 0.7, .continentalness = 0.65, .ruggedness = 0.8 },
+            .structural = .{ .height = 100, .slope = 6, .continentalness = 0.65, .ridge_mask = 0.7 },
+            .expected = .mountains,
+        },
+        .{
+            .name = "hot dry",
+            .climate = .{ .temperature = 0.9, .humidity = 0.1, .elevation = 0.4, .continentalness = 0.6, .ruggedness = 0.2 },
+            .structural = .{ .height = 70, .slope = 2, .continentalness = 0.6, .ridge_mask = 0.2 },
+            .expected = .desert,
+        },
+        .{
+            .name = "cold",
+            .climate = .{ .temperature = 0.05, .humidity = 0.3, .elevation = 0.4, .continentalness = 0.6, .ruggedness = 0.2 },
+            .structural = .{ .height = 70, .slope = 2, .continentalness = 0.6, .ridge_mask = 0.2 },
+            .expected = .snow_tundra,
+        },
+        .{
+            .name = "wet",
+            .climate = .{ .temperature = 0.65, .humidity = 0.85, .elevation = 0.3, .continentalness = 0.45, .ruggedness = 0.1 },
+            .structural = .{ .height = 65, .slope = 2, .continentalness = 0.45, .ridge_mask = 0.1 },
+            .expected = .swamp,
+        },
+        .{
+            .name = "transition-prone",
+            .climate = .{ .temperature = 0.55, .humidity = 0.5, .elevation = 0.32, .continentalness = 0.45, .ruggedness = 0.2 },
+            .structural = .{ .height = 64, .slope = 1, .continentalness = 0.45, .ridge_mask = 0.1 },
+            .expected = .coastal_plains,
+        },
+    };
+
+    for (cases) |case| {
+        errdefer std.debug.print("failed biome selector baseline case: {s}\n", .{case.name});
+        const biome = selectBiomeWithConstraints(case.climate, case.structural);
+        try testing.expectEqual(case.expected, biome);
+    }
+}
+
+test "selectBiomeWithConstraintsAndRiver locks river and frozen river priority" {
+    const temperate = ClimateParams{
+        .temperature = 0.5,
+        .humidity = 0.7,
+        .elevation = 0.3,
+        .continentalness = 0.6,
+        .ruggedness = 0.2,
+    };
+    const frozen = ClimateParams{
+        .temperature = 0.08,
+        .humidity = 0.7,
+        .elevation = 0.3,
+        .continentalness = 0.6,
+        .ruggedness = 0.2,
+    };
+    const structural = StructuralParams{
+        .height = 70,
+        .slope = 2,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    };
+
+    try testing.expectEqual(BiomeId.river, selectBiomeWithConstraintsAndRiver(temperate, structural, 0.7));
+    try testing.expectEqual(BiomeId.frozen_river, selectBiomeWithConstraintsAndRiver(frozen, structural, 0.7));
+}
+
+test "selectBiomeWithConstraints locks structural edge cases" {
+    const desert_climate = ClimateParams{
+        .temperature = 0.9,
+        .humidity = 0.1,
+        .elevation = 0.4,
+        .continentalness = 0.6,
+        .ruggedness = 0.2,
+    };
+
+    try testing.expectEqual(BiomeId.desert, selectBiomeWithConstraints(desert_climate, .{
+        .height = 70,
+        .slope = 2,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    }));
+    try testing.expect(selectBiomeWithConstraints(desert_climate, .{
+        .height = 110,
+        .slope = 2,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    }) != .desert);
+
+    const swamp_climate = ClimateParams{
+        .temperature = 0.65,
+        .humidity = 0.85,
+        .elevation = 0.3,
+        .continentalness = 0.45,
+        .ruggedness = 0.1,
+    };
+
+    try testing.expectEqual(BiomeId.swamp, selectBiomeWithConstraints(swamp_climate, .{
+        .height = 65,
+        .slope = 2,
+        .continentalness = 0.45,
+        .ridge_mask = 0.1,
+    }));
+    try testing.expect(selectBiomeWithConstraints(swamp_climate, .{
+        .height = 65,
+        .slope = 10,
+        .continentalness = 0.45,
+        .ridge_mask = 0.1,
+    }) != .swamp);
+
+    try testing.expectEqual(BiomeId.ocean, selectBiomeWithConstraints(.{
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .elevation = 0.2,
+        .continentalness = 0.25,
+        .ruggedness = 0.1,
+    }, .{
+        .height = 50,
+        .slope = 1,
+        .continentalness = 0.25,
+        .ridge_mask = 0.1,
+    }));
+    try testing.expectEqual(BiomeId.plains, selectBiomeWithConstraints(.{
+        .temperature = 0.5,
+        .humidity = 0.45,
+        .elevation = 0.35,
+        .continentalness = 0.6,
+        .ruggedness = 0.1,
+    }, .{
+        .height = 70,
+        .slope = 2,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    }));
+}
+
+test "selectBiomeWithConstraints documents ridge mask baseline behavior" {
+    const climate = ClimateParams{
+        .temperature = 0.4,
+        .humidity = 0.5,
+        .elevation = 0.7,
+        .continentalness = 0.65,
+        .ruggedness = 0.8,
+    };
+    const low_ridge = StructuralParams{
+        .height = 100,
+        .slope = 6,
+        .continentalness = 0.65,
+        .ridge_mask = 0.0,
+    };
+    const high_ridge = StructuralParams{
+        .height = 100,
+        .slope = 6,
+        .continentalness = 0.65,
+        .ridge_mask = 1.0,
+    };
+
+    try testing.expectEqual(BiomeId.mountains, selectBiomeWithConstraints(climate, low_ridge));
+    try testing.expectEqual(BiomeId.mountains, selectBiomeWithConstraints(climate, high_ridge));
+}
+
+test "selectBiomeVoronoi falls back to plains when structural filters exclude all points" {
+    try testing.expectEqual(BiomeId.plains, selectBiomeVoronoi(50, 50, 300, 1.1, 255));
+}
+
 // ============================================================================
 // selectBiomeBlended Tests
 // ============================================================================

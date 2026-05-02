@@ -315,3 +315,34 @@ test "IScreen.getWorldStats returns null when not implemented" {
     const stats = screen.getWorldStats();
     try testing.expect(stats == null);
 }
+
+fn noopDeinit(ptr: *anyopaque) void {
+    _ = ptr;
+}
+
+test "IScreen.update with null vtable update fn does nothing" {
+    const VTable = IScreen.VTable{
+        .deinit = noopDeinit,
+        .update = null,
+        .draw = null,
+        .onEnter = null,
+        .onExit = null,
+        .getWorldStats = null,
+    };
+    const screen = IScreen{ .ptr = undefined, .vtable = &VTable };
+    try screen.update(0.016);
+    try testing.expect(true);
+}
+
+test "IScreen.draw with null vtable draw fn does nothing" {
+    const VTable = IScreen.VTable{
+        .deinit = noopDeinit,
+        .update = null,
+        .draw = null,
+        .onEnter = null,
+        .onExit = null,
+        .getWorldStats = null,
+    };
+    const screen = IScreen{ .ptr = undefined, .vtable = &VTable };
+    try screen.draw(@as(*UISystem, @ptrFromInt(0x1000)));
+}
