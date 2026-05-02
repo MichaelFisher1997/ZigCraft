@@ -61,6 +61,7 @@ test {
     _ = @import("world-worldgen").biome_selector_tests;
     _ = @import("world-worldgen").height_sampler_tests;
     _ = @import("world-worldgen").terrain_shape_generator_tests;
+    _ = @import("world-worldgen").terrain_report;
     _ = @import("world-lod").lod_manager_tests;
     _ = @import("world-lod").lod_seam;
     _ = @import("world-lod").lod_renderer;
