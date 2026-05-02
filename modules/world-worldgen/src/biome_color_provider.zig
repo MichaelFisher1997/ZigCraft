@@ -7,10 +7,14 @@ const BiomeId = @import("biome_registry.zig").BiomeId;
 pub fn getBiomeColor(biome_id: BiomeId) u32 {
     return switch (biome_id) {
         .deep_ocean => 0x1A3380, // Darker blue
+        .frozen_ocean => 0x9FCBE0, // Ice-covered ocean
+        .cold_ocean => 0x295C99, // Cold blue ocean
         .ocean => 0x3366CC, // Standard ocean blue
         .warm_ocean => 0x1F8FCC, // Brighter warm ocean
         .tropical => 0x2BBF9A, // Tropical shallows
         .beach => 0xDDBB88, // Sand color
+        .stony_shore => 0x7A7D78, // Rocky coast
+        .snowy_beach => 0xE5EEF2, // Snow over sand
         .plains => 0x4D8033, // Darker grass green
         .forest => 0x2D591A, // Darker forest green
         .taiga => 0x476647, // Muted taiga green
@@ -19,6 +23,7 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
         .mountains => 0x888888, // Stone grey
         .snowy_mountains => 0xCCDDEE, // Snowy stone
         .river => 0x4488CC, // River blue
+        .frozen_river => 0xA8D2E8, // Frozen river ice
         .swamp => 0x334D33, // Dark swamp green
         .mangrove_swamp => 0x264026, // Muted mangrove
         .jungle => 0x1A661A, // Vibrant jungle green

@@ -81,11 +81,16 @@ pub const WorldMap = struct {
 
         return switch (info.biome) {
             .deep_ocean => .{ 0.03, 0.18, 0.48 },
+            .frozen_ocean => .{ 0.62, 0.80, 0.88 },
+            .cold_ocean => .{ 0.05, 0.27, 0.55 },
             .ocean => .{ 0.06, 0.34, 0.72 },
             .warm_ocean => .{ 0.08, 0.50, 0.82 },
             .tropical => .{ 0.14, 0.72, 0.58 },
             .river => .{ 0.12, 0.46, 0.86 },
+            .frozen_river => .{ 0.66, 0.82, 0.91 },
             .beach, .coastal_plains => .{ 0.90, 0.78, 0.48 },
+            .stony_shore => .{ 0.48, 0.49, 0.47 },
+            .snowy_beach => .{ 0.86, 0.92, 0.94 },
             .desert => .{ 0.86, 0.66, 0.30 },
             .badlands => .{ 0.76, 0.34, 0.16 },
             .snow_tundra => .{ 0.78, 0.88, 0.92 },

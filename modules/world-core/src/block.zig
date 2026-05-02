@@ -31,20 +31,28 @@ pub const Biome = enum(u8) {
     coastal_plains = 20,
     warm_ocean = 21,
     tropical = 22,
+    frozen_ocean = 23,
+    cold_ocean = 24,
+    stony_shore = 25,
+    snowy_beach = 26,
+    frozen_river = 27,
 
     /// Get surface block for this biome
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
     pub fn getSurfaceBlock(self: Biome) BlockType {
         return switch (self) {
-            .deep_ocean, .ocean, .warm_ocean => .gravel,
+            .deep_ocean, .ocean, .warm_ocean, .cold_ocean => .gravel,
+            .frozen_ocean => .packed_ice,
             .tropical => .sand,
-            .beach => .sand,
+            .beach, .snowy_beach => .sand,
+            .stony_shore => .stone,
             .plains, .forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains => .grass,
             .taiga => .grass,
             .desert => .sand,
             .snow_tundra, .snowy_mountains => .snow_block,
             .mountains => .stone,
             .river => .sand,
+            .frozen_river => .gravel,
             .mangrove_swamp => .mud,
             .badlands => .red_sand,
             .mushroom_fields => .mycelium,
@@ -55,9 +63,10 @@ pub const Biome = enum(u8) {
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
     pub fn getFillerBlock(self: Biome) BlockType {
         return switch (self) {
-            .deep_ocean => .gravel,
+            .deep_ocean, .frozen_ocean, .cold_ocean => .gravel,
             .ocean, .warm_ocean, .tropical => .sand,
-            .beach, .desert, .river => .sand,
+            .beach, .snowy_beach, .desert, .river => .sand,
+            .stony_shore, .frozen_river => .gravel,
             .plains, .forest, .taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains => .dirt,
             .snow_tundra => .dirt,
             .mountains, .snowy_mountains => .stone,
