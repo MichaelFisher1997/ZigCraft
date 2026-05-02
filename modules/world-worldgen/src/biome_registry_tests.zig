@@ -122,6 +122,38 @@ test "BiomeDefinition passes mountain biome with valid constraints" {
     try testing.expect(def.meetsStructuralConstraints(130, 8, 0.85, 0.3));
 }
 
+test "mountain variant biome definitions are distinct" {
+    const meadow = getBiomeDefinition(.meadow);
+    const grove = getBiomeDefinition(.grove);
+    const snowy_slopes = getBiomeDefinition(.snowy_slopes);
+    const jagged_peaks = getBiomeDefinition(.jagged_peaks);
+    const frozen_peaks = getBiomeDefinition(.frozen_peaks);
+    const stony_peaks = getBiomeDefinition(.stony_peaks);
+
+    try testing.expectEqualStrings("Meadow", meadow.name);
+    try testing.expectEqualStrings("Grove", grove.name);
+    try testing.expectEqualStrings("Snowy Slopes", snowy_slopes.name);
+    try testing.expectEqualStrings("Jagged Peaks", jagged_peaks.name);
+    try testing.expectEqualStrings("Frozen Peaks", frozen_peaks.name);
+    try testing.expectEqualStrings("Stony Peaks", stony_peaks.name);
+
+    try testing.expectEqual(@import("world-core").BlockType.grass, meadow.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.podzol, grove.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.snow_block, snowy_slopes.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.stone, jagged_peaks.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.packed_ice, frozen_peaks.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.stone, stony_peaks.surface.top);
+
+    try testing.expect(meadow.vegetation.decoration_rules.len >= 3);
+    try testing.expect(grove.vegetation.tree_types.len > 0);
+    try testing.expect(snowy_slopes.vegetation.decoration_rules.len >= 2);
+    try testing.expect(jagged_peaks.terrain.height_amplitude > mountainsAmplitude());
+}
+
+fn mountainsAmplitude() f32 {
+    return getBiomeDefinition(.mountains).terrain.height_amplitude;
+}
+
 // ============================================================================
 // BiomeDefinition Climate Scoring Tests
 // ============================================================================

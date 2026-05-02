@@ -187,7 +187,7 @@ pub const SurfaceBuilder = struct {
                 if (y > 120) return .stone;
             }
 
-            if (biome == .snowy_mountains or biome == .snow_tundra) return .snow_block;
+            if (biome == .snowy_mountains or biome == .snow_tundra or biome == .snowy_slopes) return .snow_block;
             return biome.getSurfaceBlock();
         }
 

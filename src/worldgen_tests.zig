@@ -350,7 +350,7 @@ test "Biome structural constraints - height filter" {
         .ridge_mask = 0.3,
     };
     const biome_at_high_elev = selectBiomeWithConstraints(climate_high, structural_high);
-    try testing.expect(biome_at_high_elev == .snowy_mountains);
+    try testing.expect(biome_at_high_elev == .snowy_mountains or biome_at_high_elev == .snowy_slopes);
 }
 
 test "Biome structural constraints - slope filter" {
