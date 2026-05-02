@@ -622,6 +622,52 @@ test "selectBiomeSimple hot humid returns non-desert" {
     try testing.expect(biome != .ocean);
 }
 
+test "selectBiomeSimple matches constrained selector for LOD-compatible samples" {
+    const Case = struct {
+        name: []const u8,
+        climate: ClimateParams,
+        structural: StructuralParams,
+    };
+
+    const cases = [_]Case{
+        .{
+            .name = "deep ocean",
+            .climate = .{ .temperature = 0.5, .humidity = 0.5, .elevation = 0.2, .continentalness = 0.10, .ruggedness = 0.1 },
+            .structural = .{ .height = 48, .slope = 1, .continentalness = 0.10, .ridge_mask = 0.0 },
+        },
+        .{
+            .name = "plains",
+            .climate = .{ .temperature = 0.5, .humidity = 0.45, .elevation = 0.35, .continentalness = 0.60, .ruggedness = 0.1 },
+            .structural = .{ .height = 70, .slope = 2, .continentalness = 0.60, .ridge_mask = 0.1 },
+        },
+        .{
+            .name = "jagged peaks",
+            .climate = .{ .temperature = 0.32, .humidity = 0.45, .elevation = 0.85, .continentalness = 0.85, .ruggedness = 0.85, .ridge_mask = 0.7 },
+            .structural = .{ .height = 150, .slope = 18, .continentalness = 0.85, .ridge_mask = 0.7 },
+        },
+    };
+
+    for (cases) |case| {
+        errdefer std.debug.print("failed LOD selector consistency case: {s}\n", .{case.name});
+        try testing.expectEqual(selectBiomeWithConstraints(case.climate, case.structural), selectBiomeSimple(case.climate));
+    }
+}
+
+test "selectBiomeSimple uses terrain signals beyond heat and humidity" {
+    const warm_dry = ClimateParams{
+        .temperature = 0.82,
+        .humidity = 0.25,
+        .elevation = 0.40,
+        .continentalness = 0.80,
+        .ruggedness = 0.10,
+    };
+    var rugged = warm_dry;
+    rugged.ruggedness = 0.75;
+
+    try testing.expectEqual(BiomeId.savanna, selectBiomeSimple(warm_dry));
+    try testing.expectEqual(BiomeId.badlands, selectBiomeSimple(rugged));
+}
+
 // ============================================================================
 // BiomeSelection Structure Tests
 // ============================================================================
