@@ -178,15 +178,11 @@ pub const StructuralParams = struct {
 pub const BIOME_POINTS = [_]BiomePoint{
     // === Ocean Biomes (continental < 0.35) ===
     .{ .id = .deep_ocean, .heat = 50, .humidity = 50, .weight = 1.5, .max_continental = 0.20 },
-    .{ .id = .frozen_ocean, .heat = 5, .humidity = 55, .weight = 1.1, .max_continental = 0.35 },
-    .{ .id = .cold_ocean, .heat = 22, .humidity = 55, .weight = 1.1, .min_continental = 0.10, .max_continental = 0.35 },
     .{ .id = .ocean, .heat = 50, .humidity = 50, .weight = 1.5, .min_continental = 0.20, .max_continental = 0.35 },
     .{ .id = .warm_ocean, .heat = 85, .humidity = 75, .weight = 0.9, .min_continental = 0.20, .max_continental = 0.35 },
     .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.48, .max_slope = 3, .y_max = 72 },
 
     // === Coastal Biomes ===
-    .{ .id = .snowy_beach, .heat = 8, .humidity = 45, .weight = 0.7, .max_slope = 2, .min_continental = 0.35, .max_continental = 0.42, .y_max = 70 },
-    .{ .id = .stony_shore, .heat = 30, .humidity = 45, .weight = 0.7, .min_continental = 0.35, .max_continental = 0.45, .y_max = 82 },
     .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.35, .max_continental = 0.42, .y_max = 70 },
 
     // === Cold Biomes ===
@@ -223,7 +219,6 @@ pub const BIOME_POINTS = [_]BiomePoint{
     // === Special Biomes ===
     .{ .id = .mushroom_fields, .heat = 50, .humidity = 80, .weight = 0.3, .min_continental = 0.35, .max_continental = 0.45 },
     .{ .id = .river, .heat = 50, .humidity = 70, .weight = 0.4, .min_continental = 0.42 }, // Selected by river mask, not Voronoi
-    .{ .id = .frozen_river, .heat = 8, .humidity = 70, .weight = 0.4, .min_continental = 0.42 }, // Selected by river mask, not Voronoi
 
     // === Transition Biomes (created by edge detection, but need Voronoi fallback) ===
     // These have extreme positions so they're rarely selected directly
@@ -261,36 +256,6 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 1,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{} },
-    },
-    .{
-        .id = .frozen_ocean,
-        .name = "Frozen Ocean",
-        .temperature = .{ .min = 0.0, .max = 0.15 },
-        .humidity = Range.any(),
-        .elevation = .{ .min = 0.0, .max = 0.32 },
-        .continentalness = .{ .min = 0.0, .max = 0.35 },
-        .priority = 4,
-        .surface = .{ .top = .packed_ice, .filler = .gravel, .depth_range = 4 },
-        .vegetation = .{ .tree_types = &.{} },
-        .colors = .{ .grass = .{ 0.78, 0.88, 0.92 }, .foliage = .{ 0.66, 0.78, 0.82 }, .water = .{ 0.32, 0.54, 0.74 } },
-    },
-    .{
-        .id = .cold_ocean,
-        .name = "Cold Ocean",
-        .temperature = .{ .min = 0.15, .max = 0.30 },
-        .humidity = Range.any(),
-        .elevation = .{ .min = 0.0, .max = 0.32 },
-        .continentalness = .{ .min = 0.0, .max = 0.35 },
-        .priority = 3,
-        .surface = .{ .top = .gravel, .filler = .gravel, .depth_range = 4 },
-        .vegetation = .{
-            .tree_types = &.{},
-            .seagrass_density = 0.08,
-            .kelp_density = 0.10,
-            .seaweed_density = 0.04,
-            .decoration_rules = &.{.{ .block = .kelp, .place_on = &.{ .gravel, .clay }, .chance = 0.04, .requires_water = true, .min_water_depth = 6, .max_water_depth = 30 }},
-        },
-        .colors = .{ .water = .{ 0.10, 0.32, 0.62 } },
     },
     .{
         .id = .warm_ocean,
@@ -346,33 +311,6 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 10,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 2 },
         .vegetation = .{ .tree_types = &.{} },
-    },
-    .{
-        .id = .stony_shore,
-        .name = "Stony Shore",
-        .temperature = .{ .min = 0.20, .max = 0.45 },
-        .humidity = Range.any(),
-        .elevation = .{ .min = 0.28, .max = 0.45 },
-        .continentalness = .{ .min = 0.35, .max = 0.45 },
-        .max_slope = 8,
-        .priority = 11,
-        .surface = .{ .top = .stone, .filler = .gravel, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{} },
-        .terrain = .{ .height_amplitude = 0.8, .smoothing = 0.1 },
-        .colors = .{ .grass = .{ 0.48, 0.52, 0.50 }, .foliage = .{ 0.34, 0.42, 0.36 }, .water = .{ 0.10, 0.34, 0.62 } },
-    },
-    .{
-        .id = .snowy_beach,
-        .name = "Snowy Beach",
-        .temperature = .{ .min = 0.0, .max = 0.18 },
-        .humidity = Range.any(),
-        .elevation = .{ .min = 0.28, .max = 0.38 },
-        .continentalness = .{ .min = 0.35, .max = 0.42 },
-        .max_slope = 2,
-        .priority = 12,
-        .surface = .{ .top = .snow_block, .filler = .sand, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{} },
-        .colors = .{ .grass = .{ 0.82, 0.90, 0.94 }, .foliage = .{ 0.68, 0.78, 0.82 }, .water = .{ 0.22, 0.46, 0.70 } },
     },
 
     // === Land Biomes (continentalness > 0.45) ===
@@ -779,19 +717,6 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .priority = 15,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 2 },
         .vegetation = .{ .tree_types = &.{} },
-    },
-    .{
-        .id = .frozen_river,
-        .name = "Frozen River",
-        .temperature = .{ .min = 0.0, .max = 0.20 },
-        .humidity = Range.any(),
-        .elevation = .{ .min = 0.0, .max = 0.35 },
-        // Frozen River should only be selected by river override.
-        .continentalness = .{ .min = -1.0, .max = -0.5 },
-        .priority = 16,
-        .surface = .{ .top = .ice, .filler = .gravel, .depth_range = 2 },
-        .vegetation = .{ .tree_types = &.{} },
-        .colors = .{ .grass = .{ 0.78, 0.88, 0.92 }, .foliage = .{ 0.66, 0.78, 0.82 }, .water = .{ 0.36, 0.58, 0.78 } },
     },
 
     // === Transition Micro-Biomes ===

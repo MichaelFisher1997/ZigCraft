@@ -148,7 +148,6 @@ pub const SurfaceBuilder = struct {
 
         // Above terrain: water or air
         if (y > terrain_height) {
-            if ((biome == .frozen_ocean or biome == .frozen_river) and y == sea_level) return .ice;
             if (y <= sea_level) return .water;
             return .air;
         }
@@ -188,9 +187,7 @@ pub const SurfaceBuilder = struct {
                 if (y > 120) return .stone;
             }
 
-            if (biome == .snowy_mountains or biome == .snow_tundra or biome == .snowy_taiga or biome == .snowy_slopes or biome == .snowy_beach) return .snow_block;
-            if (biome == .frozen_ocean) return .packed_ice;
-            if (biome == .frozen_river) return .ice;
+            if (biome == .snowy_mountains or biome == .snow_tundra or biome == .snowy_taiga or biome == .snowy_slopes) return .snow_block;
             return biome.getSurfaceBlock();
         }
 
@@ -278,18 +275,6 @@ test "SurfaceBuilder water above terrain below sea level" {
     const builder = SurfaceBuilder.init();
     const block = builder.getBlockAt(60, 55, .plains, 3, false, true);
     try std.testing.expectEqual(BlockType.water, block);
-}
-
-test "SurfaceBuilder freezes cold biome water surface" {
-    const builder = SurfaceBuilder.init();
-    const frozen_ocean = builder.getBlockAt(64, 55, .frozen_ocean, 3, true, true);
-    try std.testing.expectEqual(BlockType.ice, frozen_ocean);
-
-    const below_ice = builder.getBlockAt(63, 55, .frozen_ocean, 3, true, true);
-    try std.testing.expectEqual(BlockType.water, below_ice);
-
-    const frozen_river = builder.getBlockAt(64, 55, .frozen_river, 3, false, true);
-    try std.testing.expectEqual(BlockType.ice, frozen_river);
 }
 
 test "SurfaceBuilder air above terrain above sea level" {

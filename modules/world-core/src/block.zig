@@ -42,22 +42,14 @@ pub const Biome = enum(u8) {
     jagged_peaks = 31,
     frozen_peaks = 32,
     stony_peaks = 33,
-    frozen_ocean = 34,
-    cold_ocean = 35,
-    stony_shore = 36,
-    snowy_beach = 37,
-    frozen_river = 38,
 
     /// Get surface block for this biome
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
     pub fn getSurfaceBlock(self: Biome) BlockType {
         return switch (self) {
-            .deep_ocean, .ocean, .warm_ocean, .cold_ocean => .gravel,
-            .frozen_ocean => .packed_ice,
+            .deep_ocean, .ocean, .warm_ocean => .gravel,
             .tropical => .sand,
             .beach => .sand,
-            .snowy_beach => .snow_block,
-            .stony_shore => .stone,
             .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .meadow => .grass,
             .taiga, .old_growth_taiga => .grass,
             .desert => .sand,
@@ -66,7 +58,6 @@ pub const Biome = enum(u8) {
             .grove => .podzol,
             .frozen_peaks => .packed_ice,
             .river => .sand,
-            .frozen_river => .gravel,
             .mangrove_swamp => .mud,
             .badlands => .red_sand,
             .mushroom_fields => .mycelium,
@@ -77,10 +68,9 @@ pub const Biome = enum(u8) {
     /// Prefer using BiomeDefinition.surface from worldgen/biome.zig
     pub fn getFillerBlock(self: Biome) BlockType {
         return switch (self) {
-            .deep_ocean, .frozen_ocean, .cold_ocean => .gravel,
+            .deep_ocean => .gravel,
             .ocean, .warm_ocean, .tropical => .sand,
-            .beach, .snowy_beach, .desert, .river => .sand,
-            .stony_shore, .frozen_river => .gravel,
+            .beach, .desert, .river => .sand,
             .plains, .forest, .birch_forest, .dark_forest, .flower_forest, .taiga, .snowy_taiga, .old_growth_taiga, .swamp, .jungle, .savanna, .foothills, .marsh, .dry_plains, .coastal_plains, .meadow, .grove => .dirt,
             .snow_tundra => .dirt,
             .mountains, .snowy_mountains, .snowy_slopes, .jagged_peaks, .frozen_peaks, .stony_peaks => .stone,

@@ -121,7 +121,7 @@ pub const BiomeDecorator = struct {
 
     fn mayPlaceAquaticDecoration(biome: BiomeId) bool {
         return switch (biome) {
-            .ocean, .cold_ocean, .warm_ocean, .tropical => true,
+            .ocean, .warm_ocean, .tropical => true,
             else => false,
         };
     }

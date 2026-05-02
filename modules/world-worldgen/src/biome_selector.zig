@@ -60,7 +60,6 @@ pub fn selectBiomeVoronoiWithRiver(
     // River biome takes priority when river mask is active
     // Issue #110: Allow rivers at higher elevations (canyons)
     if (river_mask > 0.5 and height < 120) {
-        if (heat <= 20.0) return .frozen_river;
         return .river;
     }
     return selectBiomeVoronoi(heat, humidity, height, continentalness, slope);
@@ -90,7 +89,6 @@ pub fn selectBiome(params: ClimateParams) BiomeId {
 pub fn selectBiomeWithRiver(params: ClimateParams, river_mask: f32) BiomeId {
     // River biome takes priority when river mask is active
     if (river_mask > 0.5 and params.elevation < 0.35) {
-        if (params.temperature <= 0.20) return .frozen_river;
         return .river;
     }
     return selectBiome(params);
@@ -193,14 +191,13 @@ pub fn selectBiomeWithRiverBlended(params: ClimateParams, river_mask: f32) Biome
         if (river_mask > river_edge0) {
             const t = std.math.clamp((river_mask - river_edge0) / (river_edge1 - river_edge0), 0.0, 1.0);
             const river_factor = t * t * (3.0 - 2.0 * t);
-            const river_biome: BiomeId = if (params.temperature <= 0.20) .frozen_river else .river;
 
             // Blend towards river:
             // river_factor = 1.0 -> Pure River
             // river_factor = 0.0 -> Pure Land (selection.primary)
             // We set Primary=River, Secondary=Land, Blend=(1-river_factor)
             return .{
-                .primary = river_biome,
+                .primary = .river,
                 .secondary = selection.primary,
                 .blend_factor = 1.0 - river_factor,
                 .primary_score = 1.0, // River wins
@@ -255,8 +252,6 @@ pub fn selectBiomeSimple(climate: ClimateParams) BiomeId {
 
     // Ocean check
     if (continental < 0.35) {
-        if (heat <= 15) return .frozen_ocean;
-        if (heat <= 30) return .cold_ocean;
         if (continental < 0.20) return .deep_ocean;
         if (heat > 75 and humidity > 55) return .warm_ocean;
         return .ocean;

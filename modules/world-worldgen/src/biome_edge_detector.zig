@@ -59,13 +59,6 @@ pub const TRANSITION_RULES = [_]TransitionRule{
     .{ .biome_a = .snow_tundra, .biome_b = .flower_forest, .transition = .taiga },
     .{ .biome_a = .snow_tundra, .biome_b = .old_growth_taiga, .transition = .snowy_taiga },
 
-    // Cold/coastal <-> temperate/coastal
-    .{ .biome_a = .frozen_ocean, .biome_b = .ocean, .transition = .cold_ocean },
-    .{ .biome_a = .cold_ocean, .biome_b = .warm_ocean, .transition = .ocean },
-    .{ .biome_a = .snowy_beach, .biome_b = .beach, .transition = .stony_shore },
-    .{ .biome_a = .snow_tundra, .biome_b = .beach, .transition = .snowy_beach },
-    .{ .biome_a = .taiga, .biome_b = .beach, .transition = .stony_shore },
-
     // Wetland <-> Forest
     .{ .biome_a = .swamp, .biome_b = .forest, .transition = .marsh },
     .{ .biome_a = .swamp, .biome_b = .birch_forest, .transition = .marsh },
