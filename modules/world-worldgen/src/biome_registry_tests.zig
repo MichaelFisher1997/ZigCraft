@@ -122,6 +122,38 @@ test "BiomeDefinition passes mountain biome with valid constraints" {
     try testing.expect(def.meetsStructuralConstraints(130, 8, 0.85, 0.3));
 }
 
+test "mountain variant biome definitions are distinct" {
+    const meadow = getBiomeDefinition(.meadow);
+    const grove = getBiomeDefinition(.grove);
+    const snowy_slopes = getBiomeDefinition(.snowy_slopes);
+    const jagged_peaks = getBiomeDefinition(.jagged_peaks);
+    const frozen_peaks = getBiomeDefinition(.frozen_peaks);
+    const stony_peaks = getBiomeDefinition(.stony_peaks);
+
+    try testing.expectEqualStrings("Meadow", meadow.name);
+    try testing.expectEqualStrings("Grove", grove.name);
+    try testing.expectEqualStrings("Snowy Slopes", snowy_slopes.name);
+    try testing.expectEqualStrings("Jagged Peaks", jagged_peaks.name);
+    try testing.expectEqualStrings("Frozen Peaks", frozen_peaks.name);
+    try testing.expectEqualStrings("Stony Peaks", stony_peaks.name);
+
+    try testing.expectEqual(@import("world-core").BlockType.grass, meadow.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.podzol, grove.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.snow_block, snowy_slopes.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.stone, jagged_peaks.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.packed_ice, frozen_peaks.surface.top);
+    try testing.expectEqual(@import("world-core").BlockType.stone, stony_peaks.surface.top);
+
+    try testing.expect(meadow.vegetation.decoration_rules.len >= 3);
+    try testing.expect(grove.vegetation.tree_types.len > 0);
+    try testing.expect(snowy_slopes.vegetation.decoration_rules.len >= 2);
+    try testing.expect(jagged_peaks.terrain.height_amplitude > mountainsAmplitude());
+}
+
+fn mountainsAmplitude() f32 {
+    return getBiomeDefinition(.mountains).terrain.height_amplitude;
+}
+
 // ============================================================================
 // BiomeDefinition Climate Scoring Tests
 // ============================================================================
@@ -219,10 +251,48 @@ test "getBiomeDefinition ocean biomes have correct continentalness ranges" {
     try testing.expect(warm.vegetation.coral_density > 0.0);
 }
 
+test "getBiomeDefinition cold ocean variants have expected identity" {
+    const frozen = getBiomeDefinition(.frozen_ocean);
+    try testing.expectEqualStrings("Frozen Ocean", frozen.name);
+    try testing.expectEqual(.packed_ice, frozen.surface.top);
+    try testing.expect(frozen.temperature.max <= 0.15);
+    try testing.expect(frozen.continentalness.max <= 0.35);
+
+    const cold = getBiomeDefinition(.cold_ocean);
+    try testing.expectEqualStrings("Cold Ocean", cold.name);
+    try testing.expectEqual(.gravel, cold.surface.top);
+    try testing.expect(cold.temperature.min >= 0.15);
+    try testing.expect(cold.temperature.max <= 0.30);
+    try testing.expect(cold.vegetation.kelp_density > 0.0);
+}
+
 test "getBiomeDefinition beach has narrow continentalness band" {
     const beach = getBiomeDefinition(.beach);
     try testing.expect(beach.continentalness.min >= 0.30);
     try testing.expect(beach.continentalness.max <= 0.45);
+}
+
+test "getBiomeDefinition cold coastal variants have expected surfaces" {
+    const stony = getBiomeDefinition(.stony_shore);
+    try testing.expectEqualStrings("Stony Shore", stony.name);
+    try testing.expectEqual(.stone, stony.surface.top);
+    try testing.expectEqual(.gravel, stony.surface.filler);
+    try testing.expect(stony.continentalness.min >= 0.35);
+    try testing.expect(stony.continentalness.max <= 0.45);
+
+    const snowy = getBiomeDefinition(.snowy_beach);
+    try testing.expectEqualStrings("Snowy Beach", snowy.name);
+    try testing.expectEqual(.snow_block, snowy.surface.top);
+    try testing.expectEqual(.sand, snowy.surface.filler);
+    try testing.expect(snowy.temperature.max <= 0.20);
+}
+
+test "getBiomeDefinition frozen river is river override only" {
+    const frozen_river = getBiomeDefinition(.frozen_river);
+    try testing.expectEqualStrings("Frozen River", frozen_river.name);
+    try testing.expectEqual(.ice, frozen_river.surface.top);
+    try testing.expectEqual(.gravel, frozen_river.surface.filler);
+    try testing.expect(frozen_river.continentalness.max < 0.0);
 }
 
 test "getBiomeDefinition tropical has aquatic vegetation and coastal range" {
@@ -231,4 +301,30 @@ test "getBiomeDefinition tropical has aquatic vegetation and coastal range" {
     try testing.expect(tropical.continentalness.max <= 0.50);
     try testing.expect(tropical.vegetation.coral_density > 0.0);
     try testing.expect(tropical.vegetation.decoration_rules.len > 0);
+}
+
+test "forest and taiga variants have distinct vegetation profiles" {
+    const birch = getBiomeDefinition(.birch_forest);
+    try testing.expectEqualStrings("Birch Forest", birch.name);
+    try testing.expectEqual(BiomeId.birch_forest, birch.id);
+    try testing.expect(birch.vegetation.tree_types.len >= 2);
+
+    const dark = getBiomeDefinition(.dark_forest);
+    try testing.expectEqualStrings("Dark Forest", dark.name);
+    try testing.expect(dark.vegetation.tree_types.len >= 2);
+    try testing.expect(dark.vegetation.decoration_rules.len >= 2);
+
+    const flower = getBiomeDefinition(.flower_forest);
+    try testing.expectEqualStrings("Flower Forest", flower.name);
+    try testing.expect(flower.vegetation.decoration_rules.len >= 3);
+
+    const snowy = getBiomeDefinition(.snowy_taiga);
+    try testing.expectEqualStrings("Snowy Taiga", snowy.name);
+    try testing.expectEqual(.snow_block, snowy.surface.top);
+    try testing.expect(snowy.vegetation.tree_types.len > 0);
+
+    const old_growth = getBiomeDefinition(.old_growth_taiga);
+    try testing.expectEqualStrings("Old Growth Taiga", old_growth.name);
+    try testing.expect(old_growth.vegetation.tree_types.len >= 2);
+    try testing.expect(old_growth.terrain.height_amplitude > getBiomeDefinition(.taiga).terrain.height_amplitude);
 }

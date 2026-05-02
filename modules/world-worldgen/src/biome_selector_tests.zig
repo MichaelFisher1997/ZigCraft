@@ -106,6 +106,18 @@ test "selectBiomeWithRiver selects river when mask high and elevation low" {
     try testing.expectEqual(BiomeId.river, biome);
 }
 
+test "selectBiomeWithRiver selects frozen river in cold climates" {
+    const params = ClimateParams{
+        .temperature = 0.1,
+        .humidity = 0.7,
+        .elevation = 0.3,
+        .continentalness = 0.6,
+        .ruggedness = 0.3,
+    };
+    const biome = selectBiomeWithRiver(params, 0.7);
+    try testing.expectEqual(BiomeId.frozen_river, biome);
+}
+
 test "selectBiomeWithRiver selects normal biome when elevation high" {
     const params = ClimateParams{
         .temperature = 0.5,
@@ -164,6 +176,11 @@ test "selectBiomeVoronoi respects continentalness constraints" {
 test "selectBiomeVoronoiWithRiver returns river when mask > 0.5 and height < 120" {
     const biome = selectBiomeVoronoiWithRiver(50, 50, 80, 0.6, 2, 0.6);
     try testing.expectEqual(BiomeId.river, biome);
+}
+
+test "selectBiomeVoronoiWithRiver returns frozen river for cold river mask" {
+    const biome = selectBiomeVoronoiWithRiver(8, 70, 80, 0.6, 2, 0.6);
+    try testing.expectEqual(BiomeId.frozen_river, biome);
 }
 
 // ============================================================================
@@ -286,6 +303,26 @@ test "selectBiomeSimple returns deep_ocean for very low continentalness" {
         .ruggedness = 0.3,
     };
     try testing.expectEqual(BiomeId.deep_ocean, selectBiomeSimple(params));
+}
+
+test "selectBiomeSimple returns cold ocean variants for cold low continentalness" {
+    const frozen = ClimateParams{
+        .temperature = 0.1,
+        .humidity = 0.5,
+        .elevation = 0.1,
+        .continentalness = 0.25,
+        .ruggedness = 0.3,
+    };
+    try testing.expectEqual(BiomeId.frozen_ocean, selectBiomeSimple(frozen));
+
+    const cold = ClimateParams{
+        .temperature = 0.25,
+        .humidity = 0.5,
+        .elevation = 0.1,
+        .continentalness = 0.25,
+        .ruggedness = 0.3,
+    };
+    try testing.expectEqual(BiomeId.cold_ocean, selectBiomeSimple(cold));
 }
 
 test "selectBiomeSimple returns different biomes for hot vs cold" {

@@ -640,10 +640,21 @@ pub const OverworldGenerator = struct {
     fn biomeGrassTint(biome_id: BiomeId) [3]f32 {
         return switch (biome_id) {
             .forest => .{ 0.18, 0.64, 0.16 },
+            .birch_forest => .{ 0.24, 0.68, 0.18 },
+            .dark_forest => .{ 0.12, 0.46, 0.12 },
+            .flower_forest => .{ 0.30, 0.72, 0.18 },
             .taiga => .{ 0.24, 0.56, 0.24 },
+            .snowy_taiga => .{ 0.62, 0.74, 0.70 },
+            .old_growth_taiga => .{ 0.20, 0.48, 0.28 },
             .desert => .{ 0.75, 0.70, 0.35 },
-            .snow_tundra => .{ 0.7, 0.75, 0.8 },
+            .snow_tundra, .snowy_beach, .frozen_ocean, .frozen_river => .{ 0.7, 0.75, 0.8 },
             .snowy_mountains => .{ 0.85, 0.90, 0.95 },
+            .meadow => .{ 0.32, 0.74, 0.24 },
+            .grove => .{ 0.20, 0.48, 0.24 },
+            .snowy_slopes => .{ 0.82, 0.88, 0.94 },
+            .jagged_peaks => .{ 0.56, 0.56, 0.54 },
+            .frozen_peaks => .{ 0.76, 0.88, 0.96 },
+            .stony_peaks => .{ 0.62, 0.58, 0.48 },
             .swamp => .{ 0.26, 0.58, 0.18 },
             .jungle => .{ 0.10, 0.76, 0.08 },
             .savanna => .{ 0.55, 0.55, 0.30 },
@@ -652,6 +663,7 @@ pub const OverworldGenerator = struct {
             .foothills => .{ 0.24, 0.62, 0.22 },
             .dry_plains => .{ 0.55, 0.50, 0.28 },
             .coastal_plains => .{ 0.24, 0.66, 0.24 },
+            .stony_shore => .{ 0.48, 0.52, 0.50 },
             else => .{ 0.22, 0.72, 0.16 },
         };
     }
@@ -659,7 +671,18 @@ pub const OverworldGenerator = struct {
     fn biomeFoliageTint(biome_id: BiomeId) [3]f32 {
         return switch (biome_id) {
             .forest => .{ 0.12, 0.52, 0.12 },
+            .birch_forest => .{ 0.18, 0.58, 0.14 },
+            .dark_forest => .{ 0.08, 0.36, 0.08 },
+            .flower_forest => .{ 0.20, 0.58, 0.12 },
             .taiga => .{ 0.18, 0.46, 0.18 },
+            .meadow => .{ 0.20, 0.58, 0.18 },
+            .grove => .{ 0.16, 0.38, 0.18 },
+            .snowy_slopes => .{ 0.64, 0.72, 0.70 },
+            .jagged_peaks => .{ 0.44, 0.46, 0.42 },
+            .frozen_peaks => .{ 0.68, 0.78, 0.82 },
+            .stony_peaks => .{ 0.46, 0.44, 0.34 },
+            .snowy_taiga => .{ 0.16, 0.40, 0.24 },
+            .old_growth_taiga => .{ 0.12, 0.34, 0.20 },
             .swamp => .{ 0.22, 0.52, 0.16 },
             .jungle => .{ 0.08, 0.62, 0.08 },
             .savanna => .{ 0.50, 0.50, 0.28 },
@@ -672,6 +695,8 @@ pub const OverworldGenerator = struct {
     fn biomeWaterTint(biome_id: BiomeId) [3]f32 {
         return switch (biome_id) {
             .deep_ocean => .{ 0.1, 0.2, 0.5 },
+            .frozen_ocean, .frozen_river => .{ 0.32, 0.54, 0.74 },
+            .cold_ocean, .stony_shore, .snowy_beach => .{ 0.10, 0.34, 0.62 },
             .swamp => .{ 0.16, 0.38, 0.30 },
             else => .{ 0.12, 0.38, 0.78 },
         };
@@ -693,7 +718,8 @@ pub const OverworldGenerator = struct {
 
     fn treeBlocksForBiome(biome_id: BiomeId) TreeBlocks {
         return switch (biome_id) {
-            .taiga, .snow_tundra, .snowy_mountains => .{ .trunk = .spruce_log, .leaves = .spruce_leaves },
+            .taiga, .snowy_taiga, .old_growth_taiga, .snow_tundra, .snowy_mountains, .grove, .snowy_slopes => .{ .trunk = .spruce_log, .leaves = .spruce_leaves },
+            .birch_forest => .{ .trunk = .birch_log, .leaves = .birch_leaves },
             .jungle => .{ .trunk = .jungle_log, .leaves = .jungle_leaves },
             .savanna => .{ .trunk = .acacia_log, .leaves = .acacia_leaves },
             .swamp, .mangrove_swamp, .marsh => .{ .trunk = .mangrove_log, .leaves = .mangrove_leaves },
@@ -704,6 +730,8 @@ pub const OverworldGenerator = struct {
     fn treeBlocksForType(tree_type: tree_registry.TreeType) TreeBlocks {
         return switch (tree_type) {
             .spruce => .{ .trunk = .spruce_log, .leaves = .spruce_leaves },
+            .dense_spruce => .{ .trunk = .spruce_log, .leaves = .spruce_leaves },
+            .birch, .dense_birch => .{ .trunk = .birch_log, .leaves = .birch_leaves },
             .jungle => .{ .trunk = .jungle_log, .leaves = .jungle_leaves },
             .acacia => .{ .trunk = .acacia_log, .leaves = .acacia_leaves },
             .mangrove => .{ .trunk = .mangrove_log, .leaves = .mangrove_leaves },
@@ -716,7 +744,8 @@ pub const OverworldGenerator = struct {
     fn treeHeightForBiome(biome_id: BiomeId) f32 {
         return switch (biome_id) {
             .jungle => 13.0,
-            .taiga, .snow_tundra, .snowy_mountains => 10.0,
+            .taiga, .snowy_taiga, .snow_tundra, .snowy_mountains, .grove, .snowy_slopes => 10.0,
+            .old_growth_taiga => 12.0,
             .savanna => 8.0,
             .swamp, .mangrove_swamp, .marsh => 7.0,
             else => 6.0,
@@ -727,6 +756,7 @@ pub const OverworldGenerator = struct {
         return switch (tree_type) {
             .jungle => 13.0,
             .spruce => 10.0,
+            .dense_spruce => 12.0,
             .acacia => 8.0,
             .swamp_oak, .mangrove => 7.0,
             .huge_red_mushroom, .huge_brown_mushroom => 6.0,
@@ -830,10 +860,18 @@ pub const OverworldGenerator = struct {
     }
 
     fn makeMaterialLayers(surface_block: BlockType, biome_id: BiomeId, render_water_surface: bool) world_core.LODMaterialLayers {
+        if (render_water_surface and (surface_block == .ice or surface_block == .packed_ice)) {
+            return .{
+                .surface = surface_block,
+                .subsurface = .water,
+                .foundation = .stone,
+            };
+        }
+
         if (render_water_surface) {
             const floor_block: BlockType = switch (biome_id) {
-                .deep_ocean => .gravel,
-                .ocean, .river, .beach => .sand,
+                .deep_ocean, .frozen_ocean, .cold_ocean, .stony_shore, .frozen_river => .gravel,
+                .ocean, .river, .beach, .snowy_beach => .sand,
                 else => .dirt,
             };
             return .{
@@ -879,11 +917,19 @@ pub const OverworldGenerator = struct {
     }
 
     fn getSurfaceBlock(_: *const OverworldGenerator, biome_id: BiomeId, height: i32, sea_level: i32, render_water_surface: bool) BlockType {
+        if (render_water_surface and biome_id == .frozen_ocean) return .ice;
+        if (render_water_surface and biome_id == .frozen_river) return .ice;
         if (render_water_surface or height < sea_level) return .water;
         return switch (biome_id) {
             .desert, .badlands => .sand,
-            .snow_tundra, .snowy_mountains => .snow_block,
+            .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes, .snowy_beach => .snow_block,
+            .frozen_ocean => .packed_ice,
+            .frozen_river => .ice,
+            .grove => .podzol,
+            .frozen_peaks => .packed_ice,
+            .jagged_peaks, .stony_peaks => .stone,
             .beach => .sand,
+            .stony_shore => .stone,
             else => .grass,
         };
     }
@@ -967,8 +1013,10 @@ pub const OverworldGenerator = struct {
 
         return switch (biome_id) {
             .desert, .badlands, .beach => .sand,
-            .snow_tundra, .snowy_mountains => .snow,
-            .mountains => if (height > 120) .rock else .stone,
+            .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes => .snow,
+            .mountains, .jagged_peaks, .stony_peaks => if (height > 120) .rock else .stone,
+            .frozen_peaks => .snow,
+            .grove => .dirt,
             .deep_ocean, .ocean => .sand,
             else => .grass,
         };
