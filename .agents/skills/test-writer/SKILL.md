@@ -58,6 +58,30 @@ src/
 - Accept `std.mem.Allocator` if allocation is needed; use `testing.allocator`
 - Use `defer`/`errdefer` for cleanup
 
+### Non-Vacuous Test Requirement
+
+Every test must exercise production code or validate a real production invariant. A good test would fail if the production behavior named in the test regresses.
+
+Valid tests include:
+
+- Calling a production function with inputs that exercise a success path, edge case, or error path
+- Initializing a production type and invoking its real methods or helper functions
+- Verifying a documented GPU/shared-memory layout invariant with `@sizeOf`, `@alignOf`, `@offsetOf`, or `@bitSizeOf`
+- Testing error mapping, handle validation, state transitions, or deterministic output through the real implementation
+- Using mocks or stubs only to satisfy dependencies while still calling the production function under test
+
+Invalid tests include:
+
+- Reimplementing production branches in local variables and asserting the copied result
+- Checking local booleans, counters, or branch order without invoking the production code being named
+- Assigning a Vulkan/C struct field in the test and asserting the field contains the assigned value
+- Asserting constants equal themselves or testing that Vulkan/C bindings work
+- Using `try testing.expect(true)` as a placeholder assertion
+- Returning early from a test as the success condition instead of asserting observable production behavior
+- Adding duplicate tests with different names but no new production behavior coverage
+
+If a path cannot be tested without a real GPU/window and cannot be reached through an existing mockable helper, skip it. Document the remaining gap in the PR body rather than adding a filler test.
+
 ## Where to Write Tests
 
 - Create or extend `*_tests.zig` files **alongside** the source files (same directory)
@@ -111,6 +135,8 @@ Forbidden tests:
 7. **Struct layout** — `packed struct` alignment, `extern struct` field offsets, GPU data layout.
 8. **Pipeline state** — Shader compilation error handling, pipeline creation failure recovery.
 
+For Vulkan orchestration code, do not copy the orchestration condition into the test and assert the copied condition. Either call the real orchestration helper with a mock/partial context, test a smaller real helper used by the orchestration path, or leave the path as a documented gap.
+
 ### For world-core/world-worldgen modules
 1. **Chunk boundary conditions** — Negative coordinates, coordinate transforms, edge-of-world
 2. **Determinism** — Same seed always produces identical output
@@ -134,6 +160,8 @@ Many Vulkan types are opaque pointers that can be `null` in tests:
 6. **State machine tests**: Test state transitions only when the inputs return before any Vulkan call.
 
 Do not call real Vulkan APIs with null or fake handles. If a function could reach `vkCreate*`, `vkDestroy*`, queue submit, presentation, or device wait calls, do not test it without an existing safe mock/stub.
+
+Pure-logic tests must still call real production logic. Do not recreate a production `if` expression, selection rule, or state-machine transition inside the test body unless the assertion is also tied to a production function or production type invariant.
 
 ### Example Patterns
 
@@ -174,7 +202,8 @@ You are running inside the opencode GitHub Action. The infrastructure auto-creat
 4. Run tests: `nix develop --command zig build test` — ALL tests must pass, not just yours
 5. Run at least one new test by filter: `nix develop --command zig build test -- --test-filter "<new test name>"`
 6. Self-review the diff and remove any fake, tautological, misleading, or unsafe test before committing
-7. Commit your changes with message: `test: add {area} tests for {module}`
+7. Count actual added `test "..."` declarations from your diff and keep the run within 3-8 total new tests
+8. Commit your changes with message: `test: add {area} tests for {module}`
 
 The infrastructure will push the branch and create the PR automatically.
 
@@ -186,7 +215,7 @@ The infrastructure will push the branch and create the PR automatically.
 - A filtered run for at least one newly added test MUST pass before committing.
 - The new tests MUST be semantically analyzed and executed by `zig build test`; do not rely on registrations that hide test blocks from the test runner.
 - Format before commit: `nix develop --command zig fmt src/ modules/`.
-- 3-8 tests per run. Quality over quantity.
+- 3-8 tests per run across the whole PR, not per file. Quality over quantity.
 - If the module has no testable logic, stop without committing and note limitations.
 - Skip if nothing to test — do not create trivial tests just to create a PR.
 - For game, graphics, windowing-adjacent, or runtime initialization tests, run `nix develop --command zig build test-integration` when feasible and report if it was not feasible.
@@ -200,6 +229,17 @@ Stop without committing if any of these are true:
 - Tests only check local assignments, copied branch logic, C constants, or standard library behavior
 - Tests require modifying production code only to expose private internals
 - The diff changes non-test production files except necessary test registration exports/imports
+
+## Required Self-Review Before Commit
+
+Before committing, inspect the diff and remove or rewrite any test where the answer to any of these questions is "no":
+
+- Does the test call production code or validate a real production layout/type invariant?
+- Would this test fail if the production behavior described by the test name were broken?
+- Is the test asserting behavior beyond values created only inside the test body?
+- Is the test materially different from existing tests in the same file?
+
+Also verify the PR summary counts actual added `test "..."` declarations from the diff. Do not estimate test counts from intent.
 
 ## PR Body Template
 

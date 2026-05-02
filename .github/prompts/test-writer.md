@@ -6,6 +6,22 @@ Write 3-8 high-quality unit tests for `$MODULE`, targeting `$DEFAULT_BRANCH`.
 
 Quality is more important than quantity. If you cannot identify at least 3 meaningful tests that exercise real production behavior, STOP without committing and explain why in your final message.
 
+`3-8` means the total number of new `test "..."` declarations in the entire PR, not per file.
+
+## TEST QUALITY — CRITICAL
+
+Every added test must be non-vacuous: it must call production code or validate a real production type/layout invariant. A test should fail if the production behavior named by the test regresses.
+
+Do NOT add tests that only:
+
+- Recreate production logic in local variables and assert the copied result
+- Check local booleans, counters, or branches without calling the production function under test
+- Assign fields in a Vulkan/C struct and assert the same assigned values
+- Assert constants equal themselves or verify C/Vulkan bindings rather than ZigCraft behavior
+- Use `try testing.expect(true)` or return early as the success condition
+
+For Vulkan code without a real GPU/window, prefer real pure functions, mockable context helpers, handle validation, error mapping, state fields initialized from production types, or layout invariants. If a path cannot be tested without reimplementing it locally, skip it and document the gap instead of adding a filler test.
+
 ## FILES TO SCAN
 
 Read these source files to find untested code:
