@@ -395,6 +395,23 @@ pub fn build(b: *std.Build) void {
     const benchmark_step = b.step("benchmark", "Run benchmark harness");
     benchmark_step.dependOn(&benchmark_run_cmd.step);
 
+    const worldgen_report_root_module = b.createModule(.{
+        .root_source_file = b.path("src/worldgen_report_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    worldgen_report_root_module.addImport("world-core", world_core);
+    worldgen_report_root_module.addImport("world-worldgen", world_worldgen);
+
+    const worldgen_report_exe = b.addExecutable(.{
+        .name = "worldgen-report",
+        .root_module = worldgen_report_root_module,
+    });
+
+    const worldgen_report_run_cmd = b.addRunArtifact(worldgen_report_exe);
+    const worldgen_report_step = b.step("worldgen-report", "Print deterministic worldgen baseline report");
+    worldgen_report_step.dependOn(&worldgen_report_run_cmd.step);
+
     const test_root_module = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
