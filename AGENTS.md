@@ -69,6 +69,8 @@ nix develop --command zig fmt src/                   # Format code
 
 - **Default branch**: `dev`
 - **All PRs target `dev`** (not `main`)
+- **Never push directly to `dev`** unless the user explicitly instructs you to do so
+- Code changes should land through a pull request targeting `dev` so they receive PR code review
 - Branch naming: `feature/*`, `bug/*`, `hotfix/*`, `ci/*`
 - Conventional commits: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`
 

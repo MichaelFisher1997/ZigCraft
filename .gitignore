@@ -32,4 +32,9 @@ wiki/
 *_4k.*
 shader
 CODEBASE_REPORT.md
-.opencode/
+.opencode/*
+!.opencode/commands/
+!.opencode/commands/*.md
+!.opencode/skills/
+!.opencode/skills/*/
+!.opencode/skills/*/SKILL.md
