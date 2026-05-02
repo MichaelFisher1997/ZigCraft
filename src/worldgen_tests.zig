@@ -219,8 +219,8 @@ test "WorldGen stable chunk fingerprints for known seed" {
 
     const expected = [_]u64{
         1589085686761579315,
-        10106071382427144696,
-        12283863255206387139,
+        3398558120687224261,
+        12563833883354114501,
     };
 
     for (positions, 0..) |pos, i| {
@@ -660,21 +660,21 @@ test "selectBiomeVoronoiWithRiver returns river when mask active" {
     try testing.expect(no_river != .river);
 }
 
-test "selectBiomeWithConstraints uses Voronoi selection" {
+test "selectBiomeWithConstraints uses multi-parameter selection" {
     const biome_mod = world_worldgen.biome;
 
     const climate = biome_mod.ClimateParams{
         .temperature = 0.9,
         .humidity = 0.1,
         .elevation = 0.4,
-        .continentalness = 0.5,
+        .continentalness = 0.6,
         .ruggedness = 0.2,
     };
 
     const structural = biome_mod.StructuralParams{
         .height = 70,
         .slope = 2,
-        .continentalness = 0.5,
+        .continentalness = 0.6,
         .ridge_mask = 0.1,
     };
 
@@ -922,7 +922,7 @@ test "BiomeSource selectBiome hot dry returns desert" {
     try testing.expectEqual(result, BiomeId.desert);
 }
 
-test "BiomeSource selectBiome cold wet returns taiga" {
+test "BiomeSource selectBiome cold wet returns snowy taiga" {
     const biome_mod = world_worldgen.biome;
     const source = BiomeSource.init();
 
@@ -942,7 +942,7 @@ test "BiomeSource selectBiome cold wet returns taiga" {
     };
 
     const result = source.selectBiome(climate, structural, 0.0);
-    try testing.expectEqual(result, BiomeId.taiga);
+    try testing.expectEqual(BiomeId.snowy_taiga, result);
 }
 
 test "BiomeSource selectBiome river override" {

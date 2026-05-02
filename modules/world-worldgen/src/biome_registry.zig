@@ -119,26 +119,36 @@ pub const BiomeDefinition = struct {
         return true;
     }
 
-    /// Score how well this biome matches the given climate parameters
-    /// Only temperature, humidity, and elevation affect the score (structural already filtered)
+    /// Score how well this biome matches the given climate parameters.
+    /// Climate-space selection uses all available soft parameters; height and
+    /// slope remain structural filters handled by the constraint-aware selector.
     pub fn scoreClimate(self: BiomeDefinition, params: ClimateParams) f32 {
-        // Check if within climate ranges
         if (!self.temperature.contains(params.temperature)) return 0;
         if (!self.humidity.contains(params.humidity)) return 0;
         if (!self.elevation.contains(params.elevation)) return 0;
+        if (!self.continentalness.contains(params.continentalness)) return 0;
+        if (!self.ruggedness.contains(params.ruggedness)) return 0;
+        if (params.ridge_mask < self.min_ridge_mask or params.ridge_mask > self.max_ridge_mask) return 0;
 
-        // Compute weighted distance from ideal center
-        const t_dist = self.temperature.distanceFromCenter(params.temperature);
-        const h_dist = self.humidity.distanceFromCenter(params.humidity);
-        const e_dist = self.elevation.distanceFromCenter(params.elevation);
+        var dist_sum: f32 = 0.0;
+        var dist_count: f32 = 0.0;
+        accumulateRangeDistance(self.temperature, params.temperature, &dist_sum, &dist_count);
+        accumulateRangeDistance(self.humidity, params.humidity, &dist_sum, &dist_count);
+        accumulateRangeDistance(self.elevation, params.elevation, &dist_sum, &dist_count);
+        accumulateRangeDistance(self.continentalness, params.continentalness, &dist_sum, &dist_count);
+        accumulateRangeDistance(self.ruggedness, params.ruggedness, &dist_sum, &dist_count);
+        accumulateRangeDistance(.{ .min = self.min_ridge_mask, .max = self.max_ridge_mask }, params.ridge_mask, &dist_sum, &dist_count);
 
-        // Average distance (lower is better)
-        const avg_dist = (t_dist + h_dist + e_dist) / 3.0;
+        const avg_dist = if (dist_count > 0.0) dist_sum / dist_count else 0.0;
 
-        // Convert to score (higher is better), add priority bonus
         return (1.0 - avg_dist) + @as(f32, @floatFromInt(self.priority)) * 0.01;
     }
 };
+
+fn accumulateRangeDistance(range: Range, value: f32, dist_sum: *f32, dist_count: *f32) void {
+    dist_sum.* += range.distanceFromCenter(value);
+    dist_count.* += 1.0;
+}
 
 /// Climate parameters computed per (x,z) column
 pub const ClimateParams = struct {
@@ -147,6 +157,7 @@ pub const ClimateParams = struct {
     elevation: f32, // Normalized: 0=sea level, 1=max height
     continentalness: f32, // 0=deep ocean, 1=deep inland
     ruggedness: f32, // 0=smooth, 1=mountainous (erosion inverted)
+    ridge_mask: f32 = 0.0, // 0=valley/flat, 1=strong ridge/peak influence
 };
 
 /// Biome identifiers - shared with core chunk storage.

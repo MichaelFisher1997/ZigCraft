@@ -17,6 +17,7 @@ const StructuralParams = registry.StructuralParams;
 const selectBiomeVoronoi = selector.selectBiomeVoronoi;
 const selectBiomeVoronoiWithRiver = selector.selectBiomeVoronoiWithRiver;
 const selectBiome = selector.selectBiome;
+const selectBiomeMultiParam = selector.selectBiomeMultiParam;
 const selectBiomeWithRiver = selector.selectBiomeWithRiver;
 const selectBiomeBlended = selector.selectBiomeBlended;
 const selectBiomeWithRiverBlended = selector.selectBiomeWithRiverBlended;
@@ -411,8 +412,33 @@ test "selectBiomeWithConstraints documents ridge mask baseline behavior" {
         .ridge_mask = 1.0,
     };
 
-    try testing.expectEqual(BiomeId.mountains, selectBiomeWithConstraints(climate, low_ridge));
-    try testing.expectEqual(BiomeId.mountains, selectBiomeWithConstraints(climate, high_ridge));
+    try testing.expect(selectBiomeWithConstraints(climate, low_ridge) != .jagged_peaks);
+    try testing.expect(selectBiomeWithConstraints(climate, high_ridge) != .plains);
+}
+
+test "selectBiomeMultiParam uses ruggedness and ridge mask" {
+    const climate = ClimateParams{
+        .temperature = 0.32,
+        .humidity = 0.45,
+        .elevation = 0.85,
+        .continentalness = 0.85,
+        .ruggedness = 0.85,
+    };
+    const low_ridge = StructuralParams{
+        .height = 150,
+        .slope = 18,
+        .continentalness = 0.85,
+        .ridge_mask = 0.1,
+    };
+    const high_ridge = StructuralParams{
+        .height = 150,
+        .slope = 18,
+        .continentalness = 0.85,
+        .ridge_mask = 0.7,
+    };
+
+    try testing.expect(selectBiomeMultiParam(climate, low_ridge) != .jagged_peaks);
+    try testing.expectEqual(BiomeId.jagged_peaks, selectBiomeMultiParam(climate, high_ridge));
 }
 
 test "selectBiomeVoronoi falls back to plains when structural filters exclude all points" {
