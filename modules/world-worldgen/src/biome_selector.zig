@@ -10,6 +10,9 @@ const StructuralParams = registry.StructuralParams;
 const BIOME_REGISTRY = registry.BIOME_REGISTRY;
 const BIOME_POINTS = registry.BIOME_POINTS;
 const BLEND_EPSILON = registry.BLEND_EPSILON;
+const NORMALIZED_SEA_LEVEL = registry.NORMALIZED_SEA_LEVEL;
+
+const OCEAN_CONTINENTALNESS_MAX: f32 = 0.35;
 
 // ============================================================================
 // Voronoi Biome Selection (Issue #106)
@@ -107,6 +110,7 @@ pub fn selectBiome(params: ClimateParams) BiomeId {
     var best_biome: BiomeId = .plains; // Default fallback
 
     for (BIOME_REGISTRY) |biome| {
+        if (isOceanBiome(biome.id) and !isOceanClimate(params)) continue;
         const s = biome.scoreClimate(params);
         if (s > best_score) {
             best_score = s;
@@ -129,6 +133,7 @@ pub fn selectBiomeMultiParam(climate: ClimateParams, structural: StructuralParam
     var best_biome: BiomeId = .plains;
 
     for (BIOME_REGISTRY) |biome| {
+        if (isOceanBiome(biome.id) and !isOceanStructure(params, structural)) continue;
         if (!biome.meetsStructuralConstraints(structural.height, structural.slope, structural.continentalness, structural.ridge_mask)) continue;
 
         const s = biome.scoreClimate(params);
@@ -139,6 +144,21 @@ pub fn selectBiomeMultiParam(climate: ClimateParams, structural: StructuralParam
     }
 
     return best_biome;
+}
+
+fn isOceanStructure(climate: ClimateParams, structural: StructuralParams) bool {
+    return structural.continentalness < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL;
+}
+
+fn isOceanClimate(climate: ClimateParams) bool {
+    return climate.continentalness < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL;
+}
+
+fn isOceanBiome(biome: BiomeId) bool {
+    return switch (biome) {
+        .deep_ocean, .ocean, .frozen_ocean, .cold_ocean, .warm_ocean => true,
+        else => false,
+    };
 }
 
 /// Select biome with river override
@@ -161,18 +181,18 @@ pub fn computeClimateParams(
     sea_level: i32,
     max_height: i32,
 ) ClimateParams {
-    // Normalize elevation: 0 = below sea, 0.3 = sea level, 1.0 = max height
+    // Normalize elevation: 0 = below sea, NORMALIZED_SEA_LEVEL = sea level, 1.0 = max height
     // Use conditional to avoid integer overflow when height < sea_level
     const height_above_sea: i32 = if (height > sea_level) height - sea_level else 0;
     const elevation_range = max_height - sea_level;
     const elevation = if (elevation_range > 0)
-        0.3 + 0.7 * @as(f32, @floatFromInt(height_above_sea)) / @as(f32, @floatFromInt(elevation_range))
+        NORMALIZED_SEA_LEVEL + 0.7 * @as(f32, @floatFromInt(height_above_sea)) / @as(f32, @floatFromInt(elevation_range))
     else
-        0.3;
+        NORMALIZED_SEA_LEVEL;
 
-    // For underwater: scale 0-0.3
+    // For underwater: scale 0-NORMALIZED_SEA_LEVEL
     const final_elevation = if (height < sea_level)
-        0.3 * @as(f32, @floatFromInt(@max(0, height))) / @as(f32, @floatFromInt(sea_level))
+        NORMALIZED_SEA_LEVEL * @as(f32, @floatFromInt(@max(0, height))) / @as(f32, @floatFromInt(sea_level))
     else
         elevation;
 
@@ -206,6 +226,7 @@ pub fn selectBiomeBlended(params: ClimateParams) BiomeSelection {
     var second_biome: ?BiomeId = null;
 
     for (BIOME_REGISTRY) |biome| {
+        if (isOceanBiome(biome.id) and !isOceanClimate(params)) continue;
         const s = biome.scoreClimate(params);
         if (s > best_score) {
             second_score = best_score;

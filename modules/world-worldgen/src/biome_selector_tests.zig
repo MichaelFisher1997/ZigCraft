@@ -393,6 +393,114 @@ test "selectBiomeWithConstraints locks structural edge cases" {
     }));
 }
 
+test "selectBiomeWithConstraints preserves ocean sea-level boundary" {
+    const underwater_ocean = ClimateParams{
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .elevation = 0.30,
+        .continentalness = 0.25,
+        .ruggedness = 0.1,
+    };
+    const inland_ocean_candidate = ClimateParams{
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .elevation = 0.31,
+        .continentalness = 0.25,
+        .ruggedness = 0.1,
+    };
+    const structural = StructuralParams{
+        .height = 64,
+        .slope = 1,
+        .continentalness = 0.25,
+        .ridge_mask = 0.1,
+    };
+
+    try testing.expectEqual(BiomeId.ocean, selectBiomeWithConstraints(underwater_ocean, structural));
+    try testing.expect(selectBiomeWithConstraints(inland_ocean_candidate, structural) != .ocean);
+    try testing.expect(selectBiomeWithConstraints(inland_ocean_candidate, structural) != .deep_ocean);
+    try testing.expect(selectBiomeWithConstraints(inland_ocean_candidate, structural) != .frozen_ocean);
+    try testing.expect(selectBiomeWithConstraints(inland_ocean_candidate, structural) != .cold_ocean);
+    try testing.expect(selectBiomeWithConstraints(inland_ocean_candidate, structural) != .warm_ocean);
+}
+
+test "selectBiomeWithConstraints preserves coast and inland water boundaries" {
+    const coast_climate = ClimateParams{
+        .temperature = 0.6,
+        .humidity = 0.5,
+        .elevation = 0.3,
+        .continentalness = 0.35,
+        .ruggedness = 0.1,
+    };
+    const coast_structural = StructuralParams{
+        .height = 64,
+        .slope = 1,
+        .continentalness = 0.35,
+        .ridge_mask = 0.1,
+    };
+    const steep_coast = StructuralParams{
+        .height = 64,
+        .slope = 3,
+        .continentalness = 0.35,
+        .ridge_mask = 0.1,
+    };
+    const high_coast = StructuralParams{
+        .height = 71,
+        .slope = 1,
+        .continentalness = 0.35,
+        .ridge_mask = 0.1,
+    };
+    const inland_water = ClimateParams{
+        .temperature = 0.6,
+        .humidity = 0.5,
+        .elevation = 0.2,
+        .continentalness = 0.6,
+        .ruggedness = 0.1,
+    };
+
+    try testing.expectEqual(BiomeId.beach, selectBiomeWithConstraints(coast_climate, coast_structural));
+    try testing.expect(selectBiomeWithConstraints(coast_climate, steep_coast) != .beach);
+    try testing.expect(selectBiomeWithConstraints(coast_climate, high_coast) != .beach);
+    try testing.expect(selectBiomeWithConstraints(inland_water, .{
+        .height = 50,
+        .slope = 1,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    }) != .beach);
+}
+
+test "selectBiomeWithConstraintsAndRiver preserves river thresholds" {
+    const temperate = ClimateParams{
+        .temperature = 0.21,
+        .humidity = 0.7,
+        .elevation = 0.3,
+        .continentalness = 0.6,
+        .ruggedness = 0.2,
+    };
+    const frozen = ClimateParams{
+        .temperature = 0.20,
+        .humidity = 0.7,
+        .elevation = 0.3,
+        .continentalness = 0.6,
+        .ruggedness = 0.2,
+    };
+    const structural = StructuralParams{
+        .height = 119,
+        .slope = 2,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    };
+
+    try testing.expect(selectBiomeWithConstraintsAndRiver(temperate, structural, 0.5) != .river);
+    try testing.expectEqual(BiomeId.river, selectBiomeWithConstraintsAndRiver(temperate, structural, 0.5001));
+    try testing.expectEqual(BiomeId.frozen_river, selectBiomeWithConstraintsAndRiver(frozen, structural, 0.5001));
+    try testing.expect(selectBiomeWithConstraintsAndRiver(temperate, .{
+        .height = 120,
+        .slope = 2,
+        .continentalness = 0.6,
+        .ridge_mask = 0.1,
+    }, 0.5001) != .river);
+}
+
 test "selectBiomeWithConstraints documents ridge mask baseline behavior" {
     const climate = ClimateParams{
         .temperature = 0.4,
@@ -545,6 +653,22 @@ test "selectBiomeSimple returns ocean for low continentalness" {
     };
     const biome = selectBiomeSimple(params);
     try testing.expect(biome == .deep_ocean or biome == .ocean);
+}
+
+test "selectBiomeSimple does not return ocean above sea level" {
+    const params = ClimateParams{
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .elevation = 0.31,
+        .continentalness = 0.15,
+        .ruggedness = 0.3,
+    };
+    const biome = selectBiomeSimple(params);
+    try testing.expect(biome != .deep_ocean);
+    try testing.expect(biome != .ocean);
+    try testing.expect(biome != .frozen_ocean);
+    try testing.expect(biome != .cold_ocean);
+    try testing.expect(biome != .warm_ocean);
 }
 
 test "selectBiomeSimple returns deep_ocean for very low continentalness" {
