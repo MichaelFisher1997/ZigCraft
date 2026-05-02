@@ -210,19 +210,18 @@ pub const TerrainShapeGenerator = struct {
         const wz_i: i32 = @intFromFloat(@floor(wz));
         const region = region_pkg.getRegion(region_seed, wx_i, wz_i);
         const path_info = region_pkg.getPathInfo(region_seed, wx_i, wz_i, region);
-        const terrain_height = self.height_sampler.computeHeightWithTerrainModifier(&self.noise_sampler, noise, controls, path_info, reduction, terrain_modifier);
-        const terrain_height_i: i32 = @intFromFloat(terrain_height);
-
-        const altitude_offset: f32 = @max(0, terrain_height - sea);
-        var temperature = noise.temperature;
-        temperature = clamp01(temperature - (altitude_offset / 512.0) * self.params.temp_lapse);
-
         const ridge_params = NoiseSampler.RidgeParams{
             .inland_min = self.params.ridge_inland_min,
             .inland_max = self.params.ridge_inland_max,
             .sparsity = self.params.ridge_sparsity,
         };
         const ridge_mask = self.noise_sampler.getRidgeFactor(noise.warped_x, noise.warped_z, c_jittered, reduction, ridge_params);
+        const terrain_height = self.height_sampler.computeHeightWithTerrainModifier(&self.noise_sampler, noise, controls, path_info, reduction, terrain_modifier);
+        const terrain_height_i: i32 = @intFromFloat(terrain_height);
+
+        const altitude_offset: f32 = @max(0, terrain_height - sea);
+        var temperature = noise.temperature;
+        temperature = clamp01(temperature - (altitude_offset / 512.0) * self.params.temp_lapse);
 
         return .{
             .terrain_height = terrain_height,

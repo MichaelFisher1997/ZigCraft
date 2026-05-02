@@ -196,7 +196,7 @@ pub const HeightSampler = struct {
         return std.math.lerp(base_modulated, alt_modulated, blend) * mood_mult;
     }
 
-    fn applyPeakCompression(self: *const HeightSampler, height: f32) f32 {
+    pub fn compressPeakHeight(self: *const HeightSampler, height: f32) f32 {
         const p = self.params;
         const sea: f32 = @floatFromInt(p.sea_level);
         const peak_start = sea + p.peak_compression_offset;
@@ -317,7 +317,7 @@ pub const HeightSampler = struct {
         if (terrain_modifier) |modifier| {
             height = modifier.applyHeight(height, sea);
         }
-        height = self.applyPeakCompression(height);
+        height = self.compressPeakHeight(height);
 
         // ============================================================
         // STEP 8: River Carving - REGION-CONSTRAINED
@@ -366,7 +366,7 @@ pub const HeightSampler = struct {
         }
 
         // Peak compression
-        height = self.applyPeakCompression(height);
+        height = self.compressPeakHeight(height);
 
         return height;
     }
@@ -416,6 +416,15 @@ test "HeightSampler mountain mask range" {
 
     const m2 = sampler.getMountainMask(0.2, 0.8, 0.4);
     try std.testing.expect(m2 >= 0.0 and m2 <= 1.0);
+}
+
+test "HeightSampler peak compression caps extreme mountain output" {
+    const sampler = HeightSampler.init();
+    const compressed = sampler.compressPeakHeight(320.0);
+    const max_asymptote = @as(f32, @floatFromInt(sampler.params.sea_level)) + sampler.params.peak_compression_offset + sampler.params.peak_compression_range;
+
+    try std.testing.expect(compressed < 320.0);
+    try std.testing.expect(compressed < max_asymptote);
 }
 
 fn testNoiseValues(continentalness: f32, terrain: f32) ColumnNoiseValues {

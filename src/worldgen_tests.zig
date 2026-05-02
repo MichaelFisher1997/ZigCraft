@@ -318,7 +318,7 @@ test "Biome structural constraints - height filter" {
     const selectBiomeWithConstraints = biome_mod.selectBiomeWithConstraints;
 
     const snowy_mountains = getBiomeDefinition(.snowy_mountains);
-    try testing.expect(snowy_mountains.min_height == 110);
+    try testing.expect(snowy_mountains.min_height == 112);
 
     const climate_low = ClimateParams{
         .temperature = 0.3,
@@ -636,10 +636,10 @@ test "selectBiomeVoronoi returns deep_ocean for very low continentalness" {
 test "selectBiomeVoronoi respects height constraints" {
     const biome_mod = world_worldgen.biome;
 
-    const high_result = biome_mod.selectBiomeVoronoi(10, 40, 110, 0.65, 0);
+    const high_result = biome_mod.selectBiomeVoronoi(10, 40, 112, 0.72, 0);
     try testing.expectEqual(high_result, .snowy_mountains);
 
-    const low_result = biome_mod.selectBiomeVoronoi(10, 40, 70, 0.65, 0);
+    const low_result = biome_mod.selectBiomeVoronoi(10, 40, 70, 0.72, 0);
     try testing.expect(low_result != .snowy_mountains);
 }
 

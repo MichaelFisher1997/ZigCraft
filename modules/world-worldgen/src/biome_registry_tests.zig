@@ -150,6 +150,48 @@ test "mountain variant biome definitions are distinct" {
     try testing.expect(jagged_peaks.terrain.height_amplitude > mountainsAmplitude());
 }
 
+test "mountain terrain modifiers create transition and peak elevation tiers" {
+    const sea_level: f32 = 64.0;
+    const base_height: f32 = 124.0;
+    const meadow = getBiomeDefinition(.meadow);
+    const grove = getBiomeDefinition(.grove);
+    const snowy_slopes = getBiomeDefinition(.snowy_slopes);
+    const jagged_peaks = getBiomeDefinition(.jagged_peaks);
+    const frozen_peaks = getBiomeDefinition(.frozen_peaks);
+    const stony_peaks = getBiomeDefinition(.stony_peaks);
+
+    const meadow_height = meadow.terrain.applyHeight(base_height, sea_level);
+    const grove_height = grove.terrain.applyHeight(base_height, sea_level);
+    const slope_height = snowy_slopes.terrain.applyHeight(base_height, sea_level);
+    const jagged_height = jagged_peaks.terrain.applyHeight(base_height, sea_level);
+    const frozen_height = frozen_peaks.terrain.applyHeight(base_height, sea_level);
+    const stony_height = stony_peaks.terrain.applyHeight(base_height, sea_level);
+
+    try testing.expect(meadow_height < slope_height);
+    try testing.expect(grove_height < slope_height);
+    try testing.expect(jagged_height > slope_height);
+    try testing.expect(frozen_height > slope_height);
+    try testing.expect(stony_height > slope_height);
+}
+
+test "mountain transition biomes are constrained to high elevation bands" {
+    const meadow = getBiomeDefinition(.meadow);
+    const grove = getBiomeDefinition(.grove);
+    const snowy_slopes = getBiomeDefinition(.snowy_slopes);
+    const jagged_peaks = getBiomeDefinition(.jagged_peaks);
+    const frozen_peaks = getBiomeDefinition(.frozen_peaks);
+    const stony_peaks = getBiomeDefinition(.stony_peaks);
+
+    try testing.expect(!meadow.meetsStructuralConstraints(70, 4, 0.70, 0.2));
+    try testing.expect(!grove.meetsStructuralConstraints(70, 4, 0.70, 0.2));
+    try testing.expect(meadow.meetsStructuralConstraints(100, 6, 0.70, 0.2));
+    try testing.expect(grove.meetsStructuralConstraints(105, 8, 0.70, 0.2));
+    try testing.expect(snowy_slopes.meetsStructuralConstraints(130, 12, 0.75, 0.3));
+    try testing.expect(jagged_peaks.meetsStructuralConstraints(150, 18, 0.82, 0.5));
+    try testing.expect(frozen_peaks.meetsStructuralConstraints(150, 18, 0.82, 0.5));
+    try testing.expect(stony_peaks.meetsStructuralConstraints(145, 18, 0.82, 0.5));
+}
+
 fn mountainsAmplitude() f32 {
     return getBiomeDefinition(.mountains).terrain.height_amplitude;
 }
