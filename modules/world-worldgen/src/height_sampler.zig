@@ -276,7 +276,8 @@ pub const HeightSampler = struct {
         // ============================================================
         // STEP 4: LAND - Combine V7 terrain with continental base
         // ============================================================
-        var height = self.getBaseHeight(noise.continentalness) + v7_terrain - path_effects.depth;
+        const coastal_ramp = smoothstep(p.ocean_threshold, p.continental_coast_max, noise.continentalness);
+        var height = self.getBaseHeight(noise.continentalness) + v7_terrain * coastal_ramp - path_effects.depth * coastal_ramp;
 
         // ============================================================
         // STEP 5: Mountains & Ridges - REGION-CONSTRAINED
@@ -302,7 +303,7 @@ pub const HeightSampler = struct {
         // ============================================================
         const erosion_smooth = smoothstep(0.5, 0.75, noise.erosion);
         const land_factor = smoothstep(p.continental_coast_max, p.continental_inland_low_max, noise.continentalness);
-        const hills_atten = (1.0 - erosion_smooth) * land_factor * (1.0 - path_effects.slope_suppress);
+        const hills_atten = (1.0 - erosion_smooth) * land_factor * coastal_ramp * (1.0 - path_effects.slope_suppress);
 
         // Small-scale detail
         const elev01 = clamp01((height - sea) / p.highland_range);

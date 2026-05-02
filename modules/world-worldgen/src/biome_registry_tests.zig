@@ -394,6 +394,14 @@ test "getBiomeDefinition cold coastal variants have expected surfaces" {
     try testing.expect(snowy.temperature.max <= 0.20);
 }
 
+test "getBiomeDefinition coastal plains is sandy transition" {
+    const coastal = getBiomeDefinition(.coastal_plains);
+    try testing.expectEqualStrings("Coastal Plains", coastal.name);
+    try testing.expectEqual(.sand, coastal.surface.top);
+    try testing.expectEqual(.sand, coastal.surface.filler);
+    try testing.expectEqual(@as(usize, 0), coastal.vegetation.decoration_rules.len);
+}
+
 test "getBiomeDefinition frozen river is river override only" {
     const frozen_river = getBiomeDefinition(.frozen_river);
     try testing.expectEqualStrings("Frozen River", frozen_river.name);

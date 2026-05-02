@@ -1014,8 +1014,8 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = -1.0, .max = -0.5 }, // IMPOSSIBLE: edge-injection only
         .ruggedness = .{ .min = 0.0, .max = 0.35 },
         .priority = 0, // Lowest priority
-        .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.4 }} }, // No trees
+        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
+        .vegetation = .{ .tree_types = &.{} },
         .terrain = .{ .height_amplitude = 0.5, .smoothing = 0.3 },
         .colors = .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
     },
