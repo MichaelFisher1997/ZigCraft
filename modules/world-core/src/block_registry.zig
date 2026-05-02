@@ -37,6 +37,52 @@ pub const RenderShape = enum {
     flat_quad,
     /// 2-block-high X-shaped billboard (tall plants)
     tall_cross,
+    /// Face-attached non-cube geometry driven by RenderShapeData.attachment
+    wall_attached,
+    /// Placeholder for block-specific custom mesh variants (slabs, stairs, doors, fences)
+    custom_mesh,
+};
+
+pub const AttachmentFaces = packed struct {
+    top: bool = false,
+    bottom: bool = false,
+    north: bool = false,
+    south: bool = false,
+    east: bool = false,
+    west: bool = false,
+
+    pub fn walls() AttachmentFaces {
+        return .{ .north = true, .south = true, .east = true, .west = true };
+    }
+
+    pub fn contains(self: AttachmentFaces, face: Face) bool {
+        return switch (face) {
+            .top => self.top,
+            .bottom => self.bottom,
+            .north => self.north,
+            .south => self.south,
+            .east => self.east,
+            .west => self.west,
+        };
+    }
+};
+
+pub const AttachmentSpec = struct {
+    default_face: Face,
+    allowed_faces: AttachmentFaces,
+};
+
+pub const CustomMeshVariant = enum {
+    none,
+    slab,
+    stairs,
+    door,
+    fence,
+};
+
+pub const RenderShapeData = struct {
+    attachment: ?AttachmentSpec = null,
+    custom_mesh: CustomMeshVariant = .none,
 };
 
 pub const BlockDefinition = struct {
@@ -48,6 +94,7 @@ pub const BlockDefinition = struct {
     is_fluid: bool,
     render_pass: RenderPass,
     render_shape: RenderShape,
+    render_shape_data: RenderShapeData,
     light_emission: [3]u4,
     default_color: [3]f32,
     texture_top: []const u8,
@@ -117,6 +164,7 @@ pub const BLOCK_REGISTRY = blk: {
             .is_fluid = false,
             .render_pass = .solid,
             .render_shape = .cube,
+            .render_shape_data = .{},
             .light_emission = .{ 0, 0, 0 },
             .default_color = .{ 1, 0, 1 },
             .texture_top = "unknown",
@@ -145,6 +193,7 @@ pub const BLOCK_REGISTRY = blk: {
             .is_fluid = false,
             .render_pass = .solid,
             .render_shape = .cube,
+            .render_shape_data = .{},
             .light_emission = .{ 0, 0, 0 },
             .default_color = .{ 1, 1, 1 },
             .texture_top = field.name,
@@ -330,7 +379,18 @@ pub const BLOCK_REGISTRY = blk: {
         def.render_shape = switch (id) {
             .tall_grass => .tall_cross,
             .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch => .cross,
+            .vine => .wall_attached,
             else => .cube,
+        };
+
+        def.render_shape_data = switch (id) {
+            .vine => .{
+                .attachment = .{
+                    .default_face = .north,
+                    .allowed_faces = AttachmentFaces.walls(),
+                },
+            },
+            else => .{},
         };
 
         definitions[int_id] = def;
