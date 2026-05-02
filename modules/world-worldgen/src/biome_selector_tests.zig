@@ -15,6 +15,7 @@ const BiomeId = registry.BiomeId;
 const ClimateParams = registry.ClimateParams;
 const StructuralParams = registry.StructuralParams;
 const selectBiomeVoronoi = selector.selectBiomeVoronoi;
+const selectBiomeVoronoiMultiParam = selector.selectBiomeVoronoiMultiParam;
 const selectBiomeVoronoiWithRiver = selector.selectBiomeVoronoiWithRiver;
 const selectBiome = selector.selectBiome;
 const selectBiomeMultiParam = selector.selectBiomeMultiParam;
@@ -26,6 +27,7 @@ const selectBiomeWithConstraintsAndRiver = selector.selectBiomeWithConstraintsAn
 const selectBiomeSimple = selector.selectBiomeSimple;
 const computeClimateParams = selector.computeClimateParams;
 const BiomeSelection = selector.BiomeSelection;
+const BIOME_POINTS = registry.BIOME_POINTS;
 
 // ============================================================================
 // computeClimateParams Tests
@@ -553,6 +555,35 @@ test "selectBiomeVoronoi falls back to plains when structural filters exclude al
     try testing.expectEqual(BiomeId.plains, selectBiomeVoronoi(50, 50, 300, 1.1, 255));
 }
 
+test "selectBiomeVoronoiMultiParam keeps migrated biome points selectable" {
+    for (BIOME_POINTS) |point| {
+        const height = @divFloor(point.y_min + point.y_max, 2);
+        const biome = selectBiomeVoronoiMultiParam(
+            point.heat,
+            point.humidity,
+            height,
+            point.continentalnessCenter(),
+            point.ruggedness,
+            point.ridge_mask,
+            @min(point.max_slope, 1),
+        );
+
+        errdefer std.debug.print(
+            "migrated biome point {s} selected {s}\n",
+            .{ @tagName(point.id), @tagName(biome) },
+        );
+        try testing.expectEqual(point.id, biome);
+    }
+}
+
+test "selectBiomeVoronoiMultiParam separates equal heat humidity by continentalness" {
+    const deep = selectBiomeVoronoiMultiParam(50, 50, 50, 0.10, 0.35, 0.0, 1);
+    const shallow = selectBiomeVoronoiMultiParam(50, 50, 50, 0.28, 0.35, 0.0, 1);
+
+    try testing.expectEqual(BiomeId.deep_ocean, deep);
+    try testing.expectEqual(BiomeId.ocean, shallow);
+}
+
 // ============================================================================
 // selectBiomeBlended Tests
 // ============================================================================
@@ -713,6 +744,52 @@ test "selectBiomeSimple hot humid returns non-desert" {
     try testing.expect(biome != .snow_tundra);
     try testing.expect(biome != .deep_ocean);
     try testing.expect(biome != .ocean);
+}
+
+test "selectBiomeSimple matches constrained selector for LOD-compatible samples" {
+    const Case = struct {
+        name: []const u8,
+        climate: ClimateParams,
+        structural: StructuralParams,
+    };
+
+    const cases = [_]Case{
+        .{
+            .name = "deep ocean",
+            .climate = .{ .temperature = 0.5, .humidity = 0.5, .elevation = 0.2, .continentalness = 0.10, .ruggedness = 0.1 },
+            .structural = .{ .height = 48, .slope = 1, .continentalness = 0.10, .ridge_mask = 0.0 },
+        },
+        .{
+            .name = "plains",
+            .climate = .{ .temperature = 0.5, .humidity = 0.45, .elevation = 0.35, .continentalness = 0.60, .ruggedness = 0.1 },
+            .structural = .{ .height = 70, .slope = 2, .continentalness = 0.60, .ridge_mask = 0.1 },
+        },
+        .{
+            .name = "jagged peaks",
+            .climate = .{ .temperature = 0.32, .humidity = 0.45, .elevation = 0.85, .continentalness = 0.85, .ruggedness = 0.85, .ridge_mask = 0.7 },
+            .structural = .{ .height = 150, .slope = 18, .continentalness = 0.85, .ridge_mask = 0.7 },
+        },
+    };
+
+    for (cases) |case| {
+        errdefer std.debug.print("failed LOD selector consistency case: {s}\n", .{case.name});
+        try testing.expectEqual(selectBiomeWithConstraints(case.climate, case.structural), selectBiomeSimple(case.climate));
+    }
+}
+
+test "selectBiomeSimple uses terrain signals beyond heat and humidity" {
+    const warm_dry = ClimateParams{
+        .temperature = 0.82,
+        .humidity = 0.25,
+        .elevation = 0.40,
+        .continentalness = 0.80,
+        .ruggedness = 0.10,
+    };
+    var rugged = warm_dry;
+    rugged.ruggedness = 0.75;
+
+    try testing.expectEqual(BiomeId.savanna, selectBiomeSimple(warm_dry));
+    try testing.expectEqual(BiomeId.badlands, selectBiomeSimple(rugged));
 }
 
 // ============================================================================

@@ -992,7 +992,7 @@ test "BiomeSource selectBiomeSimplified returns valid biome" {
     };
 
     const result2 = source.selectBiomeSimplified(climate2);
-    try testing.expectEqual(result2, BiomeId.deep_ocean);
+    try testing.expectEqual(BiomeId.deep_ocean, result2);
 }
 
 test "BiomeSource getColor returns valid packed RGB" {

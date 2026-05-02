@@ -18,11 +18,27 @@ const OCEAN_CONTINENTALNESS_MAX: f32 = 0.35;
 // Voronoi Biome Selection (Issue #106)
 // ============================================================================
 
-/// Select biome using Voronoi diagram in heat/humidity space
-/// Returns the biome whose point is closest to the given heat/humidity values
+/// Select biome using Voronoi diagram in heat/humidity space.
+/// Compatibility wrapper for callers that do not have erosion/ridge data.
 pub fn selectBiomeVoronoi(heat: f32, humidity: f32, height: i32, continentalness: f32, slope: i32) BiomeId {
+    return selectBiomeVoronoiMultiParam(heat, humidity, height, continentalness, 0.35, 0.0, slope);
+}
+
+/// Select biome using multi-parameter Voronoi distance.
+/// Heat/humidity preserve their historical 0-100 scale; normalized dimensions
+/// are scaled to the same range so each axis can materially affect selection.
+pub fn selectBiomeVoronoiMultiParam(
+    heat: f32,
+    humidity: f32,
+    height: i32,
+    continentalness: f32,
+    ruggedness: f32,
+    ridge_mask: f32,
+    slope: i32,
+) BiomeId {
     var min_dist: f32 = std.math.inf(f32);
     var closest: BiomeId = .plains;
+    const elevation = normalizedHeight(height);
 
     for (BIOME_POINTS) |point| {
         // Check height constraint
@@ -34,10 +50,21 @@ pub fn selectBiomeVoronoi(heat: f32, humidity: f32, height: i32, continentalness
         // Check continentalness constraint
         if (continentalness < point.min_continental or continentalness > point.max_continental) continue;
 
-        // Calculate weighted Euclidean distance in heat/humidity space
+        // Calculate weighted Euclidean distance in multi-parameter climate space.
         const d_heat = heat - point.heat;
         const d_humidity = humidity - point.humidity;
-        var dist = @sqrt(d_heat * d_heat + d_humidity * d_humidity);
+        const d_elevation = (elevation - point.elevationCenter()) * 100.0;
+        const d_continentalness = (continentalness - point.continentalnessCenter()) * 100.0;
+        const d_ruggedness = (ruggedness - point.ruggedness) * 100.0;
+        const d_ridge_mask = (ridge_mask - point.ridge_mask) * 100.0;
+        var dist = @sqrt(
+            d_heat * d_heat +
+                d_humidity * d_humidity +
+                d_elevation * d_elevation +
+                d_continentalness * d_continentalness +
+                d_ruggedness * d_ruggedness +
+                d_ridge_mask * d_ridge_mask,
+        );
 
         // Weight adjusts effective cell size (larger weight = closer distance = more likely)
         dist /= point.weight;
@@ -49,6 +76,10 @@ pub fn selectBiomeVoronoi(heat: f32, humidity: f32, height: i32, continentalness
     }
 
     return closest;
+}
+
+fn normalizedHeight(height: i32) f32 {
+    return std.math.clamp(@as(f32, @floatFromInt(height)) / 256.0, 0.0, 1.0);
 }
 
 /// Select biome using Voronoi with river override
@@ -66,7 +97,7 @@ pub fn selectBiomeVoronoiWithRiver(
         if (heat <= 20.0) return .frozen_river;
         return .river;
     }
-    return selectBiomeVoronoi(heat, humidity, height, continentalness, slope);
+    return selectBiomeVoronoiMultiParam(heat, humidity, height, continentalness, 0.35, 0.0, slope);
 }
 
 // ============================================================================
@@ -79,6 +110,7 @@ pub fn selectBiome(params: ClimateParams) BiomeId {
     var best_biome: BiomeId = .plains; // Default fallback
 
     for (BIOME_REGISTRY) |biome| {
+        if (isOceanBiome(biome.id) and !isOceanClimate(params)) continue;
         const s = biome.scoreClimate(params);
         if (s > best_score) {
             best_score = s;
@@ -116,6 +148,10 @@ pub fn selectBiomeMultiParam(climate: ClimateParams, structural: StructuralParam
 
 fn isOceanStructure(climate: ClimateParams, structural: StructuralParams) bool {
     return structural.continentalness < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL;
+}
+
+fn isOceanClimate(climate: ClimateParams) bool {
+    return climate.continentalness < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL;
 }
 
 fn isOceanBiome(biome: BiomeId) bool {
@@ -190,6 +226,7 @@ pub fn selectBiomeBlended(params: ClimateParams) BiomeSelection {
     var second_biome: ?BiomeId = null;
 
     for (BIOME_REGISTRY) |biome| {
+        if (isOceanBiome(biome.id) and !isOceanClimate(params)) continue;
         const s = biome.scoreClimate(params);
         if (s > best_score) {
             second_score = best_score;
@@ -273,49 +310,12 @@ pub fn selectBiomeWithConstraintsAndRiver(climate: ClimateParams, structural: St
 // LOD-optimized Biome Functions (Issue #114)
 // ============================================================================
 
-/// Simplified biome selection for LOD2+ (no structural constraints).
+/// Simplified biome selection for LOD2+ paths that only have climate params.
 ///
-/// Intentionally excludes transition micro-biomes (foothills, marsh, dry_plains,
-/// coastal_plains), special biomes (mushroom_fields, mangrove_swamp), beach,
-/// and mountain variants. These are either rare, narrow-band, or structurally
-/// dependent biomes that don't significantly affect distant terrain silhouette.
-/// The full Voronoi selection handles them when chunks enter LOD0/LOD1 range.
+/// Keep this aligned with the full registry scoring path so distant biome color
+/// and material choices use the same climate, elevation, continentalness,
+/// ruggedness, and ridge signals as LOD0 where structural height/slope filters
+/// are not available.
 pub fn selectBiomeSimple(climate: ClimateParams) BiomeId {
-    const heat = climate.temperature * 100.0;
-    const humidity = climate.humidity * 100.0;
-    const continental = climate.continentalness;
-
-    // Ocean check
-    if (continental < OCEAN_CONTINENTALNESS_MAX and climate.elevation <= NORMALIZED_SEA_LEVEL) {
-        if (heat <= 15) return .frozen_ocean;
-        if (heat <= 30) return .cold_ocean;
-        if (continental < 0.20) return .deep_ocean;
-        if (heat > 75 and humidity > 55) return .warm_ocean;
-        return .ocean;
-    }
-
-    if (continental < 0.48 and heat > 85 and humidity > 70) return .tropical;
-
-    // Simple land biome selection based on heat/humidity
-    if (heat < 20) {
-        return if (humidity > 50) .taiga else .snow_tundra;
-    } else if (heat < 40) {
-        return if (humidity > 60) .taiga else .plains;
-    } else if (heat < 60) {
-        return if (humidity > 70) .forest else .plains;
-    } else if (heat < 80) {
-        if (humidity > 70) {
-            return if (humidity > 85) .bamboo_jungle else .jungle;
-        }
-        if (humidity > 30) return if (climate.elevation > 0.55) .savanna_plateau else .savanna;
-        return .desert;
-    } else {
-        if (humidity > 85) return .bamboo_jungle;
-        if (humidity > 70) return .jungle;
-        if (humidity > 50) return .sparse_jungle;
-        if (humidity > 15 and humidity <= 30 and climate.elevation > 0.55) return .windswept_savanna;
-        if (humidity > 25) return .wooded_badlands;
-        if (humidity > 10) return .badlands;
-        return .desert;
-    }
+    return selectBiome(climate);
 }
