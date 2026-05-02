@@ -57,6 +57,7 @@ const log = engine_core.log;
 const build_options = @import("world_lod_options");
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
+const LOD_UNMASKED_SENTINEL: f32 = 0.5;
 
 const RenderDiag = struct {
     meshes_seen: u32 = 0,
@@ -233,6 +234,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }
                     }
 
+                    var mask_radius = config.calculateMaskRadius();
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
                             const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
@@ -249,6 +251,9 @@ pub fn LODRenderer(comptime RHI: type) type {
                                 first_missing_cx = cov.missing_cx;
                                 first_missing_cz = cov.missing_cz;
                                 first_missing_in_radius = cov.missing_chunk_in_radius;
+                            }
+                            if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) {
+                                mask_radius = LOD_UNMASKED_SENTINEL;
                             }
                         }
                     }
@@ -267,7 +272,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                     // Keep coarser LODs visible until full-detail chunks cover them.
                     // Culling against inner LOD bands creates visible holes while finer
                     // LOD regions are still streaming in.
-                    const mask_radius = config.calculateMaskRadius();
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
@@ -367,6 +371,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             missing_cx: i32,
             missing_cz: i32,
             missing_chunk_in_radius: bool,
+            has_chunk_coverage_in_radius: bool,
         };
 
         fn isCoveredByChunks(
@@ -388,6 +393,10 @@ pub fn LODRenderer(comptime RHI: type) type {
             var first_outside_cx: i32 = 0;
             var first_outside_cz: i32 = 0;
             var has_outside_radius = false;
+            var first_missing_cx: i32 = 0;
+            var first_missing_cz: i32 = 0;
+            var has_missing_in_radius = false;
+            var has_chunk_coverage_in_radius = false;
 
             var cz = min_cz;
             while (cz <= max_cz) : (cz += 1) {
@@ -403,16 +412,24 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }
                         continue;
                     }
-                    if (!checker(cx, cz, ctx)) {
-                        return .{ .covered = false, .missing_cx = cx, .missing_cz = cz, .missing_chunk_in_radius = true };
+                    if (checker(cx, cz, ctx)) {
+                        has_chunk_coverage_in_radius = true;
+                    } else if (!has_missing_in_radius) {
+                        has_missing_in_radius = true;
+                        first_missing_cx = cx;
+                        first_missing_cz = cz;
                     }
                 }
             }
 
-            if (has_outside_radius) {
-                return .{ .covered = false, .missing_cx = first_outside_cx, .missing_cz = first_outside_cz, .missing_chunk_in_radius = false };
+            if (has_missing_in_radius) {
+                return .{ .covered = false, .missing_cx = first_missing_cx, .missing_cz = first_missing_cz, .missing_chunk_in_radius = true, .has_chunk_coverage_in_radius = has_chunk_coverage_in_radius };
             }
-            return .{ .covered = true, .missing_cx = 0, .missing_cz = 0, .missing_chunk_in_radius = false };
+
+            if (has_outside_radius) {
+                return .{ .covered = false, .missing_cx = first_outside_cx, .missing_cz = first_outside_cz, .missing_chunk_in_radius = false, .has_chunk_coverage_in_radius = has_chunk_coverage_in_radius };
+            }
+            return .{ .covered = true, .missing_cx = 0, .missing_cz = 0, .missing_chunk_in_radius = false, .has_chunk_coverage_in_radius = has_chunk_coverage_in_radius };
         }
 
         /// Create a LODGPUBridge that delegates to this renderer's RHI.
@@ -689,6 +706,228 @@ test "LODRenderer keeps coarse LOD visible while finer bands stream" {
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 1), mock_state.set_matrix_calls);
+}
+
+test "LODRenderer disables mask when chunks are missing inside LOD0 radius" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+        last_mask_radius: f32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
+            self.state.last_mask_radius = mask_radius;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    mesh.buffer_handle = 7;
+    mesh.vertex_count = 12;
+    mesh.ready = true;
+
+    var chunk = LODChunk.init(0, 0, .lod1);
+    chunk.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    try meshes[1].put(key, &mesh);
+    try regions[1].put(key, &chunk);
+
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var checker_ctx: u8 = 0;
+    const Checker = struct {
+        fn missingInRadius(_: i32, _: i32, _: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missingInRadius, &checker_ctx, false, null);
+
+    try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
+    try std.testing.expectEqual(LOD_UNMASKED_SENTINEL, mock_state.last_mask_radius);
+}
+
+test "LODRenderer keeps mask when only outside-radius chunks are uncovered" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+        last_mask_radius: f32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
+            self.state.last_mask_radius = mask_radius;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    mesh.buffer_handle = 7;
+    mesh.vertex_count = 12;
+    mesh.ready = true;
+
+    var chunk = LODChunk.init(4, 0, .lod1);
+    chunk.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    const key = LODRegionKey{ .rx = 4, .rz = 0, .lod = .lod1 };
+    try meshes[1].put(key, &mesh);
+    try regions[1].put(key, &chunk);
+
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var checker_ctx: u8 = 0;
+    const Checker = struct {
+        fn loaded(_: i32, _: i32, _: *anyopaque) bool {
+            return true;
+        }
+    };
+
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.loaded, &checker_ctx, false, null);
+
+    try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
+    try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
+}
+
+test "LODRenderer keeps mask for partially covered chunk regions" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+        last_mask_radius: f32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
+            self.state.last_mask_radius = mask_radius;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    mesh.buffer_handle = 7;
+    mesh.vertex_count = 12;
+    mesh.ready = true;
+
+    var chunk = LODChunk.init(0, 0, .lod1);
+    chunk.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    try meshes[1].put(key, &mesh);
+    try regions[1].put(key, &chunk);
+
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var checker_ctx: u8 = 0;
+    const Checker = struct {
+        fn partiallyLoaded(cx: i32, cz: i32, _: *anyopaque) bool {
+            return cx == 0 and cz == 0;
+        }
+    };
+
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null);
+
+    try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
+    try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
 }
 
 test "LODRenderer skips coarse LOD when finer coverage is ready" {

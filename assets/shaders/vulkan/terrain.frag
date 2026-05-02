@@ -685,7 +685,7 @@ void main() {
         textureDetail = 0.0;
     }
 
-    if (vMaskRadius > 0.0) {
+    if (vMaskRadius >= 1.0) {
         const float CHUNK_SIZE = 16.0;
         vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
         vec2 fragChunk = floor(worldXZ / CHUNK_SIZE);
