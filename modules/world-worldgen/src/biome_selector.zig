@@ -258,49 +258,12 @@ pub fn selectBiomeWithConstraintsAndRiver(climate: ClimateParams, structural: St
 // LOD-optimized Biome Functions (Issue #114)
 // ============================================================================
 
-/// Simplified biome selection for LOD2+ (no structural constraints).
+/// Simplified biome selection for LOD2+ paths that only have climate params.
 ///
-/// Intentionally excludes transition micro-biomes (foothills, marsh, dry_plains,
-/// coastal_plains), special biomes (mushroom_fields, mangrove_swamp), beach,
-/// and mountain variants. These are either rare, narrow-band, or structurally
-/// dependent biomes that don't significantly affect distant terrain silhouette.
-/// The full Voronoi selection handles them when chunks enter LOD0/LOD1 range.
+/// Keep this aligned with the full registry scoring path so distant biome color
+/// and material choices use the same climate, elevation, continentalness,
+/// ruggedness, and ridge signals as LOD0 where structural height/slope filters
+/// are not available.
 pub fn selectBiomeSimple(climate: ClimateParams) BiomeId {
-    const heat = climate.temperature * 100.0;
-    const humidity = climate.humidity * 100.0;
-    const continental = climate.continentalness;
-
-    // Ocean check
-    if (continental < 0.35) {
-        if (heat <= 15) return .frozen_ocean;
-        if (heat <= 30) return .cold_ocean;
-        if (continental < 0.20) return .deep_ocean;
-        if (heat > 75 and humidity > 55) return .warm_ocean;
-        return .ocean;
-    }
-
-    if (continental < 0.48 and heat > 85 and humidity > 70) return .tropical;
-
-    // Simple land biome selection based on heat/humidity
-    if (heat < 20) {
-        return if (humidity > 50) .taiga else .snow_tundra;
-    } else if (heat < 40) {
-        return if (humidity > 60) .taiga else .plains;
-    } else if (heat < 60) {
-        return if (humidity > 70) .forest else .plains;
-    } else if (heat < 80) {
-        if (humidity > 70) {
-            return if (humidity > 85) .bamboo_jungle else .jungle;
-        }
-        if (humidity > 30) return if (climate.elevation > 0.55) .savanna_plateau else .savanna;
-        return .desert;
-    } else {
-        if (humidity > 85) return .bamboo_jungle;
-        if (humidity > 70) return .jungle;
-        if (humidity > 50) return .sparse_jungle;
-        if (humidity > 15 and humidity <= 30 and climate.elevation > 0.55) return .windswept_savanna;
-        if (humidity > 25) return .wooded_badlands;
-        if (humidity > 10) return .badlands;
-        return .desert;
-    }
+    return selectBiome(climate);
 }
