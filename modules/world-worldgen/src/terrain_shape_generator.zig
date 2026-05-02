@@ -115,9 +115,10 @@ pub const TerrainShapeGenerator = struct {
         return self.height_sampler.getContinentalZone(c);
     }
 
-    fn updateSlopes(phase_data: *ChunkPhaseData) void {
+    fn updateSlopes(phase_data: *ChunkPhaseData, stop_flag: ?*const bool) bool {
         var local_z: u32 = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
+            if (stop_flag) |sf| if (sf.*) return false;
             var local_x: u32 = 0;
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
                 const idx = local_x + local_z * CHUNK_SIZE_X;
@@ -130,6 +131,7 @@ pub const TerrainShapeGenerator = struct {
                 phase_data.slopes[idx] = max_slope;
             }
         }
+        return true;
     }
 
     fn applyWetlandTerrainModifiers(self: *const TerrainShapeGenerator, phase_data: *ChunkPhaseData) void {
@@ -141,10 +143,9 @@ pub const TerrainShapeGenerator = struct {
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
                 const idx = local_x + local_z * CHUNK_SIZE_X;
                 const biome_id = phase_data.biome_ids[idx];
-                const biome_tag = @intFromEnum(biome_id);
-                const is_wetland = biome_tag == @intFromEnum(BiomeId.swamp) or
-                    biome_tag == @intFromEnum(BiomeId.mangrove_swamp) or
-                    biome_tag == @intFromEnum(BiomeId.marsh);
+                const is_wetland = biome_id == .swamp or
+                    biome_id == .mangrove_swamp or
+                    biome_id == .marsh;
                 if (!is_wetland) continue;
 
                 const biome_def = biome_mod.getBiomeDefinition(biome_id);
@@ -266,10 +267,7 @@ pub const TerrainShapeGenerator = struct {
             }
         }
 
-        updateSlopes(phase_data);
-
-        self.applyWetlandTerrainModifiers(phase_data);
-        updateSlopes(phase_data);
+        if (!updateSlopes(phase_data, stop_flag)) return false;
 
         local_z = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
@@ -346,6 +344,9 @@ pub const TerrainShapeGenerator = struct {
                 }
             }
         }
+
+        self.applyWetlandTerrainModifiers(phase_data);
+        if (!updateSlopes(phase_data, stop_flag)) return false;
 
         local_z = 0;
         while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
