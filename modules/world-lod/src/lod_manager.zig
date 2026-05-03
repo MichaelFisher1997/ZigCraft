@@ -880,6 +880,42 @@ pub const LODManager = struct {
         };
     }
 
+    fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) Self {
+        return .{
+            .allocator = allocator,
+            .config = undefined,
+            .regions = undefined,
+            .meshes = undefined,
+            .gen_queues = undefined,
+            .lod_gen_pool = null,
+            .upload_queues = undefined,
+            .transition_queue = .empty,
+            .player_cx = 0,
+            .player_cz = 0,
+            .next_job_token = 1,
+            .stats = .{},
+            .mutex = .{},
+            .gpu_bridge = undefined,
+            .generator = .{
+                .ptr = undefined,
+                .generate_heightmap_only = undefined,
+                .maybe_recenter_cache = undefined,
+                .seed = 42,
+                .identity_hash = 99,
+                .version = 7,
+            },
+            .atlas = undefined,
+            .paused = false,
+            .memory_used_bytes = 0,
+            .update_tick = 0,
+            .deletion_queue = .empty,
+            .deletion_timer = 0,
+            .renderer = undefined,
+            .cache_dir_path = cache_dir_path,
+            .cleanup_covered_regions = true,
+        };
+    }
+
     /// Worker pool callback for LOD tasks (generation and meshing)
     fn processLODJob(ctx: *anyopaque, job: Job) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
@@ -1016,3 +1052,56 @@ pub const LODManager = struct {
         }
     }
 };
+
+const testing = std.testing;
+
+test "LODManager cache helpers save and reload source data" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const cache_dir_path = try dir.realpath(".", &path_buf);
+
+    var manager = LODManager.initCacheTestManager(testing.allocator, cache_dir_path);
+    const key = LODRegionKey{ .rx = 2, .rz = -3, .lod = .lod1 };
+
+    var data = try LODSimplifiedData.init(testing.allocator, .lod1);
+    defer data.deinit();
+    data.setColumn(1, 1, 72.0, .forest, .{
+        .surface = .grass,
+        .subsurface = .dirt,
+        .foundation = .stone,
+    }, 0xFF112233, .empty, .daylight, .empty);
+
+    manager.saveCachedSourceData(key, &data);
+
+    var loaded = manager.loadCachedSourceData(key) orelse return error.ExpectedCacheHit;
+    defer loaded.deinit();
+
+    const idx = 1 + data.width;
+    try testing.expectEqual(data.heightmap[idx], loaded.heightmap[idx]);
+    try testing.expectEqual(data.biomes[idx], loaded.biomes[idx]);
+    try testing.expectEqual(data.material_layers[idx].foundation, loaded.material_layers[idx].foundation);
+}
+
+test "LODManager cache helpers delete corrupt cache files" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const cache_dir_path = try dir.realpath(".", &path_buf);
+
+    var manager = LODManager.initCacheTestManager(testing.allocator, cache_dir_path);
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
+    const path = try manager.cacheFilePath(cache_dir_path, manager.cacheKey(key));
+    defer testing.allocator.free(path);
+
+    const file = try fs.cwd().createFile(path, .{ .truncate = true });
+    try file.writeAll(&.{ 0, 1, 2, 3 });
+    file.close();
+
+    try testing.expect(manager.loadCachedSourceData(key) == null);
+    try testing.expectError(error.FileNotFound, fs.cwd().openFile(path, .{}));
+}

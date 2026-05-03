@@ -87,6 +87,14 @@ fn readBiome(byte: u8) !BiomeId {
     return std.enums.fromInt(BiomeId, byte) orelse CacheError.InvalidBiome;
 }
 
+fn computeCrc(bytes: []const u8) u32 {
+    var crc = std.hash.Crc32.init();
+    crc.update(bytes[0..6]);
+    crc.update(&.{ 0, 0, 0, 0 });
+    crc.update(bytes[10..]);
+    return crc.final();
+}
+
 pub fn serialize(data: *const LODSimplifiedData, key: Key, allocator: std.mem.Allocator) ![]u8 {
     const width_usize = @as(usize, @intCast(data.width));
     const count = width_usize * width_usize;
@@ -170,7 +178,7 @@ pub fn serialize(data: *const LODSimplifiedData, key: Key, allocator: std.mem.Al
     }
 
     std.debug.assert(off == total_size);
-    const crc = std.hash.Crc32.hash(buf[HEADER_SIZE..]);
+    const crc = computeCrc(buf);
     std.mem.writeInt(u32, buf[6..][0..4], crc, .little);
     return buf;
 }
@@ -190,7 +198,7 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
 
     const stored_crc = std.mem.readInt(u32, bytes[off..][0..4], .little);
     off += 4;
-    if (std.hash.Crc32.hash(bytes[HEADER_SIZE..]) != stored_crc) return CacheError.ChecksumMismatch;
+    if (computeCrc(bytes) != stored_crc) return CacheError.ChecksumMismatch;
 
     const seed = std.mem.readInt(u64, bytes[off..][0..8], .little);
     off += 8;
@@ -340,6 +348,18 @@ test "LOD cache rejects mismatched cache key" {
 
     const wrong_key = Key{ .seed = 1, .generator_identity_hash = 3, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
     try testing.expectError(CacheError.InvalidKey, deserialize(bytes, wrong_key, testing.allocator));
+}
+
+test "LOD cache checksum covers key header fields" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod1);
+    defer data.deinit();
+
+    const key = Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
+    const bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(bytes);
+
+    bytes[10] ^= 0x01;
+    try testing.expectError(CacheError.ChecksumMismatch, deserialize(bytes, key, testing.allocator));
 }
 
 test "LOD cache payload size follows named wire fields" {
