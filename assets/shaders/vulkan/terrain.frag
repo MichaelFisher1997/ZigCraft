@@ -672,7 +672,7 @@ void main() {
     float debugSkyFill = 0.0;
     float debugBlockLight = clamp(max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)), 0.0, 1.0);
     float debugOutdoor = baselineOutdoorFactor(vSkyLight);
-    const float LOD_TRANSITION_WIDTH = 24.0;
+    const float LOD_TRANSITION_WIDTH = 32.0;
     const float AO_FADE_DISTANCE = 128.0;
     const float TEXTURE_FADE_START = 32.0;
     const float TEXTURE_FADE_END = 128.0;
@@ -686,12 +686,11 @@ void main() {
     }
 
     if (vMaskRadius >= 1.0) {
-        const float CHUNK_SIZE = 16.0;
         vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        vec2 fragChunk = floor(worldXZ / CHUNK_SIZE);
-        vec2 cameraChunk = floor(global.cam_pos.xz / CHUNK_SIZE);
-        float maskChunks = floor(vMaskRadius / CHUNK_SIZE + 0.5);
-        if (length(fragChunk - cameraChunk) <= maskChunks) discard;
+        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
+        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
+        float ditherThreshold = lodTransitionNoise(worldXZ);
+        if (fade < ditherThreshold) discard;
     }
     
     vec2 tileBase = vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) * (1.0 / 16.0);
