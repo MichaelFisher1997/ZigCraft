@@ -271,6 +271,62 @@ pub const LODMesh = struct {
         }
     }
 
+    /// Build mesh from rich LOD column/span data, falling back to the stable heightfield path
+    /// when spans are not available. This is intentionally exposed as a test/config hook.
+    pub fn buildFromColumnSpans(self: *LODMesh, data: *const LODSimplifiedData, world_x: i32, world_z: i32, atlas: *const TextureAtlas) !void {
+        if (data.width < 2) return error.EmptyData;
+        if (!data.hasVerticalSpans()) return self.buildFromSimplifiedData(data, world_x, world_z, atlas);
+
+        const region_size: f32 = @floatFromInt(lod_chunk.regionSizeBlocks(self.lod_level));
+        const cell_size = region_size / @as(f32, @floatFromInt(data.width - 1));
+
+        var vertices = std.ArrayListUnmanaged(Vertex).empty;
+        defer vertices.deinit(self.allocator);
+
+        var found_span = false;
+        var gz: u32 = 0;
+        while (gz + 1 < data.width) : (gz += 1) {
+            var gx: u32 = 0;
+            while (gx + 1 < data.width) : (gx += 1) {
+                var spans_buf: [world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan = undefined;
+                const span_count = collectColumnSpans(data, gx, gz, &spans_buf);
+                if (span_count == 0) continue;
+                found_span = true;
+
+                const wx = @as(f32, @floatFromInt(gx)) * cell_size;
+                const wz = @as(f32, @floatFromInt(gz)) * cell_size;
+
+                var span_index: usize = 0;
+                while (span_index < span_count) : (span_index += 1) {
+                    const span = spans_buf[span_index];
+                    const top_tile = getLodTopTile(span.block, atlas);
+                    const tiles = atlas.getTilesForBlock(@intFromEnum(span.block));
+                    const side_tile = if (tiles.side == 0) Vertex.LOD_TILE_ID else tiles.side;
+                    const lit_color = applyColorBrightness(span.color, span.ambient_occlusion);
+                    const top_color = getLodTopColor(span.block, top_tile, lit_color);
+
+                    try addTopFaceQuad(self.allocator, &vertices, wx, span.max_height, wz, cell_size, unpackR(top_color), unpackG(top_color), unpackB(top_color), top_tile, world_x, world_z);
+                    try addExposedSpanFaces(self.allocator, &vertices, data, gx, gz, span, wx, wz, cell_size, lit_color, side_tile, world_x, world_z);
+                }
+            }
+        }
+
+        if (!found_span) return self.buildFromSimplifiedData(data, world_x, world_z, atlas);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.pending_vertices) |p| {
+            self.allocator.free(p);
+        }
+
+        if (vertices.items.len > 0) {
+            self.pending_vertices = try self.allocator.dupe(Vertex, vertices.items);
+        } else {
+            self.pending_vertices = null;
+        }
+    }
+
     /// Build mesh from simplified LOD data using QEM decimation.
     /// Generates a full-detail heightmap mesh first, then simplifies via quadric error metrics.
     /// Falls back to naive `buildFromSimplifiedData` if QEM input is too small or fails.
@@ -671,6 +727,176 @@ fn buildFullDetailHeightmapMesh(
 }
 
 const FaceDir = enum { north, south, east, west };
+
+const LODColumnSpan = struct {
+    min_height: f32,
+    max_height: f32,
+    block: BlockType,
+    color: u32,
+    ambient_occlusion: f32,
+};
+
+const HeightInterval = struct {
+    min_height: f32,
+    max_height: f32,
+};
+
+fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan) usize {
+    var count: usize = 0;
+    var i: u8 = 0;
+    while (i < data.verticalSpanCount(gx, gz)) : (i += 1) {
+        const raw = data.getVerticalSpan(gx, gz, i) orelse continue;
+        const block = representativeSpanBlock(raw.material_layers);
+        if (block == .air) continue;
+        const min_height = @min(raw.min_height, raw.max_height);
+        const max_height = @max(raw.min_height, raw.max_height);
+        if (max_height <= min_height + 0.01) continue;
+        insertColumnSpan(out, &count, .{
+            .min_height = min_height,
+            .max_height = max_height,
+            .block = block,
+            .color = raw.color,
+            .ambient_occlusion = raw.lighting.ambient_occlusion,
+        });
+    }
+
+    if (gx < data.width and gz < data.width) {
+        const idx = gx + gz * data.width;
+        const water = data.water[idx];
+        if (water.is_surface and water.coverage >= 0.35 and water.depth > 0.01 and count < out.len) {
+            insertColumnSpan(out, &count, .{
+                .min_height = water.surface_height - water.depth,
+                .max_height = water.surface_height,
+                .block = .water,
+                .color = data.colors[idx],
+                .ambient_occlusion = data.lighting[idx].ambient_occlusion,
+            });
+        }
+    }
+    return count;
+}
+
+fn representativeSpanBlock(layers: world_core.LODMaterialLayers) BlockType {
+    if (layers.surface != .air) return layers.surface;
+    if (layers.subsurface != .air) return layers.subsurface;
+    return layers.foundation;
+}
+
+fn insertColumnSpan(out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan, count: *usize, span: LODColumnSpan) void {
+    if (count.* >= out.len) return;
+    var dst = count.*;
+    count.* += 1;
+    while (dst > 0 and out[dst - 1].min_height > span.min_height) : (dst -= 1) {
+        out[dst] = out[dst - 1];
+    }
+    out[dst] = span;
+}
+
+fn addExposedSpanFaces(
+    allocator: std.mem.Allocator,
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    data: *const LODSimplifiedData,
+    gx: u32,
+    gz: u32,
+    span: LODColumnSpan,
+    wx: f32,
+    wz: f32,
+    size: f32,
+    color: u32,
+    tile_id: u16,
+    world_x: i32,
+    world_z: i32,
+) !void {
+    try addExposedSpanFace(allocator, vertices, data, gx, gz, if (gx == 0) null else gx - 1, gz, span, wx, wz, size, color, tile_id, .west, world_x, world_z);
+    try addExposedSpanFace(allocator, vertices, data, gx, gz, if (gx + 1 >= data.width - 1) null else gx + 1, gz, span, wx, wz, size, color, tile_id, .east, world_x, world_z);
+    try addExposedSpanFace(allocator, vertices, data, gx, gz, gx, if (gz == 0) null else gz - 1, span, wx, wz, size, color, tile_id, .north, world_x, world_z);
+    try addExposedSpanFace(allocator, vertices, data, gx, gz, gx, if (gz + 1 >= data.width - 1) null else gz + 1, span, wx, wz, size, color, tile_id, .south, world_x, world_z);
+}
+
+fn addExposedSpanFace(
+    allocator: std.mem.Allocator,
+    vertices: *std.ArrayListUnmanaged(Vertex),
+    data: *const LODSimplifiedData,
+    gx: u32,
+    gz: u32,
+    neighbor_gx: ?u32,
+    neighbor_gz: ?u32,
+    span: LODColumnSpan,
+    wx: f32,
+    wz: f32,
+    size: f32,
+    color: u32,
+    tile_id: u16,
+    dir: FaceDir,
+    world_x: i32,
+    world_z: i32,
+) !void {
+    _ = gx;
+    _ = gz;
+    var exposed: [world_core.MAX_LOD_VERTICAL_SPANS + 1]HeightInterval = undefined;
+    var exposed_count: usize = 1;
+    exposed[0] = .{ .min_height = span.min_height, .max_height = span.max_height };
+
+    if (neighbor_gx) |nx| {
+        if (neighbor_gz) |nz| {
+            var neighbor_spans: [world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan = undefined;
+            const neighbor_count = collectColumnSpans(data, nx, nz, &neighbor_spans);
+            var i: usize = 0;
+            while (i < neighbor_count) : (i += 1) {
+                subtractCoveredInterval(&exposed, &exposed_count, neighbor_spans[i].min_height, neighbor_spans[i].max_height);
+            }
+        }
+    }
+
+    var i: usize = 0;
+    while (i < exposed_count) : (i += 1) {
+        const interval = exposed[i];
+        if (interval.max_height <= interval.min_height + 0.01) continue;
+        const brightness: f32 = switch (dir) {
+            .west, .east => 0.6,
+            .north, .south => 0.7,
+        };
+        try addSideFaceQuad(allocator, vertices, wx, interval.max_height, wz, size, interval.min_height, unpackR(color) * brightness, unpackG(color) * brightness, unpackB(color) * brightness, dir, tile_id, world_x, world_z);
+    }
+}
+
+fn subtractCoveredInterval(intervals: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]HeightInterval, count: *usize, cover_min: f32, cover_max: f32) void {
+    var i: usize = 0;
+    while (i < count.*) {
+        const current = intervals[i];
+        const overlap_min = @max(current.min_height, cover_min);
+        const overlap_max = @min(current.max_height, cover_max);
+        if (overlap_max <= overlap_min + 0.01) {
+            i += 1;
+            continue;
+        }
+
+        if (overlap_min <= current.min_height + 0.01 and overlap_max >= current.max_height - 0.01) {
+            intervals[i] = intervals[count.* - 1];
+            count.* -= 1;
+            continue;
+        }
+
+        if (overlap_min <= current.min_height + 0.01) {
+            intervals[i].min_height = overlap_max;
+            i += 1;
+            continue;
+        }
+
+        if (overlap_max >= current.max_height - 0.01) {
+            intervals[i].max_height = overlap_min;
+            i += 1;
+            continue;
+        }
+
+        if (count.* < intervals.len) {
+            intervals[i].max_height = overlap_min;
+            intervals[count.*] = .{ .min_height = overlap_max, .max_height = current.max_height };
+            count.* += 1;
+        }
+        i += 1;
+    }
+}
 
 const LOD_UV_BLOCK_SCALE: f32 = 1.0;
 const LOD_UV_WRAP_BLOCKS: i32 = 256;
@@ -1439,6 +1665,174 @@ fn vertexTileId(v: Vertex) u16 {
 
 fn vertexRgb(v: Vertex) u32 {
     return v.color & 0x00FFFFFF;
+}
+
+fn testAtlas(allocator: std.mem.Allocator) TextureAtlas {
+    var atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** world_core.MAX_BLOCK_TYPES,
+    };
+    atlas.tile_mappings[@intFromEnum(BlockType.grass)] = .{ .top = 23, .bottom = 2, .side = 24 };
+    atlas.tile_mappings[@intFromEnum(BlockType.dirt)] = .{ .top = 25, .bottom = 25, .side = 26 };
+    atlas.tile_mappings[@intFromEnum(BlockType.stone)] = .{ .top = 31, .bottom = 31, .side = 32 };
+    atlas.tile_mappings[@intFromEnum(BlockType.sand)] = .{ .top = 51, .bottom = 52, .side = 55 };
+    atlas.tile_mappings[@intFromEnum(BlockType.water)] = .{ .top = 41, .bottom = 41, .side = 42 };
+    return atlas;
+}
+
+fn fillColumnSpanData(data: *LODSimplifiedData, block: BlockType, height: f32, color: u32) void {
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = height;
+        data.biomes[i] = .plains;
+        data.top_blocks[i] = block;
+        data.colors[i] = color;
+        data.material_layers[i] = .{ .surface = block, .subsurface = block, .foundation = block };
+        data.lighting[i] = world_core.LODLightingHint.daylight;
+    }
+}
+
+fn testSpan(min_height: f32, max_height: f32, block: BlockType, color: u32) world_core.LODVerticalSpan {
+    return .{
+        .min_height = min_height,
+        .max_height = max_height,
+        .biome = .plains,
+        .material_layers = .{ .surface = block, .subsurface = block, .foundation = block },
+        .color = color,
+        .water = world_core.LODWaterState.empty,
+        .lighting = world_core.LODLightingHint.daylight,
+        .vegetation = world_core.LODVegetationHint.empty,
+    };
+}
+
+test "buildFromColumnSpans falls back to heightfield without span data" {
+    const allocator = std.testing.allocator;
+    var atlas = testAtlas(allocator);
+
+    var data = try LODSimplifiedData.init(allocator, .lod2);
+    defer data.deinit();
+    fillColumnSpanData(&data, .grass, 64.0, 0x3A7D42);
+
+    var heightfield_mesh = LODMesh.init(allocator, .lod2);
+    defer heightfield_mesh.deinit(testResources());
+    try heightfield_mesh.buildFromSimplifiedData(&data, 0, 0, &atlas);
+
+    var span_mesh = LODMesh.init(allocator, .lod2);
+    defer span_mesh.deinit(testResources());
+    try span_mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
+
+    const heightfield_verts = heightfield_mesh.pending_vertices orelse return error.TestExpectedEqual;
+    const span_verts = span_mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(heightfield_verts.len, span_verts.len);
+}
+
+test "buildFromColumnSpans emits side faces for steep span terrain" {
+    const allocator = std.testing.allocator;
+    var atlas = testAtlas(allocator);
+
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+    fillColumnSpanData(&data, .stone, 64.0, 0x808080);
+    data.clearVerticalSpans(0, 0);
+    data.clearVerticalSpans(1, 0);
+    try std.testing.expect(data.setVerticalSpan(0, 0, 0, testSpan(50.0, 96.0, .stone, 0x808080)));
+    try std.testing.expect(data.setVerticalSpan(1, 0, 0, testSpan(50.0, 64.0, .stone, 0x808080)));
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+    try mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    var found_cliff_side = false;
+    for (verts) |v| {
+        if (vertexTileId(v) == 32 and v.pos[1] >= 95.0) {
+            found_cliff_side = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_cliff_side);
+}
+
+test "buildFromColumnSpans adds water as a separate span" {
+    const allocator = std.testing.allocator;
+    var atlas = testAtlas(allocator);
+
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+    fillColumnSpanData(&data, .sand, 60.0, 0xD8C76D);
+    data.clearVerticalSpans(0, 0);
+    try std.testing.expect(data.setVerticalSpan(0, 0, 0, testSpan(45.0, 60.0, .sand, 0xD8C76D)));
+    data.water[0] = .{ .is_surface = true, .surface_height = 63.0, .depth = 3.0, .coverage = 1.0 };
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+    try mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    var found_water = false;
+    for (verts) |v| {
+        if (vertexTileId(v) == 41 and v.pos[1] == 63.0) {
+            found_water = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_water);
+}
+
+test "buildFromColumnSpans skips empty columns while exposing neighbors" {
+    const allocator = std.testing.allocator;
+    var atlas = testAtlas(allocator);
+
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+    fillColumnSpanData(&data, .grass, 64.0, 0x3A7D42);
+    data.clearVerticalSpans(0, 0);
+    data.clearVerticalSpans(1, 0);
+    try std.testing.expect(data.setVerticalSpan(0, 0, 0, testSpan(50.0, 64.0, .grass, 0x3A7D42)));
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+    try mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    var side_count: usize = 0;
+    for (verts) |v| {
+        if (vertexTileId(v) == 24) side_count += 1;
+    }
+    try std.testing.expect(side_count >= 6);
+}
+
+test "buildFromColumnSpans sorts representative spans by height" {
+    const allocator = std.testing.allocator;
+    var atlas = testAtlas(allocator);
+
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+    fillColumnSpanData(&data, .stone, 64.0, 0x808080);
+    data.clearVerticalSpans(0, 0);
+    try std.testing.expect(data.setVerticalSpan(0, 0, 0, testSpan(80.0, 90.0, .stone, 0x808080)));
+    try std.testing.expect(data.setVerticalSpan(0, 0, 1, testSpan(40.0, 55.0, .dirt, 0x6B4A2B)));
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+    try mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    var found_lower_top = false;
+    var found_upper_top = false;
+    for (verts) |v| {
+        if (vertexTileId(v) == 25 and v.pos[1] == 55.0) found_lower_top = true;
+        if (vertexTileId(v) == 31 and v.pos[1] == 90.0) found_upper_top = true;
+    }
+    try std.testing.expect(found_lower_top);
+    try std.testing.expect(found_upper_top);
 }
 
 test "buildFromSimplifiedData uses atlas tiles and world-scaled UVs" {
