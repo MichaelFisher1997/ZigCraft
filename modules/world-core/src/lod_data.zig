@@ -81,14 +81,17 @@ pub const LODSimplifiedData = struct {
     allocator: std.mem.Allocator,
 
     pub fn getGridSize(lod_level: LODLevel) u32 {
-        if (lod_level == .lod0) return 16;
-        return 32;
+        return switch (lod_level) {
+            .lod0 => 16,
+            .lod1 => 64,
+            .lod2, .lod3 => 48,
+        };
     }
 
     pub fn getCellSizeBlocks(lod_level: LODLevel) u32 {
         const region_size = regionSizeBlocks(lod_level);
         const grid_size = getGridSize(lod_level);
-        return region_size / grid_size;
+        return region_size / @max(grid_size - 1, 1);
     }
 
     pub fn init(allocator: std.mem.Allocator, lod_level: LODLevel) !LODSimplifiedData {

@@ -16,6 +16,7 @@ const SurfaceBuilder = world_worldgen.SurfaceBuilder;
 const CoastalSurfaceType = world_worldgen.surface_builder.CoastalSurfaceType;
 const BiomeSource = world_worldgen.biome.BiomeSource;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
+const OverworldV2Generator = world_worldgen.OverworldV2Generator;
 
 pub const std_options: std.Options = .{ .log_level = .err };
 
@@ -203,6 +204,25 @@ test "WorldGen golden output for known seed at origin" {
 
     const surface_block = chunk.getBlock(8, surface_height, 8);
     try testing.expect(block_registry.getBlockDefinition(surface_block).is_solid);
+}
+
+test "Overworld V2 generator is deterministic" {
+    const allocator = testing.allocator;
+    var gen1 = OverworldV2Generator.init(4242, allocator);
+    var gen2 = OverworldV2Generator.init(4242, allocator);
+    var chunk1 = Chunk.init(0, 0);
+    var chunk2 = Chunk.init(0, 0);
+
+    gen1.generate(&chunk1, null);
+    gen2.generate(&chunk2, null);
+
+    try testing.expectEqualSlices(BlockType, &chunk1.blocks, &chunk2.blocks);
+    try testing.expectEqualSlices(BiomeId, &chunk1.biomes, &chunk2.biomes);
+}
+
+test "Overworld V2 registry alias resolves" {
+    const index = world_worldgen.findGeneratorIndex("overworld-v2") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("zigcraft:overworld-v2", world_worldgen.getGeneratorId(index));
 }
 
 test "WorldGen stable chunk fingerprints for known seed" {

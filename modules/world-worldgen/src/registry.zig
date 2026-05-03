@@ -3,6 +3,7 @@ const log = @import("engine-core").log;
 const gen_interface = @import("generator_interface.zig");
 const Generator = gen_interface.Generator;
 const overworld = @import("worldgen-overworld");
+const overworld_v2 = @import("worldgen-overworld-v2");
 const flat_world = @import("worldgen-flat");
 const shadow_test_world = @import("worldgen-test");
 const worldgen_api = @import("worldgen-api");
@@ -39,6 +40,12 @@ pub const GENERATORS = [_]GeneratorType{
         .info = shadow_test_world.descriptor.info,
         .initFn = initShadowTestWorld,
     },
+    .{
+        .id = overworld_v2.descriptor.id,
+        .aliases = overworld_v2.descriptor.aliases,
+        .info = overworld_v2.descriptor.info,
+        .initFn = initOverworldV2,
+    },
 };
 
 fn initOverworld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
@@ -51,6 +58,10 @@ fn initFlatWorld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generato
 
 fn initShadowTestWorld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
     return shadow_test_world.descriptor.create(.{ .seed = seed, .allocator = allocator }) catch |err| return mapApiError(err);
+}
+
+fn initOverworldV2(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
+    return overworld_v2.descriptor.create(.{ .seed = seed, .allocator = allocator }) catch |err| return mapApiError(err);
 }
 
 fn mapApiError(err: worldgen_api.RegistryError) RegistryError {

@@ -222,8 +222,13 @@ pub const LODMesh = struct {
                 const side_tile = material.side;
                 const top_block = blockForLODQuad(data, gx, gz);
                 const top_color = getLodTopColor(top_block, top_tile, lit_avg_color);
+                const flat_normal = [3]f32{ 0, 1, 0 };
+                const n00 = if (top_block == .water) flat_normal else normalForHeightPoint(data, gx, gz, cell_size);
+                const n10 = if (top_block == .water) flat_normal else normalForHeightPoint(data, gx + 1, gz, cell_size);
+                const n01 = if (top_block == .water) flat_normal else normalForHeightPoint(data, gx, gz + 1, cell_size);
+                const n11 = if (top_block == .water) flat_normal else normalForHeightPoint(data, gx + 1, gz + 1, cell_size);
 
-                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, top_color, top_color, top_color, top_color, top_tile, world_x, world_z);
+                try addSmoothQuad(self.allocator, &vertices, wx, wz, size, h00, h10, h01, h11, top_color, top_color, top_color, top_color, n00, n10, n01, n11, top_tile, world_x, world_z);
 
                 const skirt_depth: f32 = size * 4.0;
                 if (gx == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h01) * 0.5, wz, size, (h00 + h01) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.6, unpackG(lit_avg_color) * 0.6, unpackB(lit_avg_color) * 0.6, .west, side_tile, world_x, world_z);
@@ -231,7 +236,6 @@ pub const LODMesh = struct {
                 if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.7, unpackG(lit_avg_color) * 0.7, unpackB(lit_avg_color) * 0.7, .north, side_tile, world_x, world_z);
                 if (gz == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.7, unpackG(lit_avg_color) * 0.7, unpackB(lit_avg_color) * 0.7, .south, side_tile, world_x, world_z);
 
-                try addHeightDeltaFaces(self.allocator, &vertices, data, gx, gz, wx, wz, size, h00, h10, h01, h11, lit_avg_color, side_tile, world_x, world_z);
                 if (shouldRenderLODTree(self.lod_level, top_block)) {
                     const vegetation = representativeVegetation(data, gx, gz);
                     if (vegetation.tree_coverage >= 0.08) {
@@ -739,7 +743,7 @@ fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top_blo
 }
 
 fn shouldRenderLODTree(lod_level: LODLevel, top_block: BlockType) bool {
-    if (@intFromEnum(lod_level) < @intFromEnum(LODLevel.lod2)) return false;
+    _ = lod_level;
     return top_block != .water and top_block != .air;
 }
 
@@ -929,6 +933,31 @@ fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id: u1
     };
 }
 
+fn normalForHeightPoint(data: *const LODSimplifiedData, gx: u32, gz: u32, cell_size: f32) [3]f32 {
+    if (data.width < 2) return .{ 0, 1, 0 };
+
+    const left_x = if (gx == 0) gx else gx - 1;
+    const right_x = @min(gx + 1, data.width - 1);
+    const north_z = if (gz == 0) gz else gz - 1;
+    const south_z = @min(gz + 1, data.width - 1);
+    const h_left = data.getHeight(left_x, gz);
+    const h_right = data.getHeight(right_x, gz);
+    const h_north = data.getHeight(gx, north_z);
+    const h_south = data.getHeight(gx, south_z);
+    const x_span = @max(@as(f32, @floatFromInt(right_x - left_x)) * cell_size, 0.001);
+    const z_span = @max(@as(f32, @floatFromInt(south_z - north_z)) * cell_size, 0.001);
+    const dhdx = (h_right - h_left) / x_span;
+    const dhdz = (h_south - h_north) / z_span;
+
+    var n = [3]f32{ -dhdx, 1.0, -dhdz };
+    const len = @sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (len <= 0.0001) return .{ 0, 1, 0 };
+    n[0] /= len;
+    n[1] /= len;
+    n[2] /= len;
+    return n;
+}
+
 /// Add a smooth quad with per-vertex heights and colors
 fn addSmoothQuad(
     allocator: std.mem.Allocator,
@@ -944,6 +973,10 @@ fn addSmoothQuad(
     c10: u32,
     c01: u32,
     c11: u32,
+    n00: [3]f32,
+    n10: [3]f32,
+    n01: [3]f32,
+    n11: [3]f32,
     tile_id: u16,
     world_x: i32,
     world_z: i32,
@@ -953,45 +986,14 @@ fn addSmoothQuad(
     const y01 = h01;
     const y11 = h11;
 
-    // Calculate normals for each triangle
-    // Tri 1: (0,0) -> (1,1) -> (1,0)
-    const v1_0 = [3]f32{ size, y11 - y00, size };
-    const v1_1 = [3]f32{ size, y10 - y00, 0 };
-    var n1 = [3]f32{
-        v1_0[1] * v1_1[2] - v1_0[2] * v1_1[1],
-        v1_0[2] * v1_1[0] - v1_0[0] * v1_1[2],
-        v1_0[0] * v1_1[1] - v1_0[1] * v1_1[0],
-    };
-    const len1 = @sqrt(n1[0] * n1[0] + n1[1] * n1[1] + n1[2] * n1[2]);
-    if (len1 > 0.0001) {
-        n1[0] /= len1;
-        n1[1] /= len1;
-        n1[2] /= len1;
-    }
-
-    // Tri 2: (0,0) -> (0,1) -> (1,1)
-    const v2_0 = [3]f32{ 0, y01 - y00, size };
-    const v2_1 = [3]f32{ size, y11 - y00, size };
-    var n2 = [3]f32{
-        v2_0[1] * v2_1[2] - v2_0[2] * v2_1[1],
-        v2_0[2] * v2_1[0] - v2_0[0] * v2_1[2],
-        v2_0[0] * v2_1[1] - v2_0[1] * v2_1[0],
-    };
-    const len2 = @sqrt(n2[0] * n2[0] + n2[1] * n2[1] + n2[2] * n2[2]);
-    if (len2 > 0.0001) {
-        n2[0] /= len2;
-        n2[1] /= len2;
-        n2[2] /= len2;
-    }
-
     // Triangle 1: (0,0), (1,1), (1,0)
-    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n1, topFaceUV(.{ x, y00, z }, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n1, topFaceUV(.{ x + size, y11, z + size }, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y10, z }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, n1, topFaceUV(.{ x + size, y10, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n00, topFaceUV(.{ x, y00, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n11, topFaceUV(.{ x + size, y11, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y10, z }, .{ unpackR(c10), unpackG(c10), unpackB(c10) }, n10, topFaceUV(.{ x + size, y10, z }, world_x, world_z), tile_id));
 
-    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n2, topFaceUV(.{ x, y00, z }, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x, y01, z + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, n2, topFaceUV(.{ x, y01, z + size }, world_x, world_z), tile_id));
-    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n2, topFaceUV(.{ x + size, y11, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y00, z }, .{ unpackR(c00), unpackG(c00), unpackB(c00) }, n00, topFaceUV(.{ x, y00, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y01, z + size }, .{ unpackR(c01), unpackG(c01), unpackB(c01) }, n01, topFaceUV(.{ x, y01, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y11, z + size }, .{ unpackR(c11), unpackG(c11), unpackB(c11) }, n11, topFaceUV(.{ x + size, y11, z + size }, world_x, world_z), tile_id));
 }
 
 /// Add a top-facing quad (two triangles)
