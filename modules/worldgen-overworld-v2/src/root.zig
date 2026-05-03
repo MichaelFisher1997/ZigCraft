@@ -199,7 +199,7 @@ pub const OverworldV2Generator = struct {
                 if (self.params.spflags & MGV7_CAVERNS != 0) {
                     self.carveNoiseCavesColumn(chunk, local_x, local_z, wx, wz, sample.terrain_height);
                 }
-                const actual_height = highestSolidY(chunk, local_x, local_z);
+                const actual_height = highestSolidY(chunk, local_x, local_z, sample.terrain_height);
                 chunk.setSurfaceHeight(local_x, local_z, @intCast(actual_height));
                 chunk.biomes[local_x + local_z * CHUNK_SIZE_X] = sample.biome;
             }
@@ -846,8 +846,8 @@ fn np(offset: f32, scale: f32, spread: Vec3f, seed: i32, octaves: u16, persist: 
     return .{ .offset = offset, .scale = scale, .spread = spread, .seed = seed, .octaves = octaves, .persist = persist, .lacunarity = lacunarity };
 }
 
-fn highestSolidY(chunk: *const Chunk, local_x: u32, local_z: u32) i32 {
-    var y: i32 = CHUNK_SIZE_Y - 1;
+fn highestSolidY(chunk: *const Chunk, local_x: u32, local_z: u32, max_y: i32) i32 {
+    var y: i32 = @min(max_y, CHUNK_SIZE_Y - 1);
     while (y >= 0) : (y -= 1) {
         const block = chunk.getBlock(local_x, @intCast(y), local_z);
         if (block != .air and block != .water) return y;
@@ -1164,7 +1164,7 @@ fn placeRoundCanopy(chunk: *Chunk, cx: u32, cy: u32, cz: u32, leaves: BlockType)
             var ox: i32 = -radius;
             while (ox <= radius) : (ox += 1) {
                 if (@abs(ox) == radius and @abs(oz) == radius and oy >= 1) continue;
-                setTreeBlockOffset(chunk, cx, @as(i32, @intCast(cy)) + oy, cz, ox, oz, leaves, true);
+                setTreeBlockOffset(chunk, cx, cy, cz, ox, oy, oz, leaves, true);
             }
         }
     }
@@ -1181,7 +1181,7 @@ fn placeConeLeaves(chunk: *Chunk, cx: u32, base_y: u32, cz: u32, height: u32, le
             var ox: i32 = -radius;
             while (ox <= radius) : (ox += 1) {
                 if (@abs(ox) + @abs(oz) > radius + 1) continue;
-                setTreeBlockOffset(chunk, cx, @intCast(cy), cz, ox, oz, leaves, true);
+                setTreeBlockOffset(chunk, cx, cy, cz, ox, 0, oz, leaves, true);
             }
         }
     }
@@ -1193,14 +1193,15 @@ fn placeFlatCanopy(chunk: *Chunk, cx: u32, cy: u32, cz: u32, leaves: BlockType) 
         var ox: i32 = -2;
         while (ox <= 2) : (ox += 1) {
             if (@abs(ox) == 2 and @abs(oz) == 2) continue;
-            setTreeBlockOffset(chunk, cx, @intCast(cy), cz, ox, oz, leaves, true);
+            setTreeBlockOffset(chunk, cx, cy, cz, ox, 0, oz, leaves, true);
         }
     }
     setTreeBlock(chunk, cx, cy + 1, cz, leaves, true);
 }
 
-fn setTreeBlockOffset(chunk: *Chunk, cx: u32, y: i32, cz: u32, ox: i32, oz: i32, block: BlockType, leaves_only: bool) void {
+fn setTreeBlockOffset(chunk: *Chunk, cx: u32, base_y: u32, cz: u32, ox: i32, oy: i32, oz: i32, block: BlockType, leaves_only: bool) void {
     const x = @as(i32, @intCast(cx)) + ox;
+    const y = @as(i32, @intCast(base_y)) + oy;
     const z = @as(i32, @intCast(cz)) + oz;
     if (x < 0 or x >= CHUNK_SIZE_X or y < 0 or y >= CHUNK_SIZE_Y or z < 0 or z >= CHUNK_SIZE_Z) return;
     setTreeBlock(chunk, @intCast(x), @intCast(y), @intCast(z), block, leaves_only);
