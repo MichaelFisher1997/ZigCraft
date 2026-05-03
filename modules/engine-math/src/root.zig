@@ -15,3 +15,4 @@ pub const utils = @import("utils.zig");
 pub const frustum_tests = @import("frustum_tests.zig");
 pub const mat4_tests = @import("mat4_tests.zig");
 pub const utils_tests = @import("utils_tests.zig");
+pub const voxel_tests = @import("voxel_tests.zig");

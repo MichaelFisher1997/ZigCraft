@@ -50,6 +50,7 @@ test {
     _ = @import("engine-graphics").shadow_tests;
     _ = @import("engine-shadows").shadow_system_tests;
     _ = @import("engine-math").utils_tests;
+    _ = @import("engine-math").voxel_tests;
     _ = @import("engine-math").frustum_tests;
     _ = @import("engine-math").mat4_tests;
     _ = @import("world-meshing").world_tests;
