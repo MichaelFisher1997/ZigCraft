@@ -1,4 +1,5 @@
 pub const overworld = @import("worldgen-overworld");
+pub const overworld_v2 = @import("worldgen-overworld-v2");
 pub const biome = overworld.biome;
 pub const biome_color_provider = overworld.biome_color_provider;
 pub const biome_edge_detector = overworld.biome_edge_detector;
@@ -56,6 +57,7 @@ pub const TerrainReport = terrain_report.TerrainReport;
 pub const ChunkPhaseData = terrain_shape_generator.ChunkPhaseData;
 pub const StandardDecorationProvider = decoration_registry.StandardDecorationProvider;
 pub const OverworldGenerator = overworld_generator.OverworldGenerator;
+pub const OverworldV2Generator = overworld_v2.OverworldV2Generator;
 pub const ShadowTestWorldGenerator = shadow_test_world.ShadowTestWorldGenerator;
 pub const GeneratorType = registry.GeneratorType;
 pub const GENERATORS = registry.GENERATORS;

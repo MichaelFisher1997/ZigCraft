@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
 
     const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
     options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
-    const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly by id or alias (normal, overworld, flat, test)") orelse "";
+    const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly by id or alias (normal, overworld, overworld-v2, flat, test)") orelse "";
     options.addOption([]const u8, "auto_world", auto_world);
 
     const auto_preset = b.option([]const u8, "auto-preset", "Graphics preset to apply for auto-world launches (low, medium, high, ultra, extreme)") orelse "";
@@ -141,6 +141,7 @@ pub fn build(b: *std.Build) void {
     const worldgen_api = b.createModule(.{ .root_source_file = b.path("modules/worldgen-api/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_common = b.createModule(.{ .root_source_file = b.path("modules/worldgen-common/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_overworld = b.createModule(.{ .root_source_file = b.path("modules/worldgen-overworld/src/root.zig"), .target = target, .optimize = optimize });
+    const worldgen_overworld_v2 = b.createModule(.{ .root_source_file = b.path("modules/worldgen-overworld-v2/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_flat = b.createModule(.{ .root_source_file = b.path("modules/worldgen-flat/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_test = b.createModule(.{ .root_source_file = b.path("modules/worldgen-test/src/root.zig"), .target = target, .optimize = optimize });
     const world_worldgen = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/root.zig"), .target = target, .optimize = optimize });
@@ -242,6 +243,10 @@ pub fn build(b: *std.Build) void {
     worldgen_overworld.addImport("worldgen-api", worldgen_api);
     worldgen_overworld.addImport("worldgen-common", worldgen_common);
     worldgen_overworld.addOptions("worldgen_overworld_options", worldgen_overworld_options);
+    addSharedImports(worldgen_overworld_v2, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    worldgen_overworld_v2.addImport("world-core", world_core);
+    worldgen_overworld_v2.addImport("worldgen-api", worldgen_api);
+    worldgen_overworld_v2.addImport("worldgen-common", worldgen_common);
     addSharedImports(worldgen_flat, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     worldgen_flat.addImport("world-core", world_core);
     worldgen_flat.addImport("worldgen-api", worldgen_api);
@@ -278,6 +283,7 @@ pub fn build(b: *std.Build) void {
     world_worldgen.addImport("worldgen-api", worldgen_api);
     world_worldgen.addImport("worldgen-common", worldgen_common);
     world_worldgen.addImport("worldgen-overworld", worldgen_overworld);
+    world_worldgen.addImport("worldgen-overworld-v2", worldgen_overworld_v2);
     world_worldgen.addImport("worldgen-flat", worldgen_flat);
     world_worldgen.addImport("worldgen-test", worldgen_test);
 
