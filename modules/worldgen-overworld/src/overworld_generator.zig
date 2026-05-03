@@ -47,6 +47,7 @@ pub const OverworldGenerator = struct {
     pub const INFO = GeneratorInfo{
         .name = "Overworld",
         .description = "Standard terrain with diverse biomes and caves.",
+        .version = 1,
     };
 
     allocator: std.mem.Allocator,

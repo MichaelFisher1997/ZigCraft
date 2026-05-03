@@ -24,6 +24,7 @@ pub const FlatWorldGenerator = struct {
     pub const INFO = GeneratorInfo{
         .name = "Flat World",
         .description = "A perfectly flat world, ideal for testing and building.",
+        .version = 1,
     };
 
     pub fn init(seed: u64, allocator: std.mem.Allocator) FlatWorldGenerator {

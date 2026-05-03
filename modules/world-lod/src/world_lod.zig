@@ -87,6 +87,10 @@ pub fn WorldLOD(comptime RHI: type) type {
             self.manager.unpause();
         }
 
+        pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
+            try self.manager.enableCache(save_dir_path);
+        }
+
         pub fn update(
             self: *Self,
             player_pos: Vec3,

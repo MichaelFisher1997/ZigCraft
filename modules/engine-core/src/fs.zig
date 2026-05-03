@@ -114,6 +114,10 @@ pub const Dir = struct {
         try self.inner.deleteFile(io, sub_path);
     }
 
+    pub fn rename(self: Dir, old_sub_path: []const u8, new_sub_path: []const u8) !void {
+        try self.inner.rename(old_sub_path, self.inner, new_sub_path, io);
+    }
+
     pub fn readFileAlloc(self: Dir, sub_path: []const u8, allocator: Allocator, limit: usize) ![]u8 {
         return self.inner.readFileAlloc(io, sub_path, allocator, .limited(limit));
     }

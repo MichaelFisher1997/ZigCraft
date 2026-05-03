@@ -115,6 +115,7 @@ pub const OverworldV2Generator = struct {
     pub const INFO = GeneratorInfo{
         .name = "Overworld V2",
         .description = "Luanti v7-style terrain with ridges, mountains, rivers, and cave noise.",
+        .version = 1,
     };
 
     pub const Params = struct {

@@ -1,5 +1,6 @@
 pub const biome_color_provider = @import("biome_color_provider.zig");
 pub const lod_chunk = @import("lod_chunk.zig");
+pub const lod_cache = @import("lod_cache.zig");
 pub const lod_mesh = @import("lod_mesh.zig");
 pub const lod_generator = @import("lod_generator.zig");
 pub const lod_manager = @import("lod_manager.zig");

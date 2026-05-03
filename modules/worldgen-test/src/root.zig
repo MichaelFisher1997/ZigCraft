@@ -31,6 +31,7 @@ pub const ShadowTestWorldGenerator = struct {
     pub const INFO = GeneratorInfo{
         .name = "Shadow Test Scene",
         .description = "Deterministic low-block scene for shadow and cave entrance lighting captures.",
+        .version = 1,
     };
 
     pub fn init(seed: u64, allocator: std.mem.Allocator) ShadowTestWorldGenerator {
