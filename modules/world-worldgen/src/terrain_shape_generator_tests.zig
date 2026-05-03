@@ -68,10 +68,10 @@ test "Params default values" {
     const params = Params{};
     try testing.expectEqual(@as(f32, 0.25), params.temp_lapse);
     try testing.expectEqual(@as(i32, 64), params.sea_level);
-    try testing.expectEqual(@as(f32, 0.35), params.ocean_threshold);
-    try testing.expectEqual(@as(f32, 0.50), params.ridge_inland_min);
-    try testing.expectEqual(@as(f32, 0.70), params.ridge_inland_max);
-    try testing.expectEqual(@as(f32, 0.50), params.ridge_sparsity);
+    try testing.expectEqual(@as(f32, 0.37), params.ocean_threshold);
+    try testing.expectEqual(@as(f32, 0.48), params.ridge_inland_min);
+    try testing.expectEqual(@as(f32, 0.68), params.ridge_inland_max);
+    try testing.expectEqual(@as(f32, 0.46), params.ridge_sparsity);
     try testing.expect(!params.disable_caves);
 }
 

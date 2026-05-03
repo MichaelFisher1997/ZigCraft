@@ -220,7 +220,7 @@ test "WorldGen stable chunk fingerprints for known seed" {
     const expected = [_]u64{
         11844084116277698429,
         9139389730069537271,
-        8856338127037761019,
+        8491863551076282083,
     };
 
     for (positions, 0..) |pos, i| {
@@ -863,8 +863,8 @@ test "HeightSampler ocean detection" {
     const sampler = HeightSampler.init();
 
     try testing.expect(sampler.isOcean(0.0));
-    try testing.expect(sampler.isOcean(0.34));
-    try testing.expect(!sampler.isOcean(0.35));
+    try testing.expect(sampler.isOcean(0.36));
+    try testing.expect(!sampler.isOcean(0.37));
     try testing.expect(!sampler.isOcean(0.5));
 }
 

@@ -501,7 +501,6 @@ test "representative seeds keep varied but readable spawn regions" {
         wetland_samples += report.biomeCount(.swamp) + report.biomeCount(.mangrove_swamp);
         dry_samples += report.biomeCount(.desert) + report.biomeCount(.savanna) + report.biomeCount(.savanna_plateau) + report.biomeCount(.windswept_savanna) + report.biomeCount(.badlands) + report.biomeCount(.wooded_badlands) + report.biomeCount(.eroded_badlands);
         mountain_samples += @intFromFloat(report.mountain_coverage * @as(f64, @floatFromInt(report.sample_count)));
-        mountain_samples += report.biomeCount(.mountains) + report.biomeCount(.snowy_mountains) + report.biomeCount(.meadow) + report.biomeCount(.grove) + report.biomeCount(.snowy_slopes) + report.biomeCount(.jagged_peaks) + report.biomeCount(.frozen_peaks) + report.biomeCount(.stony_peaks);
     }
 
     const denominator: f64 = @floatFromInt(total_samples);

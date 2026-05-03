@@ -91,7 +91,8 @@ test "HeightSampler isOcean at deep ocean value" {
 
 test "HeightSampler isOcean at exactly threshold" {
     const sampler = HeightSampler.init();
-    try testing.expect(!sampler.isOcean(0.35));
+    try testing.expect(sampler.isOcean(0.35));
+    try testing.expect(!sampler.isOcean(0.37));
 }
 
 test "HeightSampler isOcean inland values return false" {

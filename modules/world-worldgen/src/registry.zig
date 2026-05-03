@@ -43,7 +43,7 @@ fn initOverworld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generato
         OverworldGenerator.initWithParams(seed, allocator, deco_registry.StandardDecorationProvider.provider(), .{
             .terrain_shape = .{
                 .sea_level = if (restore_water) 64 else -1,
-                .ocean_threshold = if (restore_water) 0.35 else -1.0,
+                .ocean_threshold = if (restore_water) 0.37 else -1.0,
                 .disable_caves = !restore_caves,
             },
             .basic_chunks_only = !restore_decorations,

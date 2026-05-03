@@ -12,7 +12,7 @@ const BIOME_POINTS = registry.BIOME_POINTS;
 const BLEND_EPSILON = registry.BLEND_EPSILON;
 const NORMALIZED_SEA_LEVEL = registry.NORMALIZED_SEA_LEVEL;
 
-const OCEAN_CONTINENTALNESS_MAX: f32 = 0.35;
+const OCEAN_CONTINENTALNESS_MAX: f32 = 0.37;
 
 // ============================================================================
 // Voronoi Biome Selection (Issue #106)

@@ -36,7 +36,7 @@ pub const HeightParams = struct {
     sea_level: i32 = 64,
 
     // Continental zone thresholds
-    ocean_threshold: f32 = 0.35,
+    ocean_threshold: f32 = 0.37,
     continental_deep_ocean_max: f32 = 0.20,
     continental_coast_max: f32 = 0.44,
     continental_inland_low_max: f32 = 0.58,
@@ -403,8 +403,8 @@ test "HeightSampler ocean detection" {
     const sampler = HeightSampler.init();
 
     try std.testing.expect(sampler.isOcean(0.0));
-    try std.testing.expect(sampler.isOcean(0.34));
-    try std.testing.expect(!sampler.isOcean(0.35));
+    try std.testing.expect(sampler.isOcean(0.36));
+    try std.testing.expect(!sampler.isOcean(0.37));
     try std.testing.expect(!sampler.isOcean(0.5));
 }
 

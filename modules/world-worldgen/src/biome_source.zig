@@ -23,7 +23,7 @@ pub const BiomeResult = struct {
 pub const BiomeSourceParams = struct {
     sea_level: i32 = 64,
     edge_detection_enabled: bool = true,
-    ocean_threshold: f32 = 0.35,
+    ocean_threshold: f32 = 0.37,
 };
 
 /// Unified biome selection interface.

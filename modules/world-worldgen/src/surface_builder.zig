@@ -43,7 +43,7 @@ pub const SurfaceParams = struct {
     gravel_erosion_threshold: f32 = 0.7,
 
     // Coastal zone (continentalness thresholds)
-    ocean_threshold: f32 = 0.35,
+    ocean_threshold: f32 = 0.37,
     beach_band: f32 = 0.07, // Width of beach zone in continentalness units
 };
 
