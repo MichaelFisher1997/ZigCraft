@@ -14,6 +14,7 @@
 //! GPU operations are decoupled via LODGPUBridge and LODRenderInterface (Issue #246).
 
 const std = @import("std");
+const fs = @import("fs");
 const sync = @import("sync");
 const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
@@ -60,6 +61,7 @@ const LODRenderInterface = lod_gpu.LODRenderInterface;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const lod_scheduler = @import("lod_scheduler.zig");
+const lod_cache = @import("lod_cache.zig");
 
 pub const MAX_LOD_REGIONS = 2048;
 const CHUNK_COVERAGE_PADDING: i32 = 1;
@@ -145,6 +147,9 @@ pub const LODManager = struct {
     // Type-erased renderer interface (replaces direct LODRenderer(RHI) field)
     renderer: LODRenderInterface,
 
+    // Optional on-disk cache for generated LOD source data.
+    cache_dir_path: ?[]const u8,
+
     // Keep cleanup behavior testable, but allow the live world to opt out.
     cleanup_covered_regions: bool = true,
 
@@ -218,6 +223,7 @@ pub const LODManager = struct {
             .deletion_timer = 0,
             .renderer = render_iface,
             .cleanup_covered_regions = true,
+            .cache_dir_path = null,
         };
 
         const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
@@ -284,10 +290,29 @@ pub const LODManager = struct {
         }
         self.deletion_queue.deinit(self.allocator);
 
+        if (self.cache_dir_path) |path| {
+            self.allocator.free(path);
+        }
+
         // NOTE: LODManager does NOT own the renderer lifetime.
         // The renderer is owned by World and deinit'd there.
 
         self.allocator.destroy(self);
+    }
+
+    pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
+        const cache_dir_path = try std.fs.path.join(self.allocator, &.{ save_dir_path, "lod_cache" });
+        errdefer self.allocator.free(cache_dir_path);
+
+        try fs.cwd().makePath(cache_dir_path);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.cache_dir_path) |old_path| {
+            self.allocator.free(old_path);
+        }
+        self.cache_dir_path = cache_dir_path;
+        log.log.info("LOD source cache enabled at '{s}'", .{cache_dir_path});
     }
 
     /// Update LOD system with player position
@@ -751,6 +776,81 @@ pub const LODManager = struct {
         }
     }
 
+    fn cacheKey(self: *const Self, key: LODRegionKey) lod_cache.Key {
+        return .{
+            .seed = self.generator.seed,
+            .generator_identity_hash = self.generator.identity_hash,
+            .generator_version = self.generator.version,
+            .rx = key.rx,
+            .rz = key.rz,
+            .lod = key.lod,
+        };
+    }
+
+    fn cacheFilePath(self: *Self, cache_dir_path: []const u8, key: lod_cache.Key) ![]u8 {
+        const filename = try std.fmt.allocPrint(
+            self.allocator,
+            "lod_{}_{}_{}_{}_{}_{}.dat",
+            .{ key.seed, key.generator_identity_hash, key.generator_version, key.rx, key.rz, @intFromEnum(key.lod) },
+        );
+        defer self.allocator.free(filename);
+        return std.fs.path.join(self.allocator, &.{ cache_dir_path, filename });
+    }
+
+    fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
+        const cache_dir_path = self.cache_dir_path orelse return null;
+        const cache_key = self.cacheKey(key);
+        const path = self.cacheFilePath(cache_dir_path, cache_key) catch |err| {
+            log.log.warn("LOD cache path allocation failed: {}", .{err});
+            return null;
+        };
+        defer self.allocator.free(path);
+
+        const bytes = fs.cwd().readFileAlloc(path, self.allocator, 16 * 1024 * 1024) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => {
+                log.log.warn("Failed to read LOD cache '{s}': {}", .{ path, err });
+                return null;
+            },
+        };
+        defer self.allocator.free(bytes);
+
+        return lod_cache.deserialize(bytes, cache_key, self.allocator) catch |err| {
+            log.log.warn("Discarding corrupt LOD cache '{s}': {}", .{ path, err });
+            fs.cwd().deleteFile(path) catch |delete_err| {
+                if (delete_err != error.FileNotFound) {
+                    log.log.warn("Failed to delete corrupt LOD cache '{s}': {}", .{ path, delete_err });
+                }
+            };
+            return null;
+        };
+    }
+
+    fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
+        const cache_dir_path = self.cache_dir_path orelse return;
+        const cache_key = self.cacheKey(key);
+        const path = self.cacheFilePath(cache_dir_path, cache_key) catch |err| {
+            log.log.warn("LOD cache path allocation failed: {}", .{err});
+            return;
+        };
+        defer self.allocator.free(path);
+
+        const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
+            log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+            return;
+        };
+        defer self.allocator.free(bytes);
+
+        const file = fs.cwd().createFile(path, .{ .truncate = true }) catch |err| {
+            log.log.warn("Failed to create LOD cache '{s}': {}", .{ path, err });
+            return;
+        };
+        defer file.close();
+        file.writeAll(bytes) catch |err| {
+            log.log.warn("Failed to write LOD cache '{s}': {}", .{ path, err });
+        };
+    }
+
     /// Worker pool callback for LOD tasks (generation and meshing)
     fn processLODJob(ctx: *anyopaque, job: Job) void {
         const self: *Self = @ptrCast(@alignCast(ctx));
@@ -830,18 +930,24 @@ pub const LODManager = struct {
             .chunk_generation => {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
-                    var data = LODSimplifiedData.init(self.allocator, lod_level) catch {
-                        new_state = .missing;
-                        chunk.unpin();
-                        // Acquire lock briefly to update state
-                        self.mutex.lock();
-                        chunk.state = new_state;
-                        self.mutex.unlock();
-                        return;
+                    var data = self.loadCachedSourceData(key) orelse blk: {
+                        var generated = LODSimplifiedData.init(self.allocator, lod_level) catch {
+                            new_state = .missing;
+                            chunk.unpin();
+                            // Acquire lock briefly to update state
+                            self.mutex.lock();
+                            chunk.state = new_state;
+                            self.mutex.unlock();
+                            return;
+                        };
+
+                        // Generate heightmap data (expensive, done without lock)
+                        self.generator.generateHeightmapOnly(&generated, chunk.region_x, chunk.region_z, lod_level);
+                        self.saveCachedSourceData(key, &generated);
+                        break :blk generated;
                     };
 
-                    // Generate heightmap data (expensive, done without lock)
-                    self.generator.generateHeightmapOnly(&data, chunk.region_x, chunk.region_z, lod_level);
+                    errdefer data.deinit();
 
                     // Acquire lock to update chunk data
                     self.mutex.lock();

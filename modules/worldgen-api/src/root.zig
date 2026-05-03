@@ -71,6 +71,7 @@ pub const GenerationOptions = struct {
 pub const GeneratorInfo = struct {
     name: []const u8,
     description: []const u8,
+    version: u32,
 };
 
 pub const Generator = struct {

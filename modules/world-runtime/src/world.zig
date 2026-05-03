@@ -73,6 +73,9 @@ fn lodGeneratorFromGenerator(generator: Generator) LODGenerator {
         .ptr = generator.ptr,
         .generate_heightmap_only = generator.vtable.generateHeightmapOnly,
         .maybe_recenter_cache = generator.vtable.maybeRecenterCache,
+        .seed = generator.getSeed(),
+        .identity_hash = std.hash.Wyhash.hash(0, generator.info.name),
+        .version = generator.info.version,
     };
 }
 
@@ -368,6 +371,9 @@ pub const World = struct {
         const gen_name = self.generator.info.name;
         self.save_manager = try SaveManager.init(self.allocator, save_dir_path, world_name, seed, gen_name);
         self.streamer.setSaveManager(self.save_manager);
+        if (self.lod) |lod| {
+            try lod.enableCache(save_dir_path);
+        }
     }
 
     fn enqueueModifiedChunks(self: *World, sm: *SaveManager) std.ArrayListUnmanaged(ChunkKey) {
