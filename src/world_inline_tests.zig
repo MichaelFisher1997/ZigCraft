@@ -419,7 +419,7 @@ test "normalizeLightValues RGB channels" {
 
 test "getBlockColor returns no tint for stone" {
     var chunk = Chunk.init(0, 0);
-    const color = biome_color_sampler.getBlockColor(&chunk, .empty, .top, 0, 8, 8, .stone);
+    const color = biome_color_sampler.getBlockColor(&chunk, .empty, .top, .top, 0, 8, 8, .stone);
     try testing.expectApproxEqAbs(@as(f32, 1.0), color[0], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 1.0), color[1], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 1.0), color[2], 0.001);
@@ -427,7 +427,7 @@ test "getBlockColor returns no tint for stone" {
 
 test "getBlockColor returns no tint for grass side face" {
     var chunk = Chunk.init(0, 0);
-    const color = biome_color_sampler.getBlockColor(&chunk, .empty, .east, 0, 8, 8, .grass);
+    const color = biome_color_sampler.getBlockColor(&chunk, .empty, .east, .east, 0, 8, 8, .grass);
     try testing.expectApproxEqAbs(@as(f32, 1.0), color[0], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 1.0), color[1], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 1.0), color[2], 0.001);
@@ -435,7 +435,7 @@ test "getBlockColor returns no tint for grass side face" {
 
 test "getBlockColor returns biome tint for grass top face" {
     var chunk = Chunk.init(0, 0);
-    const color = biome_color_sampler.getBlockColor(&chunk, .empty, .top, 64, 8, 8, .grass);
+    const color = biome_color_sampler.getBlockColor(&chunk, .empty, .top, .top, 64, 8, 8, .grass);
     // Plains biome grass color should not be {1, 1, 1} (it should be tinted)
     try testing.expect(color[0] != 1.0 or color[1] != 1.0 or color[2] != 1.0);
 }

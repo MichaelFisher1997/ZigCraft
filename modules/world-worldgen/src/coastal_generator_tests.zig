@@ -133,7 +133,7 @@ test "getSurfaceType delegates to SurfaceBuilder" {
     );
     try testing.expectEqual(CoastalSurfaceType.sand_beach, sand);
 
-    // Cliff: same coastal zone but slope >= cliff_min_slope
+    // Steep coasts keep their biome surface; cliffs are explicit biome choices.
     const cliff = CoastalGenerator.getSurfaceType(
         &surface_builder,
         near_ocean_continentalness,
@@ -141,7 +141,7 @@ test "getSurfaceType delegates to SurfaceBuilder" {
         p.sea_level + 1,
         p.gravel_erosion_threshold - 0.1,
     );
-    try testing.expectEqual(CoastalSurfaceType.cliff, cliff);
+    try testing.expectEqual(CoastalSurfaceType.none, cliff);
 
     // Not coastal: height exceeds beach_max_height_above_sea above sea_level
     const inland = CoastalGenerator.getSurfaceType(

@@ -11,11 +11,29 @@ const testing = std.testing;
 const height_sampler_mod = @import("height_sampler.zig");
 const world_class_mod = @import("world_class.zig");
 const noise_sampler_mod = @import("noise_sampler.zig");
+const region_mod = @import("region.zig");
 
 const HeightSampler = height_sampler_mod.HeightSampler;
 const HeightParams = height_sampler_mod.HeightParams;
 const ContinentalZone = world_class_mod.ContinentalZone;
 const ColumnNoiseValues = noise_sampler_mod.ColumnNoiseValues;
+const NoiseSampler = noise_sampler_mod.NoiseSampler;
+const RegionControls = region_mod.RegionControls;
+const PathInfo = region_mod.PathInfo;
+
+const flat_controls = RegionControls{
+    .height_mult = 1.0,
+    .vegetation_mult = 1.0,
+    .drama_mask = 0.0,
+    .river_mask = 0.0,
+    .subbiome_mask = 0.0,
+};
+
+const no_path = PathInfo{
+    .path_type = .none,
+    .influence = 0.0,
+    .direction = .{ 0.0, 0.0 },
+};
 
 // ============================================================================
 // HeightSampler Initialization Tests
@@ -199,4 +217,62 @@ test "HeightSampler computeHeightSimple peak compression caps very high terrain"
     const peak_start = sea + sampler.params.peak_compression_offset;
     try testing.expect(height < very_high);
     try testing.expect(height > peak_start);
+}
+
+fn coastalTestNoise(warped_x: f32, warped_z: f32) ColumnNoiseValues {
+    return .{
+        .warp = .{ .x = 0.0, .z = 0.0 },
+        .warped_x = warped_x,
+        .warped_z = warped_z,
+        .continentalness = 0.43,
+        .erosion = 0.45,
+        .peaks_valleys = 0.5,
+        .temperature = 0.5,
+        .humidity = 0.5,
+        .river_mask = 0.0,
+        .terrain_base = 0.0,
+        .terrain_alt = 0.0,
+        .height_select = 0.0,
+        .terrain_persist = 1.0,
+        .variant = 0.0,
+    };
+}
+
+fn lowlandRampNoise(continentalness: f32) ColumnNoiseValues {
+    var noise = coastalTestNoise(64.0, 96.0);
+    noise.continentalness = continentalness;
+    noise.erosion = 1.0;
+    return noise;
+}
+
+test "HeightSampler computeHeight avoids monotonic inland-low ramp" {
+    const sampler = HeightSampler.init();
+    const noise_sampler = NoiseSampler.init(1357);
+
+    const coastal_edge = sampler.computeHeightWithTerrainModifier(&noise_sampler, lowlandRampNoise(0.44), flat_controls, no_path, 0, null);
+    const inland_low = sampler.computeHeightWithTerrainModifier(&noise_sampler, lowlandRampNoise(0.58), flat_controls, no_path, 0, null);
+
+    try testing.expect(@abs(inland_low - coastal_edge) < 1.0);
+}
+
+test "HeightSampler computeHeight keeps detail active on coastal land" {
+    const sampler = HeightSampler.init();
+    const noise_sampler = NoiseSampler.init(2468);
+    const positions = [_][2]f32{
+        .{ 17.0, 29.0 },
+        .{ 53.0, 71.0 },
+        .{ 109.0, 31.0 },
+        .{ 157.0, 149.0 },
+        .{ 211.0, 83.0 },
+    };
+
+    var min_height: f32 = std.math.inf(f32);
+    var max_height: f32 = -std.math.inf(f32);
+    for (positions) |pos| {
+        const height = sampler.computeHeightWithTerrainModifier(&noise_sampler, coastalTestNoise(pos[0], pos[1]), flat_controls, no_path, 0, null);
+        min_height = @min(min_height, height);
+        max_height = @max(max_height, height);
+    }
+
+    try testing.expect(max_height - min_height > 0.5);
 }

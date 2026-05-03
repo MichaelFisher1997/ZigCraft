@@ -23,8 +23,8 @@ const Chunk = world_core.Chunk;
 pub const CoastalSurfaceType = enum {
     none, // Not in coastal zone OR near inland water (use biome default)
     sand_beach, // Gentle slope near sea level, adjacent to OCEAN -> sand
-    gravel_beach, // High erosion coastal area adjacent to OCEAN -> gravel
-    cliff, // Steep slope in coastal zone -> stone
+    gravel_beach, // Reserved for explicit gravel shore biomes; not auto-painted broadly
+    cliff, // Reserved for explicit cliff biomes; not auto-painted broadly
 };
 
 // ============================================================================
@@ -37,14 +37,14 @@ pub const SurfaceParams = struct {
     sea_level: i32 = 64,
 
     // Beach constraints
-    beach_max_height_above_sea: i32 = 6,
-    beach_max_slope: i32 = 2,
-    cliff_min_slope: i32 = 5,
-    gravel_erosion_threshold: f32 = 0.7,
+    beach_max_height_above_sea: i32 = 3,
+    beach_max_slope: i32 = 1,
+    cliff_min_slope: i32 = 5, // Reserved; structural coasts no longer auto-paint cliffs.
+    gravel_erosion_threshold: f32 = 0.7, // Reserved for explicit shore biomes.
 
     // Coastal zone (continentalness thresholds)
     ocean_threshold: f32 = 0.37,
-    beach_band: f32 = 0.07, // Width of beach zone in continentalness units
+    beach_band: f32 = 0.035, // Width of beach zone in continentalness units
 };
 
 // ============================================================================
@@ -75,7 +75,7 @@ pub const SurfaceBuilder = struct {
     /// 1. This block is LAND (above sea level)
     /// 2. This block is near OCEAN (continentalness indicates ocean proximity)
     /// 3. Height is within beach_max_height_above_sea of sea level
-    /// 4. Slope is gentle
+    /// 4. Slope is very gentle
     ///
     /// Inland water (lakes/rivers) get grass/dirt banks, NOT sand.
     pub fn getCoastalSurfaceType(
@@ -105,25 +105,15 @@ pub const SurfaceBuilder = struct {
             return .none;
         }
 
-        // CONSTRAINT 3: Classify based on slope and erosion
+        _ = erosion;
 
-        // Steep slopes become cliffs (stone)
-        if (slope >= p.cliff_min_slope) {
-            return .cliff;
-        }
-
-        // High erosion areas become gravel beaches
-        if (erosion >= p.gravel_erosion_threshold and slope <= p.beach_max_slope + 1) {
-            return .gravel_beach;
-        }
+        // Do not auto-paint cliffs or gravel beaches from slope/erosion here.
+        // Broad structural overrides made coastlines look like concrete slabs;
+        // biome-specific shore types should opt into those materials explicitly.
+        if (slope > p.beach_max_slope) return .none;
 
         // Gentle slopes at sea level become sand beaches
-        if (slope <= p.beach_max_slope) {
-            return .sand_beach;
-        }
-
-        // Moderate slopes - no special treatment
-        return .none;
+        return .sand_beach;
     }
 
     /// Get block type at a specific Y coordinate.
@@ -142,6 +132,8 @@ pub const SurfaceBuilder = struct {
     ) BlockType {
         const sea_level = self.params.sea_level;
         const sea: f32 = @floatFromInt(sea_level);
+        const biome_id: BiomeId = @enumFromInt(@intFromEnum(biome));
+        const biome_def = biome_mod.getBiomeDefinition(biome_id);
 
         // Bedrock floor
         if (y == 0) return .bedrock;
@@ -156,7 +148,7 @@ pub const SurfaceBuilder = struct {
         // Ocean floor: sand in shallow water, clay/gravel in deep
         if (is_ocean_water and is_underwater and y == terrain_height) {
             const depth: f32 = sea - @as(f32, @floatFromInt(terrain_height));
-            if (depth <= 12) return .sand; // Shallow ocean: sand
+            if (depth <= 5) return .sand; // Only the immediate waterline should be sandy.
             if (depth <= 30) return .clay; // Medium depth: clay
             return .gravel; // Deep: gravel
         }
@@ -164,7 +156,7 @@ pub const SurfaceBuilder = struct {
         // Ocean shallow underwater filler for continuity
         if (is_ocean_water and is_underwater and y > terrain_height - 3) {
             const depth: f32 = sea - @as(f32, @floatFromInt(terrain_height));
-            if (depth <= 12) return .sand;
+            if (depth <= 5) return .sand;
         }
 
         // INLAND WATER (lakes/rivers): dirt/gravel banks, NOT sand
@@ -191,11 +183,11 @@ pub const SurfaceBuilder = struct {
             if (biome == .snowy_mountains or biome == .snow_tundra or biome == .snowy_taiga or biome == .snowy_slopes or biome == .snowy_beach) return .snow_block;
             if (biome == .frozen_ocean) return .packed_ice;
             if (biome == .frozen_river) return .ice;
-            return biome.getSurfaceBlock();
+            return biome_def.surface.top;
         }
 
         // Filler blocks (dirt layer under surface)
-        if (y > terrain_height - filler_depth) return biome.getFillerBlock();
+        if (y > terrain_height - filler_depth) return biome_def.surface.filler;
 
         // Deep underground
         return .stone;
@@ -216,19 +208,18 @@ pub const SurfaceBuilder = struct {
         var block = self.getBlockAt(y, terrain_height, biome, filler_depth, is_ocean_water, is_underwater);
 
         const is_surface = (y == terrain_height);
-        const coastal_fill_depth = @max(filler_depth, 6);
+        const coastal_fill_depth = @max(filler_depth, 3);
         const is_coastal_fill = (y > terrain_height - coastal_fill_depth and y <= terrain_height);
 
         // Apply structural coastal surface types (ocean beaches only)
         if (is_surface and block != .air and block != .water and block != .bedrock) {
             switch (coastal_type) {
                 .sand_beach => block = .sand,
-                .gravel_beach => block = .gravel,
-                .cliff => block = .stone,
+                .gravel_beach, .cliff => {},
                 .none => {},
             }
-        } else if (is_coastal_fill and (coastal_type == .sand_beach or coastal_type == .gravel_beach) and block != .air and block != .water and block != .bedrock) {
-            block = if (coastal_type == .gravel_beach) .gravel else .sand;
+        } else if (is_coastal_fill and coastal_type == .sand_beach and block != .air and block != .water and block != .bedrock) {
+            block = .sand;
         }
 
         return block;
@@ -252,13 +243,13 @@ test "SurfaceBuilder coastal type detection" {
     const sand = builder.getCoastalSurfaceType(0.37, 1, 65, 0.3);
     try std.testing.expectEqual(CoastalSurfaceType.sand_beach, sand);
 
-    // Cliff: high slope
+    // Steep coasts keep their biome surface; broad auto-painted stone looked artificial.
     const cliff = builder.getCoastalSurfaceType(0.37, 6, 65, 0.3);
-    try std.testing.expectEqual(CoastalSurfaceType.cliff, cliff);
+    try std.testing.expectEqual(CoastalSurfaceType.none, cliff);
 
-    // Gravel beach: high erosion
+    // High erosion no longer auto-paints gravel slabs.
     const gravel = builder.getCoastalSurfaceType(0.37, 2, 65, 0.8);
-    try std.testing.expectEqual(CoastalSurfaceType.gravel_beach, gravel);
+    try std.testing.expectEqual(CoastalSurfaceType.none, gravel);
 
     // Too far inland: no coastal type
     const inland = builder.getCoastalSurfaceType(0.50, 1, 70, 0.3);
@@ -272,10 +263,10 @@ test "SurfaceBuilder coastal type detection" {
 test "SurfaceBuilder beach band matches coastal biome range" {
     const builder = SurfaceBuilder.init();
 
-    const upper_beach = builder.getCoastalSurfaceType(0.41, 1, 70, 0.3);
+    const upper_beach = builder.getCoastalSurfaceType(0.40, 1, 67, 0.3);
     try std.testing.expectEqual(CoastalSurfaceType.sand_beach, upper_beach);
 
-    const inland = builder.getCoastalSurfaceType(0.45, 1, 70, 0.3);
+    const inland = builder.getCoastalSurfaceType(0.41, 1, 67, 0.3);
     try std.testing.expectEqual(CoastalSurfaceType.none, inland);
 }
 

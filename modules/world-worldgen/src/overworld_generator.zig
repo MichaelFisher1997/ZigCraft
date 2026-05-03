@@ -883,8 +883,28 @@ pub const OverworldGenerator = struct {
 
         return .{
             .surface = surface_block,
-            .subsurface = biome_id.getFillerBlock(),
+            .subsurface = registryFillerBlock(biome_id),
             .foundation = .stone,
+        };
+    }
+
+    fn registrySurfaceBlock(biome_id: BiomeId) BlockType {
+        return biome_mod.getBiomeDefinition(biome_id).surface.top;
+    }
+
+    fn registryFillerBlock(biome_id: BiomeId) BlockType {
+        return biome_mod.getBiomeDefinition(biome_id).surface.filler;
+    }
+
+    fn surfaceTypeForBlock(block: BlockType) SurfaceType {
+        return switch (block) {
+            .sand, .red_sand => .sand,
+            .snow_block, .ice, .packed_ice, .blue_ice => .snow,
+            .stone, .cobblestone, .mossy_cobblestone => .stone,
+            .gravel => .rock,
+            .dirt, .coarse_dirt, .rooted_dirt, .podzol, .mud, .mycelium => .dirt,
+            .water => .water_shallow,
+            else => .grass,
         };
     }
 
@@ -920,18 +940,7 @@ pub const OverworldGenerator = struct {
         if (render_water_surface and biome_id == .frozen_ocean) return .ice;
         if (render_water_surface and biome_id == .frozen_river) return .ice;
         if (render_water_surface or height < sea_level) return .water;
-        return switch (biome_id) {
-            .desert, .badlands => .sand,
-            .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes, .snowy_beach => .snow_block,
-            .frozen_ocean => .packed_ice,
-            .frozen_river => .ice,
-            .grove => .podzol,
-            .frozen_peaks => .packed_ice,
-            .jagged_peaks, .stony_peaks => .stone,
-            .beach => .sand,
-            .stony_shore => .stone,
-            else => .grass,
-        };
+        return registrySurfaceBlock(biome_id);
     }
 
     fn populateClassificationCache(
@@ -1011,15 +1020,9 @@ pub const OverworldGenerator = struct {
             .none => {},
         }
 
-        return switch (biome_id) {
-            .desert, .badlands, .beach => .sand,
-            .snow_tundra, .snowy_taiga, .snowy_mountains, .snowy_slopes => .snow,
-            .mountains, .jagged_peaks, .stony_peaks => if (height > 120) .rock else .stone,
-            .frozen_peaks => .snow,
-            .grove => .dirt,
-            .deep_ocean, .ocean => .sand,
-            else => .grass,
-        };
+        const surface_block = registrySurfaceBlock(biome_id);
+        if ((biome_id == .mountains or biome_id == .jagged_peaks or biome_id == .stony_peaks) and height > 120) return .rock;
+        return surfaceTypeForBlock(surface_block);
     }
 
     pub fn generator(self: *OverworldGenerator) Generator {

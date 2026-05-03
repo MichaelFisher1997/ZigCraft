@@ -92,13 +92,19 @@ pub fn meshSlice(
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
-                const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s - 1, u, v, b1);
+                const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, axis, s - 1, u, v, b1);
                 mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
             } else if (boundary.isEmittingSubchunk(axis, s, u, v, y_min, y_max) and b2_emits and b2_cube and !b1_def.occludes(b2_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
-                const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, s, u, v, b2);
+                const face = switch (axis) {
+                    .top => Face.bottom,
+                    .east => Face.west,
+                    .south => Face.north,
+                    else => return error.UnsupportedFace,
+                };
+                const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, face, s, u, v, b2);
                 mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
             }
         }

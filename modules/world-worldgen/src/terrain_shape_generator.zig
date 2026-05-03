@@ -26,6 +26,8 @@ pub const SurfaceBuilder = surface_builder_mod.SurfaceBuilder;
 pub const CoastalSurfaceType = surface_builder_mod.CoastalSurfaceType;
 const CoastalGenerator = @import("coastal_generator.zig").CoastalGenerator;
 
+const BIOME_INFLUENCE_SAMPLE_OFFSET: f32 = 8.0;
+
 pub const Params = struct {
     temp_lapse: f32 = 0.25,
     sea_level: i32 = 64,
@@ -134,28 +136,47 @@ pub const TerrainShapeGenerator = struct {
         return true;
     }
 
-    fn applyWetlandTerrainModifiers(self: *const TerrainShapeGenerator, phase_data: *ChunkPhaseData) void {
-        const sea: f32 = @floatFromInt(self.params.sea_level);
+    fn hasNearbyOceanWater(
+        self: *const TerrainShapeGenerator,
+        phase_data: *const ChunkPhaseData,
+        chunk_world_x: i32,
+        chunk_world_z: i32,
+        local_x: u32,
+        local_z: u32,
+    ) bool {
+        const radius: i32 = 2;
+        const center_x: i32 = @intCast(local_x);
+        const center_z: i32 = @intCast(local_z);
 
-        var local_z: u32 = 0;
-        while (local_z < CHUNK_SIZE_Z) : (local_z += 1) {
-            var local_x: u32 = 0;
-            while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
-                const idx = local_x + local_z * CHUNK_SIZE_X;
-                const biome_id = phase_data.biome_ids[idx];
-                const is_wetland = biome_id == .swamp or
-                    biome_id == .mangrove_swamp or
-                    biome_id == .marsh;
-                if (!is_wetland) continue;
+        var dz: i32 = -radius;
+        while (dz <= radius) : (dz += 1) {
+            var dx: i32 = -radius;
+            while (dx <= radius) : (dx += 1) {
+                if (dx == 0 and dz == 0) continue;
+                const nx = center_x + dx;
+                const nz = center_z + dz;
 
-                const biome_def = biome_mod.getBiomeDefinition(biome_id);
-                const base_height: f32 = @floatFromInt(phase_data.surface_heights[idx]);
-                const terrain_height = biome_def.terrain.applyHeight(base_height, sea);
+                if (nx >= 0 and nx < @as(i32, @intCast(CHUNK_SIZE_X)) and nz >= 0 and nz < @as(i32, @intCast(CHUNK_SIZE_Z))) {
+                    const idx = @as(u32, @intCast(nx)) + @as(u32, @intCast(nz)) * CHUNK_SIZE_X;
+                    if (phase_data.is_ocean_water_flags[idx] and phase_data.is_underwater_flags[idx]) return true;
+                    continue;
+                }
 
-                phase_data.surface_heights[idx] = @intFromFloat(terrain_height);
-                phase_data.is_underwater_flags[idx] = terrain_height < sea;
+                const sample_wx = chunk_world_x + nx;
+                const sample_wz = chunk_world_z + nz;
+                const controls = region_pkg.getBlendedControls(self.getRegionSeed(), sample_wx, sample_wz);
+                const column = self.sampleColumnDataWithControlsAndTerrainModifier(
+                    @floatFromInt(sample_wx),
+                    @floatFromInt(sample_wz),
+                    0,
+                    controls,
+                    null,
+                );
+                if (column.is_ocean and column.is_underwater) return true;
             }
         }
+
+        return false;
     }
 
     pub fn getNoiseSampler(self: *const TerrainShapeGenerator) *const NoiseSampler {
@@ -183,10 +204,68 @@ pub const TerrainShapeGenerator = struct {
     }
 
     pub fn sampleColumnDataWithControls(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8, controls: region_pkg.RegionControls) ColumnData {
-        const base_column = self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, null);
-        const preliminary_biome = self.selectBiomeForColumn(base_column, 1);
-        const biome_def = biome_mod.getBiomeDefinition(preliminary_biome);
-        return self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, biome_def.terrain);
+        const terrain_modifier = self.sampleBlendedTerrainModifier(wx, wz, reduction, controls);
+        return self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, terrain_modifier);
+    }
+
+    fn terrainInfluenceWeight(dx: f32, dz: f32) f32 {
+        const d2 = dx * dx + dz * dz;
+        return 1.0 / (1.0 + d2 / (BIOME_INFLUENCE_SAMPLE_OFFSET * BIOME_INFLUENCE_SAMPLE_OFFSET));
+    }
+
+    fn sampleBlendedTerrainModifier(
+        self: *const TerrainShapeGenerator,
+        wx: f32,
+        wz: f32,
+        reduction: u8,
+        center_controls: region_pkg.RegionControls,
+    ) biome_mod.TerrainModifier {
+        const offsets = [_][2]f32{
+            .{ 0.0, 0.0 },
+            .{ -BIOME_INFLUENCE_SAMPLE_OFFSET, 0.0 },
+            .{ BIOME_INFLUENCE_SAMPLE_OFFSET, 0.0 },
+            .{ 0.0, -BIOME_INFLUENCE_SAMPLE_OFFSET },
+            .{ 0.0, BIOME_INFLUENCE_SAMPLE_OFFSET },
+            .{ -BIOME_INFLUENCE_SAMPLE_OFFSET, -BIOME_INFLUENCE_SAMPLE_OFFSET },
+            .{ BIOME_INFLUENCE_SAMPLE_OFFSET, -BIOME_INFLUENCE_SAMPLE_OFFSET },
+            .{ -BIOME_INFLUENCE_SAMPLE_OFFSET, BIOME_INFLUENCE_SAMPLE_OFFSET },
+            .{ BIOME_INFLUENCE_SAMPLE_OFFSET, BIOME_INFLUENCE_SAMPLE_OFFSET },
+        };
+
+        var total_weight: f32 = 0.0;
+        var height_amplitude: f32 = 0.0;
+        var smoothing: f32 = 0.0;
+        var clamp_weight: f32 = 0.0;
+        var height_offset: f32 = 0.0;
+        const region_seed = self.getRegionSeed();
+
+        for (offsets) |offset| {
+            const sx = wx + offset[0];
+            const sz = wz + offset[1];
+            const sample_controls = if (offset[0] == 0.0 and offset[1] == 0.0) center_controls else blk: {
+                const sx_i: i32 = @intFromFloat(@floor(sx));
+                const sz_i: i32 = @intFromFloat(@floor(sz));
+                break :blk region_pkg.getBlendedControls(region_seed, sx_i, sz_i);
+            };
+            const base_column = self.sampleColumnDataWithControlsAndTerrainModifier(sx, sz, reduction, sample_controls, null);
+            const biome_id = self.selectBiomeForColumn(base_column, 1);
+            const terrain = biome_mod.getBiomeDefinition(biome_id).terrain;
+            const weight = terrainInfluenceWeight(offset[0], offset[1]);
+
+            total_weight += weight;
+            height_amplitude += terrain.height_amplitude * weight;
+            smoothing += terrain.smoothing * weight;
+            if (terrain.clamp_to_sea_level) clamp_weight += weight;
+            height_offset += terrain.height_offset * weight;
+        }
+
+        if (total_weight <= 0.0) return .{};
+        return .{
+            .height_amplitude = height_amplitude / total_weight,
+            .smoothing = smoothing / total_weight,
+            .clamp_to_sea_level = clamp_weight / total_weight >= 0.65,
+            .height_offset = height_offset / total_weight,
+        };
     }
 
     fn sampleColumnDataWithControlsAndTerrainModifier(
@@ -327,15 +406,20 @@ pub const TerrainShapeGenerator = struct {
                 phase_data.secondary_biome_ids[idx] = biome_id;
                 phase_data.biome_blends[idx] = 0.0;
 
-                const biome_def = biome_mod.getBiomeDefinition(biome_id);
                 const wx_i = world_x + @as(i32, @intCast(local_x));
                 const wz_i = world_z + @as(i32, @intCast(local_z));
+                const terrain_modifier = self.sampleBlendedTerrainModifier(
+                    @floatFromInt(wx_i),
+                    @floatFromInt(wz_i),
+                    0,
+                    controls.sample(wx_i, wz_i),
+                );
                 const column = self.sampleColumnDataWithControlsAndTerrainModifier(
                     @floatFromInt(wx_i),
                     @floatFromInt(wz_i),
                     0,
                     controls.sample(wx_i, wz_i),
-                    biome_def.terrain,
+                    terrain_modifier,
                 );
                 phase_data.surface_heights[idx] = column.terrain_height_i;
                 phase_data.is_underwater_flags[idx] = column.is_underwater;
@@ -395,7 +479,8 @@ pub const TerrainShapeGenerator = struct {
                                         const lz = gz * biome_mod.EDGE_STEP + cell_z;
                                         if (lx < CHUNK_SIZE_X and lz < CHUNK_SIZE_Z) {
                                             const cell_idx = lx + lz * CHUNK_SIZE_X;
-                                            phase_data.secondary_biome_ids[cell_idx] = phase_data.biome_ids[cell_idx];
+                                            const original_biome = phase_data.biome_ids[cell_idx];
+                                            phase_data.secondary_biome_ids[cell_idx] = original_biome;
                                             phase_data.biome_ids[cell_idx] = transition_biome;
                                             phase_data.biome_blends[cell_idx] = switch (edge_info.edge_band) {
                                                 .inner => 0.3,
@@ -413,7 +498,6 @@ pub const TerrainShapeGenerator = struct {
             }
         }
 
-        self.applyWetlandTerrainModifiers(phase_data);
         if (!updateSlopes(phase_data, stop_flag)) return false;
 
         local_z = 0;
@@ -424,13 +508,16 @@ pub const TerrainShapeGenerator = struct {
                 const idx = local_x + local_z * CHUNK_SIZE_X;
                 const biome_def = biome_mod.getBiomeDefinition(phase_data.biome_ids[idx]);
                 phase_data.filler_depths[idx] = biome_def.surface.depth_range;
-                phase_data.coastal_types[idx] = CoastalGenerator.getSurfaceType(
-                    &self.surface_builder,
-                    phase_data.continentalness_values[idx],
-                    phase_data.slopes[idx],
-                    phase_data.surface_heights[idx],
-                    phase_data.erosion_values[idx],
-                );
+                phase_data.coastal_types[idx] = if (self.hasNearbyOceanWater(phase_data, world_x, world_z, local_x, local_z))
+                    CoastalGenerator.getSurfaceType(
+                        &self.surface_builder,
+                        phase_data.continentalness_values[idx],
+                        phase_data.slopes[idx],
+                        phase_data.surface_heights[idx],
+                        phase_data.erosion_values[idx],
+                    )
+                else
+                    .none;
             }
         }
 

@@ -135,27 +135,25 @@ pub const HeightSampler = struct {
         // Coastal zone: rises from sea level
         if (c < p.continental_coast_max) {
             const range = p.continental_coast_max - p.ocean_threshold;
-            const t = (c - p.ocean_threshold) / range;
-            return sea + t * 8.0; // 0 to +8 blocks
+            const t = smoothstep(0.0, 1.0, (c - p.ocean_threshold) / range);
+            return sea + t * 2.5; // Narrow shore lift only
         }
 
-        // Inland Low: plains/forests
+        // Inland lowlands use terrain noise for relief, not a continental ramp.
         if (c < p.continental_inland_low_max) {
-            const range = p.continental_inland_low_max - p.continental_coast_max;
-            const t = (c - p.continental_coast_max) / range;
-            return sea + 8.0 + t * 12.0; // +8 to +20
+            return sea + 2.5;
         }
 
         // Inland High: hills
         if (c < p.continental_inland_high_max) {
             const range = p.continental_inland_high_max - p.continental_inland_low_max;
-            const t = (c - p.continental_inland_low_max) / range;
-            return sea + 20.0 + t * 15.0; // +20 to +35
+            const t = smoothstep(0.0, 1.0, (c - p.continental_inland_low_max) / range);
+            return sea + 2.5 + t * 27.5; // +2.5 to +30
         }
 
         // Mountain Core
         const t = smoothstep(p.continental_inland_high_max, 1.0, c);
-        return sea + 35.0 + t * 25.0; // +35 to +60
+        return sea + 30.0 + t * 30.0; // +30 to +60
     }
 
     /// Process path system effects on terrain
@@ -271,7 +269,10 @@ pub const HeightSampler = struct {
         // Blend terrain_base and terrain_alt using height_select
         // ============================================================
         const mood_mult = controls.height_mult;
-        const v7_terrain = computeV7Terrain(noise, mood_mult);
+        const lowland_mask = smoothstep(p.ocean_threshold, p.continental_coast_max, noise.continentalness) *
+            (1.0 - smoothstep(p.continental_inland_low_max, p.continental_inland_high_max, noise.continentalness));
+        const terrain_mood = std.math.lerp(mood_mult, @max(mood_mult, 0.7), lowland_mask);
+        const v7_terrain = computeV7Terrain(noise, terrain_mood);
 
         // ============================================================
         // STEP 4: LAND - Combine V7 terrain with continental base
@@ -303,7 +304,9 @@ pub const HeightSampler = struct {
         // ============================================================
         const erosion_smooth = smoothstep(0.5, 0.75, noise.erosion);
         const land_factor = smoothstep(p.continental_coast_max, p.continental_inland_low_max, noise.continentalness);
-        const hills_atten = (1.0 - erosion_smooth) * land_factor * coastal_ramp * (1.0 - path_effects.slope_suppress);
+        const coastal_detail_factor = coastal_ramp * (1.0 - land_factor) * 0.45;
+        const lowland_detail_factor = @max(land_factor, coastal_detail_factor);
+        const hills_atten = (1.0 - erosion_smooth) * lowland_detail_factor * coastal_ramp * (1.0 - path_effects.slope_suppress);
 
         // Small-scale detail
         const elev01 = clamp01((height - sea) / p.highland_range);
