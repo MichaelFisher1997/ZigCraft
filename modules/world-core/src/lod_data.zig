@@ -83,7 +83,7 @@ pub const LODSimplifiedData = struct {
     pub fn getGridSize(lod_level: LODLevel) u32 {
         return switch (lod_level) {
             .lod0 => 16,
-            .lod1 => 64,
+            .lod1 => 32,
             .lod2, .lod3 => 48,
         };
     }

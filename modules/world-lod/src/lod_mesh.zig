@@ -236,6 +236,8 @@ pub const LODMesh = struct {
                 if (gz == 0) try addSideFaceQuad(self.allocator, &vertices, wx, (h00 + h10) * 0.5, wz, size, (h00 + h10) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.7, unpackG(lit_avg_color) * 0.7, unpackB(lit_avg_color) * 0.7, .north, side_tile, world_x, world_z);
                 if (gz == data.width - 2) try addSideFaceQuad(self.allocator, &vertices, wx, (h01 + h11) * 0.5, wz, size, (h01 + h11) * 0.5 - skirt_depth, unpackR(lit_avg_color) * 0.7, unpackG(lit_avg_color) * 0.7, unpackB(lit_avg_color) * 0.7, .south, side_tile, world_x, world_z);
 
+                // Adjacent cells share edge heights, so internal vertical walls are not needed.
+                // Boundary skirts above handle region edges without adding visible wall shards.
                 if (shouldRenderLODTree(self.lod_level, top_block)) {
                     const vegetation = representativeVegetation(data, gx, gz);
                     if (vegetation.tree_coverage >= 0.08) {
@@ -743,7 +745,7 @@ fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top_blo
 }
 
 fn shouldRenderLODTree(lod_level: LODLevel, top_block: BlockType) bool {
-    _ = lod_level;
+    if (@intFromEnum(lod_level) < @intFromEnum(LODLevel.lod2)) return false;
     return top_block != .water and top_block != .air;
 }
 
@@ -789,59 +791,6 @@ fn averageWaterCoverage(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const c01 = data.water[x0 + z1 * data.width].coverage;
     const c11 = data.water[x1 + z1 * data.width].coverage;
     return (c00 + c10 + c01 + c11) * 0.25;
-}
-
-fn addHeightDeltaFaces(
-    allocator: std.mem.Allocator,
-    vertices: *std.ArrayListUnmanaged(Vertex),
-    data: *const LODSimplifiedData,
-    gx: u32,
-    gz: u32,
-    wx: f32,
-    wz: f32,
-    size: f32,
-    h00: f32,
-    h10: f32,
-    h01: f32,
-    h11: f32,
-    color: u32,
-    side_tile: u16,
-    world_x: i32,
-    world_z: i32,
-) !void {
-    const threshold = @max(2.0, size * 0.12);
-    const west_edge = (h00 + h01) * 0.5;
-    const east_edge = (h10 + h11) * 0.5;
-    const north_edge = (h00 + h10) * 0.5;
-    const south_edge = (h01 + h11) * 0.5;
-    const r = unpackR(color);
-    const g = unpackG(color);
-    const b = unpackB(color);
-
-    if (gx > 0) {
-        const neighbor_edge = (data.getHeight(gx - 1, gz) + data.getHeight(gx - 1, gz + 1)) * 0.5;
-        if (west_edge > neighbor_edge + threshold) {
-            try addSideFaceQuad(allocator, vertices, wx, west_edge, wz, size, neighbor_edge, r * 0.6, g * 0.6, b * 0.6, .west, side_tile, world_x, world_z);
-        }
-    }
-    if (gx + 2 < data.width) {
-        const neighbor_edge = (data.getHeight(gx + 2, gz) + data.getHeight(gx + 2, gz + 1)) * 0.5;
-        if (east_edge > neighbor_edge + threshold) {
-            try addSideFaceQuad(allocator, vertices, wx, east_edge, wz, size, neighbor_edge, r * 0.6, g * 0.6, b * 0.6, .east, side_tile, world_x, world_z);
-        }
-    }
-    if (gz > 0) {
-        const neighbor_edge = (data.getHeight(gx, gz - 1) + data.getHeight(gx + 1, gz - 1)) * 0.5;
-        if (north_edge > neighbor_edge + threshold) {
-            try addSideFaceQuad(allocator, vertices, wx, north_edge, wz, size, neighbor_edge, r * 0.7, g * 0.7, b * 0.7, .north, side_tile, world_x, world_z);
-        }
-    }
-    if (gz + 2 < data.width) {
-        const neighbor_edge = (data.getHeight(gx, gz + 2) + data.getHeight(gx + 1, gz + 2)) * 0.5;
-        if (south_edge > neighbor_edge + threshold) {
-            try addSideFaceQuad(allocator, vertices, wx, south_edge, wz, size, neighbor_edge, r * 0.7, g * 0.7, b * 0.7, .south, side_tile, world_x, world_z);
-        }
-    }
 }
 
 // Helper functions for unpacking colors

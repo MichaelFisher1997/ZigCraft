@@ -173,6 +173,7 @@ pub const OverworldV2Generator = struct {
     }
 
     pub fn deinit(self: *OverworldV2Generator) void {
+        // No owned heap allocations; allocator is stored only for per-call lighting work.
         _ = self;
     }
 
@@ -1209,8 +1210,15 @@ fn setTreeBlock(chunk: *Chunk, x: u32, y: u32, z: u32, block: BlockType, leaves_
     const idx = Chunk.getIndex(x, y, z);
     const existing = chunk.blocks[idx];
     if (leaves_only and existing != .air and existing != .leaves and existing != .birch_leaves and existing != .spruce_leaves and existing != .jungle_leaves and existing != .acacia_leaves) return;
-    if (!leaves_only and existing != .air and existing != .leaves and existing != .birch_leaves and existing != .spruce_leaves and existing != .jungle_leaves and existing != .acacia_leaves) return;
+    if (!leaves_only and existing != .air and !isLeafBlock(existing)) return;
     chunk.blocks[idx] = block;
+}
+
+fn isLeafBlock(block: BlockType) bool {
+    return switch (block) {
+        .leaves, .birch_leaves, .spruce_leaves, .jungle_leaves, .acacia_leaves => true,
+        else => false,
+    };
 }
 
 fn hashUnit(x: i32, z: i32, seed: i32) f32 {
