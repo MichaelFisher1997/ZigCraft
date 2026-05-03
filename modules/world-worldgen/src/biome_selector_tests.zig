@@ -9,6 +9,7 @@
 const std = @import("std");
 const testing = std.testing;
 const selector = @import("biome_selector.zig");
+const edge_detector = @import("biome_edge_detector.zig");
 const registry = @import("biome_registry.zig");
 
 const BiomeId = registry.BiomeId;
@@ -296,6 +297,12 @@ test "selectBiomeWithConstraints locks baseline climate and structural selection
         const biome = selectBiomeWithConstraints(case.climate, case.structural);
         try testing.expectEqual(case.expected, biome);
     }
+}
+
+test "beach transitions to coastal plains before common inland biomes" {
+    try testing.expectEqual(BiomeId.coastal_plains, edge_detector.getTransitionBiome(.beach, .plains).?);
+    try testing.expectEqual(BiomeId.coastal_plains, edge_detector.getTransitionBiome(.forest, .beach).?);
+    try testing.expectEqual(BiomeId.coastal_plains, edge_detector.getTransitionBiome(.beach, .swamp).?);
 }
 
 test "selectBiomeWithConstraintsAndRiver locks river and frozen river priority" {

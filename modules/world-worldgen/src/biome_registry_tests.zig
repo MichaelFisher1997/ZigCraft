@@ -349,11 +349,11 @@ test "getBiomeDefinition ocean biomes have correct continentalness ranges" {
     try testing.expect(deep.continentalness.max <= 0.20);
 
     const ocean = getBiomeDefinition(.ocean);
-    try testing.expect(ocean.continentalness.max <= 0.35);
-    try testing.expect(ocean.continentalness.min < 0.35);
+    try testing.expect(ocean.continentalness.max <= 0.37);
+    try testing.expect(ocean.continentalness.min < 0.37);
 
     const warm = getBiomeDefinition(.warm_ocean);
-    try testing.expect(warm.continentalness.max <= 0.35);
+    try testing.expect(warm.continentalness.max <= 0.37);
     try testing.expect(warm.vegetation.seagrass_density > 0.0);
     try testing.expect(warm.vegetation.coral_density > 0.0);
 }
@@ -363,7 +363,7 @@ test "getBiomeDefinition cold ocean variants have expected identity" {
     try testing.expectEqualStrings("Frozen Ocean", frozen.name);
     try testing.expectEqual(.packed_ice, frozen.surface.top);
     try testing.expect(frozen.temperature.max <= 0.15);
-    try testing.expect(frozen.continentalness.max <= 0.35);
+    try testing.expect(frozen.continentalness.max <= 0.37);
 
     const cold = getBiomeDefinition(.cold_ocean);
     try testing.expectEqualStrings("Cold Ocean", cold.name);
@@ -384,14 +384,22 @@ test "getBiomeDefinition cold coastal variants have expected surfaces" {
     try testing.expectEqualStrings("Stony Shore", stony.name);
     try testing.expectEqual(.stone, stony.surface.top);
     try testing.expectEqual(.gravel, stony.surface.filler);
-    try testing.expect(stony.continentalness.min >= 0.35);
-    try testing.expect(stony.continentalness.max <= 0.45);
+    try testing.expect(stony.continentalness.min >= 0.37);
+    try testing.expect(stony.continentalness.max <= 0.46);
 
     const snowy = getBiomeDefinition(.snowy_beach);
     try testing.expectEqualStrings("Snowy Beach", snowy.name);
     try testing.expectEqual(.snow_block, snowy.surface.top);
     try testing.expectEqual(.sand, snowy.surface.filler);
     try testing.expect(snowy.temperature.max <= 0.20);
+}
+
+test "getBiomeDefinition coastal plains is sandy transition" {
+    const coastal = getBiomeDefinition(.coastal_plains);
+    try testing.expectEqualStrings("Coastal Plains", coastal.name);
+    try testing.expectEqual(.sand, coastal.surface.top);
+    try testing.expectEqual(.sand, coastal.surface.filler);
+    try testing.expectEqual(@as(usize, 0), coastal.vegetation.decoration_rules.len);
 }
 
 test "getBiomeDefinition frozen river is river override only" {

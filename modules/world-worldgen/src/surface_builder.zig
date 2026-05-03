@@ -37,14 +37,14 @@ pub const SurfaceParams = struct {
     sea_level: i32 = 64,
 
     // Beach constraints
-    beach_max_height_above_sea: i32 = 3,
+    beach_max_height_above_sea: i32 = 6,
     beach_max_slope: i32 = 2,
     cliff_min_slope: i32 = 5,
     gravel_erosion_threshold: f32 = 0.7,
 
     // Coastal zone (continentalness thresholds)
-    ocean_threshold: f32 = 0.35,
-    beach_band: f32 = 0.05, // Width of beach zone in continentalness units
+    ocean_threshold: f32 = 0.37,
+    beach_band: f32 = 0.07, // Width of beach zone in continentalness units
 };
 
 // ============================================================================
@@ -216,7 +216,8 @@ pub const SurfaceBuilder = struct {
         var block = self.getBlockAt(y, terrain_height, biome, filler_depth, is_ocean_water, is_underwater);
 
         const is_surface = (y == terrain_height);
-        const is_near_surface = (y > terrain_height - 3 and y <= terrain_height);
+        const coastal_fill_depth = @max(filler_depth, 6);
+        const is_coastal_fill = (y > terrain_height - coastal_fill_depth and y <= terrain_height);
 
         // Apply structural coastal surface types (ocean beaches only)
         if (is_surface and block != .air and block != .water and block != .bedrock) {
@@ -226,7 +227,7 @@ pub const SurfaceBuilder = struct {
                 .cliff => block = .stone,
                 .none => {},
             }
-        } else if (is_near_surface and (coastal_type == .sand_beach or coastal_type == .gravel_beach) and block == .dirt) {
+        } else if (is_coastal_fill and (coastal_type == .sand_beach or coastal_type == .gravel_beach) and block != .air and block != .water and block != .bedrock) {
             block = if (coastal_type == .gravel_beach) .gravel else .sand;
         }
 
@@ -266,6 +267,26 @@ test "SurfaceBuilder coastal type detection" {
     // Too high above sea: no coastal type
     const high = builder.getCoastalSurfaceType(0.37, 1, 80, 0.3);
     try std.testing.expectEqual(CoastalSurfaceType.none, high);
+}
+
+test "SurfaceBuilder beach band matches coastal biome range" {
+    const builder = SurfaceBuilder.init();
+
+    const upper_beach = builder.getCoastalSurfaceType(0.41, 1, 70, 0.3);
+    try std.testing.expectEqual(CoastalSurfaceType.sand_beach, upper_beach);
+
+    const inland = builder.getCoastalSurfaceType(0.45, 1, 70, 0.3);
+    try std.testing.expectEqual(CoastalSurfaceType.none, inland);
+}
+
+test "SurfaceBuilder coastal beach replaces exposed filler" {
+    const builder = SurfaceBuilder.init();
+
+    const deep_fill = builder.getSurfaceBlock(65, 70, .plains, 3, false, false, .sand_beach);
+    try std.testing.expectEqual(BlockType.sand, deep_fill);
+
+    const below_fill = builder.getSurfaceBlock(63, 70, .plains, 3, false, false, .sand_beach);
+    try std.testing.expectEqual(BlockType.stone, below_fill);
 }
 
 test "SurfaceBuilder bedrock at y=0" {

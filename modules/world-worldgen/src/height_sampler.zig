@@ -36,27 +36,27 @@ pub const HeightParams = struct {
     sea_level: i32 = 64,
 
     // Continental zone thresholds
-    ocean_threshold: f32 = 0.35,
+    ocean_threshold: f32 = 0.37,
     continental_deep_ocean_max: f32 = 0.20,
-    continental_coast_max: f32 = 0.42,
-    continental_inland_low_max: f32 = 0.60,
-    continental_inland_high_max: f32 = 0.75,
+    continental_coast_max: f32 = 0.44,
+    continental_inland_low_max: f32 = 0.58,
+    continental_inland_high_max: f32 = 0.72,
 
     // Mountains
-    mount_amp: f32 = 60.0,
-    mount_cap: f32 = 120.0,
-    mount_inland_min: f32 = 0.60,
-    mount_inland_max: f32 = 0.80,
-    mount_peak_min: f32 = 0.55,
-    mount_peak_max: f32 = 0.85,
-    mount_rugged_min: f32 = 0.35,
-    mount_rugged_max: f32 = 0.75,
+    mount_amp: f32 = 78.0,
+    mount_cap: f32 = 140.0,
+    mount_inland_min: f32 = 0.56,
+    mount_inland_max: f32 = 0.76,
+    mount_peak_min: f32 = 0.50,
+    mount_peak_max: f32 = 0.82,
+    mount_rugged_min: f32 = 0.32,
+    mount_rugged_max: f32 = 0.72,
 
     // Ridges
-    ridge_amp: f32 = 25.0,
-    ridge_inland_min: f32 = 0.50,
-    ridge_inland_max: f32 = 0.70,
-    ridge_sparsity: f32 = 0.50,
+    ridge_amp: f32 = 34.0,
+    ridge_inland_min: f32 = 0.48,
+    ridge_inland_max: f32 = 0.68,
+    ridge_sparsity: f32 = 0.46,
 
     // Detail
     highland_range: f32 = 80.0,
@@ -276,7 +276,8 @@ pub const HeightSampler = struct {
         // ============================================================
         // STEP 4: LAND - Combine V7 terrain with continental base
         // ============================================================
-        var height = self.getBaseHeight(noise.continentalness) + v7_terrain - path_effects.depth;
+        const coastal_ramp = smoothstep(p.ocean_threshold, p.continental_coast_max, noise.continentalness);
+        var height = self.getBaseHeight(noise.continentalness) + v7_terrain * coastal_ramp - path_effects.depth * coastal_ramp;
 
         // ============================================================
         // STEP 5: Mountains & Ridges - REGION-CONSTRAINED
@@ -302,7 +303,7 @@ pub const HeightSampler = struct {
         // ============================================================
         const erosion_smooth = smoothstep(0.5, 0.75, noise.erosion);
         const land_factor = smoothstep(p.continental_coast_max, p.continental_inland_low_max, noise.continentalness);
-        const hills_atten = (1.0 - erosion_smooth) * land_factor * (1.0 - path_effects.slope_suppress);
+        const hills_atten = (1.0 - erosion_smooth) * land_factor * coastal_ramp * (1.0 - path_effects.slope_suppress);
 
         // Small-scale detail
         const elev01 = clamp01((height - sea) / p.highland_range);
@@ -402,8 +403,8 @@ test "HeightSampler ocean detection" {
     const sampler = HeightSampler.init();
 
     try std.testing.expect(sampler.isOcean(0.0));
-    try std.testing.expect(sampler.isOcean(0.34));
-    try std.testing.expect(!sampler.isOcean(0.35));
+    try std.testing.expect(sampler.isOcean(0.36));
+    try std.testing.expect(!sampler.isOcean(0.37));
     try std.testing.expect(!sampler.isOcean(0.5));
 }
 

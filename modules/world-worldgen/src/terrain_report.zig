@@ -10,7 +10,7 @@ const Allocator = std.mem.Allocator;
 const BiomeId = biome_mod.BiomeId;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
 
-pub const representative_seeds = [_]u64{ 42, 424242, 987654321 };
+pub const representative_seeds = [_]u64{ 42, 1337, 424242, 8675309, 987654321 };
 pub const default_origin_x: i32 = -256;
 pub const default_origin_z: i32 = -256;
 pub const default_width: u32 = 512;
@@ -477,4 +477,36 @@ test "TerrainReport role profiles preserve region pacing controls" {
     try std.testing.expect(forest.vegetation_multiplier > transit.vegetation_multiplier);
     try std.testing.expect(forest.vegetation_multiplier > boundary.vegetation_multiplier);
     try std.testing.expect(forest.subbiome_mask > transit.subbiome_mask);
+}
+
+test "representative seeds keep varied but readable spawn regions" {
+    const allocator = std.testing.allocator;
+
+    var total_samples: u32 = 0;
+    var ocean_samples: u32 = 0;
+    var forest_samples: u32 = 0;
+    var wetland_samples: u32 = 0;
+    var dry_samples: u32 = 0;
+    var mountain_samples: u32 = 0;
+
+    for (representative_seeds) |seed| {
+        const report = try sampleRegion(allocator, seed, -128, -128, 256, 256);
+        try std.testing.expect(report.ocean_ratio <= 0.30);
+        try std.testing.expect(report.sea_level_coverage <= 0.30);
+        try std.testing.expect(report.mountain_coverage <= 0.12);
+
+        total_samples += report.sample_count;
+        ocean_samples += report.biomeCount(.ocean) + report.biomeCount(.warm_ocean) + report.biomeCount(.cold_ocean) + report.biomeCount(.frozen_ocean) + report.biomeCount(.deep_ocean);
+        forest_samples += report.biomeCount(.forest) + report.biomeCount(.birch_forest) + report.biomeCount(.dark_forest) + report.biomeCount(.flower_forest) + report.biomeCount(.taiga) + report.biomeCount(.snowy_taiga) + report.biomeCount(.old_growth_taiga) + report.biomeCount(.jungle) + report.biomeCount(.bamboo_jungle) + report.biomeCount(.sparse_jungle);
+        wetland_samples += report.biomeCount(.swamp) + report.biomeCount(.mangrove_swamp);
+        dry_samples += report.biomeCount(.desert) + report.biomeCount(.savanna) + report.biomeCount(.savanna_plateau) + report.biomeCount(.windswept_savanna) + report.biomeCount(.badlands) + report.biomeCount(.wooded_badlands) + report.biomeCount(.eroded_badlands);
+        mountain_samples += @intFromFloat(report.mountain_coverage * @as(f64, @floatFromInt(report.sample_count)));
+    }
+
+    const denominator: f64 = @floatFromInt(total_samples);
+    try std.testing.expect(@as(f64, @floatFromInt(ocean_samples)) / denominator >= 0.03);
+    try std.testing.expect(@as(f64, @floatFromInt(forest_samples)) / denominator >= 0.08);
+    try std.testing.expect(@as(f64, @floatFromInt(wetland_samples)) / denominator >= 0.005);
+    try std.testing.expect(@as(f64, @floatFromInt(dry_samples)) / denominator >= 0.003);
+    try std.testing.expect(@as(f64, @floatFromInt(mountain_samples)) / denominator >= 0.002);
 }

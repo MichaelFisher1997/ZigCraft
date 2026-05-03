@@ -29,10 +29,10 @@ const CoastalGenerator = @import("coastal_generator.zig").CoastalGenerator;
 pub const Params = struct {
     temp_lapse: f32 = 0.25,
     sea_level: i32 = 64,
-    ocean_threshold: f32 = 0.35,
-    ridge_inland_min: f32 = 0.50,
-    ridge_inland_max: f32 = 0.70,
-    ridge_sparsity: f32 = 0.50,
+    ocean_threshold: f32 = 0.37,
+    ridge_inland_min: f32 = 0.48,
+    ridge_inland_max: f32 = 0.68,
+    ridge_sparsity: f32 = 0.46,
     disable_caves: bool = false,
 };
 

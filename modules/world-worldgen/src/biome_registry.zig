@@ -184,9 +184,9 @@ pub const BiomePoint = struct {
     y_max: i32 = 256, // Maximum Y level
     /// Maximum allowed slope in blocks (0 = flat, 255 = vertical cliff)
     max_slope: i32 = 255,
-    /// Minimum continentalness (0-1). Set > 0.35 for land-only biomes
+    /// Minimum continentalness (0-1). Set > 0.37 for land-only biomes
     min_continental: f32 = 0.0,
-    /// Maximum continentalness. Set < 0.35 for ocean-only biomes
+    /// Maximum continentalness. Set < 0.37 for ocean-only biomes
     max_continental: f32 = 1.0,
 
     pub fn elevationCenter(self: BiomePoint) f32 {
@@ -218,18 +218,18 @@ pub const StructuralParams = struct {
 /// Heat: 0=frozen, 50=temperate, 100=scorching
 /// Humidity: 0=arid, 50=normal, 100=saturated
 pub const BIOME_POINTS = [_]BiomePoint{
-    // === Ocean Biomes (continental < 0.35) ===
+    // === Ocean Biomes (continental < 0.37) ===
     .{ .id = .deep_ocean, .heat = 50, .humidity = 50, .weight = 1.5, .max_continental = 0.20 },
-    .{ .id = .frozen_ocean, .heat = 5, .humidity = 55, .weight = 1.1, .max_continental = 0.35 },
-    .{ .id = .cold_ocean, .heat = 22, .humidity = 55, .weight = 1.1, .min_continental = 0.10, .max_continental = 0.35 },
-    .{ .id = .ocean, .heat = 50, .humidity = 50, .weight = 1.5, .min_continental = 0.20, .max_continental = 0.35 },
-    .{ .id = .warm_ocean, .heat = 85, .humidity = 75, .weight = 0.9, .min_continental = 0.20, .max_continental = 0.35 },
+    .{ .id = .frozen_ocean, .heat = 5, .humidity = 55, .weight = 1.1, .max_continental = 0.37 },
+    .{ .id = .cold_ocean, .heat = 22, .humidity = 55, .weight = 1.1, .min_continental = 0.10, .max_continental = 0.37 },
+    .{ .id = .ocean, .heat = 50, .humidity = 50, .weight = 1.5, .min_continental = 0.20, .max_continental = 0.37 },
+    .{ .id = .warm_ocean, .heat = 85, .humidity = 75, .weight = 0.9, .min_continental = 0.20, .max_continental = 0.37 },
     .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.48, .max_slope = 3, .y_max = 72 },
 
     // === Coastal Biomes ===
-    .{ .id = .snowy_beach, .heat = 8, .humidity = 45, .weight = 0.7, .max_slope = 2, .min_continental = 0.35, .max_continental = 0.42, .y_max = 70 },
-    .{ .id = .stony_shore, .heat = 30, .humidity = 45, .weight = 0.7, .min_continental = 0.35, .max_continental = 0.45, .y_max = 82 },
-    .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.35, .max_continental = 0.42, .y_max = 70 },
+    .{ .id = .snowy_beach, .heat = 8, .humidity = 45, .weight = 0.7, .max_slope = 2, .min_continental = 0.37, .max_continental = 0.44, .y_max = 70 },
+    .{ .id = .stony_shore, .heat = 30, .humidity = 45, .weight = 0.7, .min_continental = 0.37, .max_continental = 0.46, .y_max = 82 },
+    .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.37, .max_continental = 0.44, .y_max = 70 },
 
     // === Cold Biomes ===
     .{ .id = .snow_tundra, .heat = 5, .humidity = 30, .weight = 1.0, .min_continental = 0.42 },
@@ -253,7 +253,7 @@ pub const BIOME_POINTS = [_]BiomePoint{
 
     // === Warm/Wet Biomes ===
     .{ .id = .swamp, .heat = 65, .humidity = 85, .weight = 0.8, .max_slope = 3, .min_continental = 0.42, .y_max = 72 },
-    .{ .id = .mangrove_swamp, .heat = 75, .humidity = 90, .weight = 0.6, .max_slope = 3, .min_continental = 0.35, .max_continental = 0.50, .y_max = 68 },
+    .{ .id = .mangrove_swamp, .heat = 75, .humidity = 90, .weight = 0.6, .max_slope = 3, .min_continental = 0.37, .max_continental = 0.50, .y_max = 68 },
     .{ .id = .jungle, .heat = 85, .humidity = 85, .weight = 0.9, .min_continental = 0.50 },
     .{ .id = .bamboo_jungle, .heat = 88, .humidity = 92, .weight = 0.5, .min_continental = 0.55 },
     .{ .id = .sparse_jungle, .heat = 78, .humidity = 62, .weight = 0.7, .min_continental = 0.50 },
@@ -269,7 +269,7 @@ pub const BIOME_POINTS = [_]BiomePoint{
     .{ .id = .stony_peaks, .heat = 65, .humidity = 25, .weight = 0.55, .min_continental = 0.78, .y_min = 132 },
 
     // === Special Biomes ===
-    .{ .id = .mushroom_fields, .heat = 50, .humidity = 80, .weight = 0.3, .min_continental = 0.35, .max_continental = 0.45 },
+    .{ .id = .mushroom_fields, .heat = 50, .humidity = 80, .weight = 0.3, .min_continental = 0.37, .max_continental = 0.45 },
     .{ .id = .river, .heat = 50, .humidity = 70, .weight = 0.4, .min_continental = 0.42 }, // Selected by river mask, not Voronoi
     .{ .id = .frozen_river, .heat = 8, .humidity = 70, .weight = 0.4, .min_continental = 0.42 }, // Selected by river mask, not Voronoi
 
@@ -278,7 +278,7 @@ pub const BIOME_POINTS = [_]BiomePoint{
     .{ .id = .foothills, .heat = 45, .humidity = 45, .weight = 0.5, .min_continental = 0.55, .y_min = 75, .y_max = 100 },
     .{ .id = .marsh, .heat = 55, .humidity = 78, .weight = 0.5, .min_continental = 0.42, .y_max = 68 },
     .{ .id = .dry_plains, .heat = 70, .humidity = 25, .weight = 0.6, .min_continental = 0.42 },
-    .{ .id = .coastal_plains, .heat = 55, .humidity = 50, .weight = 0.5, .min_continental = 0.35, .max_continental = 0.48 },
+    .{ .id = .coastal_plains, .heat = 55, .humidity = 50, .weight = 0.5, .min_continental = 0.37, .max_continental = 0.48 },
 };
 
 // ============================================================================
@@ -305,7 +305,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = Range.any(),
         .humidity = Range.any(),
         .elevation = .{ .min = 0.0, .max = 0.30 },
-        .continentalness = .{ .min = 0.0, .max = 0.35 },
+        .continentalness = .{ .min = 0.0, .max = 0.37 },
         .priority = 1,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{} },
@@ -316,7 +316,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.0, .max = 0.15 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.0, .max = 0.32 },
-        .continentalness = .{ .min = 0.0, .max = 0.35 },
+        .continentalness = .{ .min = 0.0, .max = 0.37 },
         .priority = 4,
         .surface = .{ .top = .packed_ice, .filler = .gravel, .depth_range = 4 },
         .vegetation = .{ .tree_types = &.{} },
@@ -328,7 +328,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.15, .max = 0.30 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.0, .max = 0.32 },
-        .continentalness = .{ .min = 0.0, .max = 0.35 },
+        .continentalness = .{ .min = 0.0, .max = 0.37 },
         .priority = 3,
         .surface = .{ .top = .gravel, .filler = .gravel, .depth_range = 4 },
         .vegetation = .{
@@ -346,7 +346,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.70, .max = 1.0 },
         .humidity = .{ .min = 0.50, .max = 1.0 },
         .elevation = .{ .min = 0.0, .max = 0.32 },
-        .continentalness = .{ .min = 0.20, .max = 0.35 },
+        .continentalness = .{ .min = 0.20, .max = 0.37 },
         .priority = 3,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
         .vegetation = .{
@@ -389,7 +389,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.2, .max = 1.0 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.38 },
-        .continentalness = .{ .min = 0.35, .max = 0.42 }, // NARROW beach band
+        .continentalness = .{ .min = 0.37, .max = 0.44 }, // NARROW beach band
         .max_height = 70,
         .max_slope = 2,
         .priority = 10,
@@ -402,7 +402,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.20, .max = 0.45 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.45 },
-        .continentalness = .{ .min = 0.35, .max = 0.45 },
+        .continentalness = .{ .min = 0.37, .max = 0.46 },
         .max_height = 82,
         .max_slope = 8,
         .priority = 11,
@@ -417,7 +417,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.0, .max = 0.18 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.38 },
-        .continentalness = .{ .min = 0.35, .max = 0.42 },
+        .continentalness = .{ .min = 0.37, .max = 0.44 },
         .max_height = 70,
         .max_slope = 2,
         .priority = 12,
@@ -552,7 +552,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.80, .max = 1.0 }, // Very hot
         .humidity = .{ .min = 0.0, .max = 0.20 }, // Very dry
         .elevation = .{ .min = 0.35, .max = 0.60 },
-        .continentalness = .{ .min = 0.60, .max = 1.0 }, // Inland
+        .continentalness = .{ .min = 0.52, .max = 1.0 }, // Inland
         .ruggedness = .{ .min = 0.0, .max = 0.35 },
         .max_height = 90,
         .max_slope = 4,
@@ -571,7 +571,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.50, .max = 0.80 },
         .humidity = .{ .min = 0.70, .max = 1.0 },
         .elevation = .{ .min = 0.28, .max = 0.40 },
-        .continentalness = .{ .min = 0.55, .max = 0.75 }, // Coastal to mid-inland
+        .continentalness = .{ .min = 0.48, .max = 0.75 }, // Coastal to mid-inland
         .ruggedness = .{ .min = 0.0, .max = 0.30 },
         .max_slope = 3,
         .priority = 5,
@@ -590,7 +590,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.0, .max = 0.25 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.30, .max = 0.70 },
-        .continentalness = .{ .min = 0.60, .max = 1.0 }, // Inland
+        .continentalness = .{ .min = 0.52, .max = 1.0 }, // Inland
         .min_height = 70,
         .max_slope = 255,
         .priority = 4,
@@ -605,12 +605,12 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Mountains",
         .temperature = .{ .min = 0.25, .max = 1.0 },
         .humidity = Range.any(),
-        .elevation = .{ .min = 0.62, .max = 1.0 },
-        .continentalness = .{ .min = 0.72, .max = 1.0 }, // Must be inland high or core
-        .ruggedness = .{ .min = 0.60, .max = 1.0 },
-        .min_height = 102,
-        .min_ridge_mask = 0.1,
-        .priority = 2,
+        .elevation = .{ .min = 0.42, .max = 1.0 },
+        .continentalness = .{ .min = 0.54, .max = 1.0 }, // Must be inland high or core
+        .ruggedness = .{ .min = 0.30, .max = 1.0 },
+        .min_height = 82,
+        .min_ridge_mask = 0.0,
+        .priority = 10,
         .surface = .{ .top = .stone, .filler = .stone, .depth_range = 1 },
         .vegetation = .{ .tree_types = &.{.sparse_oak} },
         .terrain = .{ .height_amplitude = 1.35, .smoothing = 0.04, .height_offset = 4.0 },
@@ -620,12 +620,12 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Snowy Mountains",
         .temperature = .{ .min = 0.0, .max = 0.35 },
         .humidity = Range.any(),
-        .elevation = .{ .min = 0.62, .max = 1.0 },
-        .continentalness = .{ .min = 0.72, .max = 1.0 },
-        .ruggedness = .{ .min = 0.55, .max = 1.0 },
-        .min_height = 112,
+        .elevation = .{ .min = 0.42, .max = 1.0 },
+        .continentalness = .{ .min = 0.54, .max = 1.0 },
+        .ruggedness = .{ .min = 0.30, .max = 1.0 },
+        .min_height = 84,
         .max_slope = 255,
-        .priority = 2,
+        .priority = 10,
         .surface = .{ .top = .snow_block, .filler = .stone, .depth_range = 1 },
         .vegetation = .{ .tree_types = &.{} },
         .terrain = .{ .height_amplitude = 1.35, .smoothing = 0.05, .height_offset = 6.0 },
@@ -636,10 +636,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Meadow",
         .temperature = .{ .min = 0.25, .max = 0.65 },
         .humidity = .{ .min = 0.35, .max = 0.85 },
-        .elevation = .{ .min = 0.50, .max = 0.74 },
-        .continentalness = .{ .min = 0.64, .max = 0.95 },
+        .elevation = .{ .min = 0.45, .max = 0.74 },
+        .continentalness = .{ .min = 0.60, .max = 0.95 },
         .ruggedness = .{ .min = 0.20, .max = 0.68 },
-        .min_height = 82,
+        .min_height = 78,
         .max_height = 122,
         .max_slope = 10,
         .priority = 7,
@@ -657,13 +657,13 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Grove",
         .temperature = .{ .min = 0.05, .max = 0.35 },
         .humidity = .{ .min = 0.45, .max = 0.95 },
-        .elevation = .{ .min = 0.52, .max = 0.80 },
-        .continentalness = .{ .min = 0.66, .max = 0.98 },
+        .elevation = .{ .min = 0.46, .max = 0.80 },
+        .continentalness = .{ .min = 0.60, .max = 0.98 },
         .ruggedness = .{ .min = 0.25, .max = 0.78 },
-        .min_height = 88,
+        .min_height = 82,
         .max_height = 132,
         .max_slope = 12,
-        .priority = 8,
+        .priority = 10,
         .surface = .{ .top = .podzol, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{.spruce}, .decoration_rules = &.{
             .{ .block = .tall_grass, .place_on = &.{ .podzol, .grass }, .chance = 0.12 },
@@ -678,10 +678,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Snowy Slopes",
         .temperature = .{ .min = 0.0, .max = 0.22 },
         .humidity = .{ .min = 0.20, .max = 0.85 },
-        .elevation = .{ .min = 0.64, .max = 0.92 },
-        .continentalness = .{ .min = 0.72, .max = 1.0 },
+        .elevation = .{ .min = 0.56, .max = 0.92 },
+        .continentalness = .{ .min = 0.66, .max = 1.0 },
         .ruggedness = .{ .min = 0.42, .max = 0.90 },
-        .min_height = 112,
+        .min_height = 98,
         .max_height = 165,
         .priority = 8,
         .surface = .{ .top = .snow_block, .filler = .stone, .depth_range = 1 },
@@ -697,11 +697,11 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Jagged Peaks",
         .temperature = .{ .min = 0.10, .max = 0.50 },
         .humidity = .{ .min = 0.20, .max = 0.75 },
-        .elevation = .{ .min = 0.78, .max = 1.0 },
-        .continentalness = .{ .min = 0.78, .max = 1.0 },
-        .ruggedness = .{ .min = 0.70, .max = 1.0 },
-        .min_height = 136,
-        .min_ridge_mask = 0.45,
+        .elevation = .{ .min = 0.70, .max = 1.0 },
+        .continentalness = .{ .min = 0.72, .max = 1.0 },
+        .ruggedness = .{ .min = 0.62, .max = 1.0 },
+        .min_height = 118,
+        .min_ridge_mask = 0.35,
         .priority = 9,
         .surface = .{ .top = .stone, .filler = .stone, .depth_range = 1 },
         .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{
@@ -716,10 +716,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Frozen Peaks",
         .temperature = .{ .min = 0.0, .max = 0.18 },
         .humidity = .{ .min = 0.15, .max = 0.70 },
-        .elevation = .{ .min = 0.78, .max = 1.0 },
-        .continentalness = .{ .min = 0.78, .max = 1.0 },
-        .ruggedness = .{ .min = 0.58, .max = 1.0 },
-        .min_height = 138,
+        .elevation = .{ .min = 0.70, .max = 1.0 },
+        .continentalness = .{ .min = 0.72, .max = 1.0 },
+        .ruggedness = .{ .min = 0.52, .max = 1.0 },
+        .min_height = 120,
         .priority = 9,
         .surface = .{ .top = .packed_ice, .filler = .stone, .depth_range = 1 },
         .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{
@@ -734,10 +734,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Stony Peaks",
         .temperature = .{ .min = 0.45, .max = 0.85 },
         .humidity = .{ .min = 0.0, .max = 0.45 },
-        .elevation = .{ .min = 0.74, .max = 1.0 },
-        .continentalness = .{ .min = 0.78, .max = 1.0 },
-        .ruggedness = .{ .min = 0.52, .max = 1.0 },
-        .min_height = 132,
+        .elevation = .{ .min = 0.66, .max = 1.0 },
+        .continentalness = .{ .min = 0.70, .max = 1.0 },
+        .ruggedness = .{ .min = 0.46, .max = 1.0 },
+        .min_height = 112,
         .priority = 8,
         .surface = .{ .top = .stone, .filler = .stone, .depth_range = 1 },
         .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{
@@ -755,7 +755,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.7, .max = 0.9 },
         .humidity = .{ .min = 0.8, .max = 1.0 },
         .elevation = .{ .min = 0.2, .max = 0.4 },
-        .continentalness = .{ .min = 0.45, .max = 0.60 }, // Coastal swamp
+        .continentalness = .{ .min = 0.42, .max = 0.60 }, // Coastal swamp
         .priority = 6,
         .surface = .{ .top = .mud, .filler = .mud, .depth_range = 4 },
         .vegetation = .{ .tree_types = &.{.mangrove} },
@@ -768,7 +768,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.75, .max = 1.0 },
         .humidity = .{ .min = 0.7, .max = 1.0 },
         .elevation = .{ .min = 0.30, .max = 0.75 },
-        .continentalness = .{ .min = 0.60, .max = 1.0 },
+        .continentalness = .{ .min = 0.52, .max = 1.0 },
         .priority = 5,
         .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{.jungle}, .decoration_rules = &.{
@@ -867,7 +867,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.7, .max = 1.0 },
         .humidity = .{ .min = 0.0, .max = 0.3 },
         .elevation = .{ .min = 0.4, .max = 0.8 },
-        .continentalness = .{ .min = 0.70, .max = 1.0 },
+        .continentalness = .{ .min = 0.62, .max = 1.0 },
         .ruggedness = .{ .min = 0.4, .max = 1.0 },
         .priority = 6,
         .surface = .{ .top = .red_sand, .filler = .terracotta, .depth_range = 5 },
@@ -1014,8 +1014,8 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = -1.0, .max = -0.5 }, // IMPOSSIBLE: edge-injection only
         .ruggedness = .{ .min = 0.0, .max = 0.35 },
         .priority = 0, // Lowest priority
-        .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.4 }} }, // No trees
+        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
+        .vegetation = .{ .tree_types = &.{} },
         .terrain = .{ .height_amplitude = 0.5, .smoothing = 0.3 },
         .colors = .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
     },
