@@ -32,6 +32,7 @@ const encodeNormal = rhi_types.encodeNormal;
 const encodeMeta = rhi_types.encodeMeta;
 const encodeBlocklight = rhi_types.encodeBlocklight;
 const QuadricSimplifier = @import("world-meshing").meshing.quadric_simplifier.QuadricSimplifier;
+const engine_core = @import("engine-core");
 const log = @import("engine-core").log;
 const lod_seam = @import("lod_seam.zig");
 
@@ -197,15 +198,16 @@ pub const LODMesh = struct {
 
         var vertices = std.ArrayListUnmanaged(Vertex).empty;
         defer vertices.deinit(self.allocator);
+        const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
 
         var gz: u32 = 0;
         while (gz + 1 < data.width) : (gz += 1) {
             var gx: u32 = 0;
             while (gx + 1 < data.width) : (gx += 1) {
-                const h00 = data.heightmap[gx + gz * data.width];
-                const h10 = data.heightmap[(gx + 1) + gz * data.width];
-                const h01 = data.heightmap[gx + (gz + 1) * data.width];
-                const h11 = data.heightmap[(gx + 1) + (gz + 1) * data.width];
+                const h00 = stitchedHeight(data, gx, gz);
+                const h10 = stitchedHeight(data, gx + 1, gz);
+                const h01 = stitchedHeight(data, gx, gz + 1);
+                const h11 = stitchedHeight(data, gx + 1, gz + 1);
 
                 const c00 = data.colors[gx + gz * data.width];
                 const c10 = data.colors[(gx + 1) + gz * data.width];
@@ -244,6 +246,13 @@ pub const LODMesh = struct {
                         try addTreeImpostor(self.allocator, &vertices, wx + size * 0.5 + vegetation.offset_x, wz + size * 0.5 + vegetation.offset_z, size, (h00 + h10 + h01 + h11) * 0.25, vegetation, atlas, world_x, world_z);
                     }
                 }
+            }
+        }
+
+        if (diag_enabled) {
+            const max_adjust = maxStitchedHeightAdjustment(data);
+            if (max_adjust > 0.25) {
+                log.log.info("LOD_SEAM_DIAG lod={} origin=({}, {}) max_edge_adjust={d:.2}", .{ @intFromEnum(self.lod_level), world_x, world_z, max_adjust });
             }
         }
 
@@ -705,8 +714,67 @@ fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
 }
 
 fn blockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
-    if (averageWaterCoverage(data, gx, gz) >= 0.25) return .water;
+    const water_coverage = averageWaterCoverage(data, gx, gz);
+    if (water_coverage >= 0.35) return .water;
+    if (water_coverage > 0.0 and representativeWaterDepth(data, gx, gz) >= 1.5) return .water;
+    return representativeSurfaceBlock(data, gx, gz);
+}
+
+fn representativeSurfaceBlock(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
+    const x0 = @min(gx, data.width - 1);
+    const z0 = @min(gz, data.width - 1);
+    const x1 = @min(gx + 1, data.width - 1);
+    const z1 = @min(gz + 1, data.width - 1);
+    const indices = [_]u32{
+        x0 + z0 * data.width,
+        x1 + z0 * data.width,
+        x0 + z1 * data.width,
+        x1 + z1 * data.width,
+    };
+
+    var best_block: BlockType = .air;
+    var best_count: u32 = 0;
+    for (indices) |idx| {
+        const block = if (data.material_layers[idx].surface != .air) data.material_layers[idx].surface else if (data.top_blocks[idx] != .air) data.top_blocks[idx] else data.biomes[idx].getSurfaceBlock();
+        if (block == .air or block == .water) continue;
+
+        var count: u32 = 0;
+        for (indices) |other_idx| {
+            const other = if (data.material_layers[other_idx].surface != .air) data.material_layers[other_idx].surface else if (data.top_blocks[other_idx] != .air) data.top_blocks[other_idx] else data.biomes[other_idx].getSurfaceBlock();
+            if (other == block) count += 1;
+        }
+        if (count > best_count) {
+            best_block = block;
+            best_count = count;
+        }
+    }
+
+    if (best_block != .air) return best_block;
     return blockForLODCell(data, gx, gz);
+}
+
+fn representativeWaterDepth(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
+    const x0 = @min(gx, data.width - 1);
+    const z0 = @min(gz, data.width - 1);
+    const x1 = @min(gx + 1, data.width - 1);
+    const z1 = @min(gz + 1, data.width - 1);
+    const indices = [_]u32{
+        x0 + z0 * data.width,
+        x1 + z0 * data.width,
+        x0 + z1 * data.width,
+        x1 + z1 * data.width,
+    };
+
+    var weighted_depth: f32 = 0.0;
+    var coverage: f32 = 0.0;
+    for (indices) |idx| {
+        const water = data.water[idx];
+        if (!water.is_surface) continue;
+        weighted_depth += water.depth * water.coverage;
+        coverage += water.coverage;
+    }
+    if (coverage <= 0.001) return 0.0;
+    return weighted_depth / coverage;
 }
 
 fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32) TextureAtlas.BlockTiles {
@@ -791,6 +859,37 @@ fn averageWaterCoverage(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const c01 = data.water[x0 + z1 * data.width].coverage;
     const c11 = data.water[x1 + z1 * data.width].coverage;
     return (c00 + c10 + c01 + c11) * 0.25;
+}
+
+fn stitchedHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
+    const height = data.getHeight(gx, gz);
+    if (data.width < 5) return height;
+
+    const blend_cells: u32 = 2;
+    const max_idx = data.width - 1;
+    const edge_dist = @min(@min(gx, gz), @min(max_idx - gx, max_idx - gz));
+    if (edge_dist >= blend_cells) return height;
+
+    const coarse_x = @min(((gx + 1) / 2) * 2, max_idx);
+    const coarse_z = @min(((gz + 1) / 2) * 2, max_idx);
+    const coarse_height = data.getHeight(coarse_x, coarse_z);
+    const edge_weight = 1.0 - (@as(f32, @floatFromInt(edge_dist)) / @as(f32, @floatFromInt(blend_cells)));
+    const blend = edge_weight * 0.35;
+    return height * (1.0 - blend) + coarse_height * blend;
+}
+
+fn maxStitchedHeightAdjustment(data: *const LODSimplifiedData) f32 {
+    if (data.width < 5) return 0.0;
+
+    var max_adjust: f32 = 0.0;
+    var i: u32 = 0;
+    while (i < data.width) : (i += 1) {
+        max_adjust = @max(max_adjust, @abs(data.getHeight(i, 0) - stitchedHeight(data, i, 0)));
+        max_adjust = @max(max_adjust, @abs(data.getHeight(i, data.width - 1) - stitchedHeight(data, i, data.width - 1)));
+        max_adjust = @max(max_adjust, @abs(data.getHeight(0, i) - stitchedHeight(data, 0, i)));
+        max_adjust = @max(max_adjust, @abs(data.getHeight(data.width - 1, i) - stitchedHeight(data, data.width - 1, i)));
+    }
+    return max_adjust;
 }
 
 // Helper functions for unpacking colors
@@ -1543,6 +1642,42 @@ test "buildFromSimplifiedData promotes mixed water cells to water material" {
         }
     }
     try std.testing.expect(found_floor_side);
+}
+
+test "blockForLODQuad uses representative non-water surface" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.init(allocator, .lod1);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.biomes[i] = .plains;
+        data.top_blocks[i] = .grass;
+        data.material_layers[i] = .{
+            .surface = .grass,
+            .subsurface = .dirt,
+            .foundation = .stone,
+        };
+    }
+
+    data.material_layers[1].surface = .stone;
+    data.material_layers[data.width].surface = .stone;
+    data.material_layers[data.width + 1].surface = .stone;
+
+    try std.testing.expectEqual(BlockType.stone, blockForLODQuad(&data, 0, 0));
+}
+
+test "stitchedHeight blends boundary points toward coarse grid" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.init(allocator, .lod1);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| {
+        data.heightmap[i] = 10.0;
+    }
+    data.setHeight(0, 1, 100.0);
+
+    try std.testing.expect(stitchedHeight(&data, 0, 1) < 100.0);
+    try std.testing.expectEqual(@as(f32, 10.0), stitchedHeight(&data, 4, 4));
 }
 
 test "buildFromSimplifiedData uses averaged color tile for far LOD tops" {

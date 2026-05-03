@@ -285,7 +285,7 @@ pub const LODConfig = struct {
 
     /// Fog start position as percentage of LOD radius (0.0-1.0) where fog begins.
     /// Values closer to 0.0 start fog near the player; 1.0 disables fog for that level.
-    fog_start_percent: [LODLevel.count]f32 = .{ 0.5, 0.5, 0.4, 0.3 },
+    fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28 },
 
     qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
 
@@ -393,7 +393,7 @@ pub const LODConfig = struct {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         // Keep a small overlap so the chunk ring and LOD ring blend instead of
         // leaving a camera-centered dead zone between them.
-        const overlap_chunks = @max(self.radii[0] - 1, 0);
+        const overlap_chunks = @max(self.radii[0] - 2, 0);
         return @as(f32, @floatFromInt(overlap_chunks)) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
     }
     fn getQEMTargetWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
@@ -498,8 +498,8 @@ test "ILODConfig.calculateMaskRadius" {
         .radii = .{ 16, 40, 80, 160 },
     };
     const interface = config.interface();
-    try std.testing.expectEqual(@as(f32, 240.0), interface.calculateMaskRadius());
+    try std.testing.expectEqual(@as(f32, 224.0), interface.calculateMaskRadius());
 
     config.radii[0] = 32;
-    try std.testing.expectEqual(@as(f32, 496.0), interface.calculateMaskRadius());
+    try std.testing.expectEqual(@as(f32, 480.0), interface.calculateMaskRadius());
 }
