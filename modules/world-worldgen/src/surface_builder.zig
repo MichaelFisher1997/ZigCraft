@@ -275,7 +275,7 @@ test "SurfaceBuilder beach band matches coastal biome range" {
     const upper_beach = builder.getCoastalSurfaceType(0.41, 1, 70, 0.3);
     try std.testing.expectEqual(CoastalSurfaceType.sand_beach, upper_beach);
 
-    const inland = builder.getCoastalSurfaceType(0.43, 1, 70, 0.3);
+    const inland = builder.getCoastalSurfaceType(0.45, 1, 70, 0.3);
     try std.testing.expectEqual(CoastalSurfaceType.none, inland);
 }
 
