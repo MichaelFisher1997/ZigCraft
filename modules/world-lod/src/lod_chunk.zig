@@ -220,6 +220,7 @@ pub const ILODConfig = struct {
         getQEMTarget: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
         getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
+        getFallbackMissingChildThreshold: *const fn (ptr: *anyopaque) f32,
     };
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
@@ -264,6 +265,10 @@ pub const ILODConfig = struct {
     pub fn getFogStartPercent(self: ILODConfig, lod: LODLevel) f32 {
         return self.vtable.getFogStartPercent(self.ptr, lod);
     }
+
+    pub fn getFallbackMissingChildThreshold(self: ILODConfig) f32 {
+        return self.vtable.getFallbackMissingChildThreshold(self.ptr);
+    }
 };
 
 pub fn activeLODCount(config: ILODConfig) usize {
@@ -296,6 +301,10 @@ pub const LODConfig = struct {
     skip_lighting_lod3: bool = false,
 
     active_lod_count: u32 = 4,
+
+    /// Maximum fraction of direct finer child regions that may be missing before
+    /// a coarser parent must remain visible as fallback terrain.
+    fallback_missing_child_threshold: f32 = 0.2,
 
     pub fn getQEMTarget(self: *const LODConfig, lod: LODLevel) u32 {
         return self.qem_triangle_targets[@intFromEnum(lod)];
@@ -355,6 +364,7 @@ pub const LODConfig = struct {
         .getQEMTarget = getQEMTargetWrapper,
         .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
         .getFogStartPercent = getFogStartPercentWrapper,
+        .getFallbackMissingChildThreshold = getFallbackMissingChildThresholdWrapper,
     };
 
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
@@ -407,6 +417,10 @@ pub const LODConfig = struct {
     fn getFogStartPercentWrapper(ptr: *anyopaque, lod: LODLevel) f32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.fog_start_percent[@intFromEnum(lod)];
+    }
+    fn getFallbackMissingChildThresholdWrapper(ptr: *anyopaque) f32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return std.math.clamp(self.fallback_missing_child_threshold, 0.0, 1.0);
     }
 };
 
@@ -502,4 +516,16 @@ test "ILODConfig.calculateMaskRadius" {
 
     config.radii[0] = 32;
     try std.testing.expectEqual(@as(f32, 480.0), interface.calculateMaskRadius());
+}
+
+test "ILODConfig exposes fallback missing child threshold" {
+    var config = LODConfig{ .fallback_missing_child_threshold = 0.2 };
+    var interface = config.interface();
+    try std.testing.expectEqual(@as(f32, 0.2), interface.getFallbackMissingChildThreshold());
+
+    config.fallback_missing_child_threshold = -1.0;
+    try std.testing.expectEqual(@as(f32, 0.0), interface.getFallbackMissingChildThreshold());
+
+    config.fallback_missing_child_threshold = 2.0;
+    try std.testing.expectEqual(@as(f32, 1.0), interface.getFallbackMissingChildThreshold());
 }
