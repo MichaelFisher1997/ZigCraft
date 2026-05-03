@@ -147,6 +147,9 @@ pub const GameSession = struct {
             LODConfig{
                 .radii = preset_radii,
                 .fog_start_percent = preset_cfg.fog_start_percent,
+                .horizontal_detail = preset_cfg.horizontal_detail,
+                .vertical_span_budget = preset_cfg.vertical_span_budget,
+                .mesh_path = preset_cfg.mesh_path,
                 .qem_triangle_targets = preset_cfg.qem_targets,
                 .memory_budget_mb = preset_cfg.memory_budget_mb,
                 .max_uploads_per_frame = preset_cfg.max_uploads_per_frame,

@@ -14,6 +14,12 @@ pub const LODStats = struct {
     uploading: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
 
     memory_used_mb: u32 = 0,
+    mesh_count: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    mesh_vertices: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    gen_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    upload_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    cache_hits: u32 = 0,
+    cache_misses: u32 = 0,
     upgrades_pending: u32 = 0,
     downgrades_pending: u32 = 0,
     upload_failures: u32 = 0,
@@ -38,6 +44,10 @@ pub const LODStats = struct {
         self.mesh_ready = [_]u32{0} ** LODLevel.count;
         self.uploading = [_]u32{0} ** LODLevel.count;
         self.memory_used_mb = 0;
+        self.mesh_count = [_]u32{0} ** LODLevel.count;
+        self.mesh_vertices = [_]u32{0} ** LODLevel.count;
+        self.gen_queue_depth = [_]u32{0} ** LODLevel.count;
+        self.upload_queue_depth = [_]u32{0} ** LODLevel.count;
         self.upgrades_pending = 0;
         self.downgrades_pending = 0;
         self.upload_failures = 0;
@@ -59,4 +69,21 @@ pub const LODStats = struct {
         const mb = bytes / (1024 * 1024);
         self.memory_used_mb += @intCast(mb);
     }
+
+    pub fn cacheHitRate(self: *const LODStats) f32 {
+        const total = self.cache_hits + self.cache_misses;
+        if (total == 0) return 0.0;
+        return @as(f32, @floatFromInt(self.cache_hits)) / @as(f32, @floatFromInt(total));
+    }
 };
+
+const std = @import("std");
+
+test "LODStats reports cache hit rate" {
+    var stats = LODStats{};
+    try std.testing.expectEqual(@as(f32, 0.0), stats.cacheHitRate());
+
+    stats.cache_hits = 3;
+    stats.cache_misses = 1;
+    try std.testing.expectEqual(@as(f32, 0.75), stats.cacheHitRate());
+}

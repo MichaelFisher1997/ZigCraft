@@ -119,6 +119,8 @@ pub const LODManager = struct {
 
     // Stats
     stats: LODStats,
+    cache_hits: u32,
+    cache_misses: u32,
 
     // Mutex for thread safety
     mutex: sync.RwLock,
@@ -212,6 +214,8 @@ pub const LODManager = struct {
             .player_cz = 0,
             .next_job_token = 1,
             .stats = .{},
+            .cache_hits = 0,
+            .cache_misses = 0,
             .mutex = .{},
             .gpu_bridge = gpu_bridge,
             .generator = generator,
@@ -580,12 +584,40 @@ pub const LODManager = struct {
             // Add mesh memory
             var mesh_iter = self.meshes[i].iterator();
             while (mesh_iter.next()) |entry| {
-                mem_usage += entry.value_ptr.*.capacity * @sizeOf(Vertex);
+                const mesh = entry.value_ptr.*;
+                self.stats.mesh_count[i] += 1;
+                self.stats.mesh_vertices[i] += mesh.vertex_count;
+                mem_usage += mesh.capacity * @sizeOf(Vertex);
             }
+
+            self.stats.gen_queue_depth[i] = @intCast(self.gen_queues[i].count());
+            self.stats.upload_queue_depth[i] = @intCast(self.upload_queues[i].count());
         }
 
         self.stats.addMemory(mem_usage);
+        self.stats.cache_hits = self.cache_hits;
+        self.stats.cache_misses = self.cache_misses;
         self.memory_used_bytes = mem_usage;
+
+        if (engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false)) {
+            const S = struct {
+                var counter: u64 = 0;
+            };
+            S.counter += 1;
+            if (S.counter % 120 == 1) {
+                log.log.info("LOD_STATS_DIAG gen_q={any} upload_q={any} meshes={any} verts={any} cache_hits={} cache_misses={} cache_hit_rate={d:.2} mem_mb={} upload_failures={}", .{
+                    self.stats.gen_queue_depth,
+                    self.stats.upload_queue_depth,
+                    self.stats.mesh_count,
+                    self.stats.mesh_vertices,
+                    self.stats.cache_hits,
+                    self.stats.cache_misses,
+                    self.stats.cacheHitRate(),
+                    self.stats.memory_used_mb,
+                    self.stats.upload_failures,
+                });
+            }
+        }
     }
 
     /// Get current statistics
@@ -762,10 +794,21 @@ pub const LODManager = struct {
         switch (chunk.data) {
             .simplified => |*data| {
                 const bounds = chunk.worldBounds();
-                // QEM decimation currently introduces visible cracks and terraced holes
-                // in distant terrain. Prefer the stable heightfield path until the
-                // simplifier preserves continuous coverage again.
-                try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas);
+                switch (self.effectiveMeshPath()) {
+                    .heightfield => try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas),
+                    .column_spans => try mesh.buildFromColumnSpans(data, bounds.min_x, bounds.min_z, self.atlas),
+                    .qem => {
+                        const lod = chunk.lod_level;
+                        const horizontal_detail = self.config.getHorizontalDetail(lod);
+                        const detail_target = horizontal_detail * horizontal_detail;
+                        const target = @max(self.config.getQEMTarget(lod), detail_target);
+                        if (target == 0) {
+                            try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas);
+                        } else {
+                            try mesh.buildFromSimplifiedDataWithQEM(data, bounds.min_x, bounds.min_z, target, self.config.getQEMMinInputTriangles(), self.atlas);
+                        }
+                    },
+                }
             },
             .full => {
                 // LOD0 meshes handled by World, not LODManager
@@ -774,6 +817,12 @@ pub const LODManager = struct {
                 // No data to build mesh from
             },
         }
+    }
+
+    fn effectiveMeshPath(self: *Self) lod_chunk.LODMeshPath {
+        if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_QEM", false)) return .qem;
+        if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_SPANS", false)) return .column_spans;
+        return self.config.getMeshPath();
     }
 
     fn cacheKey(self: *const Self, key: LODRegionKey) lod_cache.Key {
@@ -808,6 +857,12 @@ pub const LODManager = struct {
         };
     }
 
+    fn cacheEnabled(self: *Self) bool {
+        self.mutex.lockShared();
+        defer self.mutex.unlockShared();
+        return self.cache_dir_path != null;
+    }
+
     fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
         const cache_dir_path = self.cacheDirPathSnapshot() orelse return null;
         defer self.allocator.free(cache_dir_path);
@@ -837,6 +892,18 @@ pub const LODManager = struct {
             };
             return null;
         };
+    }
+
+    fn recordCacheHit(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.cache_hits += 1;
+    }
+
+    fn recordCacheMiss(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.cache_misses += 1;
     }
 
     fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
@@ -894,6 +961,8 @@ pub const LODManager = struct {
             .player_cz = 0,
             .next_job_token = 1,
             .stats = .{},
+            .cache_hits = 0,
+            .cache_misses = 0,
             .mutex = .{},
             .gpu_bridge = undefined,
             .generator = .{
@@ -995,16 +1064,33 @@ pub const LODManager = struct {
             .chunk_generation => {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
-                    const data = self.loadCachedSourceData(key) orelse blk: {
-                        var generated = LODSimplifiedData.init(self.allocator, lod_level) catch {
-                            new_state = .missing;
-                            chunk.unpin();
-                            // Acquire lock briefly to update state
-                            self.mutex.lock();
-                            chunk.state = new_state;
-                            self.mutex.unlock();
-                            return;
-                        };
+                    const cache_enabled = self.cacheEnabled();
+                    const cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
+                    const data = if (cached_data) |cached| blk: {
+                        self.recordCacheHit();
+                        break :blk cached;
+                    } else blk: {
+                        if (cache_enabled) self.recordCacheMiss();
+                        var generated = if (self.config.getVerticalSpanBudget() > 0)
+                            LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
+                                new_state = .missing;
+                                chunk.unpin();
+                                // Acquire lock briefly to update state
+                                self.mutex.lock();
+                                chunk.state = new_state;
+                                self.mutex.unlock();
+                                return;
+                            }
+                        else
+                            LODSimplifiedData.init(self.allocator, lod_level) catch {
+                                new_state = .missing;
+                                chunk.unpin();
+                                // Acquire lock briefly to update state
+                                self.mutex.lock();
+                                chunk.state = new_state;
+                                self.mutex.unlock();
+                                return;
+                            };
 
                         // Generate heightmap data (expensive, done without lock)
                         self.generator.generateHeightmapOnly(&generated, chunk.region_x, chunk.region_z, lod_level);

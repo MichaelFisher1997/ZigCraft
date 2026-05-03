@@ -62,6 +62,7 @@ pub const Texture = texture.Texture;
 pub const Config = texture.Config;
 pub const RenderDistancePreset = render_settings.RenderDistancePreset;
 pub const RenderDistancePresetConfig = render_settings.RenderDistancePresetConfig;
+pub const LODMeshPath = render_settings.LODMeshPath;
 pub const RENDER_DISTANCE_PRESETS = render_settings.RENDER_DISTANCE_PRESETS;
 pub const RenderSettingsAdapter = render_settings.RenderSettingsAdapter;
 pub const getPresetConfig = render_settings.getPresetConfig;

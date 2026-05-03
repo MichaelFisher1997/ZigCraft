@@ -12,6 +12,7 @@ const Chunk = world_core.Chunk;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
+pub const LODMeshPath = @import("engine-rhi").LODMeshPath;
 
 /// LOD level enum - higher values = more simplified
 pub const LODLevel = @import("lod_types.zig").LODLevel;
@@ -219,6 +220,9 @@ pub const ILODConfig = struct {
         calculateMaskRadius: *const fn (ptr: *anyopaque) f32,
         getQEMTarget: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
         getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
+        getHorizontalDetail: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
+        getVerticalSpanBudget: *const fn (ptr: *anyopaque) u8,
+        getMeshPath: *const fn (ptr: *anyopaque) LODMeshPath,
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
         getFallbackMissingChildThreshold: *const fn (ptr: *anyopaque) f32,
     };
@@ -262,6 +266,18 @@ pub const ILODConfig = struct {
         return self.vtable.getQEMMinInputTriangles(self.ptr);
     }
 
+    pub fn getHorizontalDetail(self: ILODConfig, lod: LODLevel) u32 {
+        return self.vtable.getHorizontalDetail(self.ptr, lod);
+    }
+
+    pub fn getVerticalSpanBudget(self: ILODConfig) u8 {
+        return self.vtable.getVerticalSpanBudget(self.ptr);
+    }
+
+    pub fn getMeshPath(self: ILODConfig) LODMeshPath {
+        return self.vtable.getMeshPath(self.ptr);
+    }
+
     pub fn getFogStartPercent(self: ILODConfig, lod: LODLevel) f32 {
         return self.vtable.getFogStartPercent(self.ptr, lod);
     }
@@ -291,6 +307,12 @@ pub const LODConfig = struct {
     /// Fog start position as percentage of LOD radius (0.0-1.0) where fog begins.
     /// Values closer to 0.0 start fog near the player; 1.0 disables fog for that level.
     fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28 },
+
+    horizontal_detail: [LODLevel.count]u32 = .{ 16, 32, 48, 48 },
+
+    vertical_span_budget: u8 = 0,
+
+    mesh_path: LODMeshPath = .heightfield,
 
     qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
 
@@ -363,6 +385,9 @@ pub const LODConfig = struct {
         .calculateMaskRadius = calculateMaskRadiusWrapper,
         .getQEMTarget = getQEMTargetWrapper,
         .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
+        .getHorizontalDetail = getHorizontalDetailWrapper,
+        .getVerticalSpanBudget = getVerticalSpanBudgetWrapper,
+        .getMeshPath = getMeshPathWrapper,
         .getFogStartPercent = getFogStartPercentWrapper,
         .getFallbackMissingChildThreshold = getFallbackMissingChildThresholdWrapper,
     };
@@ -413,6 +438,18 @@ pub const LODConfig = struct {
     fn getQEMMinInputTrianglesWrapper(ptr: *anyopaque) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.qem_min_input_triangles;
+    }
+    fn getHorizontalDetailWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.horizontal_detail[@intFromEnum(lod)];
+    }
+    fn getVerticalSpanBudgetWrapper(ptr: *anyopaque) u8 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return @min(self.vertical_span_budget, @as(u8, @intCast(world_core.MAX_LOD_VERTICAL_SPANS)));
+    }
+    fn getMeshPathWrapper(ptr: *anyopaque) LODMeshPath {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.mesh_path;
     }
     fn getFogStartPercentWrapper(ptr: *anyopaque, lod: LODLevel) f32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -528,4 +565,17 @@ test "ILODConfig exposes fallback missing child threshold" {
 
     config.fallback_missing_child_threshold = 2.0;
     try std.testing.expectEqual(@as(f32, 1.0), interface.getFallbackMissingChildThreshold());
+}
+
+test "ILODConfig exposes LOD quality tuning controls" {
+    var config = LODConfig{
+        .horizontal_detail = .{ 16, 24, 32, 40 },
+        .vertical_span_budget = 99,
+        .mesh_path = .qem,
+    };
+    const interface = config.interface();
+
+    try std.testing.expectEqual(@as(u32, 32), interface.getHorizontalDetail(.lod2));
+    try std.testing.expectEqual(@as(u8, world_core.MAX_LOD_VERTICAL_SPANS), interface.getVerticalSpanBudget());
+    try std.testing.expectEqual(LODMeshPath.qem, interface.getMeshPath());
 }
