@@ -57,6 +57,33 @@ test "TerrainModifier combines amplitude smoothing clamp and offset deterministi
     try testing.expectApproxEqAbs(@as(f32, 66.0), clamped.applyHeight(102.0, SEA_LEVEL), 0.0001);
 }
 
+test "TerrainModifier blend interpolates shaping for biome seams" {
+    const plains = TerrainModifier{ .height_amplitude = 0.7, .smoothing = 0.2 };
+    const coastal = TerrainModifier{ .height_amplitude = 0.5, .smoothing = 0.3 };
+    const blended = TerrainModifier.blend(plains, coastal, 0.5);
+
+    try testing.expectApproxEqAbs(@as(f32, 0.6), blended.height_amplitude, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), blended.smoothing, 0.0001);
+
+    const base_height: f32 = 92.0;
+    const plains_height = plains.applyHeight(base_height, SEA_LEVEL);
+    const coastal_height = coastal.applyHeight(base_height, SEA_LEVEL);
+    const blended_height = blended.applyHeight(base_height, SEA_LEVEL);
+
+    try testing.expect(blended_height > coastal_height);
+    try testing.expect(blended_height < plains_height);
+}
+
+test "TerrainModifier blend clamps t and switches sea-level clamp at midpoint" {
+    const raised = TerrainModifier{ .height_offset = 10.0 };
+    const wetland = TerrainModifier{ .clamp_to_sea_level = true };
+
+    try testing.expectApproxEqAbs(@as(f32, 10.0), TerrainModifier.blend(raised, wetland, -1.0).height_offset, 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0.0), TerrainModifier.blend(raised, wetland, 2.0).height_offset, 0.0001);
+    try testing.expect(!TerrainModifier.blend(raised, wetland, 0.49).clamp_to_sea_level);
+    try testing.expect(TerrainModifier.blend(raised, wetland, 0.5).clamp_to_sea_level);
+}
+
 test "wetland terrain modifiers flatten and lower sampled heights" {
     const base_low: f32 = 80.0;
     const base_high: f32 = 112.0;

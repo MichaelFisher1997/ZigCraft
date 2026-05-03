@@ -1,7 +1,7 @@
 //! Biome color blending for chunk meshing.
 //!
 //! Computes biome-tinted colors for blocks using 3x3 biome averaging.
-//! Only grass (top face), leaves, and water receive biome tints.
+//! Grass top faces, leaves, and water receive biome tints.
 
 const std = @import("std");
 const world_core = @import("world-core");
@@ -15,11 +15,9 @@ const NeighborChunks = boundary.NeighborChunks;
 /// Calculate the biome-tinted color for a block face.
 /// Returns {1, 1, 1} (no tint) for blocks that don't receive biome coloring.
 /// `s`, `u`, `v` are local coordinates on the slice plane (depending on `axis`).
-pub inline fn getBlockColor(chunk: *const Chunk, neighbors: NeighborChunks, axis: Face, s: i32, u: u32, v: u32, block: BlockType) [3]f32 {
-    // Only apply biome tint to top face of grass, and all faces of leaves/water
+pub inline fn getBlockColor(chunk: *const Chunk, neighbors: NeighborChunks, axis: Face, face: Face, s: i32, u: u32, v: u32, block: BlockType) [3]f32 {
     if (block == .grass) {
-        // Grass: only tint the top face, sides and bottom get no tint
-        if (axis != .top) return .{ 1.0, 1.0, 1.0 };
+        if (face != .top) return .{ 1.0, 1.0, 1.0 };
     } else if (block != .leaves and block != .water) {
         return .{ 1.0, 1.0, 1.0 };
     }

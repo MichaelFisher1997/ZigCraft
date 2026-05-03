@@ -60,7 +60,7 @@ pub fn meshCustomMeshBlocks(
                 const entrance_bounce = sampleCustomEntranceBounce(chunk, neighbors, xi, y, zi);
                 const entrance_dir = boundary.getEntranceDirCross(chunk, neighbors, xi, y, zi);
                 const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
-                const color = biome_color_sampler.getBlockColor(chunk, neighbors, .top, y + 1, x, z, block);
+                const color = biome_color_sampler.getBlockColor(chunk, neighbors, .top, .top, y + 1, x, z, block);
 
                 const xf: f32 = @floatFromInt(x);
                 const yf: f32 = @floatFromInt(y);

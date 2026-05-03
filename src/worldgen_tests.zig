@@ -218,9 +218,9 @@ test "WorldGen stable chunk fingerprints for known seed" {
     };
 
     const expected = [_]u64{
-        11844084116277698429,
-        9139389730069537271,
-        8491863551076282083,
+        2995571678741719148,
+        13866304399676112481,
+        7446572877677241388,
     };
 
     for (positions, 0..) |pos, i| {
@@ -885,10 +885,10 @@ test "SurfaceBuilder coastal type detection" {
     try testing.expectEqual(CoastalSurfaceType.sand_beach, sand);
 
     const cliff = builder.getCoastalSurfaceType(0.37, 6, 65, 0.3);
-    try testing.expectEqual(CoastalSurfaceType.cliff, cliff);
+    try testing.expectEqual(CoastalSurfaceType.none, cliff);
 
     const gravel = builder.getCoastalSurfaceType(0.37, 2, 65, 0.8);
-    try testing.expectEqual(CoastalSurfaceType.gravel_beach, gravel);
+    try testing.expectEqual(CoastalSurfaceType.none, gravel);
 
     const inland = builder.getCoastalSurfaceType(0.50, 1, 70, 0.3);
     try testing.expectEqual(CoastalSurfaceType.none, inland);

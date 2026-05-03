@@ -74,6 +74,17 @@ pub const TerrainModifier = struct {
         if (self.clamp_to_sea_level) height = sea_level;
         return height + self.height_offset;
     }
+
+    /// Blend two terrain modifiers for biome-boundary height shaping.
+    pub fn blend(a: TerrainModifier, b: TerrainModifier, t_raw: f32) TerrainModifier {
+        const t = std.math.clamp(t_raw, 0.0, 1.0);
+        return .{
+            .height_amplitude = std.math.lerp(a.height_amplitude, b.height_amplitude, t),
+            .smoothing = std.math.lerp(a.smoothing, b.smoothing, t),
+            .clamp_to_sea_level = if (t >= 0.5) b.clamp_to_sea_level else a.clamp_to_sea_level,
+            .height_offset = std.math.lerp(a.height_offset, b.height_offset, t),
+        };
+    }
 };
 
 /// Surface block configuration
@@ -224,12 +235,11 @@ pub const BIOME_POINTS = [_]BiomePoint{
     .{ .id = .cold_ocean, .heat = 22, .humidity = 55, .weight = 1.1, .min_continental = 0.10, .max_continental = 0.37 },
     .{ .id = .ocean, .heat = 50, .humidity = 50, .weight = 1.5, .min_continental = 0.20, .max_continental = 0.37 },
     .{ .id = .warm_ocean, .heat = 85, .humidity = 75, .weight = 0.9, .min_continental = 0.20, .max_continental = 0.37 },
-    .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.48, .max_slope = 3, .y_max = 72 },
+    .{ .id = .tropical, .heat = 95, .humidity = 90, .weight = 0.7, .min_continental = 0.30, .max_continental = 0.41, .max_slope = 3, .y_max = 70 },
 
     // === Coastal Biomes ===
-    .{ .id = .snowy_beach, .heat = 8, .humidity = 45, .weight = 0.7, .max_slope = 2, .min_continental = 0.37, .max_continental = 0.44, .y_max = 70 },
-    .{ .id = .stony_shore, .heat = 30, .humidity = 45, .weight = 0.7, .min_continental = 0.37, .max_continental = 0.46, .y_max = 82 },
-    .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.37, .max_continental = 0.44, .y_max = 70 },
+    .{ .id = .snowy_beach, .heat = 8, .humidity = 45, .weight = 0.7, .max_slope = 2, .min_continental = 0.37, .max_continental = 0.41, .y_max = 68 },
+    .{ .id = .beach, .heat = 60, .humidity = 50, .weight = 0.6, .max_slope = 2, .min_continental = 0.37, .max_continental = 0.41, .y_max = 68 },
 
     // === Cold Biomes ===
     .{ .id = .snow_tundra, .heat = 5, .humidity = 30, .weight = 1.0, .min_continental = 0.42 },
@@ -307,7 +317,7 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .elevation = .{ .min = 0.0, .max = 0.30 },
         .continentalness = .{ .min = 0.0, .max = 0.37 },
         .priority = 1,
-        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
+        .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{ .tree_types = &.{} },
     },
     .{
@@ -366,11 +376,11 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .name = "Tropical",
         .temperature = .{ .min = 0.85, .max = 1.0 },
         .humidity = .{ .min = 0.75, .max = 1.0 },
-        .elevation = .{ .min = 0.25, .max = 0.42 },
-        .continentalness = .{ .min = 0.32, .max = 0.48 },
+        .elevation = .{ .min = 0.25, .max = 0.38 },
+        .continentalness = .{ .min = 0.32, .max = 0.41 },
         .max_slope = 3,
         .priority = 8,
-        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
+        .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
         .vegetation = .{
             .tree_types = &.{.jungle},
             .seagrass_density = 0.14,
@@ -389,8 +399,8 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.2, .max = 1.0 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.38 },
-        .continentalness = .{ .min = 0.37, .max = 0.44 }, // NARROW beach band
-        .max_height = 70,
+        .continentalness = .{ .min = 0.37, .max = 0.41 }, // Narrow beach band
+        .max_height = 68,
         .max_slope = 2,
         .priority = 10,
         .surface = .{ .top = .sand, .filler = .sand, .depth_range = 2 },
@@ -402,10 +412,10 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.20, .max = 0.45 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.45 },
-        .continentalness = .{ .min = 0.37, .max = 0.46 },
-        .max_height = 82,
-        .max_slope = 8,
-        .priority = 11,
+        .continentalness = .{ .min = -1.0, .max = -0.5 }, // Edge-injection/debug only; never natural coast fill
+        .max_height = 78,
+        .max_slope = 4,
+        .priority = 0,
         .surface = .{ .top = .stone, .filler = .gravel, .depth_range = 2 },
         .vegetation = .{ .tree_types = &.{} },
         .terrain = .{ .height_amplitude = 0.8, .smoothing = 0.1 },
@@ -417,8 +427,8 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .temperature = .{ .min = 0.0, .max = 0.18 },
         .humidity = Range.any(),
         .elevation = .{ .min = 0.28, .max = 0.38 },
-        .continentalness = .{ .min = 0.37, .max = 0.44 },
-        .max_height = 70,
+        .continentalness = .{ .min = 0.37, .max = 0.41 },
+        .max_height = 68,
         .max_slope = 2,
         .priority = 12,
         .surface = .{ .top = .snow_block, .filler = .sand, .depth_range = 2 },
@@ -1014,8 +1024,8 @@ pub const BIOME_REGISTRY: []const BiomeDefinition = &.{
         .continentalness = .{ .min = -1.0, .max = -0.5 }, // IMPOSSIBLE: edge-injection only
         .ruggedness = .{ .min = 0.0, .max = 0.35 },
         .priority = 0, // Lowest priority
-        .surface = .{ .top = .sand, .filler = .sand, .depth_range = 3 },
-        .vegetation = .{ .tree_types = &.{} },
+        .surface = .{ .top = .grass, .filler = .dirt, .depth_range = 3 },
+        .vegetation = .{ .tree_types = &.{.sparse_oak}, .decoration_rules = &.{.{ .block = .tall_grass, .place_on = &.{.grass}, .chance = 0.2 }} },
         .terrain = .{ .height_amplitude = 0.5, .smoothing = 0.3 },
         .colors = .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
     },

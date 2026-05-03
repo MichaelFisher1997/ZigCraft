@@ -377,6 +377,8 @@ test "getBiomeDefinition beach has narrow continentalness band" {
     const beach = getBiomeDefinition(.beach);
     try testing.expect(beach.continentalness.min >= 0.30);
     try testing.expect(beach.continentalness.max <= 0.45);
+    try testing.expectEqual(.sand, beach.surface.top);
+    try testing.expectEqual(.sand, beach.surface.filler);
 }
 
 test "getBiomeDefinition cold coastal variants have expected surfaces" {
@@ -384,8 +386,7 @@ test "getBiomeDefinition cold coastal variants have expected surfaces" {
     try testing.expectEqualStrings("Stony Shore", stony.name);
     try testing.expectEqual(.stone, stony.surface.top);
     try testing.expectEqual(.gravel, stony.surface.filler);
-    try testing.expect(stony.continentalness.min >= 0.37);
-    try testing.expect(stony.continentalness.max <= 0.46);
+    try testing.expect(stony.continentalness.max < 0.0);
 
     const snowy = getBiomeDefinition(.snowy_beach);
     try testing.expectEqualStrings("Snowy Beach", snowy.name);
@@ -394,12 +395,12 @@ test "getBiomeDefinition cold coastal variants have expected surfaces" {
     try testing.expect(snowy.temperature.max <= 0.20);
 }
 
-test "getBiomeDefinition coastal plains is sandy transition" {
+test "getBiomeDefinition coastal plains is grassy beach transition" {
     const coastal = getBiomeDefinition(.coastal_plains);
     try testing.expectEqualStrings("Coastal Plains", coastal.name);
-    try testing.expectEqual(.sand, coastal.surface.top);
-    try testing.expectEqual(.sand, coastal.surface.filler);
-    try testing.expectEqual(@as(usize, 0), coastal.vegetation.decoration_rules.len);
+    try testing.expectEqual(.grass, coastal.surface.top);
+    try testing.expectEqual(.dirt, coastal.surface.filler);
+    try testing.expect(coastal.vegetation.decoration_rules.len > 0);
 }
 
 test "getBiomeDefinition frozen river is river override only" {
@@ -413,7 +414,9 @@ test "getBiomeDefinition frozen river is river override only" {
 test "getBiomeDefinition tropical has aquatic vegetation and coastal range" {
     const tropical = getBiomeDefinition(.tropical);
     try testing.expect(tropical.continentalness.min >= 0.30);
-    try testing.expect(tropical.continentalness.max <= 0.50);
+    try testing.expect(tropical.continentalness.max <= 0.42);
+    try testing.expectEqual(.grass, tropical.surface.top);
+    try testing.expectEqual(.dirt, tropical.surface.filler);
     try testing.expect(tropical.vegetation.coral_density > 0.0);
     try testing.expect(tropical.vegetation.decoration_rules.len > 0);
 }

@@ -162,6 +162,8 @@ test "custom mesh blocks do not fully occlude neighboring cube faces" {
 }
 
 test "core natural block pack registry properties" {
+    try testing.expectEqualStrings("grass_side", block_registry.getBlockDefinition(.grass).texture_side);
+
     try testing.expectEqual(block_registry.RenderShape.flat_quad, block_registry.getBlockDefinition(.snow_layer).render_shape);
     try testing.expectEqual(block_registry.RenderPass.cutout, block_registry.getBlockDefinition(.snow_layer).render_pass);
     try testing.expect(!block_registry.getBlockDefinition(.snow_layer).is_solid);
