@@ -177,6 +177,12 @@ pub const JobQueue = struct {
         self.cond.signal();
     }
 
+    pub fn count(self: *JobQueue) usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.jobs.count();
+    }
+
     pub fn pop(self: *JobQueue) ?Job {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -198,8 +204,8 @@ pub const JobQueue = struct {
 
     /// Internal: rebuild queue with updated distances (called under lock)
     fn doReprioritize(self: *JobQueue) void {
-        const count = self.jobs.count();
-        if (count == 0) return;
+        const job_count = self.jobs.count();
+        if (job_count == 0) return;
 
         var temp = std.ArrayListUnmanaged(Job).empty;
         defer temp.deinit(self.allocator);

@@ -23,8 +23,20 @@ pub const RenderDistancePreset = enum(u32) {
     }
 };
 
+pub const LODMeshPath = enum(u8) {
+    /// Stable heightfield mesh path used by current defaults.
+    heightfield,
+    /// Rich column/span mesh path for vertical detail where source data provides spans.
+    column_spans,
+    /// Quadric error metric decimation path for experimentation while it stabilizes.
+    qem,
+};
+
 pub const RenderDistancePresetConfig = struct {
     lod_radii: [LODLevel.count]i32,
+    horizontal_detail: [LODLevel.count]u32,
+    vertical_span_budget: u8,
+    mesh_path: LODMeshPath,
     fog_start_percent: [LODLevel.count]f32,
     active_lod_count: u32,
     qem_targets: [LODLevel.count]u32,
@@ -38,6 +50,9 @@ pub const RenderDistancePresetConfig = struct {
 pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
     .{
         .lod_radii = .{ 6, 6, 6, 160 },
+        .horizontal_detail = .{ 16, 32, 48, 48 },
+        .vertical_span_budget = 0,
+        .mesh_path = .heightfield,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 1200, 300, 48 },
@@ -49,6 +64,9 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
     },
     .{
         .lod_radii = .{ 10, 10, 10, 160 },
+        .horizontal_detail = .{ 16, 32, 48, 48 },
+        .vertical_span_budget = 0,
+        .mesh_path = .heightfield,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.4 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
@@ -60,6 +78,9 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
     },
     .{
         .lod_radii = .{ 12, 12, 12, 160 },
+        .horizontal_detail = .{ 16, 32, 48, 48 },
+        .vertical_span_budget = 0,
+        .mesh_path = .heightfield,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
@@ -71,6 +92,9 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
     },
     .{
         .lod_radii = .{ 14, 14, 14, 160 },
+        .horizontal_detail = .{ 16, 32, 48, 48 },
+        .vertical_span_budget = 0,
+        .mesh_path = .heightfield,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
@@ -82,6 +106,9 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
     },
     .{
         .lod_radii = .{ 16, 16, 16, 160 },
+        .horizontal_detail = .{ 16, 32, 48, 48 },
+        .vertical_span_budget = 0,
+        .mesh_path = .heightfield,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3 },
         .active_lod_count = 4,
         .qem_targets = .{ 0, 2000, 800, 200 },
