@@ -10,6 +10,7 @@ const WorldScreen = @import("world.zig").WorldScreen;
 const log = @import("engine-core").log;
 const fs = @import("fs");
 const text_input = @import("game-core").text_input;
+const registry = @import("world-worldgen").registry;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
@@ -36,11 +37,13 @@ pub const LevelDat = struct {
 };
 
 pub fn writeLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir, name: []const u8, seed: u64, generator_index: usize, last_played: i64) !void {
+    const generator_id = if (generator_index < registry.getGeneratorCount()) registry.getGeneratorId(generator_index) else registry.getGeneratorId(0);
     const payload = .{
         .name = name,
         .seed = seed,
         .last_played = last_played,
         .generator_index = generator_index,
+        .generator_id = generator_id,
     };
     const json_str = try std.json.Stringify.valueAlloc(allocator, payload, .{ .whitespace = .indent_2 });
     defer allocator.free(json_str);
@@ -60,6 +63,7 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
     const name_val = obj.get("name") orelse return null;
     const seed_val = obj.get("seed") orelse return null;
     const gen_val = obj.get("generator_index") orelse return null;
+    const gen_id_val = obj.get("generator_id");
     const last_val = obj.get("last_played");
     const name_str = switch (name_val) {
         .string => |s| s,
@@ -73,10 +77,17 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
         .integer => |i| i,
         else => 0,
     } else 0;
-    const generator_index: usize = switch (gen_val) {
+    var generator_index: usize = switch (gen_val) {
         .integer => |i| @intCast(i),
         else => 0,
     };
+    const generator_id_source = if (gen_id_val) |giv| switch (giv) {
+        .string => |s| s,
+        else => "",
+    } else "";
+    if (generator_id_source.len > 0) {
+        generator_index = registry.findGeneratorIndex(generator_id_source) orelse generator_index;
+    }
     const name_copy = allocator.dupe(u8, name_str) catch return null;
     errdefer allocator.free(name_copy);
     return .{

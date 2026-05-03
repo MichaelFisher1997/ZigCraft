@@ -1,21 +1,19 @@
 const std = @import("std");
-const gen_interface = @import("generator_interface.zig");
-const Generator = gen_interface.Generator;
-const GeneratorInfo = gen_interface.GeneratorInfo;
-const ColumnInfo = gen_interface.ColumnInfo;
+const worldgen_api = @import("worldgen-api");
+const Generator = worldgen_api.Generator;
+const GeneratorInfo = worldgen_api.GeneratorInfo;
+const ColumnInfo = worldgen_api.ColumnInfo;
+const RegionInfo = worldgen_api.RegionInfo;
 const world_core = @import("world-core");
 const Chunk = world_core.Chunk;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const BlockType = world_core.BlockType;
-const BiomeId = world_core.BiomeId;
-const LightingComputer = @import("lighting_computer.zig").LightingComputer;
-const build_options = @import("world_worldgen_options");
 const LODLevel = world_core.LODLevel;
 const LODSimplifiedData = world_core.LODSimplifiedData;
-const region_pkg = @import("region.zig");
-const RegionInfo = region_pkg.RegionInfo;
+const build_options = @import("worldgen_test_options");
+const LightingComputer = @import("worldgen-common").LightingComputer;
 
 pub const ShadowTestWorldGenerator = struct {
     seed: u64,
@@ -173,11 +171,7 @@ pub const ShadowTestWorldGenerator = struct {
         @memset(data.biomes, .plains);
         @memset(data.top_blocks, .grass);
         @memset(data.colors, GRASS_COLOR);
-        @memset(data.material_layers, .{
-            .surface = .grass,
-            .subsurface = .dirt,
-            .foundation = .stone,
-        });
+        @memset(data.material_layers, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone });
         @memset(data.water, world_core.LODWaterState.empty);
         @memset(data.lighting, world_core.LODLightingHint.daylight);
         @memset(data.vegetation, world_core.LODVegetationHint.empty);
@@ -194,26 +188,20 @@ pub const ShadowTestWorldGenerator = struct {
         return self.seed;
     }
 
+    pub fn getRegionInfo(self: *const ShadowTestWorldGenerator, world_x: i32, world_z: i32) RegionInfo {
+        _ = self;
+        return .{ .mood = .calm, .role = .destination, .focus = .none, .center_x = world_x, .center_z = world_z };
+    }
+
     pub fn getColumnInfo(self: *const ShadowTestWorldGenerator, wx: f32, wz: f32) ColumnInfo {
         _ = self;
         _ = wx;
         _ = wz;
-        return .{
-            .height = GROUND_Y,
-            .biome = .plains,
-            .is_ocean = false,
-            .temperature = 0.5,
-            .humidity = 0.5,
-            .continentalness = 0.5,
-        };
+        return .{ .height = GROUND_Y, .biome = .plains, .is_ocean = false, .temperature = 0.5, .humidity = 0.5, .continentalness = 0.5 };
     }
 
     pub fn generator(self: *ShadowTestWorldGenerator) Generator {
-        return .{
-            .ptr = self,
-            .vtable = &VTABLE,
-            .info = INFO,
-        };
+        return .{ .ptr = self, .vtable = &VTABLE, .info = INFO };
     }
 
     const VTABLE = Generator.VTable{
@@ -248,7 +236,7 @@ pub const ShadowTestWorldGenerator = struct {
 
     fn getRegionInfoWrapper(ptr: *anyopaque, world_x: i32, world_z: i32) RegionInfo {
         const self: *ShadowTestWorldGenerator = @ptrCast(@alignCast(ptr));
-        return region_pkg.getRegion(self.seed, world_x, world_z);
+        return self.getRegionInfo(world_x, world_z);
     }
 
     fn getColumnInfoWrapper(ptr: *anyopaque, wx: f32, wz: f32) ColumnInfo {
@@ -260,4 +248,17 @@ pub const ShadowTestWorldGenerator = struct {
         const self: *ShadowTestWorldGenerator = @ptrCast(@alignCast(ptr));
         allocator.destroy(self);
     }
+};
+
+pub fn create(context: worldgen_api.CreateContext) worldgen_api.RegistryError!Generator {
+    const gen = context.allocator.create(ShadowTestWorldGenerator) catch return error.OutOfMemory;
+    gen.* = ShadowTestWorldGenerator.init(context.seed, context.allocator);
+    return gen.generator();
+}
+
+pub const descriptor = worldgen_api.GeneratorDescriptor{
+    .id = "zigcraft:shadow-test",
+    .aliases = &.{ "test", "shadow-test", "lighting-test" },
+    .info = ShadowTestWorldGenerator.INFO,
+    .create = create,
 };

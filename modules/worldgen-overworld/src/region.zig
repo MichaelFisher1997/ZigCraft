@@ -4,26 +4,11 @@
 
 const std = @import("std");
 const Vec3f = @import("noise.zig").Vec3f;
+const worldgen_api = @import("worldgen-api");
 
-pub const RegionMood = enum {
-    calm, // Boring on purpose
-    sparse, // Empty, lonely
-    lush, // Abundant vegetation
-    wild, // Chaos, landmarks
-};
-
-pub const RegionRole = enum {
-    transit, // Fast, boring, flat
-    destination, // One star feature (focus)
-    boundary, // Awkward, separation
-};
-
-pub const FeatureFocus = enum {
-    none,
-    lake,
-    forest,
-    mountain,
-};
+pub const RegionMood = worldgen_api.RegionMood;
+pub const RegionRole = worldgen_api.RegionRole;
+pub const FeatureFocus = worldgen_api.FeatureFocus;
 
 pub const PathType = enum {
     none,
@@ -33,13 +18,7 @@ pub const PathType = enum {
 };
 
 /// Complete region information with role, mood, and feature focus
-pub const RegionInfo = struct {
-    mood: RegionMood,
-    role: RegionRole,
-    focus: FeatureFocus,
-    center_x: i32,
-    center_z: i32,
-};
+pub const RegionInfo = worldgen_api.RegionInfo;
 
 // ============================================================================
 // FEATURE ALLOW/DENY TABLES (Exact Per Spec)
