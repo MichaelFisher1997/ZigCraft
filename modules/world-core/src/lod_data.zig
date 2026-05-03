@@ -5,6 +5,13 @@ const world_core = @import("root.zig");
 
 pub const LODLevel = engine_core.LODLevel;
 
+pub const LODDataVersion = enum(u16) {
+    simplified_v1 = 1,
+    rich_v2 = 2,
+};
+
+pub const MAX_LOD_VERTICAL_SPANS: usize = 4;
+
 pub const LODMaterialLayers = struct {
     surface: world_core.BlockType,
     subsurface: world_core.BlockType,
@@ -63,12 +70,45 @@ pub const LODVegetationHint = struct {
     };
 };
 
+pub const LODVerticalSpan = struct {
+    min_height: f32,
+    max_height: f32,
+    biome: world_core.BiomeId,
+    material_layers: LODMaterialLayers,
+    color: u32,
+    water: LODWaterState,
+    lighting: LODLightingHint,
+    vegetation: LODVegetationHint,
+
+    pub fn fromColumn(
+        height: f32,
+        biome: world_core.BiomeId,
+        layers: LODMaterialLayers,
+        color: u32,
+        water_state: LODWaterState,
+        lighting_hint: LODLightingHint,
+        vegetation_hint: LODVegetationHint,
+    ) LODVerticalSpan {
+        return .{
+            .min_height = height,
+            .max_height = height,
+            .biome = biome,
+            .material_layers = layers,
+            .color = color,
+            .water = water_state,
+            .lighting = lighting_hint,
+            .vegetation = vegetation_hint,
+        };
+    }
+};
+
 pub fn regionSizeBlocks(lod_level: LODLevel) u32 {
     return lod_level.regionSizeBlocks(world_core.CHUNK_SIZE_X);
 }
 
 /// Simplified world data for distant LOD generation.
 pub const LODSimplifiedData = struct {
+    version: LODDataVersion,
     width: u32,
     heightmap: []f32,
     biomes: []world_core.BiomeId,
@@ -78,6 +118,8 @@ pub const LODSimplifiedData = struct {
     water: []LODWaterState,
     lighting: []LODLightingHint,
     vegetation: []LODVegetationHint,
+    vertical_span_counts: ?[]u8,
+    vertical_spans: ?[]LODVerticalSpan,
     allocator: std.mem.Allocator,
 
     pub fn getGridSize(lod_level: LODLevel) u32 {
@@ -125,6 +167,7 @@ pub const LODSimplifiedData = struct {
         @memset(vegetation, LODVegetationHint.empty);
 
         return .{
+            .version = .rich_v2,
             .width = grid_size,
             .heightmap = heightmap,
             .biomes = biomes,
@@ -134,8 +177,17 @@ pub const LODSimplifiedData = struct {
             .water = water,
             .lighting = lighting,
             .vegetation = vegetation,
+            .vertical_span_counts = null,
+            .vertical_spans = null,
             .allocator = allocator,
         };
+    }
+
+    pub fn initWithVerticalSpans(allocator: std.mem.Allocator, lod_level: LODLevel) !LODSimplifiedData {
+        var data = try init(allocator, lod_level);
+        errdefer data.deinit();
+        try data.enableVerticalSpans();
+        return data;
     }
 
     pub fn deinit(self: *LODSimplifiedData) void {
@@ -147,7 +199,30 @@ pub const LODSimplifiedData = struct {
         self.allocator.free(self.water);
         self.allocator.free(self.lighting);
         self.allocator.free(self.vegetation);
+        if (self.vertical_span_counts) |counts| self.allocator.free(counts);
+        if (self.vertical_spans) |spans| self.allocator.free(spans);
         self.* = undefined;
+    }
+
+    pub fn enableVerticalSpans(self: *LODSimplifiedData) !void {
+        if (self.vertical_spans != null) return;
+
+        const count = self.width * self.width;
+        const span_count = @as(usize, @intCast(count)) * MAX_LOD_VERTICAL_SPANS;
+        const counts = try self.allocator.alloc(u8, count);
+        errdefer self.allocator.free(counts);
+        const spans = try self.allocator.alloc(LODVerticalSpan, span_count);
+        errdefer self.allocator.free(spans);
+
+        @memset(counts, 0);
+        @memset(spans, LODVerticalSpan.fromColumn(0.0, .plains, LODMaterialLayers.default(.air), 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty));
+
+        self.vertical_span_counts = counts;
+        self.vertical_spans = spans;
+    }
+
+    pub fn hasVerticalSpans(self: *const LODSimplifiedData) bool {
+        return self.vertical_span_counts != null and self.vertical_spans != null;
     }
 
     pub fn getHeight(self: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
@@ -182,11 +257,49 @@ pub const LODSimplifiedData = struct {
         self.water[idx] = water_state;
         self.lighting[idx] = lighting_hint;
         self.vegetation[idx] = vegetation_hint;
+        if (self.hasVerticalSpans()) {
+            _ = self.setVerticalSpan(gx, gz, 0, LODVerticalSpan.fromColumn(height, biome, layers, color, water_state, lighting_hint, vegetation_hint));
+        }
+    }
+
+    pub fn verticalSpanCount(self: *const LODSimplifiedData, gx: u32, gz: u32) u8 {
+        if (gx >= self.width or gz >= self.width) return 0;
+        const counts = self.vertical_span_counts orelse return 0;
+        return counts[gz * self.width + gx];
+    }
+
+    pub fn getVerticalSpan(self: *const LODSimplifiedData, gx: u32, gz: u32, span_index: u8) ?LODVerticalSpan {
+        if (gx >= self.width or gz >= self.width) return null;
+        if (span_index >= self.verticalSpanCount(gx, gz)) return null;
+        const spans = self.vertical_spans orelse return null;
+        const column_idx = @as(usize, @intCast(gz * self.width + gx));
+        const idx = column_idx * MAX_LOD_VERTICAL_SPANS + span_index;
+        return spans[idx];
+    }
+
+    pub fn setVerticalSpan(self: *LODSimplifiedData, gx: u32, gz: u32, span_index: u8, span: LODVerticalSpan) bool {
+        if (gx >= self.width or gz >= self.width) return false;
+        if (@as(usize, span_index) >= MAX_LOD_VERTICAL_SPANS) return false;
+        const counts = self.vertical_span_counts orelse return false;
+        const spans = self.vertical_spans orelse return false;
+        const column_idx = gz * self.width + gx;
+        spans[@as(usize, @intCast(column_idx)) * MAX_LOD_VERTICAL_SPANS + span_index] = span;
+        counts[column_idx] = @max(counts[column_idx], span_index + 1);
+        return true;
+    }
+
+    pub fn clearVerticalSpans(self: *LODSimplifiedData, gx: u32, gz: u32) void {
+        if (gx >= self.width or gz >= self.width) return;
+        const counts = self.vertical_span_counts orelse return;
+        counts[gz * self.width + gx] = 0;
     }
 
     pub fn totalMemoryBytes(self: *const LODSimplifiedData) usize {
         const count = self.width * self.width;
-        return count * (@sizeOf(f32) + @sizeOf(world_core.BiomeId) + @sizeOf(world_core.BlockType) + @sizeOf(u32) + @sizeOf(LODMaterialLayers) + @sizeOf(LODWaterState) + @sizeOf(LODLightingHint) + @sizeOf(LODVegetationHint));
+        var total = count * (@sizeOf(f32) + @sizeOf(world_core.BiomeId) + @sizeOf(world_core.BlockType) + @sizeOf(u32) + @sizeOf(LODMaterialLayers) + @sizeOf(LODWaterState) + @sizeOf(LODLightingHint) + @sizeOf(LODVegetationHint));
+        if (self.vertical_span_counts != null) total += count * @sizeOf(u8);
+        if (self.vertical_spans != null) total += @as(usize, @intCast(count)) * MAX_LOD_VERTICAL_SPANS * @sizeOf(LODVerticalSpan);
+        return total;
     }
 };
 
@@ -238,4 +351,70 @@ test "LODSimplifiedData setColumn stores rich representative data" {
     try std.testing.expectEqual(@as(f32, 12.0), data.water[idx].depth);
     try std.testing.expectEqual(@as(f32, 0.9), data.lighting[idx].ambient_occlusion);
     try std.testing.expectEqual(world_core.BlockType.leaves, data.vegetation[idx].leaves);
+}
+
+test "LODSimplifiedData tracks bounded vertical spans when enabled" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+
+    try std.testing.expectEqual(LODDataVersion.rich_v2, data.version);
+    try std.testing.expect(data.hasVerticalSpans());
+    try std.testing.expectEqual(@as(u8, 0), data.verticalSpanCount(3, 4));
+
+    try std.testing.expect(data.setVerticalSpan(3, 4, 0, .{
+        .min_height = 72.0,
+        .max_height = 76.0,
+        .biome = .plains,
+        .material_layers = .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone },
+        .color = 0x66AA44,
+        .water = LODWaterState.empty,
+        .lighting = LODLightingHint.daylight,
+        .vegetation = LODVegetationHint.empty,
+    }));
+    try std.testing.expect(data.setVerticalSpan(3, 4, 1, .{
+        .min_height = 44.0,
+        .max_height = 48.0,
+        .biome = .plains,
+        .material_layers = .{ .surface = .stone, .subsurface = .stone, .foundation = .stone },
+        .color = 0x777777,
+        .water = LODWaterState.empty,
+        .lighting = .{ .sky_light = 8, .block_light = 0, .ambient_occlusion = 0.6 },
+        .vegetation = LODVegetationHint.empty,
+    }));
+
+    try std.testing.expectEqual(@as(u8, 2), data.verticalSpanCount(3, 4));
+    const lower = data.getVerticalSpan(3, 4, 1) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f32, 44.0), lower.min_height);
+    try std.testing.expectEqual(world_core.BlockType.stone, lower.material_layers.surface);
+    try std.testing.expect(!data.setVerticalSpan(3, 4, @intCast(MAX_LOD_VERTICAL_SPANS), lower));
+}
+
+test "LODSimplifiedData memory accounting includes optional vertical spans" {
+    const allocator = std.testing.allocator;
+    var baseline = try LODSimplifiedData.init(allocator, .lod1);
+    defer baseline.deinit();
+    var rich = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod1);
+    defer rich.deinit();
+
+    const count = @as(usize, @intCast(baseline.width * baseline.width));
+    const span_bytes = count * (@sizeOf(u8) + MAX_LOD_VERTICAL_SPANS * @sizeOf(LODVerticalSpan));
+    try std.testing.expectEqual(baseline.totalMemoryBytes() + span_bytes, rich.totalMemoryBytes());
+}
+
+test "LODSimplifiedData setColumn seeds representative span when enabled" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod1);
+    defer data.deinit();
+
+    data.setColumn(2, 2, 80.0, .forest, .{
+        .surface = .grass,
+        .subsurface = .dirt,
+        .foundation = .stone,
+    }, 0x22AA44, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
+
+    try std.testing.expectEqual(@as(u8, 1), data.verticalSpanCount(2, 2));
+    const span = data.getVerticalSpan(2, 2, 0) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f32, 80.0), span.max_height);
+    try std.testing.expectEqual(world_core.BlockType.grass, span.material_layers.surface);
 }
