@@ -12,6 +12,7 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const BlockType = world_core.BlockType;
 const LODLevel = world_core.LODLevel;
 const LODSimplifiedData = world_core.LODSimplifiedData;
+const LightingComputer = @import("worldgen-common").LightingComputer;
 
 pub const FlatWorldGenerator = struct {
     seed: u64,
@@ -30,7 +31,6 @@ pub const FlatWorldGenerator = struct {
     }
 
     pub fn generate(self: *FlatWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
-        _ = self;
         chunk.generated = false;
 
         var local_z: u32 = 0;
@@ -57,6 +57,8 @@ pub const FlatWorldGenerator = struct {
                 }
             }
         }
+
+        LightingComputer.computeSkylight(chunk, self.allocator) catch unreachable;
 
         chunk.generated = true;
         chunk.dirty = true;

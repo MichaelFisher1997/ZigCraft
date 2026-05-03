@@ -21,9 +21,6 @@ pub fn build(b: *std.Build) void {
 
     const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
     options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
-    const world_worldgen_options = b.addOptions();
-    world_worldgen_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
-    world_worldgen_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
     const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly by id or alias (normal, overworld, flat, test)") orelse "";
     options.addOption([]const u8, "auto_world", auto_world);
 
@@ -73,7 +70,6 @@ pub fn build(b: *std.Build) void {
 
     const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
     options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
-    world_worldgen_options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
 
     const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
     options.addOption(bool, "benchmark", benchmark);
@@ -143,6 +139,7 @@ pub fn build(b: *std.Build) void {
     const engine_ui = b.createModule(.{ .root_source_file = b.path("modules/engine-ui/src/root.zig"), .target = target, .optimize = optimize });
     const world_core = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_api = b.createModule(.{ .root_source_file = b.path("modules/worldgen-api/src/root.zig"), .target = target, .optimize = optimize });
+    const worldgen_common = b.createModule(.{ .root_source_file = b.path("modules/worldgen-common/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_overworld = b.createModule(.{ .root_source_file = b.path("modules/worldgen-overworld/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_flat = b.createModule(.{ .root_source_file = b.path("modules/worldgen-flat/src/root.zig"), .target = target, .optimize = optimize });
     const worldgen_test = b.createModule(.{ .root_source_file = b.path("modules/worldgen-test/src/root.zig"), .target = target, .optimize = optimize });
@@ -233,6 +230,8 @@ pub fn build(b: *std.Build) void {
     world_core.addImport("engine-math", engine_math);
     addSharedImports(worldgen_api, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     worldgen_api.addImport("world-core", world_core);
+    addSharedImports(worldgen_common, zig_math, zig_noise, fs_module, sync_module, c_module, options);
+    worldgen_common.addImport("world-core", world_core);
     const worldgen_overworld_options = b.addOptions();
     worldgen_overworld_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
     worldgen_overworld_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
@@ -241,15 +240,18 @@ pub fn build(b: *std.Build) void {
     worldgen_overworld.addImport("engine-rhi", engine_rhi);
     worldgen_overworld.addImport("world-core", world_core);
     worldgen_overworld.addImport("worldgen-api", worldgen_api);
+    worldgen_overworld.addImport("worldgen-common", worldgen_common);
     worldgen_overworld.addOptions("worldgen_overworld_options", worldgen_overworld_options);
     addSharedImports(worldgen_flat, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     worldgen_flat.addImport("world-core", world_core);
     worldgen_flat.addImport("worldgen-api", worldgen_api);
+    worldgen_flat.addImport("worldgen-common", worldgen_common);
     const worldgen_test_options = b.addOptions();
     worldgen_test_options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
     addSharedImports(worldgen_test, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     worldgen_test.addImport("world-core", world_core);
     worldgen_test.addImport("worldgen-api", worldgen_api);
+    worldgen_test.addImport("worldgen-common", worldgen_common);
     worldgen_test.addOptions("worldgen_test_options", worldgen_test_options);
     addSharedImports(world_worldgen, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     addSharedImports(world_meshing, zig_math, zig_noise, fs_module, sync_module, c_module, options);
@@ -274,10 +276,10 @@ pub fn build(b: *std.Build) void {
     world_worldgen.addImport("engine-rhi", engine_rhi);
     world_worldgen.addImport("world-core", world_core);
     world_worldgen.addImport("worldgen-api", worldgen_api);
+    world_worldgen.addImport("worldgen-common", worldgen_common);
     world_worldgen.addImport("worldgen-overworld", worldgen_overworld);
     world_worldgen.addImport("worldgen-flat", worldgen_flat);
     world_worldgen.addImport("worldgen-test", worldgen_test);
-    world_worldgen.addOptions("world_worldgen_options", world_worldgen_options);
 
     addSharedImports(world_runtime, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_runtime.addImport("engine-core", engine_core);

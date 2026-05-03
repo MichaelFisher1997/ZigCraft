@@ -40,7 +40,7 @@ const CoastalSurfaceType = terrain_shape_mod.CoastalSurfaceType;
 const BiomeSource = @import("biome.zig").BiomeSource;
 const BiomeDecorator = @import("biome_decorator.zig").BiomeDecorator;
 const tree_registry = @import("tree_registry.zig");
-const LightingComputer = @import("lighting_computer.zig").LightingComputer;
+const LightingComputer = @import("worldgen-common").LightingComputer;
 const Mutex = sync.Mutex;
 
 pub const OverworldGenerator = struct {

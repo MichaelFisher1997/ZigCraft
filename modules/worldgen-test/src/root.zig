@@ -13,6 +13,7 @@ const BlockType = world_core.BlockType;
 const LODLevel = world_core.LODLevel;
 const LODSimplifiedData = world_core.LODSimplifiedData;
 const build_options = @import("worldgen_test_options");
+const LightingComputer = @import("worldgen-common").LightingComputer;
 
 pub const ShadowTestWorldGenerator = struct {
     seed: u64,
@@ -37,7 +38,6 @@ pub const ShadowTestWorldGenerator = struct {
     }
 
     pub fn generate(self: *ShadowTestWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
-        _ = self;
         chunk.generated = false;
 
         var local_z: u32 = 0;
@@ -55,6 +55,9 @@ pub const ShadowTestWorldGenerator = struct {
         }
 
         updateColumnMetadata(chunk);
+        LightingComputer.computeSkylight(chunk, self.allocator) catch unreachable;
+        LightingComputer.computeBlockLight(chunk, self.allocator) catch unreachable;
+
         chunk.generated = true;
         chunk.dirty = true;
     }
