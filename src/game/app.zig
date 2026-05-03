@@ -21,6 +21,7 @@ const SettingsManager = @import("game-core").SettingsManager;
 const Settings = @import("game-core").Settings;
 const InputSettings = @import("game-core").InputSettings;
 const BuildConfig = @import("game-core").BuildConfig;
+const worldgen_registry = @import("world-worldgen").registry;
 
 const screen_pkg = @import("game-ui").screen;
 const ScreenManager = screen_pkg.ScreenManager;
@@ -539,18 +540,10 @@ fn applyShadowTestPreset(settings: *Settings) void {
 }
 
 fn resolveAutoWorldGenerator() ?usize {
-    if (build_options.shadow_test_scene) return 2;
+    if (build_options.shadow_test_scene) return worldgen_registry.findGeneratorIndex("test") orelse 0;
     if (build_options.auto_world.len == 0) return null;
-    if (std.ascii.eqlIgnoreCase(build_options.auto_world, "normal") or std.ascii.eqlIgnoreCase(build_options.auto_world, "overworld")) {
-        return 0;
-    }
-    if (std.ascii.eqlIgnoreCase(build_options.auto_world, "flat")) {
-        return 1;
-    }
-    if (std.ascii.eqlIgnoreCase(build_options.auto_world, "shadow-test") or std.ascii.eqlIgnoreCase(build_options.auto_world, "lighting-test")) {
-        return 2;
-    }
+    if (worldgen_registry.findGeneratorIndex(build_options.auto_world)) |index| return index;
 
     log.log.warn("Unknown -Dauto-world value '{s}', defaulting to overworld", .{build_options.auto_world});
-    return 0;
+    return worldgen_registry.findGeneratorIndex("overworld") orelse 0;
 }
