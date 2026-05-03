@@ -38,9 +38,26 @@ pub const CacheError = error{
 
 const BIOME_COUNT: usize = @typeInfo(BiomeId).@"enum".fields.len;
 const BLOCK_COUNT: usize = @typeInfo(BlockType).@"enum".fields.len;
+const HEIGHT_WIRE_SIZE: usize = @sizeOf(f32);
+const BIOME_WIRE_SIZE: usize = @sizeOf(BiomeId);
+const BLOCK_WIRE_SIZE: usize = @sizeOf(BlockType);
+const COLOR_WIRE_SIZE: usize = @sizeOf(u32);
+const MATERIAL_LAYERS_WIRE_SIZE: usize = 3 * BLOCK_WIRE_SIZE;
+const WATER_WIRE_SIZE: usize = @sizeOf(u8) + 3 * @sizeOf(f32);
+const LIGHTING_WIRE_SIZE: usize = 2 * @sizeOf(u8) + @sizeOf(f32);
+const VEGETATION_WIRE_SIZE: usize = 4 * @sizeOf(f32) + 2 * BLOCK_WIRE_SIZE;
+const CELL_WIRE_SIZE: usize = HEIGHT_WIRE_SIZE + BIOME_WIRE_SIZE + BLOCK_WIRE_SIZE + COLOR_WIRE_SIZE + MATERIAL_LAYERS_WIRE_SIZE + WATER_WIRE_SIZE + LIGHTING_WIRE_SIZE + VEGETATION_WIRE_SIZE;
+
+comptime {
+    std.debug.assert(MATERIAL_LAYERS_WIRE_SIZE == 3);
+    std.debug.assert(WATER_WIRE_SIZE == 13);
+    std.debug.assert(LIGHTING_WIRE_SIZE == 6);
+    std.debug.assert(VEGETATION_WIRE_SIZE == 18);
+    std.debug.assert(CELL_WIRE_SIZE == 50);
+}
 
 fn payloadSize(count: usize) usize {
-    return count * (@sizeOf(f32) + @sizeOf(BiomeId) + @sizeOf(BlockType) + @sizeOf(u32) + 3 + 13 + 6 + 18);
+    return count * CELL_WIRE_SIZE;
 }
 
 pub fn serializedSize(data: *const LODSimplifiedData) usize {
@@ -311,4 +328,21 @@ test "LOD cache rejects checksum mismatch" {
     bytes[bytes.len - 1] ^= 0x01;
 
     try testing.expectError(CacheError.ChecksumMismatch, deserialize(bytes, key, testing.allocator));
+}
+
+test "LOD cache rejects mismatched cache key" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod1);
+    defer data.deinit();
+
+    const key = Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
+    const bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(bytes);
+
+    const wrong_key = Key{ .seed = 1, .generator_identity_hash = 3, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
+    try testing.expectError(CacheError.InvalidKey, deserialize(bytes, wrong_key, testing.allocator));
+}
+
+test "LOD cache payload size follows named wire fields" {
+    try testing.expectEqual(@as(usize, 50), payloadSize(1));
+    try testing.expectEqual(@as(usize, HEADER_SIZE + 50 * 4), HEADER_SIZE + payloadSize(4));
 }

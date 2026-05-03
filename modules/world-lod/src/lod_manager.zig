@@ -797,8 +797,21 @@ pub const LODManager = struct {
         return std.fs.path.join(self.allocator, &.{ cache_dir_path, filename });
     }
 
-    fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
+    fn cacheDirPathSnapshot(self: *Self) ?[]u8 {
+        self.mutex.lockShared();
+        defer self.mutex.unlockShared();
+
         const cache_dir_path = self.cache_dir_path orelse return null;
+        return self.allocator.dupe(u8, cache_dir_path) catch |err| {
+            log.log.warn("LOD cache path snapshot allocation failed: {}", .{err});
+            return null;
+        };
+    }
+
+    fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
+        const cache_dir_path = self.cacheDirPathSnapshot() orelse return null;
+        defer self.allocator.free(cache_dir_path);
+
         const cache_key = self.cacheKey(key);
         const path = self.cacheFilePath(cache_dir_path, cache_key) catch |err| {
             log.log.warn("LOD cache path allocation failed: {}", .{err});
@@ -827,13 +840,20 @@ pub const LODManager = struct {
     }
 
     fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
-        const cache_dir_path = self.cache_dir_path orelse return;
+        const cache_dir_path = self.cacheDirPathSnapshot() orelse return;
+        defer self.allocator.free(cache_dir_path);
+
         const cache_key = self.cacheKey(key);
         const path = self.cacheFilePath(cache_dir_path, cache_key) catch |err| {
             log.log.warn("LOD cache path allocation failed: {}", .{err});
             return;
         };
         defer self.allocator.free(path);
+        const tmp_path = std.fmt.allocPrint(self.allocator, "{s}.tmp", .{path}) catch |err| {
+            log.log.warn("LOD cache temp path allocation failed: {}", .{err});
+            return;
+        };
+        defer self.allocator.free(tmp_path);
 
         const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
             log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
@@ -841,13 +861,22 @@ pub const LODManager = struct {
         };
         defer self.allocator.free(bytes);
 
-        const file = fs.cwd().createFile(path, .{ .truncate = true }) catch |err| {
-            log.log.warn("Failed to create LOD cache '{s}': {}", .{ path, err });
+        const cwd = fs.cwd();
+        const file = cwd.createFile(tmp_path, .{ .truncate = true }) catch |err| {
+            log.log.warn("Failed to create LOD cache '{s}': {}", .{ tmp_path, err });
             return;
         };
-        defer file.close();
         file.writeAll(bytes) catch |err| {
-            log.log.warn("Failed to write LOD cache '{s}': {}", .{ path, err });
+            log.log.warn("Failed to write LOD cache '{s}': {}", .{ tmp_path, err });
+            file.close();
+            cwd.deleteFile(tmp_path) catch {};
+            return;
+        };
+        file.close();
+
+        cwd.rename(tmp_path, path) catch |err| {
+            log.log.warn("Failed to publish LOD cache '{s}': {}", .{ path, err });
+            cwd.deleteFile(tmp_path) catch {};
         };
     }
 
@@ -930,7 +959,7 @@ pub const LODManager = struct {
             .chunk_generation => {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
-                    var data = self.loadCachedSourceData(key) orelse blk: {
+                    const data = self.loadCachedSourceData(key) orelse blk: {
                         var generated = LODSimplifiedData.init(self.allocator, lod_level) catch {
                             new_state = .missing;
                             chunk.unpin();
@@ -946,8 +975,6 @@ pub const LODManager = struct {
                         self.saveCachedSourceData(key, &generated);
                         break :blk generated;
                     };
-
-                    errdefer data.deinit();
 
                     // Acquire lock to update chunk data
                     self.mutex.lock();
