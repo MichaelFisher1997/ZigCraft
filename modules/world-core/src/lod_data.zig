@@ -296,8 +296,9 @@ pub const LODSimplifiedData = struct {
 
     pub fn totalMemoryBytes(self: *const LODSimplifiedData) usize {
         const count = self.width * self.width;
-        var total = count * (@sizeOf(f32) + @sizeOf(world_core.BiomeId) + @sizeOf(world_core.BlockType) + @sizeOf(u32) + @sizeOf(LODMaterialLayers) + @sizeOf(LODWaterState) + @sizeOf(LODLightingHint) + @sizeOf(LODVegetationHint));
-        if (self.vertical_span_counts != null) total += count * @sizeOf(u8);
+        const count_usize = @as(usize, @intCast(count));
+        var total: usize = count_usize * (@sizeOf(f32) + @sizeOf(world_core.BiomeId) + @sizeOf(world_core.BlockType) + @sizeOf(u32) + @sizeOf(LODMaterialLayers) + @sizeOf(LODWaterState) + @sizeOf(LODLightingHint) + @sizeOf(LODVegetationHint));
+        if (self.vertical_span_counts != null) total += count_usize * @sizeOf(u8);
         if (self.vertical_spans != null) total += @as(usize, @intCast(count)) * MAX_LOD_VERTICAL_SPANS * @sizeOf(LODVerticalSpan);
         return total;
     }
