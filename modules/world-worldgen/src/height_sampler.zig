@@ -18,6 +18,8 @@ const PathInfo = region_pkg.PathInfo;
 const RegionControls = region_pkg.RegionControls;
 const TerrainModifier = @import("biome_registry.zig").TerrainModifier;
 const world_class = @import("world_class.zig");
+
+const COASTAL_DETAIL_BLEND_WEIGHT: f32 = 0.45;
 const ContinentalZone = world_class.ContinentalZone;
 
 // ============================================================================
@@ -304,7 +306,7 @@ pub const HeightSampler = struct {
         // ============================================================
         const erosion_smooth = smoothstep(0.5, 0.75, noise.erosion);
         const land_factor = smoothstep(p.continental_coast_max, p.continental_inland_low_max, noise.continentalness);
-        const coastal_detail_factor = coastal_ramp * (1.0 - land_factor) * 0.45;
+        const coastal_detail_factor = coastal_ramp * (1.0 - land_factor) * COASTAL_DETAIL_BLEND_WEIGHT;
         const lowland_detail_factor = @max(land_factor, coastal_detail_factor);
         const hills_atten = (1.0 - erosion_smooth) * lowland_detail_factor * coastal_ramp * (1.0 - path_effects.slope_suppress);
 

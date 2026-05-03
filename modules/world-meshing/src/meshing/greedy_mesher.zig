@@ -102,7 +102,7 @@ pub fn meshSlice(
                     .top => Face.bottom,
                     .east => Face.west,
                     .south => Face.north,
-                    else => return error.UnsupportedFace,
+                    else => unreachable,
                 };
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, face, s, u, v, b2);
                 mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
