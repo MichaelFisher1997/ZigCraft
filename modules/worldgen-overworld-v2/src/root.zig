@@ -1210,14 +1210,21 @@ fn setTreeBlockOffset(chunk: *Chunk, cx: u32, base_y: u32, cz: u32, ox: i32, oy:
 fn setTreeBlock(chunk: *Chunk, x: u32, y: u32, z: u32, block: BlockType, leaves_only: bool) void {
     const idx = Chunk.getIndex(x, y, z);
     const existing = chunk.blocks[idx];
-    if (leaves_only and existing != .air and existing != .leaves and existing != .birch_leaves and existing != .spruce_leaves and existing != .jungle_leaves and existing != .acacia_leaves) return;
-    if (!leaves_only and existing != .air and !isLeafBlock(existing)) return;
+    if (leaves_only and existing != .air and !isLeafBlock(existing)) return;
+    if (!leaves_only and existing != .air and !isLeafBlock(existing) and !isReplaceableTreeBase(existing)) return;
     chunk.blocks[idx] = block;
 }
 
 fn isLeafBlock(block: BlockType) bool {
     return switch (block) {
         .leaves, .birch_leaves, .spruce_leaves, .jungle_leaves, .acacia_leaves => true,
+        else => false,
+    };
+}
+
+fn isReplaceableTreeBase(block: BlockType) bool {
+    return switch (block) {
+        .tall_grass, .flower_red, .flower_yellow, .dead_bush, .snow_layer, .seagrass, .tall_seagrass, .kelp, .seaweed => true,
         else => false,
     };
 }
