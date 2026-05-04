@@ -639,3 +639,150 @@ test "Post-process framebuffer index bounds check" {
     image_index = 3;
     try testing.expect(image_index >= framebuffers_len);
 }
+
+// ============================================================================
+// markSwapchainRecreateFailed tests - call real production function
+// ============================================================================
+
+test "markSwapchainRecreateFailed first call returns true and sets failure flags" {
+    const frame_orchestration = @import("rhi_frame_orchestration.zig");
+    const MockRecreateCtx = struct {
+        runtime: struct {
+            swapchain_recreate_failed: bool = false,
+            framebuffer_resized: bool = false,
+            pipeline_rebuild_needed: bool = false,
+        } = .{},
+    };
+
+    var ctx = MockRecreateCtx{};
+
+    const result = frame_orchestration.markSwapchainRecreateFailed(&ctx, "test stage", error.OutOfMemory);
+
+    try testing.expect(result);
+    try testing.expect(ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+}
+
+test "markSwapchainRecreateFailed second call returns false and keeps flags set" {
+    const frame_orchestration = @import("rhi_frame_orchestration.zig");
+    const MockRecreateCtx = struct {
+        runtime: struct {
+            swapchain_recreate_failed: bool = false,
+            framebuffer_resized: bool = false,
+            pipeline_rebuild_needed: bool = false,
+        } = .{},
+    };
+
+    var ctx = MockRecreateCtx{};
+
+    _ = frame_orchestration.markSwapchainRecreateFailed(&ctx, "first", error.OutOfMemory);
+    const second_result = frame_orchestration.markSwapchainRecreateFailed(&ctx, "second", error.ValidationFailed);
+
+    try testing.expect(!second_result);
+    try testing.expect(ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+}
+
+test "markSwapchainRecreateFailed different errors all set same failure state" {
+    const frame_orchestration = @import("rhi_frame_orchestration.zig");
+    const MockRecreateCtx = struct {
+        runtime: struct {
+            swapchain_recreate_failed: bool = false,
+            framebuffer_resized: bool = false,
+            pipeline_rebuild_needed: bool = false,
+        } = .{},
+    };
+
+    const errors = [_]anyerror{ error.OutOfMemory, error.GpuLost, error.InitializationFailed };
+
+    for (errors) |err| {
+        var ctx = MockRecreateCtx{};
+        _ = frame_orchestration.markSwapchainRecreateFailed(&ctx, "stage", err);
+        try testing.expect(ctx.runtime.swapchain_recreate_failed);
+        try testing.expect(ctx.runtime.framebuffer_resized);
+        try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+    }
+}
+
+// ============================================================================
+// markSwapchainRecreateSucceeded tests - call real production function
+// ============================================================================
+
+test "markSwapchainRecreateSucceeded clears all failure flags" {
+    const frame_orchestration = @import("rhi_frame_orchestration.zig");
+    const MockRecreateCtx = struct {
+        runtime: struct {
+            swapchain_recreate_failed: bool = false,
+            framebuffer_resized: bool = false,
+            pipeline_rebuild_needed: bool = false,
+        } = .{},
+    };
+
+    var ctx = MockRecreateCtx{ .runtime = .{
+        .swapchain_recreate_failed = true,
+        .framebuffer_resized = true,
+        .pipeline_rebuild_needed = true,
+    } };
+
+    frame_orchestration.markSwapchainRecreateSucceeded(&ctx);
+
+    try testing.expect(!ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(!ctx.runtime.framebuffer_resized);
+    try testing.expect(!ctx.runtime.pipeline_rebuild_needed);
+}
+
+// ============================================================================
+// FrameManager abortFrame tests - real production state transition
+// ============================================================================
+
+test "FrameManager abortFrame no-op when frame not in progress" {
+    const frame_manager = @import("frame_manager.zig");
+    const MockDevice = struct {
+        vk_device: c.VkDevice = null,
+    };
+
+    var device = MockDevice{};
+    var fm = frame_manager.FrameManager{
+        .vulkan_device = &device,
+        .command_pool = null,
+        .command_buffers = .{ null, null },
+        .image_available_semaphores = .{ null, null },
+        .render_finished_semaphores = .{ null, null },
+        .in_flight_fences = .{ null, null },
+        .current_frame = 0,
+        .current_image_index = 0,
+        .frame_in_progress = false,
+        .dry_run = true,
+    };
+
+    fm.abortFrame();
+
+    try testing.expect(!fm.frame_in_progress);
+}
+
+test "FrameManager abortFrame clears frame_in_progress when set" {
+    const frame_manager = @import("frame_manager.zig");
+    const MockDevice = struct {
+        vk_device: c.VkDevice = null,
+    };
+
+    var device = MockDevice{};
+    var fm = frame_manager.FrameManager{
+        .vulkan_device = &device,
+        .command_pool = null,
+        .command_buffers = .{ null, null },
+        .image_available_semaphores = .{ null, null },
+        .render_finished_semaphores = .{ null, null },
+        .in_flight_fences = .{ null, null },
+        .current_frame = 0,
+        .current_image_index = 0,
+        .frame_in_progress = true,
+        .dry_run = true,
+    };
+
+    fm.abortFrame();
+
+    try testing.expect(!fm.frame_in_progress);
+}
