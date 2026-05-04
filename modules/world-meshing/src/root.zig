@@ -13,6 +13,7 @@ pub const meshing = struct {
     pub const biome_color_sampler = @import("meshing/biome_color_sampler.zig");
     pub const boundary = @import("meshing/boundary.zig");
     pub const boundary_tests = @import("meshing/boundary_tests.zig");
+    pub const boundary_cross_tests = @import("meshing/boundary_cross_tests.zig");
     pub const cross_mesher = @import("meshing/cross_mesher.zig");
     pub const custom_mesh_mesher = @import("meshing/custom_mesh_mesher.zig");
     pub const greedy_mesher = @import("meshing/greedy_mesher.zig");

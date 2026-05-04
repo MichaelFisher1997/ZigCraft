@@ -181,6 +181,28 @@ test "core natural block pack registry properties" {
     try testing.expectEqual(block_registry.RenderPass.solid, block_registry.getBlockDefinition(.white_terracotta).render_pass);
 }
 
+test "BlockDefinition.isFullCubeOccluder true for solid cube blocks" {
+    try testing.expect(block_registry.getBlockDefinition(.stone).isFullCubeOccluder());
+    try testing.expect(block_registry.getBlockDefinition(.bedrock).isFullCubeOccluder());
+    try testing.expect(block_registry.getBlockDefinition(.cobblestone).isFullCubeOccluder());
+}
+
+test "BlockDefinition.isFullCubeOccluder false for transparent blocks" {
+    try testing.expect(!block_registry.getBlockDefinition(.glass).isFullCubeOccluder());
+    try testing.expect(!block_registry.getBlockDefinition(.ice).isFullCubeOccluder());
+}
+
+test "BlockDefinition.isFullCubeOccluder false for non-cube shapes" {
+    try testing.expect(!block_registry.getBlockDefinition(.torch).isFullCubeOccluder());
+    try testing.expect(!block_registry.getBlockDefinition(.tall_grass).isFullCubeOccluder());
+    try testing.expect(!block_registry.getBlockDefinition(.vine).isFullCubeOccluder());
+}
+
+test "BlockDefinition.isFullCubeOccluder false for solid but non-cube render shape" {
+    try testing.expect(!block_registry.getBlockDefinition(.stone_slab).isFullCubeOccluder());
+    try testing.expect(!block_registry.getBlockDefinition(.stone_stairs).isFullCubeOccluder());
+}
+
 test "aquatic vegetation blocks use cutout shapes" {
     const seagrass = block_registry.getBlockDefinition(.seagrass);
     try testing.expect(!seagrass.is_solid);
