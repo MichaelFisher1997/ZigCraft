@@ -95,6 +95,7 @@ test {
     _ = @import("world-meshing").chunk_storage_interface_tests;
     _ = @import("world-core").biome_and_block_tests;
     _ = @import("world-core").packed_light_tests;
+    _ = @import("world-meshing").meshing.boundary_cross_tests;
     _ = @import("world-meshing").meshing.boundary_tests;
     _ = @import("world-core").world_coord_tests;
     _ = @import("world-core").world_block_fill_tests;
