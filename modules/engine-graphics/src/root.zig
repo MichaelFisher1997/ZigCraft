@@ -94,6 +94,7 @@ pub const VulkanDevice = vulkan_device.VulkanDevice;
 pub const VulkanContext = vulkan_rhi_context_types.VulkanContext;
 pub const VulkanSwapchain = vulkan_swapchain.VulkanSwapchain;
 pub const rhi_tests = @import("rhi_tests.zig");
+pub const rhi_shadow_bridge_tests = @import("rhi_shadow_bridge_tests.zig");
 pub const shadow_cascade_tests = @import("engine-shadows").shadow_cascade_tests;
 pub const shadow_tests = @import("shadow_tests.zig");
 pub const shadow_system_tests = @import("engine-shadows").shadow_system_tests;

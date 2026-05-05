@@ -47,6 +47,7 @@ test {
     _ = @import("engine-graphics").rhi_tests;
     _ = @import("engine-clouds").cloud_system;
     _ = @import("engine-shadows").shadow_cascade_tests;
+    _ = @import("engine-graphics").rhi_shadow_bridge_tests;
     _ = @import("engine-graphics").shadow_tests;
     _ = @import("engine-shadows").shadow_system_tests;
     _ = @import("engine-math").utils_tests;
