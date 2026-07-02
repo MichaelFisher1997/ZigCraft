@@ -37,7 +37,7 @@ test "LODManager initialization" {
 
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
-        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel) void {}
+        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
         fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
             return false;
         }
@@ -135,7 +135,7 @@ test "LODManager end-to-end covered cleanup" {
 
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
-        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel) void {}
+        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
         fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
             return false;
         }

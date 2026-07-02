@@ -36,7 +36,7 @@ const MAX_LIGHT_DIFF_FOR_MERGE: u8 = 1;
 /// gradients, keeping quads large without visible color steps.
 const MAX_COLOR_DIFF_FOR_MERGE: f32 = 0.02;
 
-const FaceKey = struct {
+pub const FaceKey = struct {
     block: BlockType,
     side: bool,
     light: PackedLight,
@@ -47,6 +47,8 @@ const FaceKey = struct {
 
 /// Process a single 16x16 slice along the given axis, producing greedy-merged quads.
 /// Populates solid_list, cutout_list, and fluid_list with generated vertices.
+/// The caller-owned `mask` buffer (256 entries) is reused across slices to avoid
+/// per-slice allocation churn (~816 allocs/chunk previously).
 pub fn meshSlice(
     allocator: std.mem.Allocator,
     chunk: *const Chunk,
@@ -58,13 +60,12 @@ pub fn meshSlice(
     cutout_list: *std.ArrayListUnmanaged(Vertex),
     fluid_list: *std.ArrayListUnmanaged(Vertex),
     atlas: *const TextureAtlas,
+    mask: []?FaceKey,
 ) !void {
     if (axis != .top and axis != .east and axis != .south) return error.UnsupportedFace;
 
     const du: u32 = 16;
     const dv: u32 = 16;
-    var mask = try allocator.alloc(?FaceKey, du * dv);
-    defer allocator.free(mask);
     @memset(mask, null);
 
     // Phase 1: Build the face mask

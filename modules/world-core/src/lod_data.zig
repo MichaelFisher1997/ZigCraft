@@ -126,7 +126,14 @@ pub const LODSimplifiedData = struct {
         return switch (lod_level) {
             .lod0 => 16,
             .lod1 => 32,
-            .lod2, .lod3 => 48,
+            .lod2 => 48,
+            // LOD3 is the farthest band (8x8 chunks/region). A 48x48 grid gave
+            // ~2.7 blocks/cell — far finer than is visible at that distance.
+            // 24x24 (~5.3 blocks/cell) is plenty for the horizon silhouette and
+            // cuts LOD3 heightmap generation cost 4x (columns) on top of the
+            // single-sample change — ~36x total, the difference between a vista
+            // that pops in over seconds vs. many minutes.
+            .lod3 => 24,
         };
     }
 

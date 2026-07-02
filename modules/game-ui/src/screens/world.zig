@@ -247,7 +247,7 @@ pub const WorldScreen = struct {
         const frames_elapsed = self.context.time.frame_count - self.startup_diagnostic_start_frame;
         const avg_fps = if (elapsed > 0.001) @as(f32, @floatFromInt(frames_elapsed)) / elapsed else self.context.time.fps;
 
-        log.log.info(
+        log.log.warn(
             "STARTUP_DIAG: generator='{s}' elapsed={d:.2}s fps={d:.1} avg_fps={d:.1} frames={} rd={} lod0={} chunks_loaded={} chunks_total={} chunks_rendered={} chunks_culled={} gen_queue={} mesh_queue={} upload_queue={} lod_loaded={}",
             .{
                 self.session.world.generator.info.name,
@@ -267,7 +267,7 @@ pub const WorldScreen = struct {
                 if (lod_stats) |ls| ls.totalLoaded() else @as(u32, 0),
             },
         );
-        log.log.info(
+        log.log.warn(
             "STARTUP_DIAG_STATES: total={} missing={} generating={} meshing={} renderable={} other={} dirty={} vertices_rendered={}",
             .{
                 state_counts.total,
@@ -281,12 +281,26 @@ pub const WorldScreen = struct {
             },
         );
         if (lod_stats) |ls| {
-            log.log.info(
-                "STARTUP_DIAG_LOD: loaded=[{}, {}, {}, {}] memory_mb={}",
-                .{ ls.loaded[0], ls.loaded[1], ls.loaded[2], ls.loaded[3], ls.memory_used_mb },
+            log.log.warn(
+                "STARTUP_DIAG_LOD_STATES: loaded=[{},{},{},{}] generating=[{},{},{},{}] generated=[{},{},{},{}] meshing=[{},{},{},{}]",
+                .{
+                    ls.loaded[0],     ls.loaded[1],     ls.loaded[2],     ls.loaded[3],
+                    ls.generating[0], ls.generating[1], ls.generating[2], ls.generating[3],
+                    ls.generated[0],  ls.generated[1],  ls.generated[2],  ls.generated[3],
+                    ls.meshing[0],    ls.meshing[1],    ls.meshing[2],    ls.meshing[3],
+                },
+            );
+            log.log.warn(
+                "STARTUP_DIAG_LOD_QUEUES: mesh_ready=[{},{},{},{}] uploading=[{},{},{},{}] meshes=[{},{},{},{}] genQ={} uploadQ=[{},{},{}] memory_mb={}",
+                .{
+                    ls.mesh_ready[0],                               ls.mesh_ready[1],         ls.mesh_ready[2],         ls.mesh_ready[3],
+                    ls.uploading[0],                                ls.uploading[1],          ls.uploading[2],          ls.uploading[3],
+                    ls.mesh_count[0],                               ls.mesh_count[1],         ls.mesh_count[2],         ls.mesh_count[3],
+                    ls.gen_queue_depth[ls.gen_queue_depth.len - 1], ls.upload_queue_depth[1], ls.upload_queue_depth[2], ls.upload_queue_depth[3],
+                    ls.memory_used_mb,
+                },
             );
         }
-
         self.startup_diagnostic_logged = true;
         self.context.input.setShouldQuit(true);
     }

@@ -136,6 +136,18 @@ pub const LODManager = struct {
     // Paused state
     paused: bool,
 
+    // Teardown abort flag: set true ONLY in deinit() so in-flight LOD heightmap
+    // generation jobs abort early and the worker-pool join doesn't block for
+    // seconds on non-interruptible coarse-LOD jobs. Never set during normal
+    // play or map pause, so LOD generation runs uninterrupted.
+    //
+    // Atomic: written on the main thread (deinit) with .release, read from
+    // worker threads inside the heightmap loop with .acquire. This both
+    // establishes proper cross-thread ordering and prevents the compiler from
+    // hoisting the read out of the generation loop (which would silently break
+    // the abort in ReleaseFast).
+    stop_flag: std.atomic.Value(bool),
+
     // Memory tracking
     memory_used_bytes: usize,
 
@@ -221,6 +233,7 @@ pub const LODManager = struct {
             .generator = generator,
             .atlas = atlas,
             .paused = false,
+            .stop_flag = std.atomic.Value(bool).init(false),
             .memory_used_bytes = 0,
             .update_tick = 0,
             .deletion_queue = .empty,
@@ -250,12 +263,20 @@ pub const LODManager = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Abort any in-flight heightmap jobs BEFORE joining the worker pool.
+        // Coarse-LOD heightmap generation can take seconds per region and is
+        // only interruptible via this flag (checked inside the generation loop).
+        // This is the ONLY place stop_flag is set: normal pause()/unpause() and
+        // map-open leave it false so LOD generation runs uninterrupted.
+        self.stop_flag.store(true, .release);
+
         // Stop and cleanup queues
         for (0..LODLevel.count) |i| {
             self.gen_queues[i].stop();
         }
 
-        // Cleanup worker pool
+        // Cleanup worker pool. In-flight heightmap jobs were aborted by
+        // stop_flag above, so this join completes promptly.
         if (self.lod_gen_pool) |pool| {
             pool.deinit();
         }
@@ -346,6 +367,12 @@ pub const LODManager = struct {
         self.player_cx = pc.chunk_x;
         self.player_cz = pc.chunk_z;
 
+        // Keep LOD job priorities fresh as the player moves. doReprioritize is
+        // LOD-aware (scales region coords to chunk space, preserves LOD-bias
+        // bits), so this safely re-orders stale jobs after chunk crossings.
+        // The actual rebuild is lazy (only on pop when the queue is large).
+        self.gen_queues[LODLevel.count - 1].updatePlayerPos(self.player_cx, self.player_cz) catch {};
+
         // Throttle heavy LOD management logic (generation queuing, state processing, unloads).
         // LOD management involves iterating over thousands of potential regions and can
         // take several milliseconds. Throttling to every 4 frames (approx 15Hz at 60fps)
@@ -390,6 +417,21 @@ pub const LODManager = struct {
         // Update stats
         self.updateStats();
 
+        // Periodic WARN-level LOD stats so logs/zigcraft.log shows LOD fill
+        // progress by default (no env vars needed). update_tick counts frames;
+        // every ~180 frames (~3s @ 60fps) gives a trend over a 20s diagnostic run.
+        if (self.update_tick % 180 == 0) {
+            const s = self.stats;
+            log.log.warn("LOD_STATS: loaded=[L1:{},L2:{},L3:{}] generating=[{},{},{}] meshing=[{},{},{}] genQ3={} uploadQ=[{},{},{}] meshes=[{},{},{}] cache_hit/miss={}/{}", .{
+                s.loaded[1],                           s.loaded[2],             s.loaded[3],
+                s.generating[1],                       s.generating[2],         s.generating[3],
+                s.meshing[1],                          s.meshing[2],            s.meshing[3],
+                s.gen_queue_depth[LODLevel.count - 1], s.upload_queue_depth[1], s.upload_queue_depth[2],
+                s.upload_queue_depth[3],               s.mesh_count[1],         s.mesh_count[2],
+                s.mesh_count[3],                       s.cache_hits,            s.cache_misses,
+            });
+        }
+
         // Unload distant regions
         self.unloadDistantRegions() catch |err| {
             log.log.warn("LOD unload error: {} (non-fatal)", .{err});
@@ -426,37 +468,81 @@ pub const LODManager = struct {
         defer self.mutex.unlock();
 
         const active_lod_count = lod_chunk.activeLODCount(self.config);
+
+        // Collect generated/mesh-ready chunks, then sort by ascending distance
+        // before enqueueing. The regions HashMap iterates in arbitrary
+        // (hash-bucket) order, so without sorting the meshing/upload order is
+        // effectively random — far chunks can be processed before near ones.
+        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3 };
+        var mesh_candidates = std.ArrayListUnmanaged(MeshCandidate).empty;
+        defer mesh_candidates.deinit(self.allocator);
+
+        const UploadCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3 };
+        var upload_candidates = std.ArrayListUnmanaged(UploadCandidate).empty;
+        defer upload_candidates.deinit(self.allocator);
+
         for (1..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
+            const scale = @as(i32, @intCast(lod.chunksPerSide()));
+            const lod_priority_bias = @as(i32, @intCast(LODLevel.count - 1 - i)) << 28;
+            const level: u3 = @intCast(i);
             var iter = self.regions[i].iterator();
             while (iter.next()) |entry| {
                 const chunk = entry.value_ptr.*;
                 if (chunk.state == .generated) {
-                    const scale = @as(i32, @intCast(lod.chunksPerSide()));
                     const dx = chunk.region_x * scale - self.player_cx;
                     const dz = chunk.region_z * scale - self.player_cz;
                     const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
-                    const lod_priority_bias = @as(i32, @intCast(LODLevel.count - 1 - i)) << 28;
-
+                    const encoded_priority = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias;
+                    // Append before flipping state so an allocation failure
+                    // leaves the chunk in .generated (re-tried next tick)
+                    // instead of stuck in .meshing with no queued job.
+                    try mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
                     chunk.state = .meshing;
-                    try self.gen_queues[LODLevel.count - 1].push(.{
-                        .type = .chunk_meshing,
-                        // Encode LOD level in high bits of dist_sq
-                        .dist_sq = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias,
-                        .data = .{
-                            .chunk = .{
-                                .x = chunk.region_x,
-                                .z = chunk.region_z,
-                                .job_token = chunk.job_token,
-                                .lod_level = @as(u3, @intCast(i)),
-                            },
-                        },
-                    });
                 } else if (chunk.state == .mesh_ready) {
+                    const dx = chunk.region_x * scale - self.player_cx;
+                    const dz = chunk.region_z * scale - self.player_cz;
+                    const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
+                    const encoded_priority = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias;
+                    try upload_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
                     chunk.state = .uploading;
-                    try self.upload_queues[i].push(chunk);
                 }
             }
+        }
+
+        // Meshing jobs share one queue; sort by encoded priority so the
+        // LOD-bias bits keep coarse-first across levels and distance orders
+        // nearest-first within a level.
+        std.mem.sort(MeshCandidate, mesh_candidates.items, {}, struct {
+            fn lt(_: void, a: MeshCandidate, b: MeshCandidate) bool {
+                return a.encoded_priority < b.encoded_priority;
+            }
+        }.lt);
+        for (mesh_candidates.items) |mc| {
+            try self.gen_queues[LODLevel.count - 1].push(.{
+                .type = .chunk_meshing,
+                .dist_sq = mc.encoded_priority,
+                .data = .{
+                    .chunk = .{
+                        .x = mc.chunk.region_x,
+                        .z = mc.chunk.region_z,
+                        .job_token = mc.chunk.job_token,
+                        .lod_level = mc.level,
+                    },
+                },
+            });
+        }
+
+        // Uploads go to per-level FIFO queues; group by level (ascending) and
+        // nearest-first within each level so each queue receives close regions first.
+        std.mem.sort(UploadCandidate, upload_candidates.items, {}, struct {
+            fn lt(_: void, a: UploadCandidate, b: UploadCandidate) bool {
+                if (a.level != b.level) return a.level < b.level;
+                return a.encoded_priority < b.encoded_priority;
+            }
+        }.lt);
+        for (upload_candidates.items) |uc| {
+            try self.upload_queues[uc.level].push(uc.chunk);
         }
     }
 
@@ -469,7 +555,12 @@ pub const LODManager = struct {
         const max_uploads = self.config.getMaxUploadsPerFrame();
         var uploads: u32 = 0;
 
-        // Process from highest active LOD down (furthest, should be ready first)
+        // Process coarsest LOD first so the distant horizon (the "miles" vista)
+        // fills before near bands. Near LOD0/near chunks already cover the
+        // immediate surroundings, so prioritizing the horizon gives the best
+        // perceived draw distance. Finest-first was tried and starved the
+        // horizon (only a thin near LOD ring appeared). Within each level the
+        // upload queue is ordered nearest-first by processStateTransitions.
         const active_lod_count = lod_chunk.activeLODCount(self.config);
         var i: usize = active_lod_count - 1;
         while (i > 0) : (i -= 1) {
@@ -975,6 +1066,7 @@ pub const LODManager = struct {
             },
             .atlas = undefined,
             .paused = false,
+            .stop_flag = std.atomic.Value(bool).init(false),
             .memory_used_bytes = 0,
             .update_tick = 0,
             .deletion_queue = .empty,
@@ -1092,8 +1184,24 @@ pub const LODManager = struct {
                                 return;
                             };
 
-                        // Generate heightmap data (expensive, done without lock)
-                        self.generator.generateHeightmapOnly(&generated, chunk.region_x, chunk.region_z, lod_level);
+                        // Generate heightmap data (expensive, done without lock).
+                        // Pass the stop flag so teardown/pause can interrupt the
+                        // multi-second coarse-LOD heightmap loop instead of
+                        // forcing the worker-join to block until it finishes.
+                        self.generator.generateHeightmapOnly(&generated, chunk.region_x, chunk.region_z, lod_level, &self.stop_flag);
+
+                        // If generation was aborted, discard the partial data
+                        // and leave the chunk in .missing so it re-generates later.
+                        if (self.stop_flag.load(.acquire)) {
+                            generated.deinit();
+                            new_state = .missing;
+                            chunk.unpin();
+                            self.mutex.lock();
+                            chunk.state = new_state;
+                            self.mutex.unlock();
+                            return;
+                        }
+
                         self.saveCachedSourceData(key, &generated);
                         break :blk generated;
                     };

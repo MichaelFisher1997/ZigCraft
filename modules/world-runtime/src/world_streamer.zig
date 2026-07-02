@@ -103,15 +103,15 @@ pub const WorldStreamer = struct {
 
     const MIN_GEN_WORKERS = 2;
     const MAX_GEN_WORKERS = 4;
-    const MIN_MESH_WORKERS = 1;
-    const MAX_MESH_WORKERS = 3;
+    const MIN_MESH_WORKERS = 2;
+    const MAX_MESH_WORKERS = 6;
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
         errdefer allocator.destroy(streamer);
 
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
         const gen_worker_count = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
-        const mesh_worker_count = std.math.clamp(cpu_count / 4, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
+        const mesh_worker_count = std.math.clamp(cpu_count / 2, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
 
         const gen_queue = try allocator.create(JobQueue);
         gen_queue.* = JobQueue.init(allocator);

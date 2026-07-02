@@ -81,7 +81,7 @@ pub const Generator = struct {
 
     pub const VTable = struct {
         generate: *const fn (ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) void,
-        generateHeightmapOnly: *const fn (ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void,
+        generateHeightmapOnly: *const fn (ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void,
         maybeRecenterCache: *const fn (ptr: *anyopaque, player_x: i32, player_z: i32) bool,
         getSeed: *const fn (ptr: *anyopaque) u64,
         getRegionInfo: *const fn (ptr: *anyopaque, world_x: i32, world_z: i32) RegionInfo,
@@ -93,8 +93,8 @@ pub const Generator = struct {
         self.vtable.generate(self.ptr, chunk, stop_flag);
     }
 
-    pub fn generateHeightmapOnly(self: Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
-        self.vtable.generateHeightmapOnly(self.ptr, data, region_x, region_z, lod_level);
+    pub fn generateHeightmapOnly(self: Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
+        self.vtable.generateHeightmapOnly(self.ptr, data, region_x, region_z, lod_level, stop_flag);
     }
 
     pub fn maybeRecenterCache(self: Generator, player_x: i32, player_z: i32) bool {
@@ -147,8 +147,8 @@ pub const IChunkGenerator = struct {
 pub const ILODHeightmapGenerator = struct {
     generator: Generator,
 
-    pub fn generateHeightmapOnly(self: ILODHeightmapGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
-        self.generator.generateHeightmapOnly(data, region_x, region_z, lod_level);
+    pub fn generateHeightmapOnly(self: ILODHeightmapGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
+        self.generator.generateHeightmapOnly(data, region_x, region_z, lod_level, stop_flag);
     }
 };
 

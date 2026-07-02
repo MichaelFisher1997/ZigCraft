@@ -73,6 +73,18 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
     _ = velocity;
 
+    // Collect candidates that need queuing, then sort nearest-first before
+    // pushing. This is essential because the shared priority queue is drained
+    // concurrently by worker threads: a corner-out row-major scan would push
+    // far candidates (produced first) long before near candidates, so workers
+    // process far terrain before near terrain is even inserted. Sorting by
+    // ascending encoded priority (lower = closer, within a single LOD level the
+    // bias bits are identical) ensures nearer regions enter — and thus leave —
+    // the heap first.
+    const Candidate = struct { chunk: *LODChunk, encoded_priority: i32 };
+    var candidates = std.ArrayListUnmanaged(Candidate).empty;
+    defer candidates.deinit(ctx.allocator);
+
     var rz = player_rz - region_radius;
     while (rz <= player_rz + region_radius) : (rz += 1) {
         var rx = player_rx - region_radius;
@@ -115,22 +127,34 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                 const priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
                 const encoded_priority = (priority & 0x0FFFFFFF) | lod_priority_bias;
 
-                try queue.push(.{
-                    .type = .chunk_generation,
-                    .dist_sq = encoded_priority,
-                    .data = .{
-                        .chunk = .{
-                            .x = rx,
-                            .z = rz,
-                            .job_token = chunk.job_token,
-                            .lod_level = lod_idx,
-                        },
-                    },
-                });
+                // Append before flipping state so an allocation failure leaves
+                // the chunk re-queueable in .missing instead of stuck .generating.
+                try candidates.append(ctx.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority });
                 chunk.state = .generating;
                 diag.queued += 1;
             }
         }
+    }
+
+    std.mem.sort(Candidate, candidates.items, {}, struct {
+        fn lessThan(_: void, a: Candidate, b: Candidate) bool {
+            return a.encoded_priority < b.encoded_priority;
+        }
+    }.lessThan);
+
+    for (candidates.items) |cand| {
+        try queue.push(.{
+            .type = .chunk_generation,
+            .dist_sq = cand.encoded_priority,
+            .data = .{
+                .chunk = .{
+                    .x = cand.chunk.region_x,
+                    .z = cand.chunk.region_z,
+                    .job_token = cand.chunk.job_token,
+                    .lod_level = lod_idx,
+                },
+            },
+        });
     }
 
     if (diag_enabled) {

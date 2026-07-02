@@ -163,11 +163,12 @@ pub const ShadowTestWorldGenerator = struct {
         }
     }
 
-    pub fn generateHeightmapOnly(self: *const ShadowTestWorldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
+    pub fn generateHeightmapOnly(self: *const ShadowTestWorldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         _ = self;
         _ = region_x;
         _ = region_z;
         _ = lod_level;
+        _ = stop_flag;
         @memset(data.heightmap, @floatFromInt(GROUND_Y));
         @memset(data.biomes, .plains);
         @memset(data.top_blocks, .grass);
@@ -220,9 +221,9 @@ pub const ShadowTestWorldGenerator = struct {
         self.generate(chunk, stop_flag);
     }
 
-    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
+    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         const self: *ShadowTestWorldGenerator = @ptrCast(@alignCast(ptr));
-        self.generateHeightmapOnly(data, region_x, region_z, lod_level);
+        self.generateHeightmapOnly(data, region_x, region_z, lod_level, stop_flag);
     }
 
     fn maybeRecenterCacheWrapper(ptr: *anyopaque, player_x: i32, player_z: i32) bool {

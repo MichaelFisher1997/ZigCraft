@@ -24,7 +24,7 @@ const CHUNK_VOLUME = world_core.CHUNK_VOLUME;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 
-const SAVE_THREAD_INTERVAL_NS: u64 = 100 * std.time.ns_per_ms;
+const SAVE_THREAD_INTERVAL_NS: u64 = 25 * std.time.ns_per_ms;
 const AUTO_SAVE_INTERVAL_MS: i64 = 60_000;
 const MAX_OPEN_REGIONS: usize = 16;
 
@@ -222,7 +222,7 @@ pub const SaveManager = struct {
             self.queue_mutex.unlock();
             const saving = self.pending_saves.load(.acquire);
             if (count == 0 and saving == 0) break;
-            std.Options.debug_io.sleep(.fromNanoseconds(10 * std.time.ns_per_ms), .boot) catch {};
+            std.Options.debug_io.sleep(.fromNanoseconds(2 * std.time.ns_per_ms), .boot) catch {};
         }
 
         self.failed_mutex.lock();
@@ -236,28 +236,38 @@ pub const SaveManager = struct {
         log.log.debug("Save thread started", .{});
 
         while (self.running.load(.acquire)) {
-            std.Options.debug_io.sleep(.fromNanoseconds(SAVE_THREAD_INTERVAL_NS), .boot) catch {};
-
-            self.processSaveQueue() catch |err| {
+            // On error, treat as "no work done" so the loop sleeps before
+            // retrying — otherwise a persistent fault (e.g. disk full) would
+            // busy-loop at 100% CPU and spam the log.
+            const did_work = self.processSaveQueue() catch |err| blk: {
                 log.log.err("Save thread error: {}", .{err});
+                break :blk false;
             };
+            // Only idle-sleep when there is nothing to do. Previously the thread
+            // slept a full interval between every batch, so flushing N dirty
+            // chunks on exit took ceil(N/64)*interval. Draining back-to-back
+            // collapses that to the actual IO/compression cost.
+            if (!did_work) {
+                std.Options.debug_io.sleep(.fromNanoseconds(SAVE_THREAD_INTERVAL_NS), .boot) catch {};
+            }
         }
 
-        self.processSaveQueue() catch |err| {
+        _ = self.processSaveQueue() catch |err| blk: {
             log.log.err("Save thread final flush error: {}", .{err});
+            break :blk false;
         };
 
         log.log.debug("Save thread exiting", .{});
     }
 
-    fn processSaveQueue(self: *SaveManager) !void {
+    fn processSaveQueue(self: *SaveManager) !bool {
         var batch: [64]SaveQueueEntry = undefined;
 
         self.queue_mutex.lock();
         const count = @min(self.queue.items.len, batch.len);
         if (count == 0) {
             self.queue_mutex.unlock();
-            return;
+            return false;
         }
         log.log.debug("Save thread processing {} chunks", .{count});
         @memcpy(batch[0..count], self.queue.items[0..count]);
@@ -280,6 +290,7 @@ pub const SaveManager = struct {
             };
         }
         self.pending_saves.store(0, .release);
+        return true;
     }
 
     fn saveOneChunk(self: *SaveManager, entry: *const SaveQueueEntry) !void {

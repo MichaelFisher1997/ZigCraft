@@ -254,7 +254,7 @@ pub const OverworldGenerator = struct {
 
     /// Generate heightmap data only (for LODSimplifiedData)
     /// Uses classification cache when available to ensure LOD matches LOD0.
-    pub fn generateHeightmapOnly(self: *const OverworldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
+    pub fn generateHeightmapOnly(self: *const OverworldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         if (data.width < 2) return;
 
         const region_size_i: i32 = @intCast(regionSizeBlocks(lod_level));
@@ -270,16 +270,21 @@ pub const OverworldGenerator = struct {
             world_x + region_size_i,
             world_z + region_size_i,
         );
+        // Kept allocated (cheap: empty HashMap, no heap use until first put) so
+        // tree hints can be re-enabled per-level in sampleRepresentativeLODColumn
+        // without a signature change. Currently unused since compute_tree_hints
+        // is false for all LOD levels.
         var tree_hint_cache = TreeHintCache.init(self.allocator);
         defer tree_hint_cache.deinit();
 
         var gz: u32 = 0;
         while (gz < data.width) : (gz += 1) {
+            if (stop_flag) |sf| if (sf.load(.acquire)) return;
             var gx: u32 = 0;
             while (gx < data.width) : (gx += 1) {
                 const wx = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
                 const wz = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
-                const sample = self.sampleRepresentativeLODColumn(wx, wz, region_size_f / grid_max, sea_level, controls, &tree_hint_cache);
+                const sample = self.sampleRepresentativeLODColumn(wx, wz, region_size_f / grid_max, sea_level, controls, &tree_hint_cache, lod_level);
                 data.setColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
             }
         }
@@ -308,9 +313,25 @@ pub const OverworldGenerator = struct {
     const TreeHintChunk = [CHUNK_SIZE_X * CHUNK_SIZE_Z]world_core.LODVegetationHint;
     const TreeHintCache = std.AutoHashMap(u64, TreeHintChunk);
 
-    fn sampleRepresentativeLODColumn(self: *const OverworldGenerator, wx: f32, wz: f32, cell_span: f32, sea_level: i32, controls: region_pkg.RegionControlCorners, tree_hint_cache: *TreeHintCache) RepresentativeLODColumn {
-        const sample_offsets = [_]f32{ -0.35, 0.0, 0.35 };
+    fn sampleRepresentativeLODColumn(self: *const OverworldGenerator, wx: f32, wz: f32, cell_span: f32, sea_level: i32, controls: region_pkg.RegionControlCorners, tree_hint_cache: *TreeHintCache, lod_level: LODLevel) RepresentativeLODColumn {
+        // Single center sample. The previous 3x3 (9-sample) grid sampled a
+        // sub-block neighborhood (sample_radius ~= cell_span/2 ~= 0.5-1.3
+        // blocks), so 8 of 9 samples were nearly co-located and returned
+        // near-identical results — ~9x cost for negligible anti-aliasing.
+        // One sample cuts LOD heightmap generation ~9x (the dominant LOD
+        // loading bottleneck; was producing <1 region/sec/worker).
+        const sample_offsets = [_]f32{0.0};
         const sample_radius = @min(cell_span * 0.5, 48.0);
+        // Tree-coverage hints are computed via computeChunkTreeHints, which
+        // evaluates a full 256-column chunk of biome/decoration/tree noise per
+        // cache miss. LOD columns span many chunks with little reuse, so tree
+        // hints dominated gen cost (~30x the heightmap on lod3: 5.3s -> 0.04s
+        // per region) while the foliage tint is subtle at LOD distance (real
+        // trees render in the near LOD0 chunks). Disabled per-level below; flip
+        // a level back on if its foliage tint is wanted and it's cheap enough.
+        const compute_tree_hints: bool = switch (lod_level) {
+            .lod0, .lod1, .lod2, .lod3 => false,
+        };
 
         var block_counts = [_]u32{0} ** world_core.MAX_BLOCK_TYPES;
         var biome_counts = [_]u32{0} ** 256;
@@ -363,7 +384,7 @@ pub const OverworldGenerator = struct {
         else
             land_height;
         const avg_color = packAverageColor(color_r, color_g, color_b, @max(total_samples, 1));
-        const vegetation_hint = if (render_water_surface) world_core.LODVegetationHint.empty else self.actualTreeHintInArea(wx, wz, sample_radius, dominant_biome, tree_hint_cache);
+        const vegetation_hint = if (render_water_surface or !compute_tree_hints) world_core.LODVegetationHint.empty else self.actualTreeHintInArea(wx, wz, sample_radius, dominant_biome, tree_hint_cache);
         const representative_color = if (vegetation_hint.tree_coverage > 0.0)
             blendColor(avg_color, foliageColorForBiome(dominant_biome, vegetation_hint.leaves), vegetation_hint.tree_coverage * 0.45)
         else
@@ -1049,9 +1070,9 @@ pub const OverworldGenerator = struct {
         self.generate(chunk, stop_flag);
     }
 
-    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
-        const self: *OverworldGenerator = @ptrCast(@alignCast(ptr));
-        self.generateHeightmapOnly(data, region_x, region_z, lod_level);
+    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
+        const self: *const OverworldGenerator = @ptrCast(@alignCast(ptr));
+        self.generateHeightmapOnly(data, region_x, region_z, lod_level, stop_flag);
     }
 
     fn maybeRecenterCacheWrapper(ptr: *anyopaque, player_x: i32, player_z: i32) bool {

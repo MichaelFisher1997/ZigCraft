@@ -300,7 +300,7 @@ pub const LODConfig = struct {
 
     memory_budget_mb: u32 = 256,
 
-    max_uploads_per_frame: u32 = 8,
+    max_uploads_per_frame: u32 = 32,
 
     fog_transitions: bool = true,
 

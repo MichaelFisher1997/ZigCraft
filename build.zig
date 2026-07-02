@@ -448,6 +448,24 @@ pub fn build(b: *std.Build) void {
     const worldgen_report_step = b.step("worldgen-report", "Print deterministic worldgen baseline report");
     worldgen_report_step.dependOn(&worldgen_report_run_cmd.step);
 
+    const lod_bench_root_module = b.createModule(.{
+        .root_source_file = b.path("src/lod_bench_main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    lod_bench_root_module.addImport("world-core", world_core);
+    lod_bench_root_module.addImport("world-worldgen", world_worldgen);
+    lod_bench_root_module.link_libc = true;
+
+    const lod_bench_exe = b.addExecutable(.{
+        .name = "lod-bench",
+        .root_module = lod_bench_root_module,
+    });
+
+    const lod_bench_run_cmd = b.addRunArtifact(lod_bench_exe);
+    const lod_bench_step = b.step("lod-bench", "Benchmark LOD heightmap generation (CPU-only, no graphics)");
+    lod_bench_step.dependOn(&lod_bench_run_cmd.step);
+
     const worldgen_climate_snapshot_root_module = b.createModule(.{
         .root_source_file = b.path("src/worldgen_climate_snapshot_main.zig"),
         .target = target,
