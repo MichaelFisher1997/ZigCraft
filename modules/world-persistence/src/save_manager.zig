@@ -236,9 +236,12 @@ pub const SaveManager = struct {
         log.log.debug("Save thread started", .{});
 
         while (self.running.load(.acquire)) {
+            // On error, treat as "no work done" so the loop sleeps before
+            // retrying — otherwise a persistent fault (e.g. disk full) would
+            // busy-loop at 100% CPU and spam the log.
             const did_work = self.processSaveQueue() catch |err| blk: {
                 log.log.err("Save thread error: {}", .{err});
-                break :blk true;
+                break :blk false;
             };
             // Only idle-sleep when there is nothing to do. Previously the thread
             // slept a full interval between every batch, so flushing N dirty

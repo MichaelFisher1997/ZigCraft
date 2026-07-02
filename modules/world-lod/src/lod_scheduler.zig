@@ -127,8 +127,10 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                 const priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
                 const encoded_priority = (priority & 0x0FFFFFFF) | lod_priority_bias;
 
-                chunk.state = .generating;
+                // Append before flipping state so an allocation failure leaves
+                // the chunk re-queueable in .missing instead of stuck .generating.
                 try candidates.append(ctx.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority });
+                chunk.state = .generating;
                 diag.queued += 1;
             }
         }

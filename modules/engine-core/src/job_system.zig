@@ -221,7 +221,12 @@ pub const JobQueue = struct {
                 // to player_cx/cz, which are always in chunk space. Near-chunk
                 // jobs (lod_level 0) already use chunk coords, so scale == 1.
                 const shift: u5 = @intCast(updated_job.data.chunk.lod_level);
-                const scale: i32 = @as(i32, 1) << shift;
+                // Near-chunk jobs (lod_level 0) already store chunk coords, so
+                // scale == 1. LOD jobs store REGION coords; converting to chunk
+                // coords needs chunksPerSide = 2<<level (engine-core/lod_types.zig
+                // defines chunksPerSide = scale()*2 = (1<<level)*2). A blanket
+                // chunksPerSide would double-count for lod0, hence the branch.
+                const scale: i32 = if (updated_job.data.chunk.lod_level == 0) 1 else @as(i32, 2) << shift;
                 // Compute squared distance in i64 then clamp, matching
                 // lod_manager/lod_scheduler — i32 dx*dx can overflow at large
                 // render/LOD distances.

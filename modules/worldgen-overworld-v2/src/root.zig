@@ -545,7 +545,7 @@ pub const OverworldV2Generator = struct {
         return false;
     }
 
-    pub fn generateHeightmapOnly(self: *const OverworldV2Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const bool) void {
+    pub fn generateHeightmapOnly(self: *const OverworldV2Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         if (data.width < 2) return;
         const region_size_i: i32 = @intCast(world_core.regionSizeBlocks(lod_level));
         const region_size_f: f32 = @floatFromInt(region_size_i);
@@ -556,7 +556,7 @@ pub const OverworldV2Generator = struct {
 
         var gz: u32 = 0;
         while (gz < data.width) : (gz += 1) {
-            if (stop_flag) |sf| if (sf.*) return;
+            if (stop_flag) |sf| if (sf.load(.acquire)) return;
             var gx: u32 = 0;
             while (gx < data.width) : (gx += 1) {
                 const wx_f = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
@@ -816,7 +816,7 @@ pub const OverworldV2Generator = struct {
         self.generate(chunk, stop_flag);
     }
 
-    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const bool) void {
+    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         const self: *const OverworldV2Generator = @ptrCast(@alignCast(ptr));
         self.generateHeightmapOnly(data, region_x, region_z, lod_level, stop_flag);
     }

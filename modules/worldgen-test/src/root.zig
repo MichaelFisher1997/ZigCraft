@@ -163,7 +163,7 @@ pub const ShadowTestWorldGenerator = struct {
         }
     }
 
-    pub fn generateHeightmapOnly(self: *const ShadowTestWorldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const bool) void {
+    pub fn generateHeightmapOnly(self: *const ShadowTestWorldGenerator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         _ = self;
         _ = region_x;
         _ = region_z;
@@ -221,7 +221,7 @@ pub const ShadowTestWorldGenerator = struct {
         self.generate(chunk, stop_flag);
     }
 
-    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const bool) void {
+    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
         const self: *ShadowTestWorldGenerator = @ptrCast(@alignCast(ptr));
         self.generateHeightmapOnly(data, region_x, region_z, lod_level, stop_flag);
     }

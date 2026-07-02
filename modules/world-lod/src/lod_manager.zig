@@ -141,12 +141,12 @@ pub const LODManager = struct {
     // seconds on non-interruptible coarse-LOD jobs. Never set during normal
     // play or map pause, so LOD generation runs uninterrupted.
     //
-    // Plain bool by design: this matches the near-chunk `generate(stop_flag)`
-    // convention (`?*const bool`). The cross-thread signal is well-defined —
-    // `deinit()` writes true before `pool.deinit()` joins, and the join
-    // establishes happens-before, so worker reads observe the write. A benign
-    // race exists only in the abort window, which is the intended behavior.
-    stop_flag: bool,
+    // Atomic: written on the main thread (deinit) with .release, read from
+    // worker threads inside the heightmap loop with .acquire. This both
+    // establishes proper cross-thread ordering and prevents the compiler from
+    // hoisting the read out of the generation loop (which would silently break
+    // the abort in ReleaseFast).
+    stop_flag: std.atomic.Value(bool),
 
     // Memory tracking
     memory_used_bytes: usize,
@@ -233,7 +233,7 @@ pub const LODManager = struct {
             .generator = generator,
             .atlas = atlas,
             .paused = false,
-            .stop_flag = false,
+            .stop_flag = std.atomic.Value(bool).init(false),
             .memory_used_bytes = 0,
             .update_tick = 0,
             .deletion_queue = .empty,
@@ -268,7 +268,7 @@ pub const LODManager = struct {
         // only interruptible via this flag (checked inside the generation loop).
         // This is the ONLY place stop_flag is set: normal pause()/unpause() and
         // map-open leave it false so LOD generation runs uninterrupted.
-        self.stop_flag = true;
+        self.stop_flag.store(true, .release);
 
         // Stop and cleanup queues
         for (0..LODLevel.count) |i| {
@@ -494,15 +494,18 @@ pub const LODManager = struct {
                     const dz = chunk.region_z * scale - self.player_cz;
                     const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
                     const encoded_priority = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias;
-                    chunk.state = .meshing;
+                    // Append before flipping state so an allocation failure
+                    // leaves the chunk in .generated (re-tried next tick)
+                    // instead of stuck in .meshing with no queued job.
                     try mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
+                    chunk.state = .meshing;
                 } else if (chunk.state == .mesh_ready) {
                     const dx = chunk.region_x * scale - self.player_cx;
                     const dz = chunk.region_z * scale - self.player_cz;
                     const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
                     const encoded_priority = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias;
-                    chunk.state = .uploading;
                     try upload_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
+                    chunk.state = .uploading;
                 }
             }
         }
@@ -1063,7 +1066,7 @@ pub const LODManager = struct {
             },
             .atlas = undefined,
             .paused = false,
-            .stop_flag = false,
+            .stop_flag = std.atomic.Value(bool).init(false),
             .memory_used_bytes = 0,
             .update_tick = 0,
             .deletion_queue = .empty,
@@ -1189,7 +1192,7 @@ pub const LODManager = struct {
 
                         // If generation was aborted, discard the partial data
                         // and leave the chunk in .missing so it re-generates later.
-                        if (self.stop_flag) {
+                        if (self.stop_flag.load(.acquire)) {
                             generated.deinit();
                             new_state = .missing;
                             chunk.unpin();
