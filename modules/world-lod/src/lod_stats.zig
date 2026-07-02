@@ -18,6 +18,8 @@ pub const LODStats = struct {
     mesh_vertices: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     gen_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     upload_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    /// On-disk LOD source store counters. cache_* below are retained as
+    /// compatibility aliases for existing diagnostics consumers.
     store_hits: u32 = 0,
     store_misses: u32 = 0,
     cache_hits: u32 = 0,

@@ -162,6 +162,9 @@ pub const LODChunk = struct {
     min_height: f32,
     max_height: f32,
 
+    /// Number of direct 2x2 finer child regions currently renderable.
+    ready_children: u8,
+
     /// Dirty flag for re-meshing
     dirty: bool,
 
@@ -177,6 +180,7 @@ pub const LODChunk = struct {
             .mesh_handle = 0,
             .min_height = 0.0,
             .max_height = @floatFromInt(CHUNK_SIZE_Y),
+            .ready_children = 0,
             .dirty = false,
         };
     }

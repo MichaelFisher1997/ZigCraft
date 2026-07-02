@@ -226,7 +226,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                         diag.bad_state += 1;
                         continue;
                     }
-                    if (self.isCoveredByFinerLOD(entry.key_ptr.*, all_meshes, all_regions, config)) {
+                    if (self.isCoveredByFinerLOD(chunk, config)) {
                         diag.covered_finer_lod += 1;
                         continue;
                     }
@@ -347,41 +347,12 @@ pub fn LODRenderer(comptime RHI: type) type {
 
         fn isCoveredByFinerLOD(
             _: *Self,
-            key: LODRegionKey,
-            all_meshes: *const [LODLevel.count]MeshMap,
-            all_regions: *const [LODLevel.count]RegionMap,
+            chunk: *const LODChunk,
             config: ILODConfig,
         ) bool {
-            if (key.lod == .lod1) return false;
-
-            const children = key.childKeys() orelse return false;
-            const finer_index = @intFromEnum(children[0].lod);
-            var total_children: u32 = 0;
-            var missing_children: u32 = 0;
-
-            for (children) |finer_key| {
-                total_children += 1;
-                const finer_chunk = all_regions[finer_index].get(finer_key) orelse {
-                    missing_children += 1;
-                    continue;
-                };
-                if (finer_chunk.state != .renderable) {
-                    missing_children += 1;
-                    continue;
-                }
-
-                const finer_mesh = all_meshes[finer_index].get(finer_key) orelse {
-                    missing_children += 1;
-                    continue;
-                };
-                if (!finer_mesh.ready or finer_mesh.vertex_count == 0) {
-                    missing_children += 1;
-                }
-            }
-
-            if (total_children == 0) return false;
-
-            const missing_fraction = @as(f32, @floatFromInt(missing_children)) / @as(f32, @floatFromInt(total_children));
+            if (chunk.lod_level == .lod1) return false;
+            const missing_children = 4 - @min(chunk.ready_children, 4);
+            const missing_fraction = @as(f32, @floatFromInt(missing_children)) / 4.0;
             return missing_fraction <= config.getFallbackMissingChildThreshold();
         }
 
@@ -1009,6 +980,7 @@ test "LODRenderer skips coarse LOD when finer coverage is ready" {
 
     var coarse_chunk = LODChunk.init(2, 0, .lod2);
     coarse_chunk.state = .renderable;
+    coarse_chunk.ready_children = 4;
     const coarse_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod2 };
     try meshes[2].put(coarse_key, &coarse_mesh);
     try regions[2].put(coarse_key, &coarse_chunk);
@@ -1094,6 +1066,7 @@ test "LODRenderer keeps coarse LOD when a finer child is missing" {
     coarse_mesh.ready = true;
     var coarse_chunk = LODChunk.init(2, 0, .lod2);
     coarse_chunk.state = .renderable;
+    coarse_chunk.ready_children = 3;
     const coarse_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod2 };
     try meshes[2].put(coarse_key, &coarse_mesh);
     try regions[2].put(coarse_key, &coarse_chunk);
@@ -1177,6 +1150,7 @@ test "LODRenderer resolves finer coverage across negative region boundaries" {
     coarse_mesh.ready = true;
     var coarse_chunk = LODChunk.init(-1, -1, .lod2);
     coarse_chunk.state = .renderable;
+    coarse_chunk.ready_children = 4;
     const coarse_key = LODRegionKey{ .rx = -1, .rz = -1, .lod = .lod2 };
     try meshes[2].put(coarse_key, &coarse_mesh);
     try regions[2].put(coarse_key, &coarse_chunk);
