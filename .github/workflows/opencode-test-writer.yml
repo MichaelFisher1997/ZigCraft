@@ -4,7 +4,7 @@ name: opencode-test-writer
 # - OPENCODE_PAT: Classic PAT with `repo` scope OR fine-grained PAT with:
 #     Contents: Read & Write, Pull requests: Read & Write, Metadata: Read
 #   Without `repo` scope, git push will fail with 403 permission denied.
-# - MINIMAX_API_KEY: API key for the MiniMax M2.7 model
+# - MINIMAX_API_KEY: API key for the MiniMax M3 model
 
 on:
   schedule:
@@ -99,7 +99,7 @@ jobs:
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           XDG_CACHE_HOME: /tmp/opencode-cache
         with:
-          model: minimax-coding-plan/MiniMax-M2.7
+          model: minimax-coding-plan/MiniMax-M3
           use_github_token: true
           prompt: ${{ env.PROMPT }}
 

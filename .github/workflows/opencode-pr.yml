@@ -81,7 +81,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
-          model: kimi-for-coding/k2p6
+          model: kimi-for-coding/k2p7
           use_github_token: true
           prompt: ${{ env.PROMPT }}
 
