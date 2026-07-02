@@ -117,16 +117,11 @@ pub const ChunkMesh = struct {
     /// Build the full chunk mesh from chunk data and neighbors.
     /// Delegates greedy meshing to the meshing stage modules.
     pub fn buildWithNeighbors(self: *ChunkMesh, chunk: *const Chunk, neighbors: NeighborChunks, atlas: *const TextureAtlas) !void {
-        // Build each subchunk separately (greedy meshing works per Y slice)
-        for (0..NUM_SUBCHUNKS) |i| {
-            try self.buildSubchunk(chunk, neighbors, @intCast(i), atlas);
-        }
-
-        // Merge all subchunk vertices into single buffers
-        try self.mergeSubchunks();
-    }
-
-    fn buildSubchunk(self: *ChunkMesh, chunk: *const Chunk, neighbors: NeighborChunks, si: u32, atlas: *const TextureAtlas) !void {
+        // Reusable scratch buffers owned for the whole chunk build. Previously
+        // each subchunk allocated three fresh vertex ArrayLists plus the mesher
+        // allocated a 256-entry mask per slice (~816 mask allocs + 48 vertex
+        // list grow sequences per chunk). Pooling here collapses that to one
+        // mask allocation and three vertex-list grow sequences per chunk.
         var solid_verts = std.ArrayListUnmanaged(Vertex).empty;
         defer solid_verts.deinit(self.allocator);
         var cutout_verts = std.ArrayListUnmanaged(Vertex).empty;
@@ -134,31 +129,57 @@ pub const ChunkMesh = struct {
         var fluid_verts = std.ArrayListUnmanaged(Vertex).empty;
         defer fluid_verts.deinit(self.allocator);
 
+        const mask = try self.allocator.alloc(?greedy_mesher.FaceKey, 16 * 16);
+        defer self.allocator.free(mask);
+
+        // Build each subchunk separately (greedy meshing works per Y slice)
+        for (0..NUM_SUBCHUNKS) |i| {
+            solid_verts.clearRetainingCapacity();
+            cutout_verts.clearRetainingCapacity();
+            fluid_verts.clearRetainingCapacity();
+            try self.buildSubchunk(chunk, neighbors, @intCast(i), atlas, mask, &solid_verts, &cutout_verts, &fluid_verts);
+        }
+
+        // Merge all subchunk vertices into single buffers
+        try self.mergeSubchunks();
+    }
+
+    fn buildSubchunk(
+        self: *ChunkMesh,
+        chunk: *const Chunk,
+        neighbors: NeighborChunks,
+        si: u32,
+        atlas: *const TextureAtlas,
+        mask: []?greedy_mesher.FaceKey,
+        solid_verts: *std.ArrayListUnmanaged(Vertex),
+        cutout_verts: *std.ArrayListUnmanaged(Vertex),
+        fluid_verts: *std.ArrayListUnmanaged(Vertex),
+    ) !void {
         const y0: i32 = @intCast(si * SUBCHUNK_SIZE);
         const y1: i32 = y0 + SUBCHUNK_SIZE;
 
         // Mesh horizontal slices (top/bottom faces)
         var sy: i32 = y0;
         while (sy <= y1) : (sy += 1) {
-            try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .top, sy, si, &solid_verts, &cutout_verts, &fluid_verts, atlas);
+            try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .top, sy, si, solid_verts, cutout_verts, fluid_verts, atlas, mask);
         }
         // Mesh east/west face slices
         var sx: i32 = 0;
         while (sx <= CHUNK_SIZE_X) : (sx += 1) {
-            try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .east, sx, si, &solid_verts, &cutout_verts, &fluid_verts, atlas);
+            try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .east, sx, si, solid_verts, cutout_verts, fluid_verts, atlas, mask);
         }
         // Mesh south/north face slices
         var sz: i32 = 0;
         while (sz <= CHUNK_SIZE_Z) : (sz += 1) {
-            try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .south, sz, si, &solid_verts, &cutout_verts, &fluid_verts, atlas);
+            try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .south, sz, si, solid_verts, cutout_verts, fluid_verts, atlas, mask);
         }
 
         // Mesh non-cube shapes (plants, attached quads, and custom solid geometry)
-        try cross_mesher.meshCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
-        try flat_quad_mesher.meshFlatQuadBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
-        try tall_cross_mesher.meshTallCrossBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
-        try wall_attached_mesher.meshWallAttachedBlocks(self.allocator, chunk, neighbors, si, &cutout_verts, atlas);
-        try custom_mesh_mesher.meshCustomMeshBlocks(self.allocator, chunk, neighbors, si, &solid_verts, atlas);
+        try cross_mesher.meshCrossBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
+        try flat_quad_mesher.meshFlatQuadBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
+        try tall_cross_mesher.meshTallCrossBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
+        try wall_attached_mesher.meshWallAttachedBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
+        try custom_mesh_mesher.meshCustomMeshBlocks(self.allocator, chunk, neighbors, si, solid_verts, atlas);
 
         // Store subchunk data temporarily (will be merged later)
         self.mutex.lock();

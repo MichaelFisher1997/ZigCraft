@@ -545,7 +545,7 @@ pub const OverworldV2Generator = struct {
         return false;
     }
 
-    pub fn generateHeightmapOnly(self: *const OverworldV2Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
+    pub fn generateHeightmapOnly(self: *const OverworldV2Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const bool) void {
         if (data.width < 2) return;
         const region_size_i: i32 = @intCast(world_core.regionSizeBlocks(lod_level));
         const region_size_f: f32 = @floatFromInt(region_size_i);
@@ -556,6 +556,7 @@ pub const OverworldV2Generator = struct {
 
         var gz: u32 = 0;
         while (gz < data.width) : (gz += 1) {
+            if (stop_flag) |sf| if (sf.*) return;
             var gx: u32 = 0;
             while (gx < data.width) : (gx += 1) {
                 const wx_f = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
@@ -567,7 +568,10 @@ pub const OverworldV2Generator = struct {
     }
 
     fn sampleRepresentativeLODColumn(self: *const OverworldV2Generator, wx: f32, wz: f32, cell_span: f32) RepresentativeLODColumn {
-        const sample_offsets = [_]f32{ -0.35, 0.0, 0.35 };
+        // Single center sample (see overworld v1 rationale): the 3x3 grid
+        // sampled a sub-block neighborhood, so 8 of 9 samples were nearly
+        // identical — ~9x cost for negligible benefit.
+        const sample_offsets = [_]f32{0.0};
         const sample_radius = @min(cell_span * 0.5, 48.0);
         const center_sample = self.classifyLODSample(wx, wz);
 
@@ -812,9 +816,9 @@ pub const OverworldV2Generator = struct {
         self.generate(chunk, stop_flag);
     }
 
-    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel) void {
-        const self: *OverworldV2Generator = @ptrCast(@alignCast(ptr));
-        self.generateHeightmapOnly(data, region_x, region_z, lod_level);
+    fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const bool) void {
+        const self: *const OverworldV2Generator = @ptrCast(@alignCast(ptr));
+        self.generateHeightmapOnly(data, region_x, region_z, lod_level, stop_flag);
     }
 
     fn maybeRecenterCacheWrapper(ptr: *anyopaque, player_x: i32, player_z: i32) bool {
@@ -1460,7 +1464,7 @@ test "overworld-v2 generates representative LOD data" {
     var data = try LODSimplifiedData.init(std.testing.allocator, .lod3);
     defer data.deinit();
 
-    gen.generateHeightmapOnly(&data, 0, 0, .lod3);
+    gen.generateHeightmapOnly(&data, 0, 0, .lod3, null);
 
     var filled_columns: u32 = 0;
     var material_columns: u32 = 0;

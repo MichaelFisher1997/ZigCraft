@@ -216,9 +216,25 @@ pub const JobQueue = struct {
 
             // Only update distance for chunk-based jobs
             if (job.getChunkCoords()) |coords| {
-                const dx = coords.x - self.player_cx;
-                const dz = coords.z - self.player_cz;
-                updated_job.dist_sq = dx * dx + dz * dz;
+                // LOD jobs store REGION coords in chunk.x/z (e.g. rx for lod3).
+                // Scale them to true chunk coords so the distance is comparable
+                // to player_cx/cz, which are always in chunk space. Near-chunk
+                // jobs (lod_level 0) already use chunk coords, so scale == 1.
+                const shift: u5 = @intCast(updated_job.data.chunk.lod_level);
+                const scale: i32 = @as(i32, 1) << shift;
+                // Compute squared distance in i64 then clamp, matching
+                // lod_manager/lod_scheduler — i32 dx*dx can overflow at large
+                // render/LOD distances.
+                const dx: i64 = @as(i64, coords.x) * @as(i64, scale) - @as(i64, self.player_cx);
+                const dz: i64 = @as(i64, coords.z) * @as(i64, scale) - @as(i64, self.player_cz);
+                const new_dist_i64: i64 = dx * dx + dz * dz;
+                const new_dist: i32 = @intCast(@min(new_dist_i64, @as(i64, 0x0FFFFFFF)));
+                // Preserve the LOD-bias high bits; only refresh the low 28
+                // distance bits. Overwriting dist_sq wholesale would flatten
+                // all LOD levels into one distance space and break coarse-first
+                // ordering.
+                const bias_bits = updated_job.dist_sq & ~@as(i32, 0x0FFFFFFF);
+                updated_job.dist_sq = bias_bits | new_dist;
             }
 
             temp.append(self.allocator, updated_job) catch {

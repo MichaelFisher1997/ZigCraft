@@ -324,6 +324,11 @@ pub const World = struct {
     }
 
     pub fn deinit(self: *World) void {
+        // Pause generation first: clears the gen/mesh/LOD job queues so worker
+        // threads stop pulling new jobs. (In-flight LOD heightmap jobs are
+        // aborted later by LODManager.stop_flag, set at the top of lod.deinit().)
+        self.pauseGeneration();
+
         self.rhi.query().waitIdle();
 
         if (self.save_manager) |sm| {
