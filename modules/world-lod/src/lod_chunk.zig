@@ -54,6 +54,30 @@ pub const LODRegionKey = struct {
         return a.rx == b.rx and a.rz == b.rz and a.lod == b.lod;
     }
 
+    pub fn parentKey(self: LODRegionKey) ?LODRegionKey {
+        const lod_idx = @intFromEnum(self.lod);
+        if (lod_idx + 1 >= LODLevel.count) return null;
+        return .{
+            .rx = @divFloor(self.rx, 2),
+            .rz = @divFloor(self.rz, 2),
+            .lod = @enumFromInt(@as(u3, @intCast(lod_idx + 1))),
+        };
+    }
+
+    pub fn childKeys(self: LODRegionKey) ?[4]LODRegionKey {
+        const lod_idx = @intFromEnum(self.lod);
+        if (lod_idx == 0) return null;
+        const child_lod: LODLevel = @enumFromInt(@as(u3, @intCast(lod_idx - 1)));
+        const base_x = self.rx * 2;
+        const base_z = self.rz * 2;
+        return .{
+            .{ .rx = base_x, .rz = base_z, .lod = child_lod },
+            .{ .rx = base_x + 1, .rz = base_z, .lod = child_lod },
+            .{ .rx = base_x, .rz = base_z + 1, .lod = child_lod },
+            .{ .rx = base_x + 1, .rz = base_z + 1, .lod = child_lod },
+        };
+    }
+
     /// Get the chunk coordinates that this region covers
     pub fn chunkBounds(self: LODRegionKey) ChunkBounds {
         const scale: i32 = @intCast(self.lod.chunksPerSide());
@@ -134,6 +158,10 @@ pub const LODChunk = struct {
     /// Mesh handle (0 = no mesh)
     mesh_handle: u32,
 
+    /// Actual source-data height bounds in world block coordinates.
+    min_height: f32,
+    max_height: f32,
+
     /// Dirty flag for re-meshing
     dirty: bool,
 
@@ -147,6 +175,8 @@ pub const LODChunk = struct {
             .pin_count = std.atomic.Value(u32).init(0),
             .data = .{ .empty = {} },
             .mesh_handle = 0,
+            .min_height = 0.0,
+            .max_height = @floatFromInt(CHUNK_SIZE_Y),
             .dirty = false,
         };
     }
@@ -179,6 +209,8 @@ pub const LODChunk = struct {
         min_z: i32,
         max_x: i32,
         max_z: i32,
+        min_y: f32,
+        max_y: f32,
     };
 
     /// Get the world-space bounds of this LOD region
@@ -190,7 +222,39 @@ pub const LODChunk = struct {
             .min_z = self.region_z * size,
             .max_x = self.region_x * size + size,
             .max_z = self.region_z * size + size,
+            .min_y = self.min_height,
+            .max_y = self.max_height,
         };
+    }
+
+    pub fn updateHeightBoundsFromData(self: *LODChunk) void {
+        switch (self.data) {
+            .simplified => |*data| {
+                var min_height: f32 = std.math.floatMax(f32);
+                var max_height: f32 = -std.math.floatMax(f32);
+                if (data.hasVerticalSpans()) {
+                    const counts = data.vertical_span_counts.?;
+                    const spans = data.vertical_spans.?;
+                    for (counts, 0..) |span_count, column_idx| {
+                        var span_idx: usize = 0;
+                        while (span_idx < span_count) : (span_idx += 1) {
+                            const span = spans[column_idx * world_core.MAX_LOD_VERTICAL_SPANS + span_idx];
+                            min_height = @min(min_height, span.min_height);
+                            max_height = @max(max_height, span.max_height);
+                        }
+                    }
+                }
+                for (data.heightmap) |height| {
+                    min_height = @min(min_height, height);
+                    max_height = @max(max_height, height);
+                }
+                if (min_height <= max_height) {
+                    self.min_height = min_height;
+                    self.max_height = max_height;
+                }
+            },
+            else => {},
+        }
     }
 
     pub fn chunkBounds(self: *const LODChunk) ChunkBounds {
@@ -225,6 +289,7 @@ pub const ILODConfig = struct {
         getMeshPath: *const fn (ptr: *anyopaque) LODMeshPath,
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
         getFallbackMissingChildThreshold: *const fn (ptr: *anyopaque) f32,
+        getMemoryBudgetMB: *const fn (ptr: *anyopaque) u32,
     };
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
@@ -284,6 +349,10 @@ pub const ILODConfig = struct {
 
     pub fn getFallbackMissingChildThreshold(self: ILODConfig) f32 {
         return self.vtable.getFallbackMissingChildThreshold(self.ptr);
+    }
+
+    pub fn getMemoryBudgetMB(self: ILODConfig) u32 {
+        return self.vtable.getMemoryBudgetMB(self.ptr);
     }
 };
 
@@ -390,6 +459,7 @@ pub const LODConfig = struct {
         .getMeshPath = getMeshPathWrapper,
         .getFogStartPercent = getFogStartPercentWrapper,
         .getFallbackMissingChildThreshold = getFallbackMissingChildThresholdWrapper,
+        .getMemoryBudgetMB = getMemoryBudgetMBWrapper,
     };
 
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
@@ -459,6 +529,10 @@ pub const LODConfig = struct {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return std.math.clamp(self.fallback_missing_child_threshold, 0.0, 1.0);
     }
+    fn getMemoryBudgetMBWrapper(ptr: *anyopaque) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.memory_budget_mb;
+    }
 };
 
 // Tests
@@ -482,6 +556,18 @@ test "LODRegionKey from chunk coords" {
     const key2 = LODRegionKey.fromChunkCoords(-3, -5, .lod2);
     try std.testing.expectEqual(@as(i32, -1), key2.rx); // -3 / 8 = -1
     try std.testing.expectEqual(@as(i32, -1), key2.rz); // -5 / 8 = -1
+}
+
+test "LODRegionKey parent and child keys handle negative coordinates" {
+    const child = LODRegionKey{ .rx = -1, .rz = -3, .lod = .lod1 };
+    const parent = child.parentKey().?;
+    try std.testing.expectEqual(LODRegionKey{ .rx = -1, .rz = -2, .lod = .lod2 }, parent);
+
+    const children = parent.childKeys().?;
+    try std.testing.expectEqual(LODRegionKey{ .rx = -2, .rz = -4, .lod = .lod1 }, children[0]);
+    try std.testing.expectEqual(LODRegionKey{ .rx = -1, .rz = -4, .lod = .lod1 }, children[1]);
+    try std.testing.expectEqual(LODRegionKey{ .rx = -2, .rz = -3, .lod = .lod1 }, children[2]);
+    try std.testing.expectEqual(LODRegionKey{ .rx = -1, .rz = -3, .lod = .lod1 }, children[3]);
 }
 
 test "LODConfig distance calculation" {

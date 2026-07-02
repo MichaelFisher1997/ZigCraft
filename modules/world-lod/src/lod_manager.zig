@@ -416,19 +416,23 @@ pub const LODManager = struct {
 
         // Update stats
         self.updateStats();
+        self.enforceMemoryBudget() catch |err| {
+            log.log.warn("LOD memory budget eviction error: {} (non-fatal)", .{err});
+        };
 
         // Periodic WARN-level LOD stats so logs/zigcraft.log shows LOD fill
         // progress by default (no env vars needed). update_tick counts frames;
         // every ~180 frames (~3s @ 60fps) gives a trend over a 20s diagnostic run.
         if (self.update_tick % 180 == 0) {
             const s = self.stats;
-            log.log.warn("LOD_STATS: loaded=[L1:{},L2:{},L3:{}] generating=[{},{},{}] meshing=[{},{},{}] genQ3={} uploadQ=[{},{},{}] meshes=[{},{},{}] cache_hit/miss={}/{}", .{
+            log.log.warn("LOD_STATS: loaded=[L1:{},L2:{},L3:{}] generating=[{},{},{}] meshing=[{},{},{}] genQ3={} uploadQ=[{},{},{}] meshes=[{},{},{}] cache_hit/miss={}/{} store_hit/miss={}/{} evictions={}", .{
                 s.loaded[1],                           s.loaded[2],             s.loaded[3],
                 s.generating[1],                       s.generating[2],         s.generating[3],
                 s.meshing[1],                          s.meshing[2],            s.meshing[3],
                 s.gen_queue_depth[LODLevel.count - 1], s.upload_queue_depth[1], s.upload_queue_depth[2],
                 s.upload_queue_depth[3],               s.mesh_count[1],         s.mesh_count[2],
                 s.mesh_count[3],                       s.cache_hits,            s.cache_misses,
+                s.store_hits,                          s.store_misses,          s.evictions,
             });
         }
 
@@ -649,6 +653,79 @@ pub const LODManager = struct {
         }
     }
 
+    fn queueMeshDeletion(self: *Self, mesh: *LODMesh) void {
+        self.deletion_queue.append(self.allocator, mesh) catch {
+            self.gpu_bridge.destroy(mesh);
+            self.allocator.destroy(mesh);
+        };
+    }
+
+    fn regionMemoryBytes(chunk: *const LODChunk, mesh: ?*LODMesh) usize {
+        var total: usize = 0;
+        switch (chunk.data) {
+            .simplified => |*s| total += s.totalMemoryBytes(),
+            else => {},
+        }
+        if (mesh) |m| total += m.capacity * @sizeOf(Vertex);
+        return total;
+    }
+
+    fn enforceMemoryBudget(self: *Self) !void {
+        const budget_mb = self.config.getMemoryBudgetMB();
+        if (budget_mb == 0) return;
+        const budget_bytes = @as(usize, budget_mb) * 1024 * 1024;
+        if (self.memory_used_bytes <= budget_bytes) return;
+
+        const Candidate = struct { key: LODRegionKey, distance_sq: i64 };
+        var candidates = std.ArrayListUnmanaged(Candidate).empty;
+        defer candidates.deinit(self.allocator);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        for (1..active_lod_count) |i| {
+            var iter = self.regions[i].iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const chunk = entry.value_ptr.*;
+                if (chunk.state != .renderable or chunk.isPinned()) continue;
+                const parent = key.parentKey() orelse continue;
+                const parent_idx = @intFromEnum(parent.lod);
+                const parent_chunk = self.regions[parent_idx].get(parent) orelse continue;
+                if (parent_chunk.state != .renderable) continue;
+                const bounds = key.chunkBounds();
+                try candidates.append(self.allocator, .{ .key = key, .distance_sq = bounds.distanceSquaredToPoint(self.player_cx, self.player_cz) });
+            }
+        }
+
+        std.mem.sort(Candidate, candidates.items, {}, struct {
+            fn lt(_: void, a: Candidate, b: Candidate) bool {
+                return a.distance_sq > b.distance_sq;
+            }
+        }.lt);
+
+        var used = self.memory_used_bytes;
+        for (candidates.items) |candidate| {
+            if (used <= budget_bytes) break;
+            const idx = @intFromEnum(candidate.key.lod);
+            const chunk = self.regions[idx].get(candidate.key) orelse continue;
+            if (chunk.state != .renderable or chunk.isPinned()) continue;
+            const mesh = self.meshes[idx].get(candidate.key);
+            const bytes = regionMemoryBytes(chunk, mesh);
+            if (mesh) |m| {
+                self.queueMeshDeletion(m);
+                _ = self.meshes[idx].remove(candidate.key);
+            }
+            chunk.deinit(self.allocator);
+            self.allocator.destroy(chunk);
+            _ = self.regions[idx].remove(candidate.key);
+            used = if (bytes >= used) 0 else used - bytes;
+            self.memory_used_bytes = used;
+            self.stats.evictions += 1;
+        }
+    }
+
     /// Update statistics
     fn updateStats(self: *Self) void {
         self.stats.reset();
@@ -686,6 +763,8 @@ pub const LODManager = struct {
         }
 
         self.stats.addMemory(mem_usage);
+        self.stats.store_hits = self.cache_hits;
+        self.stats.store_misses = self.cache_misses;
         self.stats.cache_hits = self.cache_hits;
         self.stats.cache_misses = self.cache_misses;
         self.memory_used_bytes = mem_usage;
@@ -696,7 +775,7 @@ pub const LODManager = struct {
             };
             S.counter += 1;
             if (S.counter % 120 == 1) {
-                log.log.info("LOD_STATS_DIAG gen_q={any} upload_q={any} meshes={any} verts={any} cache_hits={} cache_misses={} cache_hit_rate={d:.2} mem_mb={} upload_failures={}", .{
+                log.log.info("LOD_STATS_DIAG gen_q={any} upload_q={any} meshes={any} verts={any} cache_hits={} cache_misses={} cache_hit_rate={d:.2} mem_mb={} upload_failures={} store_hits={} store_misses={} evictions={} ingestion_backlog={} drawn={any} instances={any}", .{
                     self.stats.gen_queue_depth,
                     self.stats.upload_queue_depth,
                     self.stats.mesh_count,
@@ -706,6 +785,12 @@ pub const LODManager = struct {
                     self.stats.cacheHitRate(),
                     self.stats.memory_used_mb,
                     self.stats.upload_failures,
+                    self.stats.store_hits,
+                    self.stats.store_misses,
+                    self.stats.evictions,
+                    self.stats.ingestion_backlog,
+                    self.stats.drawn,
+                    self.stats.instances,
                 });
             }
         }
@@ -764,7 +849,7 @@ pub const LODManager = struct {
         self.mutex.lockShared();
         defer self.mutex.unlockShared();
 
-        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks);
+        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, &self.stats);
     }
 
     fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {
@@ -1157,13 +1242,20 @@ pub const LODManager = struct {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
                     const cache_enabled = self.cacheEnabled();
-                    const cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
+                    const want_spans = self.config.getVerticalSpanBudget() > 0;
+                    var cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
+                    if (cached_data) |*cached| {
+                        if (want_spans and !cached.hasVerticalSpans()) {
+                            cached.deinit();
+                            cached_data = null;
+                        }
+                    }
                     const data = if (cached_data) |cached| blk: {
                         self.recordCacheHit();
                         break :blk cached;
                     } else blk: {
                         if (cache_enabled) self.recordCacheMiss();
-                        var generated = if (self.config.getVerticalSpanBudget() > 0)
+                        var generated = if (want_spans)
                             LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
                                 new_state = .missing;
                                 chunk.unpin();
@@ -1209,6 +1301,7 @@ pub const LODManager = struct {
                     // Acquire lock to update chunk data
                     self.mutex.lock();
                     chunk.data = .{ .simplified = data };
+                    chunk.updateHeightBoundsFromData();
                     self.mutex.unlock();
                 }
                 success = true;

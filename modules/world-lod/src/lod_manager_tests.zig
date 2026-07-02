@@ -93,7 +93,7 @@ test "LODManager initialization" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: ?*LODStats) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -188,7 +188,7 @@ test "LODManager end-to-end covered cleanup" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: ?*LODStats) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}

@@ -9,11 +9,13 @@ const LODMaterialLayers = world_core.LODMaterialLayers;
 const LODWaterState = world_core.LODWaterState;
 const LODLightingHint = world_core.LODLightingHint;
 const LODVegetationHint = world_core.LODVegetationHint;
+const LODVerticalSpan = world_core.LODVerticalSpan;
 const BlockType = world_core.BlockType;
 const BiomeId = world_core.BiomeId;
 
 pub const MAGIC: u32 = 0x5A4C4F44; // "ZLOD"
-pub const CACHE_VERSION: u8 = 1;
+pub const CACHE_VERSION: u8 = 2;
+pub const CACHE_VERSION_V1: u8 = 1;
 pub const HEADER_SIZE: usize = 42;
 
 pub const Key = struct {
@@ -33,7 +35,14 @@ pub const CacheError = error{
     InvalidWidth,
     InvalidBiome,
     InvalidBlock,
+    InvalidSpanCount,
     ChecksumMismatch,
+};
+
+pub const ColumnProvenance = enum(u8) {
+    worldgen = 0,
+    chunk_derived = 1,
+    edited = 2,
 };
 
 const BIOME_COUNT: usize = @typeInfo(BiomeId).@"enum".fields.len;
@@ -47,6 +56,8 @@ const WATER_WIRE_SIZE: usize = @sizeOf(u8) + 3 * @sizeOf(f32);
 const LIGHTING_WIRE_SIZE: usize = 2 * @sizeOf(u8) + @sizeOf(f32);
 const VEGETATION_WIRE_SIZE: usize = 4 * @sizeOf(f32) + 2 * BLOCK_WIRE_SIZE;
 const CELL_WIRE_SIZE: usize = HEIGHT_WIRE_SIZE + BIOME_WIRE_SIZE + BLOCK_WIRE_SIZE + COLOR_WIRE_SIZE + MATERIAL_LAYERS_WIRE_SIZE + WATER_WIRE_SIZE + LIGHTING_WIRE_SIZE + VEGETATION_WIRE_SIZE;
+const SPAN_FLAGS_WIRE_SIZE: usize = @sizeOf(u8);
+const SPAN_WIRE_SIZE: usize = 2 * HEIGHT_WIRE_SIZE + BIOME_WIRE_SIZE + MATERIAL_LAYERS_WIRE_SIZE + COLOR_WIRE_SIZE + WATER_WIRE_SIZE + LIGHTING_WIRE_SIZE + VEGETATION_WIRE_SIZE;
 
 comptime {
     std.debug.assert(MATERIAL_LAYERS_WIRE_SIZE == 3);
@@ -54,6 +65,7 @@ comptime {
     std.debug.assert(LIGHTING_WIRE_SIZE == 6);
     std.debug.assert(VEGETATION_WIRE_SIZE == 18);
     std.debug.assert(CELL_WIRE_SIZE == 50);
+    std.debug.assert(SPAN_WIRE_SIZE == 53);
 }
 
 fn payloadSize(count: usize) usize {
@@ -62,7 +74,13 @@ fn payloadSize(count: usize) usize {
 
 pub fn serializedSize(data: *const LODSimplifiedData) usize {
     const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
-    return HEADER_SIZE + payloadSize(count);
+    var total = HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE;
+    if (data.hasVerticalSpans()) {
+        total += count; // provenance bytes
+        total += count; // vertical span counts
+        total += count * world_core.MAX_LOD_VERTICAL_SPANS * SPAN_WIRE_SIZE;
+    }
+    return total;
 }
 
 fn writeF32(buf: []u8, value: f32) void {
@@ -87,6 +105,109 @@ fn readBiome(byte: u8) !BiomeId {
     return std.enums.fromInt(BiomeId, byte) orelse CacheError.InvalidBiome;
 }
 
+fn writeMaterialLayers(buf: []u8, layers: LODMaterialLayers) void {
+    writeBlock(buf[0..1], layers.surface);
+    writeBlock(buf[1..2], layers.subsurface);
+    writeBlock(buf[2..3], layers.foundation);
+}
+
+fn readMaterialLayers(buf: []const u8) !LODMaterialLayers {
+    return .{
+        .surface = try readBlock(buf[0]),
+        .subsurface = try readBlock(buf[1]),
+        .foundation = try readBlock(buf[2]),
+    };
+}
+
+fn writeWater(buf: []u8, water: LODWaterState) void {
+    buf[0] = if (water.is_surface) 1 else 0;
+    writeF32(buf[1..][0..4], water.surface_height);
+    writeF32(buf[5..][0..4], water.depth);
+    writeF32(buf[9..][0..4], water.coverage);
+}
+
+fn readWater(buf: []const u8) LODWaterState {
+    return .{
+        .is_surface = buf[0] != 0,
+        .surface_height = readF32(buf[1..][0..4]),
+        .depth = readF32(buf[5..][0..4]),
+        .coverage = readF32(buf[9..][0..4]),
+    };
+}
+
+fn writeLighting(buf: []u8, lighting: LODLightingHint) void {
+    buf[0] = lighting.sky_light;
+    buf[1] = lighting.block_light;
+    writeF32(buf[2..][0..4], lighting.ambient_occlusion);
+}
+
+fn readLighting(buf: []const u8) LODLightingHint {
+    return .{
+        .sky_light = buf[0],
+        .block_light = buf[1],
+        .ambient_occlusion = readF32(buf[2..][0..4]),
+    };
+}
+
+fn writeVegetation(buf: []u8, vegetation: LODVegetationHint) void {
+    writeF32(buf[0..][0..4], vegetation.tree_coverage);
+    writeF32(buf[4..][0..4], vegetation.avg_tree_height);
+    writeF32(buf[8..][0..4], vegetation.offset_x);
+    writeF32(buf[12..][0..4], vegetation.offset_z);
+    writeBlock(buf[16..17], vegetation.trunk);
+    writeBlock(buf[17..18], vegetation.leaves);
+}
+
+fn readVegetation(buf: []const u8) !LODVegetationHint {
+    return .{
+        .tree_coverage = readF32(buf[0..][0..4]),
+        .avg_tree_height = readF32(buf[4..][0..4]),
+        .offset_x = readF32(buf[8..][0..4]),
+        .offset_z = readF32(buf[12..][0..4]),
+        .trunk = try readBlock(buf[16]),
+        .leaves = try readBlock(buf[17]),
+    };
+}
+
+fn writeSpan(buf: []u8, span: LODVerticalSpan) void {
+    var off: usize = 0;
+    writeF32(buf[off..][0..4], span.min_height);
+    off += 4;
+    writeF32(buf[off..][0..4], span.max_height);
+    off += 4;
+    buf[off] = @intFromEnum(span.biome);
+    off += 1;
+    writeMaterialLayers(buf[off..][0..3], span.material_layers);
+    off += 3;
+    std.mem.writeInt(u32, buf[off..][0..4], span.color, .little);
+    off += 4;
+    writeWater(buf[off..][0..WATER_WIRE_SIZE], span.water);
+    off += WATER_WIRE_SIZE;
+    writeLighting(buf[off..][0..LIGHTING_WIRE_SIZE], span.lighting);
+    off += LIGHTING_WIRE_SIZE;
+    writeVegetation(buf[off..][0..VEGETATION_WIRE_SIZE], span.vegetation);
+}
+
+fn readSpan(buf: []const u8) !LODVerticalSpan {
+    var off: usize = 0;
+    const min_height = readF32(buf[off..][0..4]);
+    off += 4;
+    const max_height = readF32(buf[off..][0..4]);
+    off += 4;
+    const biome = try readBiome(buf[off]);
+    off += 1;
+    const material_layers = try readMaterialLayers(buf[off..][0..3]);
+    off += 3;
+    const color = std.mem.readInt(u32, buf[off..][0..4], .little);
+    off += 4;
+    const water = readWater(buf[off..][0..WATER_WIRE_SIZE]);
+    off += WATER_WIRE_SIZE;
+    const lighting = readLighting(buf[off..][0..LIGHTING_WIRE_SIZE]);
+    off += LIGHTING_WIRE_SIZE;
+    const vegetation = try readVegetation(buf[off..][0..VEGETATION_WIRE_SIZE]);
+    return .{ .min_height = min_height, .max_height = max_height, .biome = biome, .material_layers = material_layers, .color = color, .water = water, .lighting = lighting, .vegetation = vegetation };
+}
+
 fn computeCrc(bytes: []const u8) u32 {
     var crc = std.hash.Crc32.init();
     crc.update(bytes[0..6]);
@@ -98,7 +219,7 @@ fn computeCrc(bytes: []const u8) u32 {
 pub fn serialize(data: *const LODSimplifiedData, key: Key, allocator: std.mem.Allocator) ![]u8 {
     const width_usize = @as(usize, @intCast(data.width));
     const count = width_usize * width_usize;
-    const total_size = HEADER_SIZE + payloadSize(count);
+    const total_size = serializedSize(data);
     const buf = try allocator.alloc(u8, total_size);
     errdefer allocator.free(buf);
 
@@ -141,40 +262,36 @@ pub fn serialize(data: *const LODSimplifiedData, key: Key, allocator: std.mem.Al
         off += 4;
     }
     for (data.material_layers) |layers| {
-        writeBlock(buf[off..][0..1], layers.surface);
-        writeBlock(buf[off + 1 ..][0..1], layers.subsurface);
-        writeBlock(buf[off + 2 ..][0..1], layers.foundation);
+        writeMaterialLayers(buf[off..][0..3], layers);
         off += 3;
     }
     for (data.water) |water| {
-        buf[off] = if (water.is_surface) 1 else 0;
-        off += 1;
-        writeF32(buf[off..][0..4], water.surface_height);
-        off += 4;
-        writeF32(buf[off..][0..4], water.depth);
-        off += 4;
-        writeF32(buf[off..][0..4], water.coverage);
-        off += 4;
+        writeWater(buf[off..][0..WATER_WIRE_SIZE], water);
+        off += WATER_WIRE_SIZE;
     }
     for (data.lighting) |lighting| {
-        buf[off] = lighting.sky_light;
-        buf[off + 1] = lighting.block_light;
-        off += 2;
-        writeF32(buf[off..][0..4], lighting.ambient_occlusion);
-        off += 4;
+        writeLighting(buf[off..][0..LIGHTING_WIRE_SIZE], lighting);
+        off += LIGHTING_WIRE_SIZE;
     }
     for (data.vegetation) |vegetation| {
-        writeF32(buf[off..][0..4], vegetation.tree_coverage);
-        off += 4;
-        writeF32(buf[off..][0..4], vegetation.avg_tree_height);
-        off += 4;
-        writeF32(buf[off..][0..4], vegetation.offset_x);
-        off += 4;
-        writeF32(buf[off..][0..4], vegetation.offset_z);
-        off += 4;
-        writeBlock(buf[off..][0..1], vegetation.trunk);
-        writeBlock(buf[off + 1 ..][0..1], vegetation.leaves);
-        off += 2;
+        writeVegetation(buf[off..][0..VEGETATION_WIRE_SIZE], vegetation);
+        off += VEGETATION_WIRE_SIZE;
+    }
+
+    const has_spans = data.hasVerticalSpans();
+    buf[off] = if (has_spans) 1 else 0;
+    off += 1;
+    if (has_spans) {
+        const counts = data.vertical_span_counts.?;
+        const spans = data.vertical_spans.?;
+        @memset(buf[off..][0..count], @intFromEnum(ColumnProvenance.worldgen));
+        off += count;
+        @memcpy(buf[off..][0..count], counts);
+        off += count;
+        for (spans) |span| {
+            writeSpan(buf[off..][0..SPAN_WIRE_SIZE], span);
+            off += SPAN_WIRE_SIZE;
+        }
     }
 
     std.debug.assert(off == total_size);
@@ -190,7 +307,8 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
     if (std.mem.readInt(u32, bytes[off..][0..4], .little) != MAGIC) return CacheError.InvalidMagic;
     off += 4;
 
-    if (bytes[off] != CACHE_VERSION) return CacheError.UnsupportedVersion;
+    const version = bytes[off];
+    if (version != CACHE_VERSION and version != CACHE_VERSION_V1) return CacheError.UnsupportedVersion;
     off += 1;
     const lod_byte = bytes[off];
     off += 1;
@@ -217,10 +335,20 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
     if (width != LODSimplifiedData.getGridSize(key.lod)) return CacheError.InvalidWidth;
 
     const count = @as(usize, @intCast(width)) * @as(usize, @intCast(width));
-    const expected = HEADER_SIZE + payloadSize(count);
+    const v1_expected = HEADER_SIZE + payloadSize(count);
+    if (bytes.len < v1_expected) return CacheError.DataTooShort;
+
+    var has_spans = false;
+    var expected = v1_expected;
+    if (version == CACHE_VERSION) {
+        if (bytes.len < v1_expected + SPAN_FLAGS_WIRE_SIZE) return CacheError.DataTooShort;
+        has_spans = bytes[v1_expected] != 0;
+        expected = v1_expected + SPAN_FLAGS_WIRE_SIZE;
+        if (has_spans) expected += count + count + count * world_core.MAX_LOD_VERTICAL_SPANS * SPAN_WIRE_SIZE;
+    }
     if (bytes.len < expected) return CacheError.DataTooShort;
 
-    var data = try LODSimplifiedData.init(allocator, key.lod);
+    var data = if (has_spans) try LODSimplifiedData.initWithVerticalSpans(allocator, key.lod) else try LODSimplifiedData.init(allocator, key.lod);
     errdefer data.deinit();
 
     for (data.heightmap) |*height| {
@@ -240,40 +368,40 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
         off += 4;
     }
     for (data.material_layers) |*layers| {
-        layers.* = LODMaterialLayers{
-            .surface = try readBlock(bytes[off]),
-            .subsurface = try readBlock(bytes[off + 1]),
-            .foundation = try readBlock(bytes[off + 2]),
-        };
+        layers.* = try readMaterialLayers(bytes[off..][0..3]);
         off += 3;
     }
     for (data.water) |*water| {
-        water.* = LODWaterState{
-            .is_surface = bytes[off] != 0,
-            .surface_height = readF32(bytes[off + 1 ..][0..4]),
-            .depth = readF32(bytes[off + 5 ..][0..4]),
-            .coverage = readF32(bytes[off + 9 ..][0..4]),
-        };
+        water.* = readWater(bytes[off..][0..WATER_WIRE_SIZE]);
         off += 13;
     }
     for (data.lighting) |*lighting| {
-        lighting.* = LODLightingHint{
-            .sky_light = bytes[off],
-            .block_light = bytes[off + 1],
-            .ambient_occlusion = readF32(bytes[off + 2 ..][0..4]),
-        };
+        lighting.* = readLighting(bytes[off..][0..LIGHTING_WIRE_SIZE]);
         off += 6;
     }
     for (data.vegetation) |*vegetation| {
-        vegetation.* = LODVegetationHint{
-            .tree_coverage = readF32(bytes[off..][0..4]),
-            .avg_tree_height = readF32(bytes[off + 4 ..][0..4]),
-            .offset_x = readF32(bytes[off + 8 ..][0..4]),
-            .offset_z = readF32(bytes[off + 12 ..][0..4]),
-            .trunk = try readBlock(bytes[off + 16]),
-            .leaves = try readBlock(bytes[off + 17]),
-        };
+        vegetation.* = try readVegetation(bytes[off..][0..VEGETATION_WIRE_SIZE]);
         off += 18;
+    }
+
+    if (version == CACHE_VERSION) {
+        const flags = bytes[off];
+        off += 1;
+        if ((flags & ~@as(u8, 1)) != 0) return CacheError.InvalidSpanCount;
+        if (has_spans) {
+            off += count; // provenance reserved for Phase 2; all v2 writes use worldgen.
+            const counts = data.vertical_span_counts.?;
+            @memcpy(counts, bytes[off..][0..count]);
+            off += count;
+            for (counts) |span_count| {
+                if (span_count > world_core.MAX_LOD_VERTICAL_SPANS) return CacheError.InvalidSpanCount;
+            }
+            const spans = data.vertical_spans.?;
+            for (spans) |*span| {
+                span.* = try readSpan(bytes[off..][0..SPAN_WIRE_SIZE]);
+                off += SPAN_WIRE_SIZE;
+            }
+        }
     }
 
     std.debug.assert(off == expected);
@@ -324,6 +452,72 @@ test "LOD cache round-trip preserves source data" {
     try testing.expectEqual(data.water[idx].depth, decoded.water[idx].depth);
     try testing.expectEqual(data.lighting[idx].sky_light, decoded.lighting[idx].sky_light);
     try testing.expectEqual(data.vegetation[idx].leaves, decoded.vegetation[idx].leaves);
+}
+
+test "LOD cache round-trip preserves vertical spans" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer data.deinit();
+
+    const lower = LODVerticalSpan{
+        .min_height = 12.0,
+        .max_height = 48.0,
+        .biome = .forest,
+        .material_layers = .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone },
+        .color = 0xFF112233,
+        .water = .empty,
+        .lighting = .{ .sky_light = 9, .block_light = 1, .ambient_occlusion = 0.7 },
+        .vegetation = .{ .tree_coverage = 0.5, .avg_tree_height = 7.0, .offset_x = 0.25, .offset_z = -0.25, .trunk = .wood, .leaves = .leaves },
+    };
+    const upper = LODVerticalSpan{
+        .min_height = 49.0,
+        .max_height = 92.0,
+        .biome = .mountains,
+        .material_layers = .{ .surface = .stone, .subsurface = .stone, .foundation = .stone },
+        .color = 0xFF8899AA,
+        .water = .{ .is_surface = true, .surface_height = 64.0, .depth = 2.0, .coverage = 0.25 },
+        .lighting = .daylight,
+        .vegetation = .empty,
+    };
+    try testing.expect(data.setVerticalSpan(2, 3, 0, lower));
+    try testing.expect(data.setVerticalSpan(2, 3, 1, upper));
+
+    const key = Key{ .seed = 1234, .generator_identity_hash = 99, .generator_version = 7, .rx = -2, .rz = 3, .lod = .lod1 };
+    const bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(bytes);
+
+    var decoded = try deserialize(bytes, key, testing.allocator);
+    defer decoded.deinit();
+
+    try testing.expect(decoded.hasVerticalSpans());
+    try testing.expectEqual(data.vertical_span_counts.?.len, decoded.vertical_span_counts.?.len);
+    try testing.expectEqualSlices(u8, data.vertical_span_counts.?, decoded.vertical_span_counts.?);
+    try testing.expectEqual(data.vertical_spans.?.len, decoded.vertical_spans.?.len);
+    try testing.expectEqualSlices(u8, std.mem.sliceAsBytes(data.vertical_spans.?), std.mem.sliceAsBytes(decoded.vertical_spans.?));
+}
+
+test "LOD cache accepts v1 payload as span-less data" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod2);
+    defer data.deinit();
+    data.setColumn(1, 1, 91.0, .mountains, .{ .surface = .stone, .subsurface = .dirt, .foundation = .stone }, 0xFF445566, .empty, .daylight, .empty);
+
+    const key = Key{ .seed = 4, .generator_identity_hash = 5, .generator_version = 6, .rx = -1, .rz = -2, .lod = .lod2 };
+    const v2_bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(v2_bytes);
+    const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
+    const v1_size = HEADER_SIZE + payloadSize(count);
+    const v1_bytes = try testing.allocator.dupe(u8, v2_bytes[0..v1_size]);
+    defer testing.allocator.free(v1_bytes);
+    v1_bytes[4] = CACHE_VERSION_V1;
+    std.mem.writeInt(u32, v1_bytes[6..][0..4], 0, .little);
+    std.mem.writeInt(u32, v1_bytes[6..][0..4], computeCrc(v1_bytes), .little);
+
+    var decoded = try deserialize(v1_bytes, key, testing.allocator);
+    defer decoded.deinit();
+
+    try testing.expect(!decoded.hasVerticalSpans());
+    const idx = 1 + data.width;
+    try testing.expectEqual(data.heightmap[idx], decoded.heightmap[idx]);
+    try testing.expectEqual(data.biomes[idx], decoded.biomes[idx]);
 }
 
 test "LOD cache rejects checksum mismatch" {
