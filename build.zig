@@ -273,6 +273,7 @@ pub fn build(b: *std.Build) void {
     world_lod.addImport("engine-rhi", engine_rhi);
     world_lod.addImport("world-meshing", world_meshing);
     world_lod.addImport("world-core", world_core);
+    world_lod.addImport("world-persistence", world_persistence);
     world_lod.addOptions("world_lod_options", world_lod_options);
     addSharedImports(world_persistence, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_persistence.addImport("engine-core", engine_core);

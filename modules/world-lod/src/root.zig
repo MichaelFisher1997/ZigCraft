@@ -12,6 +12,7 @@ pub const lod_streaming_coordinator = @import("lod_streaming_coordinator.zig");
 pub const lod_types = @import("lod_types.zig");
 pub const lod_upload_queue = @import("lod_upload_queue.zig");
 pub const lod_stats = @import("lod_stats.zig");
+pub const lod_store = @import("lod_store.zig");
 pub const world_lod = @import("world_lod.zig");
 
 pub const LODChunk = lod_chunk.LODChunk;

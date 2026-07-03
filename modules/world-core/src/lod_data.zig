@@ -10,6 +10,16 @@ pub const LODDataVersion = enum(u16) {
     rich_v2 = 2,
 };
 
+pub const LODColumnProvenance = enum(u8) {
+    worldgen = 0,
+    chunk_derived = 1,
+    edited = 2,
+
+    pub fn canOverwrite(new: LODColumnProvenance, old: LODColumnProvenance) bool {
+        return @intFromEnum(new) >= @intFromEnum(old);
+    }
+};
+
 pub const MAX_LOD_VERTICAL_SPANS: usize = 4;
 
 pub const LODMaterialLayers = struct {
@@ -118,6 +128,7 @@ pub const LODSimplifiedData = struct {
     water: []LODWaterState,
     lighting: []LODLightingHint,
     vegetation: []LODVegetationHint,
+    provenance: []LODColumnProvenance,
     vertical_span_counts: ?[]u8,
     vertical_spans: ?[]LODVerticalSpan,
     allocator: std.mem.Allocator,
@@ -163,6 +174,8 @@ pub const LODSimplifiedData = struct {
         errdefer allocator.free(lighting);
         const vegetation = try allocator.alloc(LODVegetationHint, count);
         errdefer allocator.free(vegetation);
+        const provenance = try allocator.alloc(LODColumnProvenance, count);
+        errdefer allocator.free(provenance);
 
         @memset(heightmap, 0.0);
         @memset(biomes, .plains);
@@ -172,6 +185,7 @@ pub const LODSimplifiedData = struct {
         @memset(water, LODWaterState.empty);
         @memset(lighting, LODLightingHint.daylight);
         @memset(vegetation, LODVegetationHint.empty);
+        @memset(provenance, .worldgen);
 
         return .{
             .version = .rich_v2,
@@ -184,6 +198,7 @@ pub const LODSimplifiedData = struct {
             .water = water,
             .lighting = lighting,
             .vegetation = vegetation,
+            .provenance = provenance,
             .vertical_span_counts = null,
             .vertical_spans = null,
             .allocator = allocator,
@@ -206,6 +221,7 @@ pub const LODSimplifiedData = struct {
         self.allocator.free(self.water);
         self.allocator.free(self.lighting);
         self.allocator.free(self.vegetation);
+        self.allocator.free(self.provenance);
         if (self.vertical_span_counts) |counts| self.allocator.free(counts);
         if (self.vertical_spans) |spans| self.allocator.free(spans);
         self.* = undefined;
@@ -269,6 +285,16 @@ pub const LODSimplifiedData = struct {
         }
     }
 
+    pub fn setColumnProvenance(self: *LODSimplifiedData, gx: u32, gz: u32, provenance: LODColumnProvenance) void {
+        if (gx >= self.width or gz >= self.width) return;
+        self.provenance[gz * self.width + gx] = provenance;
+    }
+
+    pub fn getColumnProvenance(self: *const LODSimplifiedData, gx: u32, gz: u32) LODColumnProvenance {
+        if (gx >= self.width or gz >= self.width) return .worldgen;
+        return self.provenance[gz * self.width + gx];
+    }
+
     pub fn verticalSpanCount(self: *const LODSimplifiedData, gx: u32, gz: u32) u8 {
         if (gx >= self.width or gz >= self.width) return 0;
         const counts = self.vertical_span_counts orelse return 0;
@@ -304,7 +330,7 @@ pub const LODSimplifiedData = struct {
     pub fn totalMemoryBytes(self: *const LODSimplifiedData) usize {
         const count = self.width * self.width;
         const count_usize = @as(usize, @intCast(count));
-        var total: usize = count_usize * (@sizeOf(f32) + @sizeOf(world_core.BiomeId) + @sizeOf(world_core.BlockType) + @sizeOf(u32) + @sizeOf(LODMaterialLayers) + @sizeOf(LODWaterState) + @sizeOf(LODLightingHint) + @sizeOf(LODVegetationHint));
+        var total: usize = count_usize * (@sizeOf(f32) + @sizeOf(world_core.BiomeId) + @sizeOf(world_core.BlockType) + @sizeOf(u32) + @sizeOf(LODMaterialLayers) + @sizeOf(LODWaterState) + @sizeOf(LODLightingHint) + @sizeOf(LODVegetationHint) + @sizeOf(LODColumnProvenance));
         if (self.vertical_span_counts != null) total += count_usize * @sizeOf(u8);
         if (self.vertical_spans != null) total += @as(usize, @intCast(count)) * MAX_LOD_VERTICAL_SPANS * @sizeOf(LODVerticalSpan);
         return total;
