@@ -743,11 +743,13 @@ const HeightInterval = struct {
 
 fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan) usize {
     var count: usize = 0;
+    var has_water_span = false;
     var i: u8 = 0;
     while (i < data.verticalSpanCount(gx, gz)) : (i += 1) {
         const raw = data.getVerticalSpan(gx, gz, i) orelse continue;
         const block = representativeSpanBlock(raw.material_layers);
         if (block == .air) continue;
+        if (block == .water) has_water_span = true;
         const min_height = @min(raw.min_height, raw.max_height);
         const max_height = @max(raw.min_height, raw.max_height);
         if (max_height <= min_height + 0.01) continue;
@@ -763,7 +765,7 @@ fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, out: *[w
     if (gx < data.width and gz < data.width) {
         const idx = gx + gz * data.width;
         const water = data.water[idx];
-        if (water.is_surface and water.coverage >= 0.35 and water.depth > 0.01 and count < out.len) {
+        if (!has_water_span and water.is_surface and water.coverage >= 0.35 and water.depth > 0.01 and count < out.len) {
             insertColumnSpan(out, &count, .{
                 .min_height = water.surface_height - water.depth,
                 .max_height = water.surface_height,

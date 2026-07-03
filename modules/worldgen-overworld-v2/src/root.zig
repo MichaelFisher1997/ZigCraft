@@ -562,7 +562,7 @@ pub const OverworldV2Generator = struct {
                 const wx_f = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
                 const wz_f = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
                 const sample = self.sampleRepresentativeLODColumn(wx_f, wz_f, cell_span);
-                data.setColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
+                data.setGeneratedColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
             }
         }
     }
