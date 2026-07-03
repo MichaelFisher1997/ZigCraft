@@ -330,7 +330,7 @@ pub const OverworldGenerator = struct {
         // trees render in the near LOD0 chunks). Disabled per-level below; flip
         // a level back on if its foliage tint is wanted and it's cheap enough.
         const compute_tree_hints: bool = switch (lod_level) {
-            .lod0, .lod1, .lod2, .lod3 => false,
+            .lod0, .lod1, .lod2, .lod3, .lod4 => false,
         };
 
         var block_counts = [_]u32{0} ** world_core.MAX_BLOCK_TYPES;

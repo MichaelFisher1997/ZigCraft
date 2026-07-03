@@ -697,7 +697,7 @@ test "LODRenderer keeps coarse LOD visible while finer bands stream" {
     try regions[2].put(key, &chunk);
 
     var mock_config = LODConfig{
-        .radii = .{ 16, 32, 64, 100 },
+        .radii = .{ 16, 32, 64, 100, 256 },
     };
 
     renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
@@ -766,7 +766,7 @@ test "LODRenderer disables mask when chunks are missing inside LOD0 radius" {
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
-    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
     var checker_ctx: u8 = 0;
     const Checker = struct {
         fn missingInRadius(_: i32, _: i32, _: *anyopaque) bool {
@@ -840,7 +840,7 @@ test "LODRenderer keeps mask when only outside-radius chunks are uncovered" {
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
-    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
     var checker_ctx: u8 = 0;
     const Checker = struct {
         fn loaded(_: i32, _: i32, _: *anyopaque) bool {
@@ -914,7 +914,7 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
-    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
     var checker_ctx: u8 = 0;
     const Checker = struct {
         fn partiallyLoaded(cx: i32, cz: i32, _: *anyopaque) bool {
@@ -1005,7 +1005,7 @@ test "LODRenderer skips coarse LOD when finer coverage is ready" {
     }
 
     var mock_config = LODConfig{
-        .radii = .{ 16, 32, 64, 100 },
+        .radii = .{ 16, 32, 64, 100, 256 },
     };
 
     renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
@@ -1089,7 +1089,7 @@ test "LODRenderer keeps coarse LOD when a finer child is missing" {
         try regions[1].put(finer_key, &finer_chunks[idx]);
     }
 
-    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
 
     renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
 
@@ -1174,7 +1174,7 @@ test "LODRenderer resolves finer coverage across negative region boundaries" {
         try regions[1].put(finer_key, &finer_chunks[idx]);
     }
 
-    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100 } };
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
 
     renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
 

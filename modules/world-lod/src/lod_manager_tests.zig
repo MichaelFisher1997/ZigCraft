@@ -71,7 +71,7 @@ test "LODManager initialization" {
     };
 
     var config = LODConfig{
-        .radii = .{ 8, 16, 32, 64 },
+        .radii = .{ 8, 16, 32, 64, 128 },
     };
 
     var mock_state = MockState{};
@@ -169,7 +169,7 @@ test "LODManager end-to-end covered cleanup" {
     };
 
     var config = LODConfig{
-        .radii = .{ 2, 4, 8, 16 },
+        .radii = .{ 2, 4, 8, 16, 32 },
     };
 
     var noop_ctx: u8 = 0;

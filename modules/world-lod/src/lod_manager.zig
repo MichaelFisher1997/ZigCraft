@@ -165,7 +165,7 @@ pub const LODManager = struct {
     // Optional save directory for generated LOD source data.
     cache_dir_path: ?[]const u8,
     logged_legacy_cache_notice: bool,
-    store_mutex: std.Thread.Mutex,
+    store_mutex: sync.Mutex,
 
     // Keep cleanup behavior testable, but allow the live world to opt out.
     cleanup_covered_regions: bool = true,
@@ -256,11 +256,8 @@ pub const LODManager = struct {
         mgr.lod_gen_pool = try WorkerPool.init(allocator, lod_worker_count, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
 
         const radii = config.getRadii();
-        log.log.info("LODManager initialized with radii: LOD0={}, LOD1={}, LOD2={}, LOD3={} | workers={}", .{
-            radii[0],
-            radii[1],
-            radii[2],
-            radii[3],
+        log.log.info("LODManager initialized with radii: {any} | workers={}", .{
+            radii,
             lod_worker_count,
         });
 
@@ -426,7 +423,7 @@ pub const LODManager = struct {
         }
 
         // Process state transitions
-        self.processStateTransitions() catch |err| {
+        self.processStateTransitions(player_velocity) catch |err| {
             log.log.warn("LOD state transitions error: {} (non-fatal)", .{err});
         };
 
@@ -444,14 +441,18 @@ pub const LODManager = struct {
         // every ~180 frames (~3s @ 60fps) gives a trend over a 20s diagnostic run.
         if (self.update_tick % 180 == 0) {
             const s = self.stats;
-            log.log.warn("LOD_STATS: loaded=[L1:{},L2:{},L3:{}] generating=[{},{},{}] meshing=[{},{},{}] genQ3={} uploadQ=[{},{},{}] meshes=[{},{},{}] cache_hit/miss={}/{} store_hit/miss={}/{} evictions={}", .{
-                s.loaded[1],                           s.loaded[2],             s.loaded[3],
-                s.generating[1],                       s.generating[2],         s.generating[3],
-                s.meshing[1],                          s.meshing[2],            s.meshing[3],
-                s.gen_queue_depth[LODLevel.count - 1], s.upload_queue_depth[1], s.upload_queue_depth[2],
-                s.upload_queue_depth[3],               s.mesh_count[1],         s.mesh_count[2],
-                s.mesh_count[3],                       s.cache_hits,            s.cache_misses,
-                s.store_hits,                          s.store_misses,          s.evictions,
+            log.log.warn("LOD_STATS: loaded={any} generating={any} meshing={any} genQ={} uploadQ={any} meshes={any} cache_hit/miss={}/{} store_hit/miss={}/{} evictions={}", .{
+                s.loaded,
+                s.generating,
+                s.meshing,
+                s.gen_queue_depth[LODLevel.count - 1],
+                s.upload_queue_depth,
+                s.mesh_count,
+                s.cache_hits,
+                s.cache_misses,
+                s.store_hits,
+                s.store_misses,
+                s.evictions,
             });
         }
 
@@ -485,7 +486,7 @@ pub const LODManager = struct {
     }
 
     /// Process state transitions (generated -> meshing -> ready)
-    fn processStateTransitions(self: *Self) !void {
+    fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         // Use exclusive lock since we modify chunk state
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -507,26 +508,23 @@ pub const LODManager = struct {
         for (1..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
             const scale = @as(i32, @intCast(lod.chunksPerSide()));
-            const lod_priority_bias = @as(i32, @intCast(LODLevel.count - 1 - i)) << 28;
             const level: u3 = @intCast(i);
             var iter = self.regions[i].iterator();
             while (iter.next()) |entry| {
                 const chunk = entry.value_ptr.*;
                 if (chunk.state == .generated) {
-                    const dx = chunk.region_x * scale - self.player_cx;
-                    const dz = chunk.region_z * scale - self.player_cz;
-                    const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
-                    const encoded_priority = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias;
+                    const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
+                    const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
+                    const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - self.player_cx, center_cz - self.player_cz, velocity);
                     // Append before flipping state so an allocation failure
                     // leaves the chunk in .generated (re-tried next tick)
                     // instead of stuck in .meshing with no queued job.
                     try mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
                     chunk.state = .meshing;
                 } else if (chunk.state == .mesh_ready) {
-                    const dx = chunk.region_x * scale - self.player_cx;
-                    const dz = chunk.region_z * scale - self.player_cz;
-                    const dist_sq = @as(i64, dx) * @as(i64, dx) + @as(i64, dz) * @as(i64, dz);
-                    const encoded_priority = @as(i32, @truncate(dist_sq & 0x0FFFFFFF)) | lod_priority_bias;
+                    const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
+                    const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
+                    const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - self.player_cx, center_cz - self.player_cz, velocity);
                     try upload_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
                     chunk.state = .uploading;
                 }
@@ -1032,7 +1030,7 @@ pub const LODManager = struct {
         switch (chunk.data) {
             .simplified => |*data| {
                 const bounds = chunk.worldBounds();
-                switch (self.effectiveMeshPath()) {
+                switch (self.effectiveMeshPath(chunk.lod_level)) {
                     .heightfield => try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas),
                     .column_spans => try mesh.buildFromColumnSpans(data, bounds.min_x, bounds.min_z, self.atlas),
                     .qem => {
@@ -1057,7 +1055,8 @@ pub const LODManager = struct {
         }
     }
 
-    fn effectiveMeshPath(self: *Self) lod_chunk.LODMeshPath {
+    fn effectiveMeshPath(self: *Self, lod: LODLevel) lod_chunk.LODMeshPath {
+        if (lod == LODConfig.coarsestLOD()) return .heightfield;
         if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_QEM", false)) return .qem;
         if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_SPANS", false)) return .column_spans;
         return self.config.getMeshPath();
@@ -1118,7 +1117,7 @@ pub const LODManager = struct {
     fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key, bytes: []const u8) !void {
         self.store_mutex.lock();
         defer self.store_mutex.unlock();
-        try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes);
+        try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes, self.config.getLODStoreSizeCapMB());
     }
 
     fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) void {

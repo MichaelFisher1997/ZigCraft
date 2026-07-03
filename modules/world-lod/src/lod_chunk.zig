@@ -294,6 +294,7 @@ pub const ILODConfig = struct {
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
         getFallbackMissingChildThreshold: *const fn (ptr: *anyopaque) f32,
         getMemoryBudgetMB: *const fn (ptr: *anyopaque) u32,
+        getLODStoreSizeCapMB: *const fn (ptr: *anyopaque) u32,
     };
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
@@ -358,6 +359,10 @@ pub const ILODConfig = struct {
     pub fn getMemoryBudgetMB(self: ILODConfig) u32 {
         return self.vtable.getMemoryBudgetMB(self.ptr);
     }
+
+    pub fn getLODStoreSizeCapMB(self: ILODConfig) u32 {
+        return self.vtable.getLODStoreSizeCapMB(self.ptr);
+    }
 };
 
 pub fn activeLODCount(config: ILODConfig) usize {
@@ -367,11 +372,13 @@ pub fn activeLODCount(config: ILODConfig) usize {
 /// Concrete implementation of LOD system configuration.
 pub const LODConfig = struct {
     pub const dynamic_lod0_radius: i32 = 16;
-    pub const dynamic_lod3_radius: i32 = 512;
+    pub const default_horizon_radius: i32 = 512;
 
-    radii: [LODLevel.count]i32 = .{ 16, 40, 80, 160 },
+    radii: [LODLevel.count]i32 = .{ 16, 40, 80, 160, default_horizon_radius },
 
     memory_budget_mb: u32 = 256,
+
+    lod_store_size_cap_mb: u32 = @import("lod_store.zig").DEFAULT_STORE_SIZE_CAP_MB,
 
     max_uploads_per_frame: u32 = 32,
 
@@ -379,15 +386,15 @@ pub const LODConfig = struct {
 
     /// Fog start position as percentage of LOD radius (0.0-1.0) where fog begins.
     /// Values closer to 0.0 start fog near the player; 1.0 disables fog for that level.
-    fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28 },
+    fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28, 0.22 },
 
-    horizontal_detail: [LODLevel.count]u32 = .{ 16, 32, 48, 48 },
+    horizontal_detail: [LODLevel.count]u32 = .{ 16, 32, 48, 48, 24 },
 
     vertical_span_budget: u8 = 0,
 
     mesh_path: LODMeshPath = .heightfield,
 
-    qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200 },
+    qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200, 64 },
 
     qem_min_input_triangles: u32 = 50,
 
@@ -395,7 +402,7 @@ pub const LODConfig = struct {
 
     skip_lighting_lod3: bool = false,
 
-    active_lod_count: u32 = 4,
+    active_lod_count: u32 = LODLevel.count,
 
     /// Maximum fraction of direct finer child regions that may be missing before
     /// a coarser parent must remain visible as fallback terrain.
@@ -406,17 +413,27 @@ pub const LODConfig = struct {
     }
 
     pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
+        return radiiForDistances(distance, default_horizon_radius);
+    }
+
+    pub fn radiiForDistances(distance: i32, horizon_distance: i32) [LODLevel.count]i32 {
         const lod0 = @min(@max(distance, 1), dynamic_lod0_radius);
+        const horizon = @max(horizon_distance, lod0);
         const lod0_i64 = @as(i64, lod0);
-        const max_radius_i64 = @as(i64, dynamic_lod3_radius);
+        const max_radius_i64 = @as(i64, horizon);
         const lod1 = @as(i32, @intCast(@min(@max(lod0_i64 * 4, @as(i64, 32)), max_radius_i64)));
         const lod2 = @as(i32, @intCast(@min(@max(@as(i64, lod1) * 4, @as(i64, 128)), max_radius_i64)));
-        return .{ lod0, lod1, lod2, dynamic_lod3_radius };
+        const lod3 = @as(i32, @intCast(@min(@max(@as(i64, lod2) * 2, @as(i64, 160)), max_radius_i64)));
+        return .{ lod0, lod1, lod2, lod3, horizon };
     }
 
     pub fn activeCountForRenderDistance(distance: i32) u32 {
         _ = distance;
         return LODLevel.count;
+    }
+
+    pub fn coarsestLOD() LODLevel {
+        return @enumFromInt(@as(u3, @intCast(LODLevel.count - 1)));
     }
 
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
@@ -464,6 +481,7 @@ pub const LODConfig = struct {
         .getFogStartPercent = getFogStartPercentWrapper,
         .getFallbackMissingChildThreshold = getFallbackMissingChildThresholdWrapper,
         .getMemoryBudgetMB = getMemoryBudgetMBWrapper,
+        .getLODStoreSizeCapMB = getLODStoreSizeCapMBWrapper,
     };
 
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
@@ -537,6 +555,10 @@ pub const LODConfig = struct {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.memory_budget_mb;
     }
+    fn getLODStoreSizeCapMBWrapper(ptr: *anyopaque) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.lod_store_size_cap_mb;
+    }
 };
 
 // Tests
@@ -545,11 +567,13 @@ test "LODLevel scale calculations" {
     try std.testing.expectEqual(@as(u32, 2), LODLevel.lod1.scale());
     try std.testing.expectEqual(@as(u32, 4), LODLevel.lod2.scale());
     try std.testing.expectEqual(@as(u32, 8), LODLevel.lod3.scale());
+    try std.testing.expectEqual(@as(u32, 16), LODLevel.lod4.scale());
 
     try std.testing.expectEqual(@as(u32, 4), LODLevel.lod0.totalChunks());
     try std.testing.expectEqual(@as(u32, 16), LODLevel.lod1.totalChunks());
     try std.testing.expectEqual(@as(u32, 64), LODLevel.lod2.totalChunks());
     try std.testing.expectEqual(@as(u32, 256), LODLevel.lod3.totalChunks());
+    try std.testing.expectEqual(@as(u32, 1024), LODLevel.lod4.totalChunks());
 }
 
 test "LODRegionKey from chunk coords" {
@@ -584,7 +608,7 @@ test "LODConfig distance calculation" {
 
 test "LODConfig distance calculation respects active LOD count" {
     const config = LODConfig{
-        .radii = .{ 16, 32, 64, 128 },
+        .radii = .{ 16, 32, 64, 128, 256 },
         .active_lod_count = 2,
     };
 
@@ -616,13 +640,19 @@ test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(i32, 8), low_radii[0]);
     try std.testing.expectEqual(@as(i32, 32), low_radii[1]);
     try std.testing.expectEqual(@as(i32, 128), low_radii[2]);
-    try std.testing.expectEqual(@as(i32, 512), low_radii[3]);
+    try std.testing.expectEqual(@as(i32, 256), low_radii[3]);
+    try std.testing.expectEqual(@as(i32, 512), low_radii[4]);
 
     const radii = LODConfig.radiiForRenderDistance(32);
     try std.testing.expectEqual(@as(i32, 16), radii[0]);
     try std.testing.expectEqual(@as(i32, 64), radii[1]);
     try std.testing.expectEqual(@as(i32, 256), radii[2]);
     try std.testing.expectEqual(@as(i32, 512), radii[3]);
+    try std.testing.expectEqual(@as(i32, 512), radii[4]);
+
+    const custom_horizon = LODConfig.radiiForDistances(12, 1024);
+    try std.testing.expectEqual(@as(i32, 12), custom_horizon[0]);
+    try std.testing.expectEqual(@as(i32, 1024), custom_horizon[4]);
 }
 
 test "ChunkBounds intersects radius radially" {
@@ -636,7 +666,7 @@ test "ChunkBounds intersects radius radially" {
 
 test "ILODConfig.calculateMaskRadius" {
     var config = LODConfig{
-        .radii = .{ 16, 40, 80, 160 },
+        .radii = .{ 16, 40, 80, 160, 512 },
     };
     const interface = config.interface();
     try std.testing.expectEqual(@as(f32, 224.0), interface.calculateMaskRadius());
@@ -659,7 +689,7 @@ test "ILODConfig exposes fallback missing child threshold" {
 
 test "ILODConfig exposes LOD quality tuning controls" {
     var config = LODConfig{
-        .horizontal_detail = .{ 16, 24, 32, 40 },
+        .horizontal_detail = .{ 16, 24, 32, 40, 24 },
         .vertical_span_budget = 99,
         .mesh_path = .qem,
     };

@@ -237,7 +237,7 @@ pub const HeightSampler = struct {
         reduction: u8,
         terrain_modifier: ?TerrainModifier,
     ) f32 {
-        // Validate reduction is in expected range (0-4 for LOD0-LOD3)
+        // Validate reduction is in expected range (0-4 for LOD0-LOD4)
         std.debug.assert(reduction <= 4);
 
         const p = self.params;
