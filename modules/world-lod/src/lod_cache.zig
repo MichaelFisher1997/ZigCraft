@@ -39,11 +39,7 @@ pub const CacheError = error{
     ChecksumMismatch,
 };
 
-pub const ColumnProvenance = enum(u8) {
-    worldgen = 0,
-    chunk_derived = 1,
-    edited = 2,
-};
+pub const ColumnProvenance = world_core.LODColumnProvenance;
 
 const BIOME_COUNT: usize = @typeInfo(BiomeId).@"enum".fields.len;
 const BLOCK_COUNT: usize = @typeInfo(BlockType).@"enum".fields.len;
@@ -284,8 +280,10 @@ pub fn serialize(data: *const LODSimplifiedData, key: Key, allocator: std.mem.Al
     if (has_spans) {
         const counts = data.vertical_span_counts.?;
         const spans = data.vertical_spans.?;
-        @memset(buf[off..][0..count], @intFromEnum(ColumnProvenance.worldgen));
-        off += count;
+        for (data.provenance) |provenance| {
+            buf[off] = @intFromEnum(provenance);
+            off += 1;
+        }
         @memcpy(buf[off..][0..count], counts);
         off += count;
         for (spans) |span| {
@@ -389,7 +387,16 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
         off += 1;
         if ((flags & ~@as(u8, 1)) != 0) return CacheError.InvalidSpanCount;
         if (has_spans) {
-            off += count; // provenance reserved for Phase 2; all v2 writes use worldgen.
+            for (data.provenance) |*provenance| {
+                const byte = bytes[off];
+                provenance.* = switch (byte) {
+                    0 => .worldgen,
+                    1 => .chunk_derived,
+                    2 => .edited,
+                    else => return CacheError.InvalidSpanCount,
+                };
+                off += 1;
+            }
             const counts = data.vertical_span_counts.?;
             @memcpy(counts, bytes[off..][0..count]);
             off += count;
@@ -493,6 +500,25 @@ test "LOD cache round-trip preserves vertical spans" {
     try testing.expectEqualSlices(u8, data.vertical_span_counts.?, decoded.vertical_span_counts.?);
     try testing.expectEqual(data.vertical_spans.?.len, decoded.vertical_spans.?.len);
     try testing.expectEqualSlices(u8, std.mem.sliceAsBytes(data.vertical_spans.?), std.mem.sliceAsBytes(decoded.vertical_spans.?));
+}
+
+test "LOD cache round-trip preserves column provenance" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer data.deinit();
+
+    data.setColumnProvenance(2, 3, .chunk_derived);
+    data.setColumnProvenance(4, 5, .edited);
+
+    const key = Key{ .seed = 1234, .generator_identity_hash = 99, .generator_version = 7, .rx = -2, .rz = 3, .lod = .lod1 };
+    const bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(bytes);
+
+    var decoded = try deserialize(bytes, key, testing.allocator);
+    defer decoded.deinit();
+
+    try testing.expectEqual(ColumnProvenance.chunk_derived, decoded.getColumnProvenance(2, 3));
+    try testing.expectEqual(ColumnProvenance.edited, decoded.getColumnProvenance(4, 5));
+    try testing.expectEqual(ColumnProvenance.worldgen, decoded.getColumnProvenance(0, 0));
 }
 
 test "LOD cache accepts v1 payload as span-less data" {

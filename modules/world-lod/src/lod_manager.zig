@@ -62,6 +62,7 @@ const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const lod_scheduler = @import("lod_scheduler.zig");
 const lod_cache = @import("lod_cache.zig");
+const lod_store = @import("lod_store.zig");
 
 pub const MAX_LOD_REGIONS = 2048;
 const CHUNK_COVERAGE_PADDING: i32 = 1;
@@ -161,8 +162,10 @@ pub const LODManager = struct {
     // Type-erased renderer interface (replaces direct LODRenderer(RHI) field)
     renderer: LODRenderInterface,
 
-    // Optional on-disk cache for generated LOD source data.
+    // Optional save directory for generated LOD source data.
     cache_dir_path: ?[]const u8,
+    logged_legacy_cache_notice: bool,
+    store_mutex: std.Thread.Mutex,
 
     // Keep cleanup behavior testable, but allow the live world to opt out.
     cleanup_covered_regions: bool = true,
@@ -241,6 +244,8 @@ pub const LODManager = struct {
             .renderer = render_iface,
             .cleanup_covered_regions = true,
             .cache_dir_path = null,
+            .logged_legacy_cache_notice = false,
+            .store_mutex = .{},
         };
 
         const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
@@ -326,10 +331,23 @@ pub const LODManager = struct {
     }
 
     pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
-        const cache_dir_path = try std.fs.path.join(self.allocator, &.{ save_dir_path, "lod_cache" });
+        const cache_dir_path = try self.allocator.dupe(u8, save_dir_path);
         errdefer self.allocator.free(cache_dir_path);
 
-        try fs.cwd().makePath(cache_dir_path);
+        const live_header = lod_store.StoreHeader{
+            .seed = self.generator.seed,
+            .generator_identity_hash = self.generator.identity_hash,
+            .generator_version = self.generator.version,
+        };
+
+        if (try lod_store.readHeader(self.allocator, save_dir_path)) |stored_header| {
+            if (!lod_store.headersMatch(stored_header, live_header)) {
+                log.log.warn("LOD store metadata mismatch; purging stale LOD source store", .{});
+                try lod_store.deleteStore(self.allocator, save_dir_path);
+            }
+        }
+
+        try lod_store.writeHeader(self.allocator, save_dir_path, live_header);
 
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -337,7 +355,8 @@ pub const LODManager = struct {
             self.allocator.free(old_path);
         }
         self.cache_dir_path = cache_dir_path;
-        log.log.info("LOD source cache enabled at '{s}'", .{cache_dir_path});
+        self.logged_legacy_cache_notice = false;
+        log.log.info("LOD source store enabled at '{s}/lod'", .{cache_dir_path});
     }
 
     /// Update LOD system with player position
@@ -1055,14 +1074,22 @@ pub const LODManager = struct {
         };
     }
 
-    fn cacheFilePath(self: *Self, cache_dir_path: []const u8, key: lod_cache.Key) ![]u8 {
+    fn legacyCacheFilePath(self: *Self, save_dir_path: []const u8, key: lod_cache.Key) ![]u8 {
         const filename = try std.fmt.allocPrint(
             self.allocator,
             "lod_{}_{}_{}_{}_{}_{}.dat",
             .{ key.seed, key.generator_identity_hash, key.generator_version, key.rx, key.rz, @intFromEnum(key.lod) },
         );
         defer self.allocator.free(filename);
-        return std.fs.path.join(self.allocator, &.{ cache_dir_path, filename });
+        return std.fs.path.join(self.allocator, &.{ save_dir_path, "lod_cache", filename });
+    }
+
+    fn logLegacyCacheNotice(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.logged_legacy_cache_notice) return;
+        self.logged_legacy_cache_notice = true;
+        log.log.warn("Using read-only legacy LOD cache fallback; new writes go to lod/ region store", .{});
     }
 
     fn cacheDirPathSnapshot(self: *Self) ?[]u8 {
@@ -1082,13 +1109,65 @@ pub const LODManager = struct {
         return self.cache_dir_path != null;
     }
 
+    fn readStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) !?[]u8 {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        return lod_store.readPayload(self.allocator, save_dir_path, cache_key);
+    }
+
+    fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key, bytes: []const u8) !void {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes);
+    }
+
+    fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) void {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        lod_store.deletePayload(self.allocator, save_dir_path, cache_key);
+    }
+
+    fn deleteStoreContainer(self: *Self, path: []const u8) void {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        fs.cwd().deleteFile(path) catch |delete_err| {
+            if (delete_err != error.FileNotFound) {
+                log.log.warn("Failed to delete corrupt LOD store container '{s}': {}", .{ path, delete_err });
+            }
+        };
+    }
+
     fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
-        const cache_dir_path = self.cacheDirPathSnapshot() orelse return null;
-        defer self.allocator.free(cache_dir_path);
+        const save_dir_path = self.cacheDirPathSnapshot() orelse return null;
+        defer self.allocator.free(save_dir_path);
 
         const cache_key = self.cacheKey(key);
-        const path = self.cacheFilePath(cache_dir_path, cache_key) catch |err| {
-            log.log.warn("LOD cache path allocation failed: {}", .{err});
+
+        if (self.readStorePayload(save_dir_path, cache_key) catch |err| switch (err) {
+            lod_store.StoreError.CorruptContainer => {
+                const path = lod_store.containerPath(self.allocator, save_dir_path, cache_key) catch null;
+                if (path) |container_path| {
+                    defer self.allocator.free(container_path);
+                    log.log.warn("Discarding corrupt LOD store container '{s}'", .{container_path});
+                    self.deleteStoreContainer(container_path);
+                }
+                return null;
+            },
+            else => {
+                log.log.warn("Failed to read LOD store for LOD{} ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+                return null;
+            },
+        }) |bytes| {
+            defer self.allocator.free(bytes);
+            return lod_cache.deserialize(bytes, cache_key, self.allocator) catch |err| {
+                log.log.warn("Discarding corrupt LOD store payload LOD{} ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+                self.deleteStorePayload(save_dir_path, cache_key);
+                return null;
+            };
+        }
+
+        const path = self.legacyCacheFilePath(save_dir_path, cache_key) catch |err| {
+            log.log.warn("LOD legacy cache path allocation failed: {}", .{err});
             return null;
         };
         defer self.allocator.free(path);
@@ -1096,17 +1175,18 @@ pub const LODManager = struct {
         const bytes = fs.cwd().readFileAlloc(path, self.allocator, 16 * 1024 * 1024) catch |err| switch (err) {
             error.FileNotFound => return null,
             else => {
-                log.log.warn("Failed to read LOD cache '{s}': {}", .{ path, err });
+                log.log.warn("Failed to read legacy LOD cache '{s}': {}", .{ path, err });
                 return null;
             },
         };
         defer self.allocator.free(bytes);
+        self.logLegacyCacheNotice();
 
         return lod_cache.deserialize(bytes, cache_key, self.allocator) catch |err| {
-            log.log.warn("Discarding corrupt LOD cache '{s}': {}", .{ path, err });
+            log.log.warn("Discarding corrupt legacy LOD cache '{s}': {}", .{ path, err });
             fs.cwd().deleteFile(path) catch |delete_err| {
                 if (delete_err != error.FileNotFound) {
-                    log.log.warn("Failed to delete corrupt LOD cache '{s}': {}", .{ path, delete_err });
+                    log.log.warn("Failed to delete corrupt legacy LOD cache '{s}': {}", .{ path, delete_err });
                 }
             };
             return null;
@@ -1126,20 +1206,10 @@ pub const LODManager = struct {
     }
 
     fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
-        const cache_dir_path = self.cacheDirPathSnapshot() orelse return;
-        defer self.allocator.free(cache_dir_path);
+        const save_dir_path = self.cacheDirPathSnapshot() orelse return;
+        defer self.allocator.free(save_dir_path);
 
         const cache_key = self.cacheKey(key);
-        const path = self.cacheFilePath(cache_dir_path, cache_key) catch |err| {
-            log.log.warn("LOD cache path allocation failed: {}", .{err});
-            return;
-        };
-        defer self.allocator.free(path);
-        const tmp_path = std.fmt.allocPrint(self.allocator, "{s}.tmp", .{path}) catch |err| {
-            log.log.warn("LOD cache temp path allocation failed: {}", .{err});
-            return;
-        };
-        defer self.allocator.free(tmp_path);
 
         const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
             log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
@@ -1147,22 +1217,8 @@ pub const LODManager = struct {
         };
         defer self.allocator.free(bytes);
 
-        const cwd = fs.cwd();
-        const file = cwd.createFile(tmp_path, .{ .truncate = true }) catch |err| {
-            log.log.warn("Failed to create LOD cache '{s}': {}", .{ tmp_path, err });
-            return;
-        };
-        file.writeAll(bytes) catch |err| {
-            log.log.warn("Failed to write LOD cache '{s}': {}", .{ tmp_path, err });
-            file.close();
-            cwd.deleteFile(tmp_path) catch {};
-            return;
-        };
-        file.close();
-
-        cwd.rename(tmp_path, path) catch |err| {
-            log.log.warn("Failed to publish LOD cache '{s}': {}", .{ path, err });
-            cwd.deleteFile(tmp_path) catch {};
+        self.writeStorePayload(save_dir_path, cache_key, bytes) catch |err| {
+            log.log.warn("Failed to write LOD{} store ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
         };
     }
 
@@ -1201,6 +1257,8 @@ pub const LODManager = struct {
             .deletion_timer = 0,
             .renderer = undefined,
             .cache_dir_path = cache_dir_path,
+            .logged_legacy_cache_notice = false,
+            .store_mutex = .{},
             .cleanup_covered_regions = true,
         };
     }
@@ -1391,9 +1449,9 @@ test "LODManager cache helpers save and reload source data" {
 
     const dir = fs.Dir{ .inner = tmp_dir.dir };
     var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const cache_dir_path = try dir.realpath(".", &path_buf);
+    const save_dir_path = try dir.realpath(".", &path_buf);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, cache_dir_path);
+    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     const key = LODRegionKey{ .rx = 2, .rz = -3, .lod = .lod1 };
 
     var data = try LODSimplifiedData.init(testing.allocator, .lod1);
@@ -1405,6 +1463,10 @@ test "LODManager cache helpers save and reload source data" {
     }, 0xFF112233, .empty, .daylight, .empty);
 
     manager.saveCachedSourceData(key, &data);
+
+    const store_path = try lod_store.containerPath(testing.allocator, save_dir_path, manager.cacheKey(key));
+    defer testing.allocator.free(store_path);
+    fs.cwd().access(store_path, .{}) catch return error.ExpectedStoreContainer;
 
     var loaded = manager.loadCachedSourceData(key) orelse return error.ExpectedCacheHit;
     defer loaded.deinit();
@@ -1421,11 +1483,14 @@ test "LODManager cache helpers delete corrupt cache files" {
 
     const dir = fs.Dir{ .inner = tmp_dir.dir };
     var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const cache_dir_path = try dir.realpath(".", &path_buf);
+    const save_dir_path = try dir.realpath(".", &path_buf);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, cache_dir_path);
+    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
-    const path = try manager.cacheFilePath(cache_dir_path, manager.cacheKey(key));
+    const legacy_dir = try fs.path.join(testing.allocator, &.{ save_dir_path, "lod_cache" });
+    defer testing.allocator.free(legacy_dir);
+    try fs.cwd().makePath(legacy_dir);
+    const path = try manager.legacyCacheFilePath(save_dir_path, manager.cacheKey(key));
     defer testing.allocator.free(path);
 
     const file = try fs.cwd().createFile(path, .{ .truncate = true });
