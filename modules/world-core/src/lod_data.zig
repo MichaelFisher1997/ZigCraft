@@ -285,6 +285,69 @@ pub const LODSimplifiedData = struct {
         }
     }
 
+    pub fn setGeneratedColumn(
+        self: *LODSimplifiedData,
+        gx: u32,
+        gz: u32,
+        height: f32,
+        biome: world_core.BiomeId,
+        layers: LODMaterialLayers,
+        color: u32,
+        water_state: LODWaterState,
+        lighting_hint: LODLightingHint,
+        vegetation_hint: LODVegetationHint,
+    ) void {
+        self.setColumn(gx, gz, height, biome, layers, color, water_state, lighting_hint, vegetation_hint);
+        if (!self.hasVerticalSpans()) return;
+
+        self.clearVerticalSpans(gx, gz);
+        const terrain_layers = terrainLayersForGeneratedSpan(layers, water_state);
+        const terrain_height = terrainHeightForGeneratedSpan(height, water_state);
+        _ = self.setVerticalSpan(gx, gz, 0, .{
+            .min_height = 0.0,
+            .max_height = terrain_height,
+            .biome = biome,
+            .material_layers = terrain_layers,
+            .color = color,
+            .water = LODWaterState.empty,
+            .lighting = lighting_hint,
+            .vegetation = vegetation_hint,
+        });
+
+        if (water_state.is_surface and water_state.coverage > 0.0) {
+            _ = self.setVerticalSpan(gx, gz, 1, .{
+                .min_height = terrain_height,
+                .max_height = @max(water_state.surface_height, terrain_height),
+                .biome = biome,
+                .material_layers = .{
+                    .surface = .water,
+                    .subsurface = .water,
+                    .foundation = terrain_layers.foundation,
+                },
+                .color = color,
+                .water = water_state,
+                .lighting = lighting_hint,
+                .vegetation = LODVegetationHint.empty,
+            });
+        }
+    }
+
+    fn terrainLayersForGeneratedSpan(layers: LODMaterialLayers, water_state: LODWaterState) LODMaterialLayers {
+        if (!water_state.is_surface or layers.surface != .water) return layers;
+        const floor_block = if (layers.subsurface == .air) layers.foundation else layers.subsurface;
+        return .{
+            .surface = floor_block,
+            .subsurface = floor_block,
+            .foundation = layers.foundation,
+        };
+    }
+
+    fn terrainHeightForGeneratedSpan(height: f32, water_state: LODWaterState) f32 {
+        if (!water_state.is_surface) return height;
+        if (water_state.depth <= 0.0) return @min(height, water_state.surface_height);
+        return @max(0.0, water_state.surface_height - water_state.depth);
+    }
+
     pub fn setColumnProvenance(self: *LODSimplifiedData, gx: u32, gz: u32, provenance: LODColumnProvenance) void {
         if (gx >= self.width or gz >= self.width) return;
         self.provenance[gz * self.width + gx] = provenance;
@@ -458,4 +521,37 @@ test "LODSimplifiedData setColumn seeds representative span when enabled" {
     const span = data.getVerticalSpan(2, 2, 0) orelse return error.TestExpectedEqual;
     try std.testing.expectEqual(@as(f32, 80.0), span.max_height);
     try std.testing.expectEqual(world_core.BlockType.grass, span.material_layers.surface);
+}
+
+test "LODSimplifiedData generated columns emit surface and water spans" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod1);
+    defer data.deinit();
+
+    data.setGeneratedColumn(1, 1, 64.0, .ocean, .{
+        .surface = .water,
+        .subsurface = .sand,
+        .foundation = .stone,
+    }, 0x3355AA, .{
+        .is_surface = true,
+        .surface_height = 64.0,
+        .depth = 10.0,
+        .coverage = 1.0,
+    }, LODLightingHint.daylight, LODVegetationHint.empty);
+
+    try std.testing.expectEqual(@as(f32, 64.0), data.getHeight(1, 1));
+    try std.testing.expectEqual(world_core.BlockType.water, data.top_blocks[1 + data.width]);
+    try std.testing.expectEqual(@as(u8, 2), data.verticalSpanCount(1, 1));
+
+    const surface = data.getVerticalSpan(1, 1, 0) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f32, 0.0), surface.min_height);
+    try std.testing.expectEqual(@as(f32, 54.0), surface.max_height);
+    try std.testing.expectEqual(world_core.BlockType.sand, surface.material_layers.surface);
+    try std.testing.expect(!surface.water.is_surface);
+
+    const water = data.getVerticalSpan(1, 1, 1) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(@as(f32, 54.0), water.min_height);
+    try std.testing.expectEqual(@as(f32, 64.0), water.max_height);
+    try std.testing.expectEqual(world_core.BlockType.water, water.material_layers.surface);
+    try std.testing.expect(water.water.is_surface);
 }

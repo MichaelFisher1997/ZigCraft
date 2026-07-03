@@ -285,7 +285,7 @@ pub const OverworldGenerator = struct {
                 const wx = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
                 const wz = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
                 const sample = self.sampleRepresentativeLODColumn(wx, wz, region_size_f / grid_max, sea_level, controls, &tree_hint_cache, lod_level);
-                data.setColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
+                data.setGeneratedColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
             }
         }
     }
