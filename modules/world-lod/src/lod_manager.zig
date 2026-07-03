@@ -597,9 +597,15 @@ pub const LODManager = struct {
         var count: u8 = 0;
         for (children) |child_key| {
             const child = self.regions[child_idx].get(child_key) orelse continue;
-            if (child.state == .renderable) count += 1;
+            if (self.regionContributesGeometry(child_key, child)) count += 1;
         }
         return count;
+    }
+
+    fn regionContributesGeometry(self: *Self, key: LODRegionKey, chunk: *const LODChunk) bool {
+        if (chunk.state != .renderable) return false;
+        const mesh = self.meshes[@intFromEnum(key.lod)].get(key) orelse return false;
+        return mesh.ready and mesh.vertex_count > 0;
     }
 
     fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void {
@@ -617,11 +623,13 @@ pub const LODManager = struct {
         if (chunk.state == .renderable) return;
         chunk.ready_children = self.countRenderableChildren(key);
         chunk.state = .renderable;
-        self.adjustParentReadyChildren(key, 1);
+        if (self.regionContributesGeometry(key, chunk)) {
+            self.adjustParentReadyChildren(key, 1);
+        }
     }
 
     fn noteRegionRemoved(self: *Self, key: LODRegionKey, chunk: *const LODChunk) void {
-        if (chunk.state == .renderable) {
+        if (self.regionContributesGeometry(key, chunk)) {
             self.adjustParentReadyChildren(key, -1);
         }
     }
@@ -670,13 +678,13 @@ pub const LODManager = struct {
                 if (storage.get(key)) |chunk| {
                     // Clean up mesh before removing chunk
                     const meshes = &self.meshes[@intFromEnum(lod)];
+                    self.noteRegionRemoved(key, chunk);
                     if (meshes.get(key)) |mesh| {
                         // Push to deferred deletion queue instead of deleting immediately
                         self.queueMeshDeletion(mesh);
                         _ = meshes.remove(key);
                     }
 
-                    self.noteRegionRemoved(key, chunk);
                     chunk.deinit(self.allocator);
                     self.allocator.destroy(chunk);
                     _ = storage.remove(key);
@@ -747,11 +755,11 @@ pub const LODManager = struct {
             if (chunk.state != .renderable or chunk.isPinned()) continue;
             const mesh = self.meshes[idx].get(candidate.key);
             const bytes = regionMemoryBytes(chunk, mesh);
+            self.noteRegionRemoved(candidate.key, chunk);
             if (mesh) |m| {
                 self.queueMeshDeletion(m);
                 _ = self.meshes[idx].remove(candidate.key);
             }
-            self.noteRegionRemoved(candidate.key, chunk);
             chunk.deinit(self.allocator);
             self.allocator.destroy(chunk);
             _ = self.regions[idx].remove(candidate.key);
@@ -921,12 +929,14 @@ pub const LODManager = struct {
             }
 
             for (to_remove.items) |rem_key| {
+                if (storage.get(rem_key)) |chunk| {
+                    self.noteRegionRemoved(rem_key, chunk);
+                }
                 if (meshes.fetchRemove(rem_key)) |mesh_entry| {
                     // Queue for deferred deletion to avoid waitIdle stutter
                     self.queueMeshDeletion(mesh_entry.value);
                 }
                 if (storage.fetchRemove(rem_key)) |chunk_entry| {
-                    self.noteRegionRemoved(rem_key, chunk_entry.value);
                     chunk_entry.value.deinit(self.allocator);
                     self.allocator.destroy(chunk_entry.value);
                 }
@@ -1482,7 +1492,7 @@ fn putTestMesh(manager: *LODManager, key: LODRegionKey, capacity: u32) !*LODMesh
     const mesh = try manager.allocator.create(LODMesh);
     mesh.* = LODMesh.init(manager.allocator, key.lod);
     mesh.ready = true;
-    mesh.vertex_count = 1;
+    mesh.vertex_count = capacity;
     mesh.capacity = capacity;
     try manager.meshes[@intFromEnum(key.lod)].put(key, mesh);
     return mesh;
@@ -1495,6 +1505,7 @@ test "LODManager ready child counters update on renderable transitions and remov
 
     const child_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 };
     const child = try putTestRegion(&manager, child_key, .mesh_ready);
+    _ = try putTestMesh(&manager, child_key, 1);
     manager.markRegionRenderable(child_key, child);
 
     const parent_key = child_key.parentKey().?;
@@ -1503,6 +1514,23 @@ test "LODManager ready child counters update on renderable transitions and remov
     try testing.expectEqual(@as(u8, 1), parent.ready_children);
 
     manager.noteRegionRemoved(child_key, child);
+    try testing.expectEqual(@as(u8, 0), parent.ready_children);
+}
+
+test "LODManager ready child counters ignore renderable children without geometry" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const child_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 };
+    const child = try putTestRegion(&manager, child_key, .mesh_ready);
+    _ = try putTestMesh(&manager, child_key, 0);
+    manager.markRegionRenderable(child_key, child);
+
+    const parent_key = child_key.parentKey().?;
+    const parent = try putTestRegion(&manager, parent_key, .mesh_ready);
+    manager.markRegionRenderable(parent_key, parent);
+
     try testing.expectEqual(@as(u8, 0), parent.ready_children);
 }
 
