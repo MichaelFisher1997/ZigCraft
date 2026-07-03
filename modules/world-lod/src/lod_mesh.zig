@@ -47,7 +47,9 @@ pub const LODMeshResources = struct {
     pub const VTable = struct {
         createBuffer: *const fn (ptr: *anyopaque, size: usize, usage: BufferUsage) RhiError!BufferHandle,
         uploadBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle, data: []const u8) RhiError!void,
+        updateBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void,
         destroyBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+        waitIdle: *const fn (ptr: *anyopaque) void,
     };
 
     pub fn fromRHI(rhi: *rhi_pkg.RHI) LODMeshResources {
@@ -69,7 +71,27 @@ pub const LODMeshResources = struct {
                 if (@hasDecl(Provider, "resourceManager")) {
                     return typed.resourceManager().uploadBuffer(handle, data);
                 }
-                return typed.uploadBuffer(handle, data);
+                if (@hasDecl(Provider, "uploadBuffer")) {
+                    return typed.uploadBuffer(handle, data);
+                }
+                if (@hasDecl(Provider, "updateBuffer")) {
+                    return typed.updateBuffer(handle, 0, data);
+                }
+                return error.InvalidState;
+            }
+
+            fn updateBuffer(ptr: *anyopaque, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "resourceManager")) {
+                    return typed.resourceManager().updateBuffer(handle, offset, data);
+                }
+                if (@hasDecl(Provider, "updateBuffer")) {
+                    return typed.updateBuffer(handle, offset, data);
+                }
+                if (offset == 0 and @hasDecl(Provider, "uploadBuffer")) {
+                    return typed.uploadBuffer(handle, data);
+                }
+                return error.InvalidState;
             }
 
             fn destroyBuffer(ptr: *anyopaque, handle: BufferHandle) void {
@@ -81,10 +103,19 @@ pub const LODMeshResources = struct {
                 typed.destroyBuffer(handle);
             }
 
+            fn waitIdle(ptr: *anyopaque) void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "waitIdle")) {
+                    typed.waitIdle();
+                }
+            }
+
             const vtable = VTable{
                 .createBuffer = @This().createBuffer,
                 .uploadBuffer = @This().uploadBuffer,
+                .updateBuffer = @This().updateBuffer,
                 .destroyBuffer = @This().destroyBuffer,
+                .waitIdle = @This().waitIdle,
             };
         };
 
@@ -99,8 +130,16 @@ pub const LODMeshResources = struct {
         return self.vtable.uploadBuffer(self.ptr, handle, data);
     }
 
+    pub fn updateBuffer(self: LODMeshResources, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void {
+        return self.vtable.updateBuffer(self.ptr, handle, offset, data);
+    }
+
     pub fn destroyBuffer(self: LODMeshResources, handle: BufferHandle) void {
         self.vtable.destroyBuffer(self.ptr, handle);
+    }
+
+    pub fn waitIdle(self: LODMeshResources) void {
+        self.vtable.waitIdle(self.ptr);
     }
 
     const rhi_vtable = VTable{
@@ -116,10 +155,22 @@ pub const LODMeshResources = struct {
                 return rhi.resourceManager().uploadBuffer(handle, data);
             }
         }.f,
+        .updateBuffer = struct {
+            fn f(ptr: *anyopaque, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void {
+                const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
+                return rhi.resourceManager().updateBuffer(handle, offset, data);
+            }
+        }.f,
         .destroyBuffer = struct {
             fn f(ptr: *anyopaque, handle: BufferHandle) void {
                 const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
                 rhi.resourceManager().destroyBuffer(handle);
+            }
+        }.f,
+        .waitIdle = struct {
+            fn f(ptr: *anyopaque) void {
+                const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
+                rhi.waitIdle();
             }
         }.f,
     };
@@ -128,9 +179,18 @@ pub const LODMeshResources = struct {
 pub const LODMeshRenderContext = struct {
     ptr: *anyopaque,
     draw_fn: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, mode: rhi_types.DrawMode) void,
+    draw_offset_fn: ?*const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, mode: rhi_types.DrawMode, offset: usize) void = null,
 
     pub fn draw(self: LODMeshRenderContext, handle: BufferHandle, count: u32, mode: rhi_types.DrawMode) void {
         self.draw_fn(self.ptr, handle, count, mode);
+    }
+
+    pub fn drawOffset(self: LODMeshRenderContext, handle: BufferHandle, count: u32, mode: rhi_types.DrawMode, offset: usize) void {
+        if (self.draw_offset_fn) |draw_offset| {
+            draw_offset(self.ptr, handle, count, mode, offset);
+            return;
+        }
+        self.draw(handle, count, mode);
     }
 };
 
@@ -147,6 +207,10 @@ pub const LODMesh = struct {
     vertex_count: u32 = 0,
     /// Buffer capacity (vertices)
     capacity: u32 = 0,
+    /// Byte offset inside the vertex buffer. Non-zero when backed by a shared LOD pool.
+    vertex_offset: usize = 0,
+    /// True when buffer_handle is owned by a shared LOD vertex pool.
+    pooled: bool = false,
     /// Pending vertices to upload
     pending_vertices: ?[]Vertex = null,
     /// Allocator
@@ -169,10 +233,17 @@ pub const LODMesh = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.buffer_handle != 0) {
-            resources.destroyBuffer(self.buffer_handle);
-            self.buffer_handle = 0;
+        if (self.pooled) {
+            std.debug.assert(false);
+            return;
         }
+
+        if (self.buffer_handle != 0 and !self.pooled) {
+            resources.destroyBuffer(self.buffer_handle);
+        }
+        self.buffer_handle = 0;
+        self.vertex_offset = 0;
+        self.pooled = false;
         if (self.pending_vertices) |p| {
             self.allocator.free(p);
             self.pending_vertices = null;
@@ -504,6 +575,8 @@ pub const LODMesh = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
+        if (self.pooled) return error.InvalidState;
+
         const pending = self.pending_vertices orelse {
             self.ready = self.buffer_handle != 0;
             return;
@@ -520,11 +593,13 @@ pub const LODMesh = struct {
 
         // Create or resize buffer
         if (self.buffer_handle == 0 or needed_capacity > self.capacity * @sizeOf(Vertex)) {
-            if (self.buffer_handle != 0) {
+            if (self.buffer_handle != 0 and !self.pooled) {
                 resources.destroyBuffer(self.buffer_handle);
             }
             self.buffer_handle = try resources.createBuffer(needed_capacity, .vertex);
             self.capacity = @intCast(needed_capacity / @sizeOf(Vertex));
+            self.vertex_offset = 0;
+            self.pooled = false;
         }
 
         // Upload data
@@ -539,7 +614,7 @@ pub const LODMesh = struct {
     /// Draw the LOD mesh
     pub fn draw(self: *const LODMesh, render_ctx: LODMeshRenderContext) void {
         if (!self.ready or self.buffer_handle == 0 or self.vertex_count == 0) return;
-        render_ctx.draw(self.buffer_handle, self.vertex_count, .triangles);
+        render_ctx.drawOffset(self.buffer_handle, self.vertex_count, .triangles, self.vertex_offset);
     }
 };
 
@@ -1596,12 +1671,16 @@ fn testResources() LODMeshResources {
             return 1;
         }
         fn uploadBuffer(_: *anyopaque, _: BufferHandle, _: []const u8) RhiError!void {}
+        fn updateBuffer(_: *anyopaque, _: BufferHandle, _: usize, _: []const u8) RhiError!void {}
         fn destroyBuffer(_: *anyopaque, _: BufferHandle) void {}
+        fn waitIdle(_: *anyopaque) void {}
 
         const vtable = LODMeshResources.VTable{
             .createBuffer = createBuffer,
             .uploadBuffer = uploadBuffer,
+            .updateBuffer = updateBuffer,
             .destroyBuffer = destroyBuffer,
+            .waitIdle = waitIdle,
         };
     };
     return .{ .ptr = undefined, .vtable = &Mock.vtable };

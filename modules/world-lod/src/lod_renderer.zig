@@ -37,6 +37,7 @@ const LODRegionKey = lod_chunk.LODRegionKey;
 const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const LODMeshResources = @import("lod_mesh.zig").LODMeshResources;
+const LODVertexPool = @import("lod_vertex_pool.zig").LODVertexPool;
 const CHUNK_SIZE_X = @import("world-core").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("world-core").CHUNK_SIZE_Z;
 const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
@@ -90,6 +91,7 @@ pub fn LODRenderer(comptime RHI: type) type {
         instance_data: std.ArrayListUnmanaged(rhi_types.InstanceData),
         draw_list: std.ArrayListUnmanaged(*LODMesh),
         instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
+        vertex_pools: [LODLevel.count]LODVertexPool,
         frame_index: usize,
 
         pub fn init(allocator: std.mem.Allocator, rhi: RHI) !*Self {
@@ -103,12 +105,18 @@ pub fn LODRenderer(comptime RHI: type) type {
                 instance_buffers[i] = try resources.createBuffer(max_regions * @sizeOf(rhi_types.InstanceData), .storage);
             }
 
+            var vertex_pools: [LODLevel.count]LODVertexPool = undefined;
+            for (0..LODLevel.count) |i| {
+                vertex_pools[i] = LODVertexPool.init(allocator, @enumFromInt(@as(u3, @intCast(i))), 8 * 1024 * 1024);
+            }
+
             renderer.* = .{
                 .allocator = allocator,
                 .rhi = rhi,
                 .instance_data = .empty,
                 .draw_list = .empty,
                 .instance_buffers = instance_buffers,
+                .vertex_pools = vertex_pools,
                 .frame_index = 0,
             };
 
@@ -121,6 +129,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
                     resources.destroyBuffer(self.instance_buffers[i]);
                 }
+            }
+            const mesh_resources = LODMeshResources.fromProvider(RHI, &self.rhi);
+            for (0..LODLevel.count) |i| {
+                self.vertex_pools[i].deinit(mesh_resources);
             }
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
@@ -178,7 +190,11 @@ pub fn LODRenderer(comptime RHI: type) type {
             for (self.draw_list.items, 0..) |mesh, idx| {
                 const instance = self.instance_data.items[idx];
                 render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
-                render_ctx.draw(mesh.buffer_handle, mesh.vertex_count, .triangles);
+                if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
+                    render_ctx.drawOffset(mesh.buffer_handle, mesh.vertex_count, .triangles, mesh.vertex_offset);
+                } else {
+                    render_ctx.draw(mesh.buffer_handle, mesh.vertex_count, .triangles);
+                }
             }
         }
 
@@ -426,23 +442,24 @@ pub fn LODRenderer(comptime RHI: type) type {
         pub fn createGPUBridge(self: *Self) LODGPUBridge {
             const Wrapper = struct {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
-                    const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    return mesh.upload(LODMeshResources.fromProvider(RHI, rhi));
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
+                    return renderer.vertex_pools[@intFromEnum(mesh.lod_level)].uploadMesh(mesh, resources);
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
-                    const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    mesh.deinit(LODMeshResources.fromProvider(RHI, rhi));
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    renderer.vertex_pools[@intFromEnum(mesh.lod_level)].destroyMesh(mesh);
                 }
                 fn onWaitIdle(ctx: *anyopaque) void {
-                    const rhi: *RHI = @ptrCast(@alignCast(ctx));
-                    rhi.waitIdle();
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    renderer.rhi.waitIdle();
                 }
             };
             return .{
                 .on_upload = Wrapper.onUpload,
                 .on_destroy = Wrapper.onDestroy,
                 .on_wait_idle = Wrapper.onWaitIdle,
-                .ctx = @ptrCast(&self.rhi),
+                .ctx = @ptrCast(self),
             };
         }
 
