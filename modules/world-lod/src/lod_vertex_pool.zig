@@ -243,19 +243,22 @@ pub const LODVertexPool = struct {
 
         const old_handle = self.buffer_handle;
         const old_capacity = self.capacity_bytes;
-        if (old_handle != 0) {
-            resources.waitIdle();
-            resources.destroyBuffer(old_handle);
-        }
-        if (old_capacity != 0) self.allocator.free(self.shadow);
+        const old_shadow = if (old_capacity != 0) self.shadow else null;
+
+        try self.releaseOffsetUnlocked(old_capacity, new_capacity - old_capacity);
 
         self.buffer_handle = new_handle;
         self.shadow = new_shadow;
         self.capacity_bytes = new_capacity;
-        try self.releaseOffsetUnlocked(old_capacity, new_capacity - old_capacity);
         for (self.allocations.items) |record| {
             setMeshBufferHandle(record.mesh, new_handle, locked_mesh);
         }
+
+        if (old_handle != 0) {
+            resources.waitIdle();
+            resources.destroyBuffer(old_handle);
+        }
+        if (old_shadow) |shadow| self.allocator.free(shadow);
     }
 
     fn findBestFitUnlocked(self: *const LODVertexPool, size: usize) ?usize {
