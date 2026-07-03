@@ -7,7 +7,7 @@ const RegionFile = @import("world-persistence").RegionFile;
 const lod_cache = @import("lod_cache.zig");
 
 const REGION_GRID: i32 = 32;
-const MAX_CONTAINER_BYTES: usize = 256 * 1024 * 1024;
+pub const DEFAULT_STORE_SIZE_CAP_MB: u32 = 256;
 
 pub const StoreHeader = struct {
     seed: u64,
@@ -125,7 +125,11 @@ pub fn readPayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key:
     };
 }
 
-pub fn writePayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key: lod_cache.Key, bytes: []const u8) !void {
+fn storeSizeCapBytes(cap_mb: u32) usize {
+    return @as(usize, @max(cap_mb, 1)) * 1024 * 1024;
+}
+
+pub fn writePayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key: lod_cache.Key, bytes: []const u8, store_size_cap_mb: u32) !void {
     const dir_path = try lodDirPath(allocator, save_dir_path, key.lod);
     defer allocator.free(dir_path);
     try fs.cwd().makePath(dir_path);
@@ -149,7 +153,7 @@ pub fn writePayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key
     };
 
     if (use_existing) {
-        const existing = try fs.cwd().readFileAlloc(path, allocator, MAX_CONTAINER_BYTES);
+        const existing = try fs.cwd().readFileAlloc(path, allocator, storeSizeCapBytes(store_size_cap_mb));
         defer allocator.free(existing);
         const tmp_file = try fs.cwd().createFile(tmp_path, .{ .truncate = true });
         tmp_file.writeAll(existing) catch |err| {
@@ -201,7 +205,7 @@ test "LOD store round-trips payloads through region containers" {
     const save_dir = try dir.realpath(".", &path_buf);
 
     const key = lod_cache.Key{ .seed = 11, .generator_identity_hash = 22, .generator_version = 3, .rx = 34, .rz = -1, .lod = .lod2 };
-    try writePayload(testing.allocator, save_dir, key, "payload-a");
+    try writePayload(testing.allocator, save_dir, key, "payload-a", DEFAULT_STORE_SIZE_CAP_MB);
 
     const loaded = (try readPayload(testing.allocator, save_dir, key)).?;
     defer testing.allocator.free(loaded);
@@ -217,8 +221,8 @@ test "LOD store overwrites existing payloads" {
     const save_dir = try dir.realpath(".", &path_buf);
 
     const key = lod_cache.Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 3, .rx = -32, .rz = 63, .lod = .lod1 };
-    try writePayload(testing.allocator, save_dir, key, "small");
-    try writePayload(testing.allocator, save_dir, key, "larger replacement payload");
+    try writePayload(testing.allocator, save_dir, key, "small", DEFAULT_STORE_SIZE_CAP_MB);
+    try writePayload(testing.allocator, save_dir, key, "larger replacement payload", DEFAULT_STORE_SIZE_CAP_MB);
 
     const loaded = (try readPayload(testing.allocator, save_dir, key)).?;
     defer testing.allocator.free(loaded);
@@ -235,9 +239,9 @@ test "LOD store atomic overwrite preserves sibling entries" {
 
     const key_a = lod_cache.Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 3, .rx = 0, .rz = 0, .lod = .lod1 };
     const key_b = lod_cache.Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 3, .rx = 1, .rz = 0, .lod = .lod1 };
-    try writePayload(testing.allocator, save_dir, key_a, "payload-a");
-    try writePayload(testing.allocator, save_dir, key_b, "payload-b");
-    try writePayload(testing.allocator, save_dir, key_a, "payload-a-updated");
+    try writePayload(testing.allocator, save_dir, key_a, "payload-a", DEFAULT_STORE_SIZE_CAP_MB);
+    try writePayload(testing.allocator, save_dir, key_b, "payload-b", DEFAULT_STORE_SIZE_CAP_MB);
+    try writePayload(testing.allocator, save_dir, key_a, "payload-a-updated", DEFAULT_STORE_SIZE_CAP_MB);
 
     const loaded_a = (try readPayload(testing.allocator, save_dir, key_a)).?;
     defer testing.allocator.free(loaded_a);
@@ -264,7 +268,7 @@ test "LOD store write replaces corrupt containers" {
     try file.writeAll("bad");
     file.close();
 
-    try writePayload(testing.allocator, save_dir, key, "replacement");
+    try writePayload(testing.allocator, save_dir, key, "replacement", DEFAULT_STORE_SIZE_CAP_MB);
     const loaded = (try readPayload(testing.allocator, save_dir, key)).?;
     defer testing.allocator.free(loaded);
     try testing.expectEqualStrings("replacement", loaded);

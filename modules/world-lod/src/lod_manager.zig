@@ -1117,7 +1117,7 @@ pub const LODManager = struct {
     fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key, bytes: []const u8) !void {
         self.store_mutex.lock();
         defer self.store_mutex.unlock();
-        try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes);
+        try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes, self.config.getLODStoreSizeCapMB());
     }
 
     fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) void {

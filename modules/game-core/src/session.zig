@@ -157,6 +157,7 @@ pub const GameSession = struct {
                 .mesh_path = preset_cfg.mesh_path,
                 .qem_triangle_targets = preset_cfg.qem_targets,
                 .memory_budget_mb = preset_cfg.memory_budget_mb,
+                .lod_store_size_cap_mb = preset_cfg.lod_store_size_cap_mb,
                 .max_uploads_per_frame = preset_cfg.max_uploads_per_frame,
                 .skip_cutout_lod2 = preset_cfg.skip_cutout_lod2,
                 .skip_lighting_lod3 = preset_cfg.skip_lighting_lod3,

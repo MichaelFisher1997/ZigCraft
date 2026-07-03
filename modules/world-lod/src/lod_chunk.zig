@@ -294,6 +294,7 @@ pub const ILODConfig = struct {
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
         getFallbackMissingChildThreshold: *const fn (ptr: *anyopaque) f32,
         getMemoryBudgetMB: *const fn (ptr: *anyopaque) u32,
+        getLODStoreSizeCapMB: *const fn (ptr: *anyopaque) u32,
     };
 
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
@@ -358,6 +359,10 @@ pub const ILODConfig = struct {
     pub fn getMemoryBudgetMB(self: ILODConfig) u32 {
         return self.vtable.getMemoryBudgetMB(self.ptr);
     }
+
+    pub fn getLODStoreSizeCapMB(self: ILODConfig) u32 {
+        return self.vtable.getLODStoreSizeCapMB(self.ptr);
+    }
 };
 
 pub fn activeLODCount(config: ILODConfig) usize {
@@ -372,6 +377,8 @@ pub const LODConfig = struct {
     radii: [LODLevel.count]i32 = .{ 16, 40, 80, 160, default_horizon_radius },
 
     memory_budget_mb: u32 = 256,
+
+    lod_store_size_cap_mb: u32 = @import("lod_store.zig").DEFAULT_STORE_SIZE_CAP_MB,
 
     max_uploads_per_frame: u32 = 32,
 
@@ -474,6 +481,7 @@ pub const LODConfig = struct {
         .getFogStartPercent = getFogStartPercentWrapper,
         .getFallbackMissingChildThreshold = getFallbackMissingChildThresholdWrapper,
         .getMemoryBudgetMB = getMemoryBudgetMBWrapper,
+        .getLODStoreSizeCapMB = getLODStoreSizeCapMBWrapper,
     };
 
     fn getRadiiWrapper(ptr: *anyopaque) [LODLevel.count]i32 {
@@ -546,6 +554,10 @@ pub const LODConfig = struct {
     fn getMemoryBudgetMBWrapper(ptr: *anyopaque) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.memory_budget_mb;
+    }
+    fn getLODStoreSizeCapMBWrapper(ptr: *anyopaque) u32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.lod_store_size_cap_mb;
     }
 };
 
