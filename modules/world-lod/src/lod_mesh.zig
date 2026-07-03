@@ -49,6 +49,7 @@ pub const LODMeshResources = struct {
         uploadBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle, data: []const u8) RhiError!void,
         updateBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void,
         destroyBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+        waitIdle: *const fn (ptr: *anyopaque) void,
     };
 
     pub fn fromRHI(rhi: *rhi_pkg.RHI) LODMeshResources {
@@ -102,11 +103,19 @@ pub const LODMeshResources = struct {
                 typed.destroyBuffer(handle);
             }
 
+            fn waitIdle(ptr: *anyopaque) void {
+                const typed: *Provider = @ptrCast(@alignCast(ptr));
+                if (@hasDecl(Provider, "waitIdle")) {
+                    typed.waitIdle();
+                }
+            }
+
             const vtable = VTable{
                 .createBuffer = @This().createBuffer,
                 .uploadBuffer = @This().uploadBuffer,
                 .updateBuffer = @This().updateBuffer,
                 .destroyBuffer = @This().destroyBuffer,
+                .waitIdle = @This().waitIdle,
             };
         };
 
@@ -127,6 +136,10 @@ pub const LODMeshResources = struct {
 
     pub fn destroyBuffer(self: LODMeshResources, handle: BufferHandle) void {
         self.vtable.destroyBuffer(self.ptr, handle);
+    }
+
+    pub fn waitIdle(self: LODMeshResources) void {
+        self.vtable.waitIdle(self.ptr);
     }
 
     const rhi_vtable = VTable{
@@ -152,6 +165,12 @@ pub const LODMeshResources = struct {
             fn f(ptr: *anyopaque, handle: BufferHandle) void {
                 const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
                 rhi.resourceManager().destroyBuffer(handle);
+            }
+        }.f,
+        .waitIdle = struct {
+            fn f(ptr: *anyopaque) void {
+                const rhi: *rhi_pkg.RHI = @ptrCast(@alignCast(ptr));
+                rhi.waitIdle();
             }
         }.f,
     };
@@ -213,6 +232,11 @@ pub const LODMesh = struct {
     pub fn deinit(self: *LODMesh, resources: LODMeshResources) void {
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        if (self.pooled) {
+            std.debug.assert(false);
+            return;
+        }
 
         if (self.buffer_handle != 0 and !self.pooled) {
             resources.destroyBuffer(self.buffer_handle);
@@ -550,6 +574,8 @@ pub const LODMesh = struct {
     pub fn upload(self: *LODMesh, resources: LODMeshResources) RhiError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
+
+        if (self.pooled) return error.InvalidState;
 
         const pending = self.pending_vertices orelse {
             self.ready = self.buffer_handle != 0;
@@ -1647,12 +1673,14 @@ fn testResources() LODMeshResources {
         fn uploadBuffer(_: *anyopaque, _: BufferHandle, _: []const u8) RhiError!void {}
         fn updateBuffer(_: *anyopaque, _: BufferHandle, _: usize, _: []const u8) RhiError!void {}
         fn destroyBuffer(_: *anyopaque, _: BufferHandle) void {}
+        fn waitIdle(_: *anyopaque) void {}
 
         const vtable = LODMeshResources.VTable{
             .createBuffer = createBuffer,
             .uploadBuffer = uploadBuffer,
             .updateBuffer = updateBuffer,
             .destroyBuffer = destroyBuffer,
+            .waitIdle = waitIdle,
         };
     };
     return .{ .ptr = undefined, .vtable = &Mock.vtable };

@@ -26,6 +26,17 @@ const AllocationRecord = struct {
     size: usize,
 };
 
+const MeshDrawState = struct {
+    buffer_handle: BufferHandle = 0,
+    vertex_offset: usize = 0,
+    vertex_count: u32 = 0,
+    capacity: u32 = 0,
+    pooled: bool = false,
+    ready: bool = false,
+
+    const empty = MeshDrawState{};
+};
+
 /// Owns one large vertex buffer for a single LOD level and sub-allocates mesh ranges.
 pub const LODVertexPool = struct {
     allocator: std.mem.Allocator,
@@ -89,38 +100,56 @@ pub const LODVertexPool = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        var record_index = self.findRecordIndexUnlocked(mesh);
+        const old_record_index = self.findRecordIndexUnlocked(mesh);
+        const old_record = if (old_record_index) |idx| self.allocations.items[idx] else null;
+        var record_index = old_record_index;
+        var using_new_record = false;
+
         if (record_index == null or self.allocations.items[record_index.?].size < bytes.len) {
-            if (record_index) |idx| {
-                self.freeRecordUnlocked(idx, false);
-                clearMeshDrawState(mesh);
-                record_index = null;
-            }
-            const offset = try self.allocateBlockUnlocked(resources, bytes.len);
+            const offset = try self.allocateBlockUnlocked(resources, bytes.len, mesh);
             errdefer self.releaseOffsetUnlocked(offset, bytes.len) catch {};
             try self.allocations.append(self.allocator, .{ .mesh = mesh, .offset = offset, .size = bytes.len });
             record_index = self.allocations.items.len - 1;
+            using_new_record = true;
         }
 
         const record = &self.allocations.items[record_index.?];
         resources.updateBuffer(self.buffer_handle, record.offset, bytes) catch |err| {
-            self.freeRecordUnlocked(record_index.?, false);
-            mesh.buffer_handle = 0;
-            mesh.vertex_offset = 0;
-            mesh.capacity = 0;
-            mesh.vertex_count = 0;
-            mesh.pooled = false;
-            mesh.ready = false;
+            if (using_new_record) {
+                self.freeRecordUnlocked(record_index.?, false, mesh);
+            }
+            if (old_record) |old| {
+                applyMeshDrawState(mesh, .{
+                    .buffer_handle = self.buffer_handle,
+                    .vertex_offset = old.offset,
+                    .vertex_count = mesh.vertex_count,
+                    .capacity = @intCast(old.size / @sizeOf(Vertex)),
+                    .pooled = true,
+                    .ready = true,
+                });
+            } else {
+                clearMeshDrawState(mesh);
+            }
             return err;
         };
         @memcpy(self.shadow[record.offset .. record.offset + bytes.len], bytes);
 
-        mesh.buffer_handle = self.buffer_handle;
-        mesh.vertex_offset = record.offset;
-        mesh.vertex_count = @intCast(pending.len);
-        mesh.capacity = @intCast(record.size / @sizeOf(Vertex));
-        mesh.pooled = true;
-        mesh.ready = true;
+        const new_offset = record.offset;
+        const new_size = record.size;
+        if (using_new_record) {
+            if (old_record_index) |idx| {
+                self.freeRecordUnlocked(idx, false, mesh);
+            }
+        }
+
+        applyMeshDrawState(mesh, .{
+            .buffer_handle = self.buffer_handle,
+            .vertex_offset = new_offset,
+            .vertex_count = @intCast(pending.len),
+            .capacity = @intCast(new_size / @sizeOf(Vertex)),
+            .pooled = true,
+            .ready = true,
+        });
         self.allocator.free(pending);
         mesh.pending_vertices = null;
     }
@@ -172,26 +201,26 @@ pub const LODVertexPool = struct {
     pub fn compact(self: *LODVertexPool, resources: LODMeshResources) RhiError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        try self.compactUnlocked(resources);
+        try self.compactUnlocked(resources, null);
     }
 
-    fn allocateBlockUnlocked(self: *LODVertexPool, resources: LODMeshResources, size: usize) RhiError!usize {
+    fn allocateBlockUnlocked(self: *LODVertexPool, resources: LODMeshResources, size: usize, locked_mesh: ?*LODMesh) RhiError!usize {
         if (size == 0) return error.InvalidState;
-        try self.ensureCapacityUnlocked(resources, size);
+        try self.ensureCapacityUnlocked(resources, size, locked_mesh);
 
         if (self.findBestFitUnlocked(size)) |idx| return self.takeBlockUnlocked(idx, size);
 
         if (self.freeBytesUnlocked() >= size) {
-            try self.compactUnlocked(resources);
+            try self.compactUnlocked(resources, locked_mesh);
             if (self.findBestFitUnlocked(size)) |idx| return self.takeBlockUnlocked(idx, size);
         }
 
-        try self.ensureCapacityUnlocked(resources, self.capacity_bytes + size);
+        try self.ensureCapacityUnlocked(resources, self.capacity_bytes + size, locked_mesh);
         if (self.findBestFitUnlocked(size)) |idx| return self.takeBlockUnlocked(idx, size);
         return error.OutOfMemory;
     }
 
-    fn ensureCapacityUnlocked(self: *LODVertexPool, resources: LODMeshResources, min_capacity: usize) RhiError!void {
+    fn ensureCapacityUnlocked(self: *LODVertexPool, resources: LODMeshResources, min_capacity: usize, locked_mesh: ?*LODMesh) RhiError!void {
         if (self.capacity_bytes >= min_capacity) return;
 
         var new_capacity = @max(self.initial_capacity_bytes, @as(usize, 1024));
@@ -214,7 +243,10 @@ pub const LODVertexPool = struct {
 
         const old_handle = self.buffer_handle;
         const old_capacity = self.capacity_bytes;
-        if (old_handle != 0) resources.destroyBuffer(old_handle);
+        if (old_handle != 0) {
+            resources.waitIdle();
+            resources.destroyBuffer(old_handle);
+        }
         if (old_capacity != 0) self.allocator.free(self.shadow);
 
         self.buffer_handle = new_handle;
@@ -222,7 +254,7 @@ pub const LODVertexPool = struct {
         self.capacity_bytes = new_capacity;
         try self.releaseOffsetUnlocked(old_capacity, new_capacity - old_capacity);
         for (self.allocations.items) |record| {
-            record.mesh.buffer_handle = new_handle;
+            setMeshBufferHandle(record.mesh, new_handle, locked_mesh);
         }
     }
 
@@ -253,15 +285,15 @@ pub const LODVertexPool = struct {
 
     fn freeMeshUnlocked(self: *LODVertexPool, mesh: *LODMesh) void {
         if (self.findRecordIndexUnlocked(mesh)) |idx| {
-            self.freeRecordUnlocked(idx, true);
+            self.freeRecordUnlocked(idx, true, mesh);
         }
     }
 
-    fn freeRecordUnlocked(self: *LODVertexPool, idx: usize, reset_mesh: bool) void {
+    fn freeRecordUnlocked(self: *LODVertexPool, idx: usize, reset_mesh: bool, locked_mesh: ?*LODMesh) void {
         const record = self.allocations.items[idx];
         self.releaseOffsetUnlocked(record.offset, record.size) catch {};
         if (reset_mesh) {
-            clearMeshDrawState(record.mesh);
+            setMeshDrawState(record.mesh, .empty, locked_mesh);
         }
         _ = self.allocations.orderedRemove(idx);
     }
@@ -293,7 +325,7 @@ pub const LODVertexPool = struct {
         }
     }
 
-    fn compactUnlocked(self: *LODVertexPool, resources: LODMeshResources) RhiError!void {
+    fn compactUnlocked(self: *LODVertexPool, resources: LODMeshResources, locked_mesh: ?*LODMesh) RhiError!void {
         if (self.allocations.items.len == 0) {
             self.free_blocks.clearRetainingCapacity();
             try self.releaseOffsetUnlocked(0, self.capacity_bytes);
@@ -312,8 +344,7 @@ pub const LODVertexPool = struct {
                 std.mem.copyForwards(u8, self.shadow[cursor .. cursor + record.size], self.shadow[record.offset .. record.offset + record.size]);
                 try resources.updateBuffer(self.buffer_handle, cursor, self.shadow[cursor .. cursor + record.size]);
                 record.offset = cursor;
-                record.mesh.vertex_offset = cursor;
-                record.mesh.buffer_handle = self.buffer_handle;
+                setMeshPoolLocation(record.mesh, self.buffer_handle, cursor, locked_mesh);
             }
             cursor += record.size;
         }
@@ -353,12 +384,54 @@ pub const LODVertexPool = struct {
 };
 
 fn clearMeshDrawState(mesh: *LODMesh) void {
-    mesh.buffer_handle = 0;
-    mesh.vertex_offset = 0;
-    mesh.vertex_count = 0;
-    mesh.capacity = 0;
-    mesh.pooled = false;
-    mesh.ready = false;
+    applyMeshDrawState(mesh, .empty);
+}
+
+fn setMeshBufferHandle(mesh: *LODMesh, buffer_handle: BufferHandle, locked_mesh: ?*LODMesh) void {
+    if (locked_mesh) |locked| {
+        if (locked == mesh) {
+            mesh.buffer_handle = buffer_handle;
+            return;
+        }
+    }
+    mesh.mutex.lock();
+    defer mesh.mutex.unlock();
+    mesh.buffer_handle = buffer_handle;
+}
+
+fn setMeshPoolLocation(mesh: *LODMesh, buffer_handle: BufferHandle, vertex_offset: usize, locked_mesh: ?*LODMesh) void {
+    if (locked_mesh) |locked| {
+        if (locked == mesh) {
+            mesh.buffer_handle = buffer_handle;
+            mesh.vertex_offset = vertex_offset;
+            return;
+        }
+    }
+    mesh.mutex.lock();
+    defer mesh.mutex.unlock();
+    mesh.buffer_handle = buffer_handle;
+    mesh.vertex_offset = vertex_offset;
+}
+
+fn setMeshDrawState(mesh: *LODMesh, state: MeshDrawState, locked_mesh: ?*LODMesh) void {
+    if (locked_mesh) |locked| {
+        if (locked == mesh) {
+            applyMeshDrawState(mesh, state);
+            return;
+        }
+    }
+    mesh.mutex.lock();
+    defer mesh.mutex.unlock();
+    applyMeshDrawState(mesh, state);
+}
+
+fn applyMeshDrawState(mesh: *LODMesh, state: MeshDrawState) void {
+    mesh.buffer_handle = state.buffer_handle;
+    mesh.vertex_offset = state.vertex_offset;
+    mesh.vertex_count = state.vertex_count;
+    mesh.capacity = state.capacity;
+    mesh.pooled = state.pooled;
+    mesh.ready = state.ready;
 }
 
 fn shouldCompactAfterEviction(pool: *LODVertexPool) bool {
@@ -371,6 +444,7 @@ const TestResources = struct {
     destroyed: u32 = 0,
     uploaded: u32 = 0,
     updated: u32 = 0,
+    wait_idle: u32 = 0,
     fail_updates: bool = false,
 
     fn resources(self: *TestResources) LODMeshResources {
@@ -401,11 +475,17 @@ const TestResources = struct {
         self.destroyed += 1;
     }
 
+    fn waitIdle(ptr: *anyopaque) void {
+        const self: *TestResources = @ptrCast(@alignCast(ptr));
+        self.wait_idle += 1;
+    }
+
     const vtable = LODMeshResources.VTable{
         .createBuffer = createBuffer,
         .uploadBuffer = uploadBuffer,
         .updateBuffer = updateBuffer,
         .destroyBuffer = destroyBuffer,
+        .waitIdle = waitIdle,
     };
 };
 
@@ -458,6 +538,7 @@ test "LODVertexPool grows and preserves pooled handles" {
     try std.testing.expect(first.buffer_handle != old_handle);
     try std.testing.expectEqual(first.buffer_handle, second.buffer_handle);
     try std.testing.expect(resources.uploaded >= 1);
+    try std.testing.expectEqual(@as(u32, 1), resources.wait_idle);
     pool.destroyMesh(&first);
     pool.destroyMesh(&second);
 }
@@ -502,6 +583,33 @@ test "LODVertexPool upload failure keeps pending vertices retryable" {
     try std.testing.expect(mesh.pending_vertices != null);
     try std.testing.expect(!mesh.ready);
     try std.testing.expectEqual(@as(u32, 0), mesh.vertex_count);
+}
+
+test "LODVertexPool upload failure preserves existing renderable allocation" {
+    const allocator = std.testing.allocator;
+    var resources = TestResources{};
+    var pool = LODVertexPool.init(allocator, .lod1, 1024);
+    defer pool.deinit(resources.resources());
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    defer if (mesh.pending_vertices) |pending| allocator.free(pending);
+    try setPending(&mesh, allocator, 4);
+    try pool.uploadMesh(&mesh, resources.resources());
+
+    const old_handle = mesh.buffer_handle;
+    const old_offset = mesh.vertex_offset;
+    const old_count = mesh.vertex_count;
+    resources.fail_updates = true;
+    try setPending(&mesh, allocator, 4);
+    try std.testing.expectError(error.GpuLost, pool.uploadMesh(&mesh, resources.resources()));
+
+    try std.testing.expect(mesh.pending_vertices != null);
+    try std.testing.expect(mesh.ready);
+    try std.testing.expect(mesh.pooled);
+    try std.testing.expectEqual(old_handle, mesh.buffer_handle);
+    try std.testing.expectEqual(old_offset, mesh.vertex_offset);
+    try std.testing.expectEqual(old_count, mesh.vertex_count);
+    try std.testing.expectEqual(@as(usize, old_count) * @sizeOf(Vertex), pool.allocatedBytes());
 }
 
 test "LODVertexPool exposes compaction threshold helper" {
