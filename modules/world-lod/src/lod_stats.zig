@@ -18,8 +18,16 @@ pub const LODStats = struct {
     mesh_vertices: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     gen_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     upload_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    /// On-disk LOD source store counters. cache_* below are retained as
+    /// compatibility aliases for existing diagnostics consumers.
+    store_hits: u32 = 0,
+    store_misses: u32 = 0,
     cache_hits: u32 = 0,
     cache_misses: u32 = 0,
+    evictions: u32 = 0,
+    drawn: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    instances: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    ingestion_backlog: u32 = 0,
     upgrades_pending: u32 = 0,
     downgrades_pending: u32 = 0,
     upload_failures: u32 = 0,
@@ -48,9 +56,12 @@ pub const LODStats = struct {
         self.mesh_vertices = [_]u32{0} ** LODLevel.count;
         self.gen_queue_depth = [_]u32{0} ** LODLevel.count;
         self.upload_queue_depth = [_]u32{0} ** LODLevel.count;
+        self.drawn = [_]u32{0} ** LODLevel.count;
+        self.instances = [_]u32{0} ** LODLevel.count;
         self.upgrades_pending = 0;
         self.downgrades_pending = 0;
         self.upload_failures = 0;
+        self.ingestion_backlog = 0;
     }
 
     pub fn recordState(self: *LODStats, lod_idx: usize, state: LODState) void {
@@ -71,9 +82,9 @@ pub const LODStats = struct {
     }
 
     pub fn cacheHitRate(self: *const LODStats) f32 {
-        const total = self.cache_hits + self.cache_misses;
+        const total = self.store_hits + self.store_misses;
         if (total == 0) return 0.0;
-        return @as(f32, @floatFromInt(self.cache_hits)) / @as(f32, @floatFromInt(total));
+        return @as(f32, @floatFromInt(self.store_hits)) / @as(f32, @floatFromInt(total));
     }
 };
 
@@ -83,7 +94,7 @@ test "LODStats reports cache hit rate" {
     var stats = LODStats{};
     try std.testing.expectEqual(@as(f32, 0.0), stats.cacheHitRate());
 
-    stats.cache_hits = 3;
-    stats.cache_misses = 1;
+    stats.store_hits = 3;
+    stats.store_misses = 1;
     try std.testing.expectEqual(@as(f32, 0.75), stats.cacheHitRate());
 }

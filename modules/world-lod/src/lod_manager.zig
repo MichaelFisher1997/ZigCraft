@@ -416,19 +416,23 @@ pub const LODManager = struct {
 
         // Update stats
         self.updateStats();
+        self.enforceMemoryBudget() catch |err| {
+            log.log.warn("LOD memory budget eviction error: {} (non-fatal)", .{err});
+        };
 
         // Periodic WARN-level LOD stats so logs/zigcraft.log shows LOD fill
         // progress by default (no env vars needed). update_tick counts frames;
         // every ~180 frames (~3s @ 60fps) gives a trend over a 20s diagnostic run.
         if (self.update_tick % 180 == 0) {
             const s = self.stats;
-            log.log.warn("LOD_STATS: loaded=[L1:{},L2:{},L3:{}] generating=[{},{},{}] meshing=[{},{},{}] genQ3={} uploadQ=[{},{},{}] meshes=[{},{},{}] cache_hit/miss={}/{}", .{
+            log.log.warn("LOD_STATS: loaded=[L1:{},L2:{},L3:{}] generating=[{},{},{}] meshing=[{},{},{}] genQ3={} uploadQ=[{},{},{}] meshes=[{},{},{}] cache_hit/miss={}/{} store_hit/miss={}/{} evictions={}", .{
                 s.loaded[1],                           s.loaded[2],             s.loaded[3],
                 s.generating[1],                       s.generating[2],         s.generating[3],
                 s.meshing[1],                          s.meshing[2],            s.meshing[3],
                 s.gen_queue_depth[LODLevel.count - 1], s.upload_queue_depth[1], s.upload_queue_depth[2],
                 s.upload_queue_depth[3],               s.mesh_count[1],         s.mesh_count[2],
                 s.mesh_count[3],                       s.cache_hits,            s.cache_misses,
+                s.store_hits,                          s.store_misses,          s.evictions,
             });
         }
 
@@ -580,10 +584,53 @@ pub const LODManager = struct {
                             continue;
                         };
                     }
-                    chunk.state = .renderable;
+                    self.markRegionRenderable(key, chunk);
                     uploads += 1;
                 }
             }
+        }
+    }
+
+    fn countRenderableChildren(self: *Self, key: LODRegionKey) u8 {
+        const children = key.childKeys() orelse return 0;
+        const child_idx = @intFromEnum(children[0].lod);
+        var count: u8 = 0;
+        for (children) |child_key| {
+            const child = self.regions[child_idx].get(child_key) orelse continue;
+            if (self.regionContributesGeometry(child_key, child)) count += 1;
+        }
+        return count;
+    }
+
+    fn regionContributesGeometry(self: *Self, key: LODRegionKey, chunk: *const LODChunk) bool {
+        if (chunk.state != .renderable) return false;
+        const mesh = self.meshes[@intFromEnum(key.lod)].get(key) orelse return false;
+        return mesh.ready and mesh.vertex_count > 0;
+    }
+
+    fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void {
+        const parent = key.parentKey() orelse return;
+        const parent_chunk = self.regions[@intFromEnum(parent.lod)].get(parent) orelse return;
+        if (delta > 0) {
+            parent_chunk.ready_children = @min(parent_chunk.ready_children + @as(u8, @intCast(delta)), 4);
+        } else if (delta < 0) {
+            const amount: u8 = @intCast(-delta);
+            parent_chunk.ready_children = if (amount >= parent_chunk.ready_children) 0 else parent_chunk.ready_children - amount;
+        }
+    }
+
+    fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
+        if (chunk.state == .renderable) return;
+        chunk.ready_children = self.countRenderableChildren(key);
+        chunk.state = .renderable;
+        if (self.regionContributesGeometry(key, chunk)) {
+            self.adjustParentReadyChildren(key, 1);
+        }
+    }
+
+    fn noteRegionRemoved(self: *Self, key: LODRegionKey, chunk: *const LODChunk) void {
+        if (self.regionContributesGeometry(key, chunk)) {
+            self.adjustParentReadyChildren(key, -1);
         }
     }
 
@@ -631,13 +678,10 @@ pub const LODManager = struct {
                 if (storage.get(key)) |chunk| {
                     // Clean up mesh before removing chunk
                     const meshes = &self.meshes[@intFromEnum(lod)];
+                    self.noteRegionRemoved(key, chunk);
                     if (meshes.get(key)) |mesh| {
                         // Push to deferred deletion queue instead of deleting immediately
-                        self.deletion_queue.append(self.allocator, mesh) catch {
-                            // Fallback if allocation fails: delete immediately (slow but safe)
-                            self.gpu_bridge.destroy(mesh);
-                            self.allocator.destroy(mesh);
-                        };
+                        self.queueMeshDeletion(mesh);
                         _ = meshes.remove(key);
                     }
 
@@ -646,6 +690,82 @@ pub const LODManager = struct {
                     _ = storage.remove(key);
                 }
             }
+        }
+    }
+
+    fn queueMeshDeletion(self: *Self, mesh: *LODMesh) void {
+        self.deletion_queue.append(self.allocator, mesh) catch {
+            self.gpu_bridge.destroy(mesh);
+            self.allocator.destroy(mesh);
+        };
+    }
+
+    fn regionMemoryBytes(chunk: *const LODChunk, mesh: ?*LODMesh) usize {
+        var total: usize = 0;
+        switch (chunk.data) {
+            .simplified => |*s| total += s.totalMemoryBytes(),
+            else => {},
+        }
+        if (mesh) |m| total += m.capacity * @sizeOf(Vertex);
+        return total;
+    }
+
+    fn enforceMemoryBudget(self: *Self) !void {
+        const budget_mb = self.config.getMemoryBudgetMB();
+        if (budget_mb == 0) return;
+        const budget_bytes = @as(usize, budget_mb) * 1024 * 1024;
+        if (self.memory_used_bytes <= budget_bytes) return;
+
+        const Candidate = struct { key: LODRegionKey, distance_sq: i64 };
+        var candidates = std.ArrayListUnmanaged(Candidate).empty;
+        defer candidates.deinit(self.allocator);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        for (1..active_lod_count) |i| {
+            var iter = self.regions[i].iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const chunk = entry.value_ptr.*;
+                if (chunk.state != .renderable or chunk.isPinned()) continue;
+                // Coarsest active LOD regions have no renderable parent fallback and are
+                // intentionally excluded so eviction never opens horizon holes.
+                const parent = key.parentKey() orelse continue;
+                const parent_idx = @intFromEnum(parent.lod);
+                const parent_chunk = self.regions[parent_idx].get(parent) orelse continue;
+                if (parent_chunk.state != .renderable) continue;
+                const bounds = key.chunkBounds();
+                try candidates.append(self.allocator, .{ .key = key, .distance_sq = bounds.distanceSquaredToPoint(self.player_cx, self.player_cz) });
+            }
+        }
+
+        std.mem.sort(Candidate, candidates.items, {}, struct {
+            fn lt(_: void, a: Candidate, b: Candidate) bool {
+                return a.distance_sq > b.distance_sq;
+            }
+        }.lt);
+
+        var used = self.memory_used_bytes;
+        for (candidates.items) |candidate| {
+            if (used <= budget_bytes) break;
+            const idx = @intFromEnum(candidate.key.lod);
+            const chunk = self.regions[idx].get(candidate.key) orelse continue;
+            if (chunk.state != .renderable or chunk.isPinned()) continue;
+            const mesh = self.meshes[idx].get(candidate.key);
+            const bytes = regionMemoryBytes(chunk, mesh);
+            self.noteRegionRemoved(candidate.key, chunk);
+            if (mesh) |m| {
+                self.queueMeshDeletion(m);
+                _ = self.meshes[idx].remove(candidate.key);
+            }
+            chunk.deinit(self.allocator);
+            self.allocator.destroy(chunk);
+            _ = self.regions[idx].remove(candidate.key);
+            used = if (bytes >= used) 0 else used - bytes;
+            self.memory_used_bytes = used;
+            self.stats.evictions += 1;
         }
     }
 
@@ -686,6 +806,8 @@ pub const LODManager = struct {
         }
 
         self.stats.addMemory(mem_usage);
+        self.stats.store_hits = self.cache_hits;
+        self.stats.store_misses = self.cache_misses;
         self.stats.cache_hits = self.cache_hits;
         self.stats.cache_misses = self.cache_misses;
         self.memory_used_bytes = mem_usage;
@@ -696,7 +818,7 @@ pub const LODManager = struct {
             };
             S.counter += 1;
             if (S.counter % 120 == 1) {
-                log.log.info("LOD_STATS_DIAG gen_q={any} upload_q={any} meshes={any} verts={any} cache_hits={} cache_misses={} cache_hit_rate={d:.2} mem_mb={} upload_failures={}", .{
+                log.log.info("LOD_STATS_DIAG gen_q={any} upload_q={any} meshes={any} verts={any} cache_hits={} cache_misses={} cache_hit_rate={d:.2} mem_mb={} upload_failures={} store_hits={} store_misses={} evictions={} ingestion_backlog={} drawn={any} instances={any}", .{
                     self.stats.gen_queue_depth,
                     self.stats.upload_queue_depth,
                     self.stats.mesh_count,
@@ -706,6 +828,12 @@ pub const LODManager = struct {
                     self.stats.cacheHitRate(),
                     self.stats.memory_used_mb,
                     self.stats.upload_failures,
+                    self.stats.store_hits,
+                    self.stats.store_misses,
+                    self.stats.evictions,
+                    self.stats.ingestion_backlog,
+                    self.stats.drawn,
+                    self.stats.instances,
                 });
             }
         }
@@ -764,7 +892,7 @@ pub const LODManager = struct {
         self.mutex.lockShared();
         defer self.mutex.unlockShared();
 
-        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks);
+        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, &self.stats);
     }
 
     fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {
@@ -801,12 +929,12 @@ pub const LODManager = struct {
             }
 
             for (to_remove.items) |rem_key| {
+                if (storage.get(rem_key)) |chunk| {
+                    self.noteRegionRemoved(rem_key, chunk);
+                }
                 if (meshes.fetchRemove(rem_key)) |mesh_entry| {
                     // Queue for deferred deletion to avoid waitIdle stutter
-                    self.deletion_queue.append(self.allocator, mesh_entry.value) catch {
-                        self.gpu_bridge.destroy(mesh_entry.value);
-                        self.allocator.destroy(mesh_entry.value);
-                    };
+                    self.queueMeshDeletion(mesh_entry.value);
                 }
                 if (storage.fetchRemove(rem_key)) |chunk_entry| {
                     chunk_entry.value.deinit(self.allocator);
@@ -1157,13 +1285,20 @@ pub const LODManager = struct {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
                     const cache_enabled = self.cacheEnabled();
-                    const cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
+                    const want_spans = self.config.getVerticalSpanBudget() > 0;
+                    var cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
+                    if (cached_data) |*cached| {
+                        if (want_spans and !cached.hasVerticalSpans()) {
+                            cached.deinit();
+                            cached_data = null;
+                        }
+                    }
                     const data = if (cached_data) |cached| blk: {
                         self.recordCacheHit();
                         break :blk cached;
                     } else blk: {
                         if (cache_enabled) self.recordCacheMiss();
-                        var generated = if (self.config.getVerticalSpanBudget() > 0)
+                        var generated = if (want_spans)
                             LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
                                 new_state = .missing;
                                 chunk.unpin();
@@ -1209,6 +1344,7 @@ pub const LODManager = struct {
                     // Acquire lock to update chunk data
                     self.mutex.lock();
                     chunk.data = .{ .simplified = data };
+                    chunk.updateHeightBoundsFromData();
                     self.mutex.unlock();
                 }
                 success = true;
@@ -1298,4 +1434,150 @@ test "LODManager cache helpers delete corrupt cache files" {
 
     try testing.expect(manager.loadCachedSourceData(key) == null);
     try testing.expectError(error.FileNotFound, fs.cwd().openFile(path, .{}));
+}
+
+fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {
+    var manager = LODManager.initCacheTestManager(allocator, "");
+    manager.config = config.interface();
+    for (0..LODLevel.count) |i| {
+        manager.regions[i] = RegionMap.init(allocator);
+        manager.meshes[i] = MeshMap.init(allocator);
+    }
+    var bridge_ctx: u8 = 0;
+    manager.gpu_bridge = .{
+        .on_upload = struct {
+            fn f(_: *LODMesh, _: *anyopaque) @import("engine-rhi").RhiError!void {}
+        }.f,
+        .on_destroy = struct {
+            fn f(_: *LODMesh, _: *anyopaque) void {}
+        }.f,
+        .on_wait_idle = struct {
+            fn f(_: *anyopaque) void {}
+        }.f,
+        .ctx = @ptrCast(&bridge_ctx),
+    };
+    return manager;
+}
+
+fn deinitEvictionTestManager(manager: *LODManager) void {
+    for (0..LODLevel.count) |i| {
+        var region_iter = manager.regions[i].iterator();
+        while (region_iter.next()) |entry| {
+            entry.value_ptr.*.deinit(manager.allocator);
+            manager.allocator.destroy(entry.value_ptr.*);
+        }
+        manager.regions[i].deinit();
+
+        var mesh_iter = manager.meshes[i].iterator();
+        while (mesh_iter.next()) |entry| {
+            manager.allocator.destroy(entry.value_ptr.*);
+        }
+        manager.meshes[i].deinit();
+    }
+    for (manager.deletion_queue.items) |mesh| {
+        manager.allocator.destroy(mesh);
+    }
+    manager.deletion_queue.deinit(manager.allocator);
+}
+
+fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
+    const chunk = try manager.allocator.create(LODChunk);
+    chunk.* = LODChunk.init(key.rx, key.rz, key.lod);
+    chunk.state = state;
+    try manager.regions[@intFromEnum(key.lod)].put(key, chunk);
+    return chunk;
+}
+
+fn putTestMesh(manager: *LODManager, key: LODRegionKey, capacity: u32) !*LODMesh {
+    const mesh = try manager.allocator.create(LODMesh);
+    mesh.* = LODMesh.init(manager.allocator, key.lod);
+    mesh.ready = true;
+    mesh.vertex_count = capacity;
+    mesh.capacity = capacity;
+    try manager.meshes[@intFromEnum(key.lod)].put(key, mesh);
+    return mesh;
+}
+
+test "LODManager ready child counters update on renderable transitions and removal" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const child_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 };
+    const child = try putTestRegion(&manager, child_key, .mesh_ready);
+    _ = try putTestMesh(&manager, child_key, 1);
+    manager.markRegionRenderable(child_key, child);
+
+    const parent_key = child_key.parentKey().?;
+    const parent = try putTestRegion(&manager, parent_key, .mesh_ready);
+    manager.markRegionRenderable(parent_key, parent);
+    try testing.expectEqual(@as(u8, 1), parent.ready_children);
+
+    manager.noteRegionRemoved(child_key, child);
+    try testing.expectEqual(@as(u8, 0), parent.ready_children);
+}
+
+test "LODManager ready child counters ignore renderable children without geometry" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const child_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 };
+    const child = try putTestRegion(&manager, child_key, .mesh_ready);
+    _ = try putTestMesh(&manager, child_key, 0);
+    manager.markRegionRenderable(child_key, child);
+
+    const parent_key = child_key.parentKey().?;
+    const parent = try putTestRegion(&manager, parent_key, .mesh_ready);
+    manager.markRegionRenderable(parent_key, parent);
+
+    try testing.expectEqual(@as(u8, 0), parent.ready_children);
+}
+
+test "LODManager memory budget eviction skips unsafe regions and evicts farthest first" {
+    var config = LODConfig{ .memory_budget_mb = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const budget_bytes = @as(usize, config.memory_budget_mb) * 1024 * 1024;
+    const eviction_bytes = 600 * 1024;
+    const mesh_capacity: u32 = @intCast(@max(eviction_bytes / @sizeOf(Vertex), 1));
+    const mesh_bytes = @as(usize, mesh_capacity) * @sizeOf(Vertex);
+
+    const near_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 };
+    const far_key = LODRegionKey{ .rx = 20, .rz = 0, .lod = .lod1 };
+    const pinned_key = LODRegionKey{ .rx = 40, .rz = 0, .lod = .lod1 };
+    const no_parent_key = LODRegionKey{ .rx = 60, .rz = 0, .lod = .lod1 };
+    const in_flight_key = LODRegionKey{ .rx = 80, .rz = 0, .lod = .lod1 };
+
+    _ = try putTestRegion(&manager, near_key.parentKey().?, .renderable);
+    _ = try putTestRegion(&manager, far_key.parentKey().?, .renderable);
+    _ = try putTestRegion(&manager, pinned_key.parentKey().?, .renderable);
+    _ = try putTestRegion(&manager, in_flight_key.parentKey().?, .renderable);
+
+    _ = try putTestRegion(&manager, near_key, .renderable);
+    _ = try putTestRegion(&manager, far_key, .renderable);
+    const pinned_chunk = try putTestRegion(&manager, pinned_key, .renderable);
+    pinned_chunk.pin();
+    _ = try putTestRegion(&manager, no_parent_key, .renderable);
+    _ = try putTestRegion(&manager, in_flight_key, .generating);
+
+    _ = try putTestMesh(&manager, near_key, mesh_capacity);
+    _ = try putTestMesh(&manager, far_key, mesh_capacity);
+    _ = try putTestMesh(&manager, pinned_key, mesh_capacity);
+    _ = try putTestMesh(&manager, no_parent_key, mesh_capacity);
+    _ = try putTestMesh(&manager, in_flight_key, mesh_capacity);
+
+    manager.memory_used_bytes = budget_bytes + mesh_bytes;
+    try manager.enforceMemoryBudget();
+
+    try testing.expect(!manager.regions[1].contains(far_key));
+    try testing.expect(!manager.meshes[1].contains(far_key));
+    try testing.expect(manager.regions[1].contains(near_key));
+    try testing.expect(manager.regions[1].contains(pinned_key));
+    try testing.expect(manager.regions[1].contains(no_parent_key));
+    try testing.expect(manager.regions[1].contains(in_flight_key));
+    try testing.expect(manager.memory_used_bytes <= budget_bytes);
+    try testing.expectEqual(@as(u32, 1), manager.stats.evictions);
+    try testing.expectEqual(@as(u32, 1), manager.deletion_queue.items.len);
 }
