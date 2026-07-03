@@ -165,6 +165,7 @@ pub const LODManager = struct {
     // Optional save directory for generated LOD source data.
     cache_dir_path: ?[]const u8,
     logged_legacy_cache_notice: bool,
+    store_mutex: std.Thread.Mutex,
 
     // Keep cleanup behavior testable, but allow the live world to opt out.
     cleanup_covered_regions: bool = true,
@@ -244,6 +245,7 @@ pub const LODManager = struct {
             .cleanup_covered_regions = true,
             .cache_dir_path = null,
             .logged_legacy_cache_notice = false,
+            .store_mutex = .{},
         };
 
         const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
@@ -332,11 +334,20 @@ pub const LODManager = struct {
         const cache_dir_path = try self.allocator.dupe(u8, save_dir_path);
         errdefer self.allocator.free(cache_dir_path);
 
-        try lod_store.writeHeader(self.allocator, save_dir_path, .{
+        const live_header = lod_store.StoreHeader{
             .seed = self.generator.seed,
             .generator_identity_hash = self.generator.identity_hash,
             .generator_version = self.generator.version,
-        });
+        };
+
+        if (try lod_store.readHeader(self.allocator, save_dir_path)) |stored_header| {
+            if (!lod_store.headersMatch(stored_header, live_header)) {
+                log.log.warn("LOD store metadata mismatch; purging stale LOD source store", .{});
+                try lod_store.deleteStore(self.allocator, save_dir_path);
+            }
+        }
+
+        try lod_store.writeHeader(self.allocator, save_dir_path, live_header);
 
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -1098,23 +1109,47 @@ pub const LODManager = struct {
         return self.cache_dir_path != null;
     }
 
+    fn readStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) !?[]u8 {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        return lod_store.readPayload(self.allocator, save_dir_path, cache_key);
+    }
+
+    fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key, bytes: []const u8) !void {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes);
+    }
+
+    fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) void {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        lod_store.deletePayload(self.allocator, save_dir_path, cache_key);
+    }
+
+    fn deleteStoreContainer(self: *Self, path: []const u8) void {
+        self.store_mutex.lock();
+        defer self.store_mutex.unlock();
+        fs.cwd().deleteFile(path) catch |delete_err| {
+            if (delete_err != error.FileNotFound) {
+                log.log.warn("Failed to delete corrupt LOD store container '{s}': {}", .{ path, delete_err });
+            }
+        };
+    }
+
     fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
         const save_dir_path = self.cacheDirPathSnapshot() orelse return null;
         defer self.allocator.free(save_dir_path);
 
         const cache_key = self.cacheKey(key);
 
-        if (lod_store.readPayload(self.allocator, save_dir_path, cache_key) catch |err| switch (err) {
+        if (self.readStorePayload(save_dir_path, cache_key) catch |err| switch (err) {
             lod_store.StoreError.CorruptContainer => {
                 const path = lod_store.containerPath(self.allocator, save_dir_path, cache_key) catch null;
                 if (path) |container_path| {
                     defer self.allocator.free(container_path);
                     log.log.warn("Discarding corrupt LOD store container '{s}'", .{container_path});
-                    fs.cwd().deleteFile(container_path) catch |delete_err| {
-                        if (delete_err != error.FileNotFound) {
-                            log.log.warn("Failed to delete corrupt LOD store container '{s}': {}", .{ container_path, delete_err });
-                        }
-                    };
+                    self.deleteStoreContainer(container_path);
                 }
                 return null;
             },
@@ -1126,7 +1161,7 @@ pub const LODManager = struct {
             defer self.allocator.free(bytes);
             return lod_cache.deserialize(bytes, cache_key, self.allocator) catch |err| {
                 log.log.warn("Discarding corrupt LOD store payload LOD{} ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
-                lod_store.deletePayload(self.allocator, save_dir_path, cache_key);
+                self.deleteStorePayload(save_dir_path, cache_key);
                 return null;
             };
         }
@@ -1182,7 +1217,7 @@ pub const LODManager = struct {
         };
         defer self.allocator.free(bytes);
 
-        lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes) catch |err| {
+        self.writeStorePayload(save_dir_path, cache_key, bytes) catch |err| {
             log.log.warn("Failed to write LOD{} store ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
         };
     }
@@ -1223,6 +1258,7 @@ pub const LODManager = struct {
             .renderer = undefined,
             .cache_dir_path = cache_dir_path,
             .logged_legacy_cache_notice = false,
+            .store_mutex = .{},
             .cleanup_covered_regions = true,
         };
     }

@@ -350,6 +350,13 @@ test "LODSimplifiedData initializes rich column defaults" {
     try std.testing.expectEqual(@as(f32, 0.0), data.vegetation[0].tree_coverage);
 }
 
+test "LODColumnProvenance orders overwrite authority" {
+    try std.testing.expect(LODColumnProvenance.chunk_derived.canOverwrite(.worldgen));
+    try std.testing.expect(LODColumnProvenance.edited.canOverwrite(.chunk_derived));
+    try std.testing.expect(!LODColumnProvenance.worldgen.canOverwrite(.chunk_derived));
+    try std.testing.expect(!LODColumnProvenance.chunk_derived.canOverwrite(.edited));
+}
+
 test "LODSimplifiedData setColumn stores rich representative data" {
     const allocator = std.testing.allocator;
     var data = try LODSimplifiedData.init(allocator, .lod2);

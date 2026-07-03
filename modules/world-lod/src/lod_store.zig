@@ -7,6 +7,7 @@ const RegionFile = @import("world-persistence").RegionFile;
 const lod_cache = @import("lod_cache.zig");
 
 const REGION_GRID: i32 = 32;
+const MAX_CONTAINER_BYTES: usize = 256 * 1024 * 1024;
 
 pub const StoreHeader = struct {
     seed: u64,
@@ -18,6 +19,13 @@ pub const StoreHeader = struct {
 pub const StoreError = error{
     CorruptContainer,
 };
+
+pub fn headersMatch(a: StoreHeader, b: StoreHeader) bool {
+    return a.seed == b.seed and
+        a.generator_identity_hash == b.generator_identity_hash and
+        a.generator_version == b.generator_version and
+        a.lod_data_version == b.lod_data_version;
+}
 
 fn containerCoord(value: i32) i32 {
     return @divFloor(value, REGION_GRID);
@@ -75,6 +83,31 @@ pub fn writeHeader(allocator: std.mem.Allocator, save_dir_path: []const u8, head
     };
 }
 
+pub fn readHeader(allocator: std.mem.Allocator, save_dir_path: []const u8) !?StoreHeader {
+    const path = try fs.path.join(allocator, &.{ save_dir_path, "lod", "store.json" });
+    defer allocator.free(path);
+
+    const bytes = fs.cwd().readFileAlloc(path, allocator, 4096) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer allocator.free(bytes);
+
+    const parsed = try std.json.parseFromSlice(StoreHeader, allocator, bytes, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    return parsed.value;
+}
+
+pub fn deleteStore(allocator: std.mem.Allocator, save_dir_path: []const u8) !void {
+    const lod_root = try fs.path.join(allocator, &.{ save_dir_path, "lod" });
+    defer allocator.free(lod_root);
+
+    fs.cwd().deleteTree(lod_root) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
 pub fn readPayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key: lod_cache.Key) !?[]u8 {
     const path = try containerPath(allocator, save_dir_path, key);
     defer allocator.free(path);
@@ -98,14 +131,53 @@ pub fn writePayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key
 
     const path = try containerPath(allocator, save_dir_path, key);
     defer allocator.free(path);
-
-    var region = RegionFile.open(allocator, path) catch |err| switch (err) {
-        error.FileNotFound => try RegionFile.create(allocator, path),
+    const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
+    defer allocator.free(tmp_path);
+    fs.cwd().deleteFile(tmp_path) catch |err| switch (err) {
+        error.FileNotFound => {},
         else => return err,
     };
-    defer region.close();
 
-    try region.writeChunk(localCoord(key.rx), localCoord(key.rz), bytes);
+    const use_existing = blk: {
+        var existing_region = RegionFile.open(allocator, path) catch |err| switch (err) {
+            error.FileNotFound => break :blk false,
+            else => break :blk false,
+        };
+        existing_region.close();
+        break :blk true;
+    };
+
+    if (use_existing) {
+        const existing = try fs.cwd().readFileAlloc(path, allocator, MAX_CONTAINER_BYTES);
+        defer allocator.free(existing);
+        const tmp_file = try fs.cwd().createFile(tmp_path, .{ .truncate = true });
+        tmp_file.writeAll(existing) catch |err| {
+            tmp_file.close();
+            fs.cwd().deleteFile(tmp_path) catch {};
+            return err;
+        };
+        tmp_file.close();
+    }
+
+    var region = (if (use_existing)
+        RegionFile.open(allocator, tmp_path)
+    else
+        RegionFile.create(allocator, tmp_path)) catch |err| {
+        fs.cwd().deleteFile(tmp_path) catch {};
+        return err;
+    };
+
+    region.writeChunk(localCoord(key.rx), localCoord(key.rz), bytes) catch |err| {
+        region.close();
+        fs.cwd().deleteFile(tmp_path) catch {};
+        return err;
+    };
+    region.close();
+
+    fs.cwd().rename(tmp_path, path) catch |err| {
+        fs.cwd().deleteFile(tmp_path) catch {};
+        return err;
+    };
 }
 
 pub fn deletePayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key: lod_cache.Key) void {
@@ -152,6 +224,51 @@ test "LOD store overwrites existing payloads" {
     try testing.expectEqualStrings("larger replacement payload", loaded);
 }
 
+test "LOD store atomic overwrite preserves sibling entries" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+
+    const key_a = lod_cache.Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 3, .rx = 0, .rz = 0, .lod = .lod1 };
+    const key_b = lod_cache.Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 3, .rx = 1, .rz = 0, .lod = .lod1 };
+    try writePayload(testing.allocator, save_dir, key_a, "payload-a");
+    try writePayload(testing.allocator, save_dir, key_b, "payload-b");
+    try writePayload(testing.allocator, save_dir, key_a, "payload-a-updated");
+
+    const loaded_a = (try readPayload(testing.allocator, save_dir, key_a)).?;
+    defer testing.allocator.free(loaded_a);
+    const loaded_b = (try readPayload(testing.allocator, save_dir, key_b)).?;
+    defer testing.allocator.free(loaded_b);
+    try testing.expectEqualStrings("payload-a-updated", loaded_a);
+    try testing.expectEqualStrings("payload-b", loaded_b);
+}
+
+test "LOD store write replaces corrupt containers" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+    const key = lod_cache.Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 3, .rx = 0, .rz = 0, .lod = .lod1 };
+
+    const path = try containerPath(testing.allocator, save_dir, key);
+    defer testing.allocator.free(path);
+    const parent = fs.path.dirname(path).?;
+    try fs.cwd().makePath(parent);
+    const file = try fs.cwd().createFile(path, .{ .truncate = true });
+    try file.writeAll("bad");
+    file.close();
+
+    try writePayload(testing.allocator, save_dir, key, "replacement");
+    const loaded = (try readPayload(testing.allocator, save_dir, key)).?;
+    defer testing.allocator.free(loaded);
+    try testing.expectEqualStrings("replacement", loaded);
+}
+
 test "LOD store missing and corrupt containers are advisory misses" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -190,4 +307,21 @@ test "LOD store writes metadata header atomically" {
 
     try testing.expect(std.mem.indexOf(u8, bytes, "\"seed\": 123") != null);
     try testing.expect(std.mem.indexOf(u8, bytes, "\"lod_data_version\": 2") != null);
+}
+
+test "LOD store reads and deletes metadata store" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+    const header = StoreHeader{ .seed = 123, .generator_identity_hash = 456, .generator_version = 7 };
+
+    try writeHeader(testing.allocator, save_dir, header);
+    const loaded = (try readHeader(testing.allocator, save_dir)).?;
+    try testing.expect(headersMatch(header, loaded));
+
+    try deleteStore(testing.allocator, save_dir);
+    try testing.expect((try readHeader(testing.allocator, save_dir)) == null);
 }
