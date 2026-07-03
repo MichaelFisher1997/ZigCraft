@@ -89,7 +89,7 @@ pub const GameSession = struct {
     debug_cascade_idx: usize = 0,
     build_config: BuildConfig = .{},
 
-    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
+    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, horizon_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
 
@@ -113,11 +113,15 @@ pub const GameSession = struct {
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
-        const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0];
+        const effective_horizon_distance = @max(horizon_distance, effective_render_distance);
+        const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0] or effective_horizon_distance != preset_cfg.horizon_radius;
         var preset_radii = if (!strict_safe_mode and manual_distance_expanded)
-            LODConfig.radiiForRenderDistance(effective_render_distance)
-        else
-            preset_cfg.lod_radii;
+            LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance)
+        else blk: {
+            var radii = preset_cfg.lod_radii;
+            radii[LODLevel.count - 1] = effective_horizon_distance;
+            break :blk radii;
+        };
         preset_radii[0] = if (strict_safe_mode)
             @min(effective_render_distance, 8)
         else
@@ -141,6 +145,7 @@ pub const GameSession = struct {
                     12,
                     24,
                     40,
+                    64,
                 },
             }
         else

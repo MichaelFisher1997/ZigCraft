@@ -102,10 +102,11 @@ pub fn deleteStore(allocator: std.mem.Allocator, save_dir_path: []const u8) !voi
     const lod_root = try fs.path.join(allocator, &.{ save_dir_path, "lod" });
     defer allocator.free(lod_root);
 
-    fs.cwd().deleteTree(lod_root) catch |err| switch (err) {
-        error.FileNotFound => {},
+    fs.cwd().access(lod_root, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
         else => return err,
     };
+    try fs.cwd().deleteTree(lod_root);
 }
 
 pub fn readPayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key: lod_cache.Key) !?[]u8 {

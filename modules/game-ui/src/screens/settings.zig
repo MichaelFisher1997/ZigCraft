@@ -259,6 +259,19 @@ fn drawWorldTab(ui: *UISystem, settings: anytype, rs: anytype, layout: ColumnLay
         if (step == .previous and settings.render_distance > 1) settings.render_distance -= 1;
         if (step == .next) settings.render_distance += 1;
     }
+    y_left += row_h + 8.0 * scale;
+
+    const horizon_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.horizon_distance}) catch "?";
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "HORIZON DISTANCE", "Coarsest LOD radius, independent of near chunks.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        const values = [_]i32{ 256, 512, 1024, 2048 };
+        var current_idx: usize = 1;
+        for (values, 0..) |value, i| {
+            if (settings.horizon_distance == value) current_idx = i;
+        }
+        if (step == .previous) current_idx = if (current_idx == 0) values.len - 1 else current_idx - 1;
+        if (step == .next) current_idx = (current_idx + 1) % values.len;
+        settings.horizon_distance = values[current_idx];
+    }
 
     var y_right = if (layout.two_column) layout.top_y else y_left + row_h + 22.0 * scale;
     Theme.drawSectionLabel(ui, layout.right_x, y_right, "STREAMING", scale);
@@ -391,6 +404,7 @@ fn drawRenderDistancePresetRow(ui: *UISystem, settings: *Settings, row: Rect, to
         settings.render_distance_preset = @enumFromInt(next_value);
         const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
         settings.render_distance = preset_cfg.lod_radii[0];
+        settings.horizon_distance = preset_cfg.horizon_radius;
     }
     return row.y + row.height;
 }

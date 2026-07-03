@@ -68,7 +68,7 @@ pub fn WorldLOD(comptime RHI: type) type {
             };
 
             const radii = config.getRadii();
-            log.log.info("WorldLOD initialized (LOD3 radius: {} chunks)", .{radii[3]});
+            log.log.info("WorldLOD initialized (horizon radius: {} chunks)", .{radii[LODLevel.count - 1]});
 
             return lod;
         }
@@ -119,12 +119,7 @@ pub fn WorldLOD(comptime RHI: type) type {
 
         pub fn setRadii(self: *Self, radii: [LODLevel.count]i32) void {
             self.manager.config.setRadii(radii);
-            log.log.info("LOD radii updated: LOD0={}, LOD1={}, LOD2={}, LOD3={}", .{
-                radii[0],
-                radii[1],
-                radii[2],
-                radii[3],
-            });
+            log.log.info("LOD radii updated: {any}", .{radii});
         }
 
         pub fn setActiveLODCount(self: *Self, count: u32) void {

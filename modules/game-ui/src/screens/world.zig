@@ -76,7 +76,7 @@ pub const WorldScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
         const render_system = context.render_system;
-        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.horizon_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
         errdefer session.deinit();
         const world = session.world.interface();
 
@@ -133,6 +133,9 @@ pub const WorldScreen = struct {
 
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
+        }
+        if (self.session.world.horizon_distance != ctx.settings.horizon_distance) {
+            self.session.world.setHorizonDistance(ctx.settings.horizon_distance);
         }
 
         self.maybeLogStartupDiagnostic(now);

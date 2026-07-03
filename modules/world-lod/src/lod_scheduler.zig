@@ -45,6 +45,28 @@ fn lodPriorityBias(lod: LODLevel) i32 {
     return @as(i32, @intCast(LODLevel.count - 1 - lod_idx)) << 28;
 }
 
+pub fn priorityWeightForVelocity(velocity: Vec3, chunk_dx: i32, chunk_dz: i32) f32 {
+    const speed = @sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    if (speed < 2.0) return 1.0;
+
+    const cdx: f32 = @floatFromInt(chunk_dx);
+    const cdz: f32 = @floatFromInt(chunk_dz);
+    const dist = @sqrt(cdx * cdx + cdz * cdz);
+    if (dist < 0.001) return 0.5;
+
+    const dir_x = velocity.x / speed;
+    const dir_z = velocity.z / speed;
+    const dot = (cdx * dir_x + cdz * dir_z) / dist;
+    return 1.0 - dot * 0.5;
+}
+
+pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec3) i32 {
+    const dist_sq = @as(i64, chunk_dx) * @as(i64, chunk_dx) + @as(i64, chunk_dz) * @as(i64, chunk_dz);
+    const weighted = @as(f64, @floatFromInt(dist_sq)) * @as(f64, priorityWeightForVelocity(velocity, chunk_dx, chunk_dz));
+    const priority: i32 = @intFromFloat(@min(weighted, @as(f64, @floatFromInt(@as(i32, 0x0FFFFFFF)))));
+    return (priority & 0x0FFFFFFF) | lodPriorityBias(lod);
+}
+
 /// Queue LOD regions that need generation.
 pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
     const radii = ctx.config.getRadii();
@@ -69,9 +91,6 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     // All LOD jobs go to the highest LOD queue. Encode the actual LOD in priority bits.
     const queue = ctx.gen_queues[LODLevel.count - 1];
     const lod_idx: u3 = @intFromEnum(lod);
-    const lod_priority_bias = lodPriorityBias(lod);
-
-    _ = velocity;
 
     // Collect candidates that need queuing, then sort nearest-first before
     // pushing. This is essential because the shared priority queue is drained
@@ -122,10 +141,9 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                 chunk.job_token = ctx.next_job_token.*;
                 ctx.next_job_token.* += 1;
 
-                const dist_sq = chunk_bounds.distanceSquaredToPoint(ctx.player_cx, ctx.player_cz);
-                const priority_full = dist_sq * @as(i64, scale) * @as(i64, scale);
-                const priority: i32 = @as(i32, @intCast(@min(priority_full, 0x0FFFFFFF)));
-                const encoded_priority = (priority & 0x0FFFFFFF) | lod_priority_bias;
+                const center_cx = key.rx * scale + @divFloor(scale, 2);
+                const center_cz = key.rz * scale + @divFloor(scale, 2);
+                const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity);
 
                 // Append before flipping state so an allocation failure leaves
                 // the chunk re-queueable in .missing instead of stuck .generating.
@@ -181,6 +199,18 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 }
 
 test "LOD scheduling prioritizes coarse horizon before near LODs" {
+    try std.testing.expect(lodPriorityBias(.lod4) < lodPriorityBias(.lod3));
     try std.testing.expect(lodPriorityBias(.lod3) < lodPriorityBias(.lod2));
     try std.testing.expect(lodPriorityBias(.lod2) < lodPriorityBias(.lod1));
+}
+
+test "LOD scheduling biases priorities toward movement direction" {
+    const velocity = Vec3.init(10, 0, 0);
+    const ahead = encodePriority(.lod2, 10, 0, velocity) & 0x0FFFFFFF;
+    const behind = encodePriority(.lod2, -10, 0, velocity) & 0x0FFFFFFF;
+    const stationary_ahead = encodePriority(.lod2, 10, 0, Vec3.zero) & 0x0FFFFFFF;
+    const stationary_behind = encodePriority(.lod2, -10, 0, Vec3.zero) & 0x0FFFFFFF;
+
+    try std.testing.expect(ahead < behind);
+    try std.testing.expectEqual(stationary_ahead, stationary_behind);
 }

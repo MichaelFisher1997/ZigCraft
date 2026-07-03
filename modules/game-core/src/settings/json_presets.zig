@@ -42,6 +42,7 @@ pub const PresetConfig = struct {
     clouds_3d_enabled: bool = true,
     lod_enabled: bool,
     render_distance: i32,
+    horizon_distance: ?i32 = null,
     render_distance_preset: RenderDistancePreset = .high,
     fxaa_enabled: bool,
     bloom_enabled: bool,
@@ -118,6 +119,12 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
             log.log.warn("Skipping preset '{s}': invalid render_distance {}", .{ p.name, p.render_distance });
             continue;
         }
+        if (p.horizon_distance) |horizon_distance| {
+            if (horizon_distance != 256 and horizon_distance != 512 and horizon_distance != 1024 and horizon_distance != 2048) {
+                log.log.warn("Skipping preset '{s}': invalid horizon_distance {}", .{ p.name, horizon_distance });
+                continue;
+            }
+        }
         p.name = try allocator.dupe(u8, preset.name);
         errdefer allocator.free(p.name);
         try graphics_presets.append(allocator, p);
@@ -170,6 +177,7 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
     settings.clouds_3d_enabled = config.clouds_3d_enabled;
     settings.lod_enabled = config.lod_enabled;
     settings.render_distance = config.render_distance;
+    settings.horizon_distance = config.horizon_distance orelse @import("engine-rhi").render_settings.getPresetConfig(config.render_distance_preset).horizon_radius;
     settings.render_distance_preset = config.render_distance_preset;
     settings.fxaa_enabled = config.fxaa_enabled and !config.taa_enabled;
     settings.bloom_enabled = config.bloom_enabled;
@@ -205,6 +213,7 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
         std.math.approxEqAbs(f32, settings.exposure, preset.exposure, epsilon) and
         std.math.approxEqAbs(f32, settings.saturation, preset.saturation, epsilon) and
         settings.render_distance == preset.render_distance and
+        settings.horizon_distance == (preset.horizon_distance orelse @import("engine-rhi").render_settings.getPresetConfig(preset.render_distance_preset).horizon_radius) and
         settings.render_distance_preset == preset.render_distance_preset and
         settings.volumetric_lighting_enabled == preset.volumetric_lighting_enabled and
         settings.sun_shafts_enabled == preset.sun_shafts_enabled and

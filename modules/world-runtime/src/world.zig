@@ -62,6 +62,7 @@ const runtime_env = engine_core.runtime_env;
 
 const LODConfig = @import("world-lod").lod_chunk.LODConfig;
 const ILODConfig = @import("world-lod").lod_chunk.ILODConfig;
+const LODLevel = @import("world-lod").LODLevel;
 const CHUNK_UNLOAD_BUFFER = world_core.CHUNK_UNLOAD_BUFFER;
 const SaveManager = @import("world-persistence").SaveManager;
 const LoadResult = @import("world-persistence").LoadResult;
@@ -233,6 +234,7 @@ pub const World = struct {
     allocator: std.mem.Allocator,
     generator: Generator,
     render_distance: i32,
+    horizon_distance: i32,
     rhi: RHI,
     paused: bool = false,
     safe_mode: bool,
@@ -276,6 +278,7 @@ pub const World = struct {
             .renderer = undefined,
             .allocator = allocator,
             .render_distance = safe_render_distance,
+            .horizon_distance = if (options.lod_config) |lod_config| lod_config.getRadii()[LODLevel.count - 1] else LODConfig.default_horizon_radius,
             .generator = try registry.createGenerator(options.generator_index, options.seed, allocator),
             .rhi = options.rhi,
             .paused = false,
@@ -455,10 +458,21 @@ pub const World = struct {
             self.streamer.setRenderDistance(target);
 
             if (self.lod) |lod| {
-                const radii = LODConfig.radiiForRenderDistance(target);
+                const radii = LODConfig.radiiForDistances(target, self.horizon_distance);
                 lod.setRadii(radii);
                 lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(target));
             }
+        }
+    }
+
+    pub fn setHorizonDistance(self: *World, distance: i32) void {
+        const target = @max(distance, self.render_distance);
+        if (self.horizon_distance == target) return;
+        log.log.info("Horizon distance changed: {} -> {}", .{ self.horizon_distance, target });
+        self.horizon_distance = target;
+        if (self.lod) |lod| {
+            lod.setRadii(LODConfig.radiiForDistances(self.render_distance, target));
+            lod.setActiveLODCount(LODLevel.count);
         }
     }
 
