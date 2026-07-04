@@ -168,6 +168,10 @@ pub const LODChunk = struct {
     /// Dirty flag for re-meshing
     dirty: bool,
 
+    /// Source data changed since the last store flush (chunk-derived ingestion
+    /// or edit). The manager writes the region container to disk lazily.
+    store_dirty: bool,
+
     pub fn init(rx: i32, rz: i32, lod: LODLevel) LODChunk {
         return .{
             .region_x = rx,
@@ -182,6 +186,7 @@ pub const LODChunk = struct {
             .max_height = @floatFromInt(CHUNK_SIZE_Y),
             .ready_children = 0,
             .dirty = false,
+            .store_dirty = false,
         };
     }
 

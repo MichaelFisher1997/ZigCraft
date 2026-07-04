@@ -60,6 +60,7 @@ const WorkerPool = engine_core.WorkerPool;
 const Generator = @import("world-worldgen").Generator;
 const GlobalVertexAllocator = world_meshing.GlobalVertexAllocator;
 const LODManager = @import("world-lod").LODManager;
+const ChunkResolver = @import("world-lod").ChunkResolver;
 const TextureAtlas = @import("engine-assets").TextureAtlas;
 const log = @import("engine-core").log;
 const SaveManager = @import("world-persistence").SaveManager;
@@ -255,6 +256,16 @@ pub const WorldStreamer = struct {
 
     pub fn setLODManager(self: *WorldStreamer, lod_manager: ?*LODManager) void {
         self.lod_coordinator.setLODManager(lod_manager);
+        self.queue_coordinator.setLODManager(lod_manager);
+        if (lod_manager) |mgr| {
+            // Resolver lets deferred ingestions fetch resident chunks. The
+            // returned pointer is consumed synchronously within the manager's
+            // main-thread update, so it does not need pinning.
+            mgr.setChunkResolver(.{
+                .ptr = self.storage,
+                .resolve_fn = resolveChunkFromStorage,
+            });
+        }
     }
 
     pub fn setSaveManager(self: *WorldStreamer, sm: ?*SaveManager) void {
@@ -589,3 +600,15 @@ pub const WorldStreamer = struct {
         };
     }
 };
+
+/// ChunkResolver callback: look up a resident, generated chunk by coordinate.
+/// The returned pointer is only valid for synchronous use on the main thread
+/// (it is not pinned); the LOD manager consumes it immediately within update().
+fn resolveChunkFromStorage(ptr: *anyopaque, cx: i32, cz: i32) ?*const world_core.Chunk {
+    const storage: *ChunkStorage = @ptrCast(@alignCast(ptr));
+    storage.chunks_mutex.lockShared();
+    defer storage.chunks_mutex.unlockShared();
+    const entry = storage.chunks.get(ChunkKey{ .x = cx, .z = cz }) orelse return null;
+    if (!entry.chunk.generated) return null;
+    return &entry.chunk;
+}

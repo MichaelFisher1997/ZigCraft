@@ -19,6 +19,8 @@ const log = @import("engine-core").log;
 const SaveManager = @import("world-persistence").SaveManager;
 const LoadResult = @import("world-persistence").LoadResult;
 const GpuAccelerationCoordinator = @import("gpu_acceleration_coordinator.zig").GpuAccelerationCoordinator;
+const LODManager = @import("world-lod").LODManager;
+const LODColumnProvenance = @import("world-core").LODColumnProvenance;
 
 pub const ChunkQueueCoordinator = struct {
     allocator: std.mem.Allocator,
@@ -32,6 +34,8 @@ pub const ChunkQueueCoordinator = struct {
     gpu: *GpuAccelerationCoordinator,
     max_uploads_per_frame: usize,
     save_manager: ?*SaveManager = null,
+    // Optional LOD manager fed chunk-derived data after generation/load.
+    lod_manager: ?*LODManager = null,
 
     chunks_generated_total: std.atomic.Value(u64) = .init(0),
     chunks_meshed_total: std.atomic.Value(u64) = .init(0),
@@ -60,6 +64,10 @@ pub const ChunkQueueCoordinator = struct {
 
     pub fn setSaveManager(self: *ChunkQueueCoordinator, sm: ?*SaveManager) void {
         self.save_manager = sm;
+    }
+
+    pub fn setLODManager(self: *ChunkQueueCoordinator, mgr: ?*LODManager) void {
+        self.lod_manager = mgr;
     }
 
     pub fn setView(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32) void {
@@ -292,6 +300,12 @@ pub const ChunkQueueCoordinator = struct {
             self.storage.chunks_mutex.unlock();
             if (chunk_data.chunk.generated) {
                 self.markNeighborsForRemesh(cx, cz);
+                // Feed the real chunk into the LOD system so distant terrain is
+                // derived from actual blocks (chunk_derived provenance) instead
+                // of worldgen sampling. The chunk is pinned for this call.
+                if (self.lod_manager) |mgr| {
+                    mgr.ingestChunk(cx, cz, &chunk_data.chunk, .chunk_derived);
+                }
             }
         }
     }

@@ -41,5 +41,11 @@ pub fn getBiomeColor(biome_id: BiomeId) u32 {
         .marsh => 0x405933,
         .dry_plains => 0x8C8047,
         .coastal_plains => 0x598047,
+        .bamboo_jungle => 0x6B8E23,
+        .sparse_jungle => 0x3A7A2E,
+        .wooded_badlands => 0x8A4F2E,
+        .eroded_badlands => 0x9A5A33,
+        .savanna_plateau => 0x9A9456,
+        .windswept_savanna => 0x7E7A40,
     };
 }

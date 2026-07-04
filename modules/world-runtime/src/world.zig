@@ -507,6 +507,12 @@ pub const World = struct {
 
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         _ = try self.mutation.applyBlockMutation(world_x, world_y, world_z, block);
+        // Notify the LOD system so distant terrain reflects player edits after
+        // the player teleports away. Coalesced on a debounce inside LODManager.
+        if (self.lod) |lod| {
+            const wc = world_core.worldToChunk(world_x, world_z);
+            lod.manager.markChunkEdited(wc.chunk_x, wc.chunk_z);
+        }
     }
 
     /// Get chunk data at chunk coordinates.
