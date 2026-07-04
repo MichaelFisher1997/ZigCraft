@@ -478,3 +478,19 @@ test "markChunkEdited coalesces and re-ingests via the resolver on update" {
 fn chunk_derived_setBlock(chunk: *Chunk, x: u32, y: u32, z: u32, block: world_core.BlockType) void {
     chunk.setBlock(x, y, z, block);
 }
+
+test "enforceMemoryBudget shrinks finer radii under sustained pressure and spares the horizon" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 }, .memory_budget_mb = 1 };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    // Force sustained over-budget state with no evictable regions, so the
+    // hysteresis grow path must fire.
+    mgr.memory_used_bytes = 50_000_000;
+    try mgr.update(Vec3.zero, Vec3.zero, null, null);
+
+    // Finer levels (1..count-2) must have grown; coarsest (horizon) untouched.
+    try std.testing.expect(mgr.radius_shrink_chunks[1] > 0);
+    try std.testing.expectEqual(@as(i32, 0), mgr.radius_shrink_chunks[LODLevel.count - 1]);
+}

@@ -246,6 +246,11 @@ pub const LODManager = struct {
     edit_cooldown: f32,
     // Cap on deferred ingestion records to bound memory under rapid movement.
     ingestion_drain_per_frame: u32,
+    // Memory-pressure hysteresis (issue #752 Phase 4.5): under sustained budget
+    // pressure, finer LOD radii are dynamically shrunk so evicted regions do
+    // not immediately re-queue. Re-expands gradually once memory drops below
+    // 80% of budget. The coarsest (horizon) level is never shrunk.
+    radius_shrink_chunks: [LODLevel.count]i32,
 
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;
@@ -329,6 +334,7 @@ pub const LODManager = struct {
             .chunk_resolver = null,
             .edit_cooldown = 0.0,
             .ingestion_drain_per_frame = 4,
+            .radius_shrink_chunks = [_]i32{0} ** LODLevel.count,
         };
 
         const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
@@ -857,6 +863,7 @@ pub const LODManager = struct {
             .cleanup_covered_regions = self.cleanup_covered_regions,
             .coverage_ptr = self,
             .are_all_chunks_loaded = Coverage.areAllLoaded,
+            .radius_reduction = &self.radius_shrink_chunks,
         }, lod, velocity, chunk_checker, checker_ctx);
     }
 
@@ -1106,7 +1113,26 @@ pub const LODManager = struct {
         const budget_mb = self.config.getMemoryBudgetMB();
         if (budget_mb == 0) return;
         const budget_bytes = @as(usize, budget_mb) * 1024 * 1024;
-        if (self.memory_used_bytes <= budget_bytes) return;
+        const hysteresis_low = (budget_bytes * 4) / 5; // 80% re-expand threshold
+
+        // Decay path: comfortably under budget -> gradually re-expand radii.
+        if (self.memory_used_bytes < hysteresis_low) {
+            self.mutex.lock();
+            var decayed = false;
+            for (&self.radius_shrink_chunks) |*s| {
+                if (s.* > 0) {
+                    s.* -= 1;
+                    decayed = true;
+                }
+            }
+            self.mutex.unlock();
+            if (decayed) {
+                log.log.trace("LOD memory below 80% budget; re-expanding radii", .{});
+            }
+            return;
+        }
+
+        if (self.memory_used_bytes <= budget_bytes) return; // 80-100% band: hold
 
         const Candidate = struct { key: LODRegionKey, distance_sq: i64 };
         var candidates = std.ArrayListUnmanaged(Candidate).empty;
@@ -1158,6 +1184,25 @@ pub const LODManager = struct {
             used = if (bytes >= used) 0 else used - bytes;
             self.memory_used_bytes = used;
             self.stats.evictions += 1;
+        }
+
+        // Sustained pressure: still over budget after evicting everything we
+        // safely could. Shrink finer LOD radii so evicted regions do not
+        // immediately re-queue (hysteresis). The coarsest horizon band is
+        // exempt (never shrunk) so the vista never develops holes.
+        if (self.memory_used_bytes > budget_bytes) {
+            const active = lod_chunk.activeLODCount(self.config);
+            var grew = false;
+            var i: usize = 1;
+            while (i + 1 < active) : (i += 1) {
+                if (self.radius_shrink_chunks[i] < 64) {
+                    self.radius_shrink_chunks[i] += 1;
+                    grew = true;
+                }
+            }
+            if (grew) {
+                log.log.warn("LOD memory over budget after eviction; shrinking finer radii (shrink={any})", .{self.radius_shrink_chunks});
+            }
         }
     }
 
@@ -1644,6 +1689,7 @@ pub const LODManager = struct {
             .chunk_resolver = null,
             .edit_cooldown = 0.0,
             .ingestion_drain_per_frame = 4,
+            .radius_shrink_chunks = [_]i32{0} ** LODLevel.count,
         };
     }
 

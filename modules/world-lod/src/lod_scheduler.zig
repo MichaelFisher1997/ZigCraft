@@ -28,6 +28,9 @@ pub const SchedulerContext = struct {
     cleanup_covered_regions: bool,
     coverage_ptr: *anyopaque,
     are_all_chunks_loaded: CoverageFn,
+    // Dynamic per-level radius reduction (hysteresis under memory pressure).
+    // Applied to all levels EXCEPT the coarsest (horizon is never shrunk).
+    radius_reduction: *const [LODLevel.count]i32,
 };
 
 const std = @import("std");
@@ -70,7 +73,11 @@ pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec
 /// Queue LOD regions that need generation.
 pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
     const radii = ctx.config.getRadii();
-    const radius = radii[@intFromEnum(lod)];
+    const idx: u32 = @intFromEnum(lod);
+    // Apply dynamic radius reduction (hysteresis) to every level except the
+    // coarsest horizon band, which must keep filling regardless of pressure.
+    const is_coarsest = (idx + 1 >= LODLevel.count) or (idx + 1 >= ctx.config.getActiveLODCount());
+    const radius = if (is_coarsest) radii[idx] else @max(0, radii[idx] - ctx.radius_reduction[idx]);
 
     // Skip LOD0 - handled by existing World system.
     if (lod == .lod0) return;
