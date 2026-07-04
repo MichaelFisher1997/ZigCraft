@@ -298,6 +298,13 @@ pub const LODSimplifiedData = struct {
         lighting_hint: LODLightingHint,
         vegetation_hint: LODVegetationHint,
     ) void {
+        // Provenance-aware: worldgen generation never overwrites a column held
+        // by chunk_derived or edited data (issue #752 Phase 2.4). This makes
+        // every generator's heightmap pass respect real chunk data, so a region
+        // can regenerate its worldgen columns while preserving chunk-derived
+        // columns without any special-casing at the call sites.
+        if (!LODColumnProvenance.worldgen.canOverwrite(self.getColumnProvenance(gx, gz))) return;
+
         self.setColumn(gx, gz, height, biome, layers, color, water_state, lighting_hint, vegetation_hint);
         if (!self.hasVerticalSpans()) return;
 
@@ -357,6 +364,40 @@ pub const LODSimplifiedData = struct {
     pub fn getColumnProvenance(self: *const LODSimplifiedData, gx: u32, gz: u32) LODColumnProvenance {
         if (gx >= self.width or gz >= self.width) return .worldgen;
         return self.provenance[gz * self.width + gx];
+    }
+
+    /// Reset every worldgen-provenance column (height -> 0, spans cleared),
+    /// leaving chunk_derived/edited columns untouched. Used on generator
+    /// mismatch so a region can regenerate its worldgen columns from the new
+    /// generator while preserving real chunk data (issue #752 Phase 2.4).
+    /// Returns the number of columns that survived (chunk_derived or edited).
+    pub fn purgeWorldgenColumns(self: *LODSimplifiedData) u32 {
+        var survived: u32 = 0;
+        const count = self.width * self.width;
+        var idx: usize = 0;
+        while (idx < count) : (idx += 1) {
+            const p = self.provenance[idx];
+            if (p == .worldgen) {
+                self.heightmap[idx] = 0.0;
+                if (self.hasVerticalSpans()) {
+                    const gx: u32 = @intCast(idx % self.width);
+                    const gz: u32 = @intCast(idx / self.width);
+                    self.clearVerticalSpans(gx, gz);
+                }
+            } else {
+                survived += 1;
+            }
+        }
+        return survived;
+    }
+
+    /// True if any column is chunk_derived or edited (i.e. the region carries
+    /// real chunk data worth preserving across a generator change).
+    pub fn hasNonWorldgenColumns(self: *const LODSimplifiedData) bool {
+        for (self.provenance) |p| {
+            if (p != .worldgen) return true;
+        }
+        return false;
     }
 
     pub fn verticalSpanCount(self: *const LODSimplifiedData, gx: u32, gz: u32) u8 {
@@ -555,4 +596,43 @@ test "LODSimplifiedData generated columns emit surface and water spans" {
     try std.testing.expectEqual(@as(f32, 64.0), water.max_height);
     try std.testing.expectEqual(world_core.BlockType.water, water.material_layers.surface);
     try std.testing.expect(water.water.is_surface);
+}
+
+test "setGeneratedColumn never overwrites chunk_derived or edited columns" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.init(allocator, .lod2);
+    defer data.deinit();
+
+    // A chunk_derived column at height 70.
+    data.setColumn(2, 2, 70.0, .forest, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
+    data.setColumnProvenance(2, 2, .chunk_derived);
+
+    // Worldgen regen attempts to overwrite it with a different height.
+    data.setGeneratedColumn(2, 2, 10.0, .desert, .{ .surface = .sand, .subsurface = .sand, .foundation = .stone }, 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
+
+    try std.testing.expectEqual(@as(f32, 70.0), data.getHeight(2, 2));
+    try std.testing.expectEqual(LODColumnProvenance.chunk_derived, data.getColumnProvenance(2, 2));
+
+    // A neighboring worldgen column is still filled normally.
+    data.setGeneratedColumn(3, 3, 40.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
+    try std.testing.expectEqual(@as(f32, 40.0), data.getHeight(3, 3));
+}
+
+test "purgeWorldgenColumns preserves chunk_derived and edited data" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+
+    data.setGeneratedColumn(0, 0, 30.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
+    data.setColumn(1, 1, 80.0, .mountains, .{ .surface = .stone, .subsurface = .stone, .foundation = .stone }, 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
+    data.setColumnProvenance(1, 1, .edited);
+
+    const survived = data.purgeWorldgenColumns();
+    try std.testing.expectEqual(@as(u32, 1), survived);
+    try std.testing.expect(data.hasNonWorldgenColumns());
+
+    // Worldgen column reset, edited column preserved.
+    try std.testing.expectEqual(@as(f32, 0.0), data.getHeight(0, 0));
+    try std.testing.expectEqual(@as(f32, 80.0), data.getHeight(1, 1));
+    try std.testing.expectEqual(LODColumnProvenance.edited, data.getColumnProvenance(1, 1));
 }

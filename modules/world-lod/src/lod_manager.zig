@@ -424,8 +424,22 @@ pub const LODManager = struct {
         };
 
         if (try lod_store.readHeader(self.allocator, save_dir_path)) |stored_header| {
-            if (!lod_store.headersMatch(stored_header, live_header)) {
-                log.log.warn("LOD store metadata mismatch; purging stale LOD source store", .{});
+            if (stored_header.seed != live_header.seed) {
+                // Seed mismatch => the entire store is foreign; discard all.
+                log.log.warn("LOD store seed mismatch; discarding foreign LOD source store", .{});
+                try lod_store.deleteStore(self.allocator, save_dir_path);
+            } else if (stored_header.generator_identity_hash != live_header.generator_identity_hash or
+                stored_header.generator_version != live_header.generator_version)
+            {
+                // Generator changed but seed is the same: worldgen-sampled LOD
+                // is stale, but chunk-derived columns reflect real saved chunks
+                // and remain valid. Cached payloads are keyed by generator
+                // identity/version, so the old data is naturally ignored on
+                // read (cache miss) and regenerated with the new generator;
+                // `setGeneratedColumn` is provenance-aware, so regeneration
+                // preserves any chunk_derived/edited columns. We still delete
+                // the orphaned old-keyed store for disk hygiene.
+                log.log.warn("LOD store generator mismatch; regenerating stale worldgen LOD (chunk-derived data re-ingested from saved chunks)", .{});
                 try lod_store.deleteStore(self.allocator, save_dir_path);
             }
         }
@@ -1417,6 +1431,10 @@ pub const LODManager = struct {
     }
 
     fn effectiveMeshPath(self: *Self, lod: LODLevel) lod_chunk.LODMeshPath {
+        // Far bands (LOD3/LOD4) stay heightfield: at ~5+ blocks/cell the
+        // silhouette dominates and vertical spans would multiply source
+        // memory ~4-5x for no visible gain (issue #752 Phase 3.4).
+        if (@intFromEnum(lod) >= @intFromEnum(LODLevel.lod3)) return .heightfield;
         if (lod == LODConfig.coarsestLOD()) return .heightfield;
         if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_QEM", false)) return .qem;
         if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_SPANS", false)) return .column_spans;

@@ -378,6 +378,16 @@ pub const LODMesh = struct {
 
                     try addTopFaceQuad(self.allocator, &vertices, wx, span.max_height, wz, cell_size, unpackR(top_color), unpackG(top_color), unpackB(top_color), top_tile, world_x, world_z);
                     try addExposedSpanFaces(self.allocator, &vertices, data, gx, gz, span, wx, wz, cell_size, lit_color, side_tile, world_x, world_z);
+
+                    // Floating span (overhang): there is open air below this
+                    // span's floor, so add a downward-facing bottom quad.
+                    const supported_from_below = if (span_index == 0)
+                        span.min_height <= 0.01
+                    else
+                        spans_buf[span_index - 1].max_height >= span.min_height - 0.01;
+                    if (!supported_from_below) {
+                        try addBottomFaceQuad(self.allocator, &vertices, wx, span.min_height, wz, cell_size, unpackR(lit_color) * 0.5, unpackG(lit_color) * 0.5, unpackB(lit_color) * 0.5, side_tile, world_x, world_z);
+                    }
                 }
             }
         }
@@ -1355,6 +1365,21 @@ fn addTopFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanage
     try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, topFaceUV(.{ x, y, z }, world_x, world_z), tile_id));
     try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, topFaceUV(.{ x + size, y, z + size }, world_x, world_z), tile_id));
     try vertices.append(allocator, makeLODVertex(.{ x, y, z + size }, color, normal, topFaceUV(.{ x, y, z + size }, world_x, world_z), tile_id));
+
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, topFaceUV(.{ x, y, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, topFaceUV(.{ x + size, y, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z }, color, normal, topFaceUV(.{ x + size, y, z }, world_x, world_z), tile_id));
+}
+
+/// Add a downward-facing bottom quad for floating spans (overhangs) so
+/// caves/arches read correctly from below (issue #752 Phase 3.3).
+fn addBottomFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y: f32, z: f32, size: f32, r: f32, g: f32, b: f32, tile_id: u16, world_x: i32, world_z: i32) !void {
+    const normal = [3]f32{ 0, -1, 0 };
+    const color = [3]f32{ r, g, b };
+
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, topFaceUV(.{ x, y, z }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x, y, z + size }, color, normal, topFaceUV(.{ x, y, z + size }, world_x, world_z), tile_id));
+    try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, topFaceUV(.{ x + size, y, z + size }, world_x, world_z), tile_id));
 
     try vertices.append(allocator, makeLODVertex(.{ x, y, z }, color, normal, topFaceUV(.{ x, y, z }, world_x, world_z), tile_id));
     try vertices.append(allocator, makeLODVertex(.{ x + size, y, z + size }, color, normal, topFaceUV(.{ x + size, y, z + size }, world_x, world_z), tile_id));
