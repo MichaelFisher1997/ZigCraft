@@ -45,6 +45,57 @@ test "Mat4 lookAt preserves length" {
     try testing.expectApproxEqAbs(@as(f32, 1), rotated.length(), 0.0001);
 }
 
+test "Mat4 lookAt handles looking straight up (+Y)" {
+    const view = Mat4.lookAt(
+        Vec3.init(0, 0, 0),
+        Vec3.init(0, 5, 0),
+        Vec3.init(0, 1, 0),
+    );
+    // Forward axis (Z column) should map the +Y forward to -Z, not collapse to zero.
+    const fwd_col = Vec3.init(view.data[0][2], view.data[1][2], view.data[2][2]);
+    try testing.expectApproxEqAbs(@as(f32, 1), fwd_col.length(), 0.0001);
+    // Right axis (X column) should be a unit-length vector.
+    const right_col = Vec3.init(view.data[0][0], view.data[1][0], view.data[2][0]);
+    try testing.expectApproxEqAbs(@as(f32, 1), right_col.length(), 0.0001);
+    // Up axis (Y column) should be a unit-length vector.
+    const up_col = Vec3.init(view.data[0][1], view.data[1][1], view.data[2][1]);
+    try testing.expectApproxEqAbs(@as(f32, 1), up_col.length(), 0.0001);
+}
+
+test "Mat4 lookAt handles looking straight down (-Y)" {
+    const view = Mat4.lookAt(
+        Vec3.init(0, 5, 0),
+        Vec3.init(0, 0, 0),
+        Vec3.init(0, 1, 0),
+    );
+    const fwd_col = Vec3.init(view.data[0][2], view.data[1][2], view.data[2][2]);
+    try testing.expectApproxEqAbs(@as(f32, 1), fwd_col.length(), 0.0001);
+    const right_col = Vec3.init(view.data[0][0], view.data[1][0], view.data[2][0]);
+    try testing.expectApproxEqAbs(@as(f32, 1), right_col.length(), 0.0001);
+    const up_col = Vec3.init(view.data[0][1], view.data[1][1], view.data[2][1]);
+    try testing.expectApproxEqAbs(@as(f32, 1), up_col.length(), 0.0001);
+}
+
+test "Mat4 lookAt degenerate produces orthonormal axes" {
+    // Forward parallel to world_up should still produce an orthonormal basis.
+    const view = Mat4.lookAt(
+        Vec3.init(1, 2, 3),
+        Vec3.init(1, 5, 3),
+        Vec3.init(0, 1, 0),
+    );
+    const right_col = Vec3.init(view.data[0][0], view.data[1][0], view.data[2][0]);
+    const up_col = Vec3.init(view.data[0][1], view.data[1][1], view.data[2][1]);
+    const fwd_col = Vec3.init(view.data[0][2], view.data[1][2], view.data[2][2]);
+    // Each axis should be unit-length.
+    try testing.expectApproxEqAbs(@as(f32, 1), right_col.length(), 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 1), up_col.length(), 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 1), fwd_col.length(), 0.0001);
+    // Axes should be mutually orthogonal.
+    try testing.expectApproxEqAbs(@as(f32, 0), right_col.dot(up_col), 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0), right_col.dot(fwd_col), 0.0001);
+    try testing.expectApproxEqAbs(@as(f32, 0), up_col.dot(fwd_col), 0.0001);
+}
+
 test "Mat4 orthographic creates correct matrix" {
     const ortho = Mat4.orthographic(-10, 10, -10, 10, -100, 100);
     try testing.expectEqual(@as(f32, 0.1), ortho.data[0][0]);

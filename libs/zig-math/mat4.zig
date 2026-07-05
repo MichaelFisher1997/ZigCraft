@@ -78,7 +78,17 @@ pub const Mat4 = extern struct {
 
     pub fn lookAt(eye: Vec3, target: Vec3, world_up: Vec3) Mat4 {
         const f = target.sub(eye).normalize();
-        const r = f.cross(world_up).normalize();
+
+        // Handle degenerate case where f is parallel (or anti-parallel) to world_up.
+        // In that case f x world_up is zero, which normalize() collapses to Vec3.zero,
+        // producing an invalid view matrix with degenerate axes. Fall back to an
+        // alternate reference axis that is not aligned with f.
+        var up = world_up;
+        const cross_len_sq = f.cross(world_up).lengthSquared();
+        if (cross_len_sq < 1e-8) {
+            up = if (@abs(f.y) > 0.9) Vec3.right else Vec3.up;
+        }
+        const r = f.cross(up).normalize();
         const u = r.cross(f);
 
         var result = Mat4.identity;
