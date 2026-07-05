@@ -236,11 +236,35 @@ test "AABB fromCenterSize" {
 test "AABB contains point" {
     const aabb = AABB.init(Vec3.init(0, 0, 0), Vec3.init(10, 10, 10));
 
+    // Interior and min corner are contained (half-open [min, max)).
     try testing.expect(aabb.contains(Vec3.init(5, 5, 5)));
     try testing.expect(aabb.contains(Vec3.init(0, 0, 0)));
-    try testing.expect(aabb.contains(Vec3.init(10, 10, 10)));
+
+    // Just-below-max on each axis is contained.
+    try testing.expect(aabb.contains(Vec3.init(9.999, 9.999, 9.999)));
+
+    // Max corner is excluded by the half-open upper bound.
+    try testing.expect(!aabb.contains(Vec3.init(10, 10, 10)));
+    try testing.expect(!aabb.contains(Vec3.init(10, 5, 5)));
+    try testing.expect(!aabb.contains(Vec3.init(5, 10, 5)));
+    try testing.expect(!aabb.contains(Vec3.init(5, 5, 10)));
+
+    // Points fully outside are excluded.
     try testing.expect(!aabb.contains(Vec3.init(-1, 5, 5)));
     try testing.expect(!aabb.contains(Vec3.init(11, 5, 5)));
+}
+
+test "AABB contains voxel-sized region" {
+    // Mirrors the common voxel pattern: a unit block at the origin.
+    const block = AABB.init(Vec3.init(0, 0, 0), Vec3.init(1, 1, 1));
+
+    // Lower corner and interior are inside the block.
+    try testing.expect(block.contains(Vec3.init(0, 0, 0)));
+    try testing.expect(block.contains(Vec3.init(0.5, 0.5, 0.5)));
+
+    // The upper corner belongs to the neighboring block, not this one.
+    try testing.expect(!block.contains(Vec3.init(1, 1, 1)));
+    try testing.expect(!block.contains(Vec3.init(1, 0.5, 0.5)));
 }
 
 test "AABB intersects" {

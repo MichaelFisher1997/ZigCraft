@@ -24,10 +24,16 @@ pub const AABB = struct {
         return self.max.sub(self.min);
     }
 
+    /// Returns true if `point` lies within this AABB using a half-open
+    /// interval `[min, max)` on each axis. This matches the voxel convention
+    /// where a block AABB `init((x, y, z), (x+1, y+1, z+1))` owns its lower
+    /// corner but excludes the upper corner, avoiding double-counting shared
+    /// block boundaries. The `min` corner is therefore contained while the
+    /// `max` corner is not.
     pub fn contains(self: AABB, point: Vec3) bool {
-        return point.x >= self.min.x and point.x <= self.max.x and
-            point.y >= self.min.y and point.y <= self.max.y and
-            point.z >= self.min.z and point.z <= self.max.z;
+        return point.x >= self.min.x and point.x < self.max.x and
+            point.y >= self.min.y and point.y < self.max.y and
+            point.z >= self.min.z and point.z < self.max.z;
     }
 
     pub fn intersects(self: AABB, other: AABB) bool {
