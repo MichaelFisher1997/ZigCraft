@@ -26,6 +26,7 @@ const biome_color_provider = @import("biome_color_provider.zig");
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const LODLightingHint = world_core.LODLightingHint;
 const LODMaterialLayers = world_core.LODMaterialLayers;
+const LODVerticalSpan = world_core.LODVerticalSpan;
 const LODVegetationHint = world_core.LODVegetationHint;
 const LODWaterState = world_core.LODWaterState;
 
@@ -34,6 +35,9 @@ const LODWaterState = world_core.LODWaterState;
 /// detected (their trunk is within the band); only the recorded height is
 /// capped for the LOD vegetation hint.
 const TREE_SCAN_BAND: u32 = 24;
+/// Treat short underground air gaps as caves inside one terrain column. Larger
+/// detached runs remain overhang spans for close/mid LODs.
+const MAX_INTERNAL_CAVE_GAP: i32 = 16;
 
 /// Maximum number of grid vertices a single 16x16 chunk can touch along one
 /// axis. The finest LOD cell is ~2 blocks, so a chunk spans at most ~9
@@ -54,6 +58,10 @@ pub const VertexSample = struct {
     has_tree: bool = false,
     tree_height: f32 = 0.0,
     sky_light: u8 = 15,
+    has_overhang: bool = false,
+    overhang_min: f32 = 0.0,
+    overhang_max: f32 = 0.0,
+    overhang_block: BlockType = .stone,
 };
 
 const VertexAccumulator = struct {
@@ -68,6 +76,10 @@ const VertexAccumulator = struct {
     tree_count: u32 = 0,
     tree_height_sum: u32 = 0,
     sky_light_sum: u32 = 0,
+    has_overhang: bool = false,
+    overhang_min_y: i32 = 0,
+    overhang_max_y: i32 = -1,
+    dominant_overhang_block: BlockType = .stone,
 
     fn toSample(self: VertexAccumulator) ?VertexSample {
         if (self.sample_count == 0 or self.max_terrain_y < 0) return null;
@@ -100,8 +112,20 @@ const VertexAccumulator = struct {
             .has_tree = has_tree,
             .tree_height = tree_height,
             .sky_light = @intCast(@min(avg_sky, 15)),
+            .has_overhang = self.has_overhang,
+            .overhang_min = if (self.has_overhang) @floatFromInt(self.overhang_min_y) else 0.0,
+            .overhang_max = if (self.has_overhang) @floatFromInt(self.overhang_max_y) else 0.0,
+            .overhang_block = self.dominant_overhang_block,
         };
     }
+};
+
+const ColumnGeometry = struct {
+    terrain_y: i32 = -1,
+    has_overhang: bool = false,
+    overhang_min_y: i32 = 0,
+    overhang_max_y: i32 = -1,
+    overhang_block: BlockType = .stone,
 };
 
 /// Downsample a chunk into a region's LOD source data.
@@ -217,12 +241,7 @@ pub fn writeIngestedColumn(
 
     const color = biome_color_provider.getBiomeColor(sample.biome);
 
-    // setGeneratedColumn writes the heightmap/biome/material/water/lighting
-    // fields AND emits surface + water vertical spans when spans are enabled,
-    // mirroring the worldgen path so chunk-derived data is mesh-compatible at
-    // every preset. Provenance is set separately (setGeneratedColumn does not
-    // touch it).
-    data.setGeneratedColumn(
+    data.setColumn(
         gx,
         gz,
         sample.terrain_height,
@@ -233,6 +252,8 @@ pub fn writeIngestedColumn(
         lighting,
         vegetation,
     );
+
+    writeIngestedSpans(data, gx, gz, sample, water_state, lighting, vegetation, color);
     data.setColumnProvenance(gx, gz, provenance);
     return true;
 }
@@ -268,7 +289,26 @@ fn clampVertex(vertex: i32, width: i32) i32 {
 /// surface. These are excluded from terrain-height detection so a canopy does
 /// not masquerade as the ground.
 fn isVegetationBlock(block: BlockType) bool {
-    return block == .wood or block == .leaves;
+    return switch (block) {
+        .wood,
+        .leaves,
+        .mangrove_log,
+        .mangrove_leaves,
+        .mangrove_roots,
+        .jungle_log,
+        .jungle_leaves,
+        .acacia_log,
+        .acacia_leaves,
+        .acacia_sapling,
+        .birch_log,
+        .birch_leaves,
+        .spruce_log,
+        .spruce_leaves,
+        .bamboo,
+        .vine,
+        => true,
+        else => false,
+    };
 }
 
 /// True for blocks that form the solid terrain surface (everything that is
@@ -280,13 +320,51 @@ fn isTerrainSolid(block: BlockType) bool {
 /// Highest terrain-surface Y in a column, or -1 if the column has no solid
 /// ground. Skips air, water, and vegetation so tree canopies do not inflate
 /// the recorded surface height.
-fn terrainSurfaceY(chunk: *const Chunk, lx: u32, lz: u32) i32 {
-    var y: i32 = CHUNK_SIZE_Y - 1;
-    while (y >= 0) : (y -= 1) {
-        const block = chunk.getBlock(lx, @intCast(y), lz);
-        if (isTerrainSolid(block)) return y;
+fn columnGeometry(chunk: *const Chunk, lx: u32, lz: u32) ColumnGeometry {
+    var result: ColumnGeometry = .{};
+    var in_solid_run = false;
+    var run_min: i32 = 0;
+    var y: u32 = 0;
+    while (y < CHUNK_SIZE_Y) : (y += 1) {
+        const block = chunk.getBlock(lx, y, lz);
+        if (isTerrainSolid(block)) {
+            if (!in_solid_run) {
+                in_solid_run = true;
+                run_min = @intCast(y);
+            }
+            continue;
+        }
+
+        if (in_solid_run) {
+            finishSolidRun(&result, run_min, @as(i32, @intCast(y)) - 1, chunk.getBlock(lx, @intCast(y - 1), lz));
+            in_solid_run = false;
+        }
     }
-    return -1;
+
+    if (in_solid_run) {
+        finishSolidRun(&result, run_min, @as(i32, @intCast(CHUNK_SIZE_Y)) - 1, chunk.getBlock(lx, CHUNK_SIZE_Y - 1, lz));
+    }
+    return result;
+}
+
+fn finishSolidRun(result: *ColumnGeometry, min_y: i32, max_y: i32, top_block: BlockType) void {
+    if (result.terrain_y < 0 and min_y == 0) {
+        result.terrain_y = max_y;
+        return;
+    }
+    if (result.terrain_y >= 0 and min_y > result.terrain_y) {
+        const air_gap = min_y - result.terrain_y - 1;
+        if (air_gap <= MAX_INTERNAL_CAVE_GAP) {
+            result.terrain_y = max_y;
+            return;
+        }
+    }
+    if (max_y > result.overhang_max_y) {
+        result.has_overhang = true;
+        result.overhang_min_y = min_y;
+        result.overhang_max_y = max_y;
+        result.overhang_block = top_block;
+    }
 }
 
 /// Highest water block Y in a column, or -1 if there is no water above the
@@ -304,7 +382,8 @@ fn waterSurfaceY(chunk: *const Chunk, lx: u32, lz: u32, terrain_y: i32) i32 {
 }
 
 fn accumulateColumn(acc: *VertexAccumulator, chunk: *const Chunk, lx: u32, lz: u32) void {
-    const terrain_y = terrainSurfaceY(chunk, lx, lz);
+    const geometry = columnGeometry(chunk, lx, lz);
+    const terrain_y = geometry.terrain_y;
     if (terrain_y < 0) return; // empty column: no terrain to contribute
 
     acc.sample_count += 1;
@@ -332,6 +411,13 @@ fn accumulateColumn(acc: *VertexAccumulator, chunk: *const Chunk, lx: u32, lz: u
         if (water_y > acc.max_water_surface_y) acc.max_water_surface_y = water_y;
     }
 
+    if (geometry.has_overhang and geometry.overhang_max_y > acc.overhang_max_y) {
+        acc.has_overhang = true;
+        acc.overhang_min_y = geometry.overhang_min_y;
+        acc.overhang_max_y = geometry.overhang_max_y;
+        acc.dominant_overhang_block = geometry.overhang_block;
+    }
+
     // Vegetation canopy above terrain.
     const scan_top: u32 = @min(CHUNK_SIZE_Y - 1, terrain_u32 + TREE_SCAN_BAND);
     var tree_top: i32 = terrain_y;
@@ -355,6 +441,78 @@ fn accumulateColumn(acc: *VertexAccumulator, chunk: *const Chunk, lx: u32, lz: u
     acc.sky_light_sum += chunk.getSkyLight(lx, sample_y, lz);
 }
 
+fn writeIngestedSpans(
+    data: *LODSimplifiedData,
+    gx: u32,
+    gz: u32,
+    sample: VertexSample,
+    water_state: LODWaterState,
+    lighting: LODLightingHint,
+    vegetation: LODVegetationHint,
+    color: u32,
+) void {
+    if (!data.hasVerticalSpans()) return;
+
+    data.clearVerticalSpans(gx, gz);
+    var span_index: u8 = 0;
+    _ = data.setVerticalSpan(gx, gz, span_index, .{
+        .min_height = 0.0,
+        .max_height = sample.terrain_height,
+        .biome = sample.biome,
+        .material_layers = sample.layers,
+        .color = color,
+        .water = LODWaterState.empty,
+        .lighting = lighting,
+        .vegetation = vegetation,
+    });
+    span_index += 1;
+
+    if (water_state.is_surface and water_state.coverage > 0.0 and span_index < world_core.MAX_LOD_VERTICAL_SPANS) {
+        _ = data.setVerticalSpan(gx, gz, span_index, .{
+            .min_height = sample.terrain_height,
+            .max_height = @max(water_state.surface_height, sample.terrain_height),
+            .biome = sample.biome,
+            .material_layers = .{ .surface = .water, .subsurface = .water, .foundation = sample.layers.foundation },
+            .color = color,
+            .water = water_state,
+            .lighting = lighting,
+            .vegetation = LODVegetationHint.empty,
+        });
+        span_index += 1;
+    }
+
+    if (sample.has_overhang and sample.overhang_max > sample.overhang_min + 0.01 and span_index < world_core.MAX_LOD_VERTICAL_SPANS) {
+        const layers = LODMaterialLayers.default(sample.overhang_block);
+        _ = data.setVerticalSpan(gx, gz, span_index, LODVerticalSpan{
+            .min_height = sample.overhang_min,
+            .max_height = sample.overhang_max,
+            .biome = sample.biome,
+            .material_layers = layers,
+            .color = color,
+            .water = LODWaterState.empty,
+            .lighting = lighting,
+            .vegetation = LODVegetationHint.empty,
+        });
+        span_index += 1;
+    }
+
+    if (vegetation.tree_coverage > 0.0 and vegetation.avg_tree_height >= 2.0 and span_index < world_core.MAX_LOD_VERTICAL_SPANS) {
+        const canopy_top = sample.terrain_height + vegetation.avg_tree_height;
+        const canopy_bottom = @max(sample.terrain_height + 1.0, canopy_top - @max(vegetation.avg_tree_height * 0.45, 2.0));
+        const leaves = if (vegetation.leaves == .air) BlockType.leaves else vegetation.leaves;
+        _ = data.setVerticalSpan(gx, gz, span_index, LODVerticalSpan{
+            .min_height = canopy_bottom,
+            .max_height = canopy_top,
+            .biome = sample.biome,
+            .material_layers = .{ .surface = leaves, .subsurface = leaves, .foundation = sample.layers.foundation },
+            .color = color,
+            .water = LODWaterState.empty,
+            .lighting = lighting,
+            .vegetation = vegetation,
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -372,6 +530,23 @@ fn fillTerrainColumn(chunk: *Chunk, lx: u32, lz: u32, surface_y: u32, surface: B
             foundation;
         chunk.setBlock(lx, y, lz, block);
     }
+}
+
+test "vegetation detection includes tree variants" {
+    try testing.expect(isVegetationBlock(.wood));
+    try testing.expect(isVegetationBlock(.leaves));
+    try testing.expect(isVegetationBlock(.mangrove_log));
+    try testing.expect(isVegetationBlock(.mangrove_leaves));
+    try testing.expect(isVegetationBlock(.jungle_log));
+    try testing.expect(isVegetationBlock(.jungle_leaves));
+    try testing.expect(isVegetationBlock(.acacia_log));
+    try testing.expect(isVegetationBlock(.acacia_leaves));
+    try testing.expect(isVegetationBlock(.birch_log));
+    try testing.expect(isVegetationBlock(.birch_leaves));
+    try testing.expect(isVegetationBlock(.spruce_log));
+    try testing.expect(isVegetationBlock(.spruce_leaves));
+    try testing.expect(!isVegetationBlock(.stone));
+    try testing.expect(!isVegetationBlock(.water));
 }
 
 test "downsampleChunkIntoRegion writes terrain height and biome for an overlapping cell" {
@@ -404,10 +579,15 @@ test "writeIngestedColumn respects provenance authority" {
     try testing.expect(upgraded);
     try testing.expectEqual(@as(f32, 40.0), data.getHeight(1, 1));
 
+    // chunk_derived refresh can replace previous chunk_derived data.
+    const refreshed = writeIngestedColumn(data, 1, 1, .{ .terrain_height = 45.0, .biome = .forest }, .chunk_derived);
+    try testing.expect(refreshed);
+    try testing.expectEqual(@as(f32, 45.0), data.getHeight(1, 1));
+
     // chunk_derived must NOT be overwritten by worldgen.
     const clobbered = writeIngestedColumn(data, 1, 1, .{ .terrain_height = 1.0, .biome = .desert }, .worldgen);
     try testing.expect(!clobbered);
-    try testing.expectEqual(@as(f32, 40.0), data.getHeight(1, 1));
+    try testing.expectEqual(@as(f32, 45.0), data.getHeight(1, 1));
     try testing.expectEqual(BiomeId.forest, data.biomes[1 + data.width]);
 
     // edited beats chunk_derived.
@@ -434,6 +614,69 @@ test "downsampleChunkIntoRegion emits water state for a flooded column" {
     try testing.expect(data.water[0].is_surface);
     try testing.expectEqual(@as(f32, 63.0), data.water[0].surface_height);
     try testing.expectEqual(@as(f32, 5.0), data.water[0].depth);
+}
+
+test "downsampleChunkIntoRegion keeps terrain surface above cave gaps" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer data.deinit();
+
+    var chunk = Chunk.init(0, 0);
+    fillTerrainColumn(&chunk, 0, 0, 64, .grass, .dirt, .stone);
+    var y: u32 = 50;
+    while (y <= 55) : (y += 1) chunk.setBlock(0, y, 0, .air);
+
+    const region_size: i32 = @intCast(world_core.regionSizeBlocks(.lod1));
+    _ = downsampleChunkIntoRegion(&chunk, 0, 0, &data, 0, 0, region_size, .chunk_derived);
+
+    try testing.expectEqual(@as(f32, 64.0), data.getHeight(0, 0));
+    try testing.expectEqual(@as(u8, 1), data.verticalSpanCount(0, 0));
+    const terrain = data.getVerticalSpan(0, 0, 0) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(f32, 64.0), terrain.max_height);
+}
+
+test "downsampleChunkIntoRegion emits a floating overhang span" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer data.deinit();
+
+    var chunk = Chunk.init(0, 0);
+    fillTerrainColumn(&chunk, 0, 0, 48, .grass, .dirt, .stone);
+    var y: u32 = 72;
+    while (y <= 80) : (y += 1) chunk.setBlock(0, y, 0, .stone);
+
+    const region_size: i32 = @intCast(world_core.regionSizeBlocks(.lod1));
+    _ = downsampleChunkIntoRegion(&chunk, 0, 0, &data, 0, 0, region_size, .chunk_derived);
+
+    try testing.expectEqual(@as(f32, 48.0), data.getHeight(0, 0));
+    try testing.expectEqual(@as(u8, 2), data.verticalSpanCount(0, 0));
+
+    const terrain = data.getVerticalSpan(0, 0, 0) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(f32, 0.0), terrain.min_height);
+    try testing.expectEqual(@as(f32, 48.0), terrain.max_height);
+    try testing.expectEqual(BlockType.grass, terrain.material_layers.surface);
+
+    const overhang = data.getVerticalSpan(0, 0, 1) orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(f32, 72.0), overhang.min_height);
+    try testing.expectEqual(@as(f32, 80.0), overhang.max_height);
+    try testing.expectEqual(BlockType.stone, overhang.material_layers.surface);
+}
+
+test "downsampleChunkIntoRegion emits canopy span when budget remains" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer data.deinit();
+
+    var chunk = Chunk.init(0, 0);
+    fillTerrainColumn(&chunk, 0, 0, 64, .grass, .dirt, .stone);
+    var y: u32 = 68;
+    while (y <= 72) : (y += 1) chunk.setBlock(0, y, 0, .birch_leaves);
+
+    const region_size: i32 = @intCast(world_core.regionSizeBlocks(.lod1));
+    _ = downsampleChunkIntoRegion(&chunk, 0, 0, &data, 0, 0, region_size, .chunk_derived);
+
+    try testing.expectEqual(@as(u8, 2), data.verticalSpanCount(0, 0));
+    const canopy = data.getVerticalSpan(0, 0, 1) orelse return error.TestExpectedEqual;
+    try testing.expect(canopy.min_height > 64.0);
+    try testing.expectEqual(@as(f32, 72.0), canopy.max_height);
+    try testing.expectEqual(BlockType.leaves, canopy.material_layers.surface);
 }
 
 test "downsampleChunkIntoRegion updates the correct cells at a region corner" {

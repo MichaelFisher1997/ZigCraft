@@ -82,6 +82,10 @@ pub const Job = struct {
         z: i32,
         job_token: u32,
         lod_level: u3 = 0,
+        /// Converts x/z into chunk coordinates for distance reprioritization.
+        /// Normal chunk jobs use chunk coords directly (1); LOD jobs store
+        /// region coords and set this to that LOD's chunks-per-side.
+        coord_scale: i32 = 1,
     };
 
     pub const GenericJobData = struct {
@@ -216,17 +220,7 @@ pub const JobQueue = struct {
 
             // Only update distance for chunk-based jobs
             if (job.getChunkCoords()) |coords| {
-                // LOD jobs store REGION coords in chunk.x/z (e.g. rx for lod3).
-                // Scale them to true chunk coords so the distance is comparable
-                // to player_cx/cz, which are always in chunk space. Near-chunk
-                // jobs (lod_level 0) already use chunk coords, so scale == 1.
-                const shift: u5 = @intCast(updated_job.data.chunk.lod_level);
-                // Near-chunk jobs (lod_level 0) already store chunk coords, so
-                // scale == 1. LOD jobs store REGION coords; converting to chunk
-                // coords needs chunksPerSide = 2<<level (engine-core/lod_types.zig
-                // defines chunksPerSide = scale()*2 = (1<<level)*2). A blanket
-                // chunksPerSide would double-count for lod0, hence the branch.
-                const scale: i32 = if (updated_job.data.chunk.lod_level == 0) 1 else @as(i32, 2) << shift;
+                const scale: i32 = @max(updated_job.data.chunk.coord_scale, 1);
                 // Compute squared distance in i64 then clamp, matching
                 // lod_manager/lod_scheduler — i32 dx*dx can overflow at large
                 // render/LOD distances.
@@ -236,7 +230,7 @@ pub const JobQueue = struct {
                 const new_dist: i32 = @intCast(@min(new_dist_i64, @as(i64, 0x0FFFFFFF)));
                 // Preserve the LOD-bias high bits; only refresh the low 28
                 // distance bits. Overwriting dist_sq wholesale would flatten
-                // all LOD levels into one distance space and break coarse-first
+                // all LOD levels into one distance space and break cross-level
                 // ordering.
                 const bias_bits = updated_job.dist_sq & ~@as(i32, 0x0FFFFFFF);
                 updated_job.dist_sq = bias_bits | new_dist;
@@ -453,6 +447,28 @@ test "Job.cleanup is no-op for chunk jobs" {
     };
     job.cleanup();
     try testing.expectEqual(@as(usize, 0), cleanup_count);
+}
+
+test "JobQueue reprioritizes region-scaled chunk jobs" {
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    try queue.push(.{
+        .type = .chunk_generation,
+        .dist_sq = 0,
+        .data = .{ .chunk = .{ .x = 60, .z = 0, .job_token = 1, .lod_level = 0, .coord_scale = 2 } },
+    });
+    try queue.push(.{
+        .type = .chunk_generation,
+        .dist_sq = 0,
+        .data = .{ .chunk = .{ .x = 50, .z = 0, .job_token = 2, .lod_level = 0, .coord_scale = 2 } },
+    });
+
+    try queue.updatePlayerPos(100, 0);
+
+    const first = queue.pop() orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(u32, 2), first.data.chunk.job_token);
+    try testing.expectEqual(@as(i32, 50), first.data.chunk.x);
 }
 
 test "JobQueue.clear calls cleanup on generic jobs" {

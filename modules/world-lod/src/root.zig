@@ -29,6 +29,7 @@ pub const LODGenerator = lod_generator.LODGenerator;
 pub const LODManager = lod_manager.LODManager;
 pub const ChunkResolver = lod_manager.ChunkResolver;
 pub const LODRenderInterface = lod_upload_queue.LODRenderInterface;
+pub const LODRenderLayer = lod_upload_queue.LODRenderLayer;
 pub const LODStreamingCoordinator = lod_streaming_coordinator.LODStreamingCoordinator;
 pub const LODState = lod_types.LODState;
 pub const LODStats = lod_stats.LODStats;

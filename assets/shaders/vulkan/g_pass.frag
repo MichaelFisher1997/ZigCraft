@@ -57,9 +57,7 @@ void main() {
     }
 
     vec3 N = normalize(vNormal);
-    if (isLOD) {
-        N = vec3(0.0, 1.0, 0.0);
-    } else {
+    if (!isLOD) {
         // Calculate UV coordinates in atlas
         vec2 atlasSize = vec2(16.0, 16.0);
         vec2 tileSize = 1.0 / atlasSize;

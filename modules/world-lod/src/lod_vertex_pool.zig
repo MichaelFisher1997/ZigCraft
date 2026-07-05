@@ -87,6 +87,9 @@ pub const LODVertexPool = struct {
             self.freeMeshUnlocked(mesh);
             self.mutex.unlock();
             mesh.vertex_count = 0;
+            mesh.opaque_vertex_count = 0;
+            mesh.water_vertex_offset = 0;
+            mesh.water_vertex_count = 0;
             mesh.capacity = 0;
             mesh.vertex_offset = 0;
             mesh.buffer_handle = 0;
@@ -105,7 +108,8 @@ pub const LODVertexPool = struct {
         var record_index = old_record_index;
         var using_new_record = false;
 
-        if (record_index == null or self.allocations.items[record_index.?].size < bytes.len) {
+        const large_update = bytes.len > lod_mesh.MAX_STAGING_UPDATE_BYTES;
+        if (record_index == null or self.allocations.items[record_index.?].size < bytes.len or (large_update and old_record_index != null)) {
             const offset = try self.allocateBlockUnlocked(resources, bytes.len, mesh);
             errdefer self.releaseOffsetUnlocked(offset, bytes.len) catch {};
             try self.allocations.append(self.allocator, .{ .mesh = mesh, .offset = offset, .size = bytes.len });
@@ -114,7 +118,7 @@ pub const LODVertexPool = struct {
         }
 
         const record = &self.allocations.items[record_index.?];
-        resources.updateBuffer(self.buffer_handle, record.offset, bytes) catch |err| {
+        lod_mesh.updateBufferChunked(resources, self.buffer_handle, record.offset, bytes) catch |err| {
             if (using_new_record) {
                 self.freeRecordUnlocked(record_index.?, false, mesh);
             }
@@ -168,6 +172,9 @@ pub const LODVertexPool = struct {
         }
         mesh.buffer_handle = 0;
         mesh.vertex_count = 0;
+        mesh.opaque_vertex_count = 0;
+        mesh.water_vertex_offset = 0;
+        mesh.water_vertex_count = 0;
         mesh.capacity = 0;
         mesh.vertex_offset = 0;
         mesh.pooled = false;
@@ -238,7 +245,9 @@ pub const LODVertexPool = struct {
         const new_handle = try resources.createBuffer(new_capacity, .vertex);
         errdefer resources.destroyBuffer(new_handle);
         if (self.capacity_bytes > 0) {
-            try resources.uploadBuffer(new_handle, new_shadow[0..self.capacity_bytes]);
+            for (self.allocations.items) |record| {
+                try lod_mesh.updateBufferChunked(resources, new_handle, record.offset, new_shadow[record.offset .. record.offset + record.size]);
+            }
         }
 
         const old_handle = self.buffer_handle;
@@ -344,8 +353,8 @@ pub const LODVertexPool = struct {
         var cursor: usize = 0;
         for (self.allocations.items) |*record| {
             if (record.offset != cursor) {
+                try lod_mesh.updateBufferChunked(resources, self.buffer_handle, cursor, self.shadow[record.offset .. record.offset + record.size]);
                 std.mem.copyForwards(u8, self.shadow[cursor .. cursor + record.size], self.shadow[record.offset .. record.offset + record.size]);
-                try resources.updateBuffer(self.buffer_handle, cursor, self.shadow[cursor .. cursor + record.size]);
                 record.offset = cursor;
                 setMeshPoolLocation(record.mesh, self.buffer_handle, cursor, locked_mesh);
             }
@@ -447,6 +456,8 @@ const TestResources = struct {
     destroyed: u32 = 0,
     uploaded: u32 = 0,
     updated: u32 = 0,
+    total_updated_bytes: usize = 0,
+    max_update_bytes: usize = 0,
     wait_idle: u32 = 0,
     fail_updates: bool = false,
 
@@ -467,10 +478,12 @@ const TestResources = struct {
         self.uploaded += 1;
     }
 
-    fn updateBuffer(ptr: *anyopaque, _: BufferHandle, _: usize, _: []const u8) RhiError!void {
+    fn updateBuffer(ptr: *anyopaque, _: BufferHandle, _: usize, data: []const u8) RhiError!void {
         const self: *TestResources = @ptrCast(@alignCast(ptr));
         if (self.fail_updates) return error.GpuLost;
         self.updated += 1;
+        self.total_updated_bytes += data.len;
+        self.max_update_bytes = @max(self.max_update_bytes, data.len);
     }
 
     fn destroyBuffer(ptr: *anyopaque, _: BufferHandle) void {
@@ -540,10 +553,28 @@ test "LODVertexPool grows and preserves pooled handles" {
     try std.testing.expect(pool.gpuMemoryBytes() > 64);
     try std.testing.expect(first.buffer_handle != old_handle);
     try std.testing.expectEqual(first.buffer_handle, second.buffer_handle);
-    try std.testing.expect(resources.uploaded >= 1);
+    try std.testing.expectEqual(@as(u32, 0), resources.uploaded);
+    try std.testing.expect(resources.updated >= 1);
     try std.testing.expectEqual(@as(u32, 1), resources.wait_idle);
     pool.destroyMesh(&first);
     pool.destroyMesh(&second);
+}
+
+test "LODVertexPool splits oversized staging updates" {
+    const allocator = std.testing.allocator;
+    var resources = TestResources{};
+    var pool = LODVertexPool.init(allocator, .lod1, lod_mesh.MAX_STAGING_UPDATE_BYTES * 2);
+    defer pool.deinit(resources.resources());
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    const vertex_count = lod_mesh.MAX_STAGING_UPDATE_BYTES / @sizeOf(Vertex) + 1;
+    try setPending(&mesh, allocator, vertex_count);
+    try pool.uploadMesh(&mesh, resources.resources());
+
+    try std.testing.expect(resources.updated >= 2);
+    try std.testing.expect(resources.max_update_bytes <= lod_mesh.MAX_STAGING_UPDATE_BYTES);
+    try std.testing.expectEqual(vertex_count * @sizeOf(Vertex), resources.total_updated_bytes);
+    pool.destroyMesh(&mesh);
 }
 
 test "LODVertexPool compacts fragmented ranges" {

@@ -17,6 +17,7 @@ pub const LODMeshPath = @import("engine-rhi").LODMeshPath;
 /// LOD level enum - higher values = more simplified
 pub const LODLevel = @import("lod_types.zig").LODLevel;
 pub const regionSizeBlocks = world_core.regionSizeBlocks;
+pub const TRANSITION_FADE_FRAMES: u8 = 30;
 
 /// State for LOD chunks/regions
 pub const LODState = @import("lod_types.zig").LODState;
@@ -165,6 +166,10 @@ pub const LODChunk = struct {
     /// Number of direct 2x2 finer child regions currently renderable.
     ready_children: u8,
 
+    /// Remaining render ticks for child fade-in or parent fade-out after a
+    /// hierarchy coverage transition.
+    transition_frames_remaining: u8,
+
     /// Dirty flag for re-meshing
     dirty: bool,
 
@@ -185,6 +190,7 @@ pub const LODChunk = struct {
             .min_height = 0.0,
             .max_height = @floatFromInt(CHUNK_SIZE_Y),
             .ready_children = 0,
+            .transition_frames_remaining = 0,
             .dirty = false,
             .store_dirty = false,
         };
@@ -283,8 +289,10 @@ pub const ILODConfig = struct {
 
     pub const VTable = struct {
         getRadii: *const fn (ptr: *anyopaque) [LODLevel.count]i32,
+        getChunkRenderRadius: *const fn (ptr: *anyopaque) i32,
         getActiveLODCount: *const fn (ptr: *anyopaque) u32,
         setActiveLODCount: *const fn (ptr: *anyopaque, count: u32) void,
+        setChunkRenderRadius: *const fn (ptr: *anyopaque, radius: i32) void,
         setLOD0Radius: *const fn (ptr: *anyopaque, radius: i32) void,
         setRadii: *const fn (ptr: *anyopaque, radii: [LODLevel.count]i32) void,
         getLODForDistance: *const fn (ptr: *anyopaque, dist_chunks: i32) LODLevel,
@@ -305,11 +313,17 @@ pub const ILODConfig = struct {
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
         return self.vtable.getRadii(self.ptr);
     }
+    pub fn getChunkRenderRadius(self: ILODConfig) i32 {
+        return self.vtable.getChunkRenderRadius(self.ptr);
+    }
     pub fn getActiveLODCount(self: ILODConfig) u32 {
         return self.vtable.getActiveLODCount(self.ptr);
     }
     pub fn setActiveLODCount(self: ILODConfig, count: u32) void {
         self.vtable.setActiveLODCount(self.ptr, count);
+    }
+    pub fn setChunkRenderRadius(self: ILODConfig, radius: i32) void {
+        self.vtable.setChunkRenderRadius(self.ptr, radius);
     }
     pub fn setLOD0Radius(self: ILODConfig, radius: i32) void {
         self.vtable.setLOD0Radius(self.ptr, radius);
@@ -376,10 +390,17 @@ pub fn activeLODCount(config: ILODConfig) usize {
 
 /// Concrete implementation of LOD system configuration.
 pub const LODConfig = struct {
-    pub const dynamic_lod0_radius: i32 = 16;
+    pub const default_chunk_render_radius: i32 = 16;
     pub const default_horizon_radius: i32 = 512;
+    pub const target_lod1_radius: i32 = 96; // keep 2-block cells visible farther out.
+    pub const target_lod2_radius: i32 = 256;
+    pub const target_lod3_radius: i32 = 512;
 
-    radii: [LODLevel.count]i32 = .{ 16, 40, 80, 160, default_horizon_radius },
+    /// Radius of real full-detail chunks. LOD0 is a separate 1-block-column
+    /// LOD ring that extends beyond this radius.
+    chunk_render_radius: i32 = default_chunk_render_radius,
+
+    radii: [LODLevel.count]i32 = .{ 32, target_lod1_radius, target_lod2_radius, target_lod3_radius, default_horizon_radius },
 
     memory_budget_mb: u32 = 256,
 
@@ -393,11 +414,11 @@ pub const LODConfig = struct {
     /// Values closer to 0.0 start fog near the player; 1.0 disables fog for that level.
     fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28, 0.22 },
 
-    horizontal_detail: [LODLevel.count]u32 = .{ 16, 32, 48, 48, 24 },
+    horizontal_detail: [LODLevel.count]u32 = .{ 33, 65, 65, 129, 129 },
 
-    vertical_span_budget: u8 = 0,
+    vertical_span_budget: u8 = 4,
 
-    mesh_path: LODMeshPath = .heightfield,
+    mesh_path: LODMeshPath = .column_spans,
 
     qem_triangle_targets: [LODLevel.count]u32 = .{ 0, 2000, 800, 200, 64 },
 
@@ -422,13 +443,17 @@ pub const LODConfig = struct {
     }
 
     pub fn radiiForDistances(distance: i32, horizon_distance: i32) [LODLevel.count]i32 {
-        const lod0 = @min(@max(distance, 1), dynamic_lod0_radius);
+        const requested = @max(distance, 1);
+        const lod0_target = @max(@as(i64, requested) * 3, @as(i64, requested + 16));
+        const lod0 = @as(i32, @intCast(@min(lod0_target, @as(i64, @max(horizon_distance, requested)))));
         const horizon = @max(horizon_distance, lod0);
-        const lod0_i64 = @as(i64, lod0);
         const max_radius_i64 = @as(i64, horizon);
-        const lod1 = @as(i32, @intCast(@min(@max(lod0_i64 * 4, @as(i64, 32)), max_radius_i64)));
-        const lod2 = @as(i32, @intCast(@min(@max(@as(i64, lod1) * 4, @as(i64, 128)), max_radius_i64)));
-        const lod3 = @as(i32, @intCast(@min(@max(@as(i64, lod2) * 2, @as(i64, 160)), max_radius_i64)));
+        const lod1_target = @max(@as(i64, lod0) * 2, @as(i64, target_lod1_radius));
+        const lod1 = @as(i32, @intCast(@min(lod1_target, max_radius_i64)));
+        const lod2_target = @max(@as(i64, lod1) * 2, @as(i64, target_lod2_radius));
+        const lod2 = @as(i32, @intCast(@min(lod2_target, max_radius_i64)));
+        const lod3_target = @max(@as(i64, lod2) * 2, @as(i64, target_lod3_radius));
+        const lod3 = @as(i32, @intCast(@min(lod3_target, max_radius_i64)));
         return .{ lod0, lod1, lod2, lod3, horizon };
     }
 
@@ -470,8 +495,10 @@ pub const LODConfig = struct {
 
     const VTABLE = ILODConfig.VTable{
         .getRadii = getRadiiWrapper,
+        .getChunkRenderRadius = getChunkRenderRadiusWrapper,
         .getActiveLODCount = getActiveLODCountWrapper,
         .setActiveLODCount = setActiveLODCountWrapper,
+        .setChunkRenderRadius = setChunkRenderRadiusWrapper,
         .setLOD0Radius = setLOD0RadiusWrapper,
         .setRadii = setRadiiWrapper,
         .getLODForDistance = getLODForDistanceWrapper,
@@ -493,6 +520,10 @@ pub const LODConfig = struct {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.radii;
     }
+    fn getChunkRenderRadiusWrapper(ptr: *anyopaque) i32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.chunk_render_radius;
+    }
     fn getActiveLODCountWrapper(ptr: *anyopaque) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return std.math.clamp(self.active_lod_count, 1, LODLevel.count);
@@ -500,6 +531,10 @@ pub const LODConfig = struct {
     fn setActiveLODCountWrapper(ptr: *anyopaque, count: u32) void {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         self.active_lod_count = std.math.clamp(count, 1, LODLevel.count);
+    }
+    fn setChunkRenderRadiusWrapper(ptr: *anyopaque, radius: i32) void {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        self.chunk_render_radius = @max(radius, 1);
     }
     fn setLOD0RadiusWrapper(ptr: *anyopaque, radius: i32) void {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -525,7 +560,7 @@ pub const LODConfig = struct {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         // Keep a small overlap so the chunk ring and LOD ring blend instead of
         // leaving a camera-centered dead zone between them.
-        const overlap_chunks = @max(self.radii[0] - 2, 0);
+        const overlap_chunks = @max(self.chunk_render_radius - 2, 0);
         return @as(f32, @floatFromInt(overlap_chunks)) * @as(f32, @floatFromInt(CHUNK_SIZE_X));
     }
     fn getQEMTargetWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
@@ -606,9 +641,9 @@ test "LODRegionKey parent and child keys handle negative coordinates" {
 test "LODConfig distance calculation" {
     const config = LODConfig{};
     try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(10));
-    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(20));
-    try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(50));
-    try std.testing.expectEqual(LODLevel.lod3, config.getLODForDistance(100));
+    try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(20));
+    try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(50));
+    try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(100));
 }
 
 test "LODConfig distance calculation respects active LOD count" {
@@ -642,21 +677,24 @@ test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(32));
 
     const low_radii = LODConfig.radiiForRenderDistance(8);
-    try std.testing.expectEqual(@as(i32, 8), low_radii[0]);
-    try std.testing.expectEqual(@as(i32, 32), low_radii[1]);
-    try std.testing.expectEqual(@as(i32, 128), low_radii[2]);
-    try std.testing.expectEqual(@as(i32, 256), low_radii[3]);
+    try std.testing.expectEqual(@as(i32, 24), low_radii[0]);
+    try std.testing.expectEqual(@as(i32, 96), low_radii[1]);
+    try std.testing.expectEqual(@as(i32, 256), low_radii[2]);
+    try std.testing.expectEqual(@as(i32, 512), low_radii[3]);
     try std.testing.expectEqual(@as(i32, 512), low_radii[4]);
 
     const radii = LODConfig.radiiForRenderDistance(32);
-    try std.testing.expectEqual(@as(i32, 16), radii[0]);
-    try std.testing.expectEqual(@as(i32, 64), radii[1]);
-    try std.testing.expectEqual(@as(i32, 256), radii[2]);
+    try std.testing.expectEqual(@as(i32, 96), radii[0]);
+    try std.testing.expectEqual(@as(i32, 192), radii[1]);
+    try std.testing.expectEqual(@as(i32, 384), radii[2]);
     try std.testing.expectEqual(@as(i32, 512), radii[3]);
     try std.testing.expectEqual(@as(i32, 512), radii[4]);
 
     const custom_horizon = LODConfig.radiiForDistances(12, 1024);
-    try std.testing.expectEqual(@as(i32, 12), custom_horizon[0]);
+    try std.testing.expectEqual(@as(i32, 36), custom_horizon[0]);
+    try std.testing.expectEqual(@as(i32, 96), custom_horizon[1]);
+    try std.testing.expectEqual(@as(i32, 256), custom_horizon[2]);
+    try std.testing.expectEqual(@as(i32, 512), custom_horizon[3]);
     try std.testing.expectEqual(@as(i32, 1024), custom_horizon[4]);
 }
 
@@ -671,12 +709,13 @@ test "ChunkBounds intersects radius radially" {
 
 test "ILODConfig.calculateMaskRadius" {
     var config = LODConfig{
+        .chunk_render_radius = 16,
         .radii = .{ 16, 40, 80, 160, 512 },
     };
     const interface = config.interface();
     try std.testing.expectEqual(@as(f32, 224.0), interface.calculateMaskRadius());
 
-    config.radii[0] = 32;
+    config.chunk_render_radius = 32;
     try std.testing.expectEqual(@as(f32, 480.0), interface.calculateMaskRadius());
 }
 

@@ -303,8 +303,10 @@ pub const ChunkQueueCoordinator = struct {
                 // Feed the real chunk into the LOD system so distant terrain is
                 // derived from actual blocks (chunk_derived provenance) instead
                 // of worldgen sampling. The chunk is pinned for this call.
-                if (self.lod_manager) |mgr| {
-                    mgr.ingestChunk(cx, cz, &chunk_data.chunk, .chunk_derived);
+                if (engine_core.envFlag("ZIGCRAFT_LOD_CHUNK_INGEST", false)) {
+                    if (self.lod_manager) |mgr| {
+                        mgr.ingestChunk(cx, cz, &chunk_data.chunk, .chunk_derived);
+                    }
                 }
             }
         }

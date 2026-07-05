@@ -459,6 +459,7 @@ pub const World = struct {
 
             if (self.lod) |lod| {
                 const radii = LODConfig.radiiForDistances(target, self.horizon_distance);
+                lod.setChunkRenderRadius(target);
                 lod.setRadii(radii);
                 lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(target));
             }

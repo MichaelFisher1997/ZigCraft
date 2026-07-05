@@ -341,8 +341,7 @@ pub const WorldStreamer = struct {
             }
 
             if (self.lod_coordinator.lod_manager) |lod_mgr| {
-                const radii = lod_mgr.config.getRadii();
-                const lod0_r = radii[0];
+                const lod0_r = lod_mgr.config.getChunkRenderRadius();
                 const pc_x = self.lod_coordinator.last_pc.x;
                 const pc_z = self.lod_coordinator.last_pc.z;
                 const check_dirs = [_][2]i32{ .{ lod0_r, 0 }, .{ -lod0_r, 0 }, .{ 0, lod0_r }, .{ 0, -lod0_r } };

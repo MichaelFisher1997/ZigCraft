@@ -311,7 +311,7 @@ test "LOD store writes metadata header atomically" {
     defer testing.allocator.free(bytes);
 
     try testing.expect(std.mem.indexOf(u8, bytes, "\"seed\": 123") != null);
-    try testing.expect(std.mem.indexOf(u8, bytes, "\"lod_data_version\": 2") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"lod_data_version\": 10") != null);
 }
 
 test "LOD store reads and deletes metadata store" {

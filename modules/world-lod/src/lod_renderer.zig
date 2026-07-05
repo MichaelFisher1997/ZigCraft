@@ -45,6 +45,7 @@ const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
+const LODRenderLayer = lod_gpu.LODRenderLayer;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const ChunkChecker = lod_gpu.ChunkChecker;
@@ -73,6 +74,13 @@ const RenderDiag = struct {
     drawn: u32 = 0,
 };
 
+const MAX_LOD_MDI_REGIONS: usize = 2048;
+
+const MeshDrawRange = struct {
+    offset: usize,
+    count: u32,
+};
+
 /// Expected RHI interface for LODRenderer:
 /// - createBuffer(size: usize, usage: BufferUsage) !BufferHandle
 /// - destroyBuffer(handle: BufferHandle) void
@@ -90,20 +98,28 @@ pub fn LODRenderer(comptime RHI: type) type {
         // MDI Resources (Moved from LODManager)
         instance_data: std.ArrayListUnmanaged(rhi_types.InstanceData),
         draw_list: std.ArrayListUnmanaged(*LODMesh),
+        draw_commands: [LODLevel.count]std.ArrayListUnmanaged(rhi_types.DrawIndirectCommand),
         instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
+        indirect_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
         vertex_pools: [LODLevel.count]LODVertexPool,
         frame_index: usize,
+        enable_mdi: bool,
+        gpu_culling_requested: bool,
+        gpu_culling_fallback_logged: bool,
 
         pub fn init(allocator: std.mem.Allocator, rhi: RHI) !*Self {
             const renderer = try allocator.create(Self);
 
-            // Init MDI buffers (capacity for ~2048 LOD regions)
-            const max_regions = 2048;
             var instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle = undefined;
+            var indirect_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle = undefined;
             const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi;
             for (0..rhi_types.MAX_FRAMES_IN_FLIGHT) |i| {
-                instance_buffers[i] = try resources.createBuffer(max_regions * @sizeOf(rhi_types.InstanceData), .storage);
+                instance_buffers[i] = try resources.createBuffer(MAX_LOD_MDI_REGIONS * @sizeOf(rhi_types.InstanceData), .storage);
+                indirect_buffers[i] = try resources.createBuffer(MAX_LOD_MDI_REGIONS * @sizeOf(rhi_types.DrawIndirectCommand), .indirect);
             }
+
+            var draw_commands: [LODLevel.count]std.ArrayListUnmanaged(rhi_types.DrawIndirectCommand) = undefined;
+            for (&draw_commands) |*commands| commands.* = .empty;
 
             var vertex_pools: [LODLevel.count]LODVertexPool = undefined;
             for (0..LODLevel.count) |i| {
@@ -115,10 +131,19 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .rhi = rhi,
                 .instance_data = .empty,
                 .draw_list = .empty,
+                .draw_commands = draw_commands,
                 .instance_buffers = instance_buffers,
+                .indirect_buffers = indirect_buffers,
                 .vertex_pools = vertex_pools,
                 .frame_index = 0,
+                .enable_mdi = engine_core.envFlag("ZIGCRAFT_ENABLE_LOD_MDI", false),
+                .gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false),
+                .gpu_culling_fallback_logged = false,
             };
+
+            if (!renderer.enable_mdi) {
+                log.log.info("LOD MDI disabled by default; set ZIGCRAFT_ENABLE_LOD_MDI=1 to enable indirect LOD batches", .{});
+            }
 
             return renderer;
         }
@@ -129,6 +154,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
                     resources.destroyBuffer(self.instance_buffers[i]);
                 }
+                if (self.indirect_buffers[i] != 0) {
+                    const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
+                    resources.destroyBuffer(self.indirect_buffers[i]);
+                }
             }
             const mesh_resources = LODMeshResources.fromProvider(RHI, &self.rhi);
             for (0..LODLevel.count) |i| {
@@ -136,6 +165,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
+            for (&self.draw_commands) |*commands| commands.deinit(self.allocator);
             self.allocator.destroy(self);
         }
 
@@ -151,12 +181,17 @@ pub fn LODRenderer(comptime RHI: type) type {
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
             max_distance_chunks: ?i32,
+            layer: LODRenderLayer,
             stats: ?*LODStats,
         ) void {
             // Update frame index
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
+            if (self.gpu_culling_requested and !self.gpu_culling_fallback_logged) {
+                log.log.warn("ZIGCRAFT_LOD_GPU_CULLING requested, but LOD GPU culling is using CPU fallback until RHI exposes indirect-command compaction", .{});
+                self.gpu_culling_fallback_logged = true;
+            }
 
             // Use the LOD descriptor set while issuing LOD draws, then restore
             // normal terrain descriptor mode so the chunk pass keeps its textures.
@@ -164,38 +199,108 @@ pub fn LODRenderer(comptime RHI: type) type {
             render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
 
             const frustum = Frustum.fromViewProj(view_proj);
-            // Keep LOD terrain slightly below full chunks so the handoff zone does not
-            // z-fight when both representations overlap during the transition.
-            const lod_y_offset: f32 = -1.0;
+            // Keep opaque LOD terrain just below full chunks during the masked
+            // handoff. Water must stay at the true surface height or shorelines
+            // visibly step down at the LOD boundary.
+            const lod_y_offset: f32 = if (layer == .fluid) 0.0 else -0.05;
 
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
+            for (&self.draw_commands) |*commands| commands.clearRetainingCapacity();
             if (stats) |s| {
-                s.drawn = [_]u32{0} ** LODLevel.count;
-                s.instances = [_]u32{0} ** LODLevel.count;
+                if (layer == .terrain) {
+                    s.drawn = [_]u32{0} ** LODLevel.count;
+                    s.instances = [_]u32{0} ** LODLevel.count;
+                }
             }
 
-            // Collect visible meshes from coarsest active LOD down. Some presets
-            // intentionally disable coarser levels to avoid low-quality slabs.
-            var i: usize = lod_chunk.activeLODCount(config) - 1;
-            while (i > 0) : (i -= 1) {
+            // Collect visible meshes from coarsest active LOD down so parent
+            // fallback draws first and finer children overdraw it as they arrive.
+            var i: usize = lod_chunk.activeLODCount(config);
+            while (i > 0) {
+                i -= 1;
                 const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
-                self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats) catch |err| {
+                self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats) catch |err| {
                     log.log.errWithTrace("Failed to collect visible meshes for LOD{}: {}", .{ i, err });
                 };
             }
 
             if (self.instance_data.items.len == 0) return;
 
+            if (self.enable_mdi and layer == .terrain and self.renderIndirectBatches(render_ctx, query)) return;
+
             for (self.draw_list.items, 0..) |mesh, idx| {
                 const instance = self.instance_data.items[idx];
+                const range = meshDrawRange(mesh, layer) orelse continue;
                 render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
                 if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
-                    render_ctx.drawOffset(mesh.buffer_handle, mesh.vertex_count, .triangles, mesh.vertex_offset);
+                    render_ctx.drawOffset(mesh.buffer_handle, range.count, .triangles, mesh.vertex_offset + range.offset);
                 } else {
-                    render_ctx.draw(mesh.buffer_handle, mesh.vertex_count, .triangles);
+                    render_ctx.draw(mesh.buffer_handle, range.count, .triangles);
                 }
             }
+        }
+
+        fn renderIndirectBatches(self: *Self, render_ctx: anytype, query: anytype) bool {
+            if (!supportsLodIndirect(@TypeOf(render_ctx), @TypeOf(query), @TypeOf(self.rhi))) return false;
+            if (!query.supportsIndirectFirstInstance()) return false;
+            if (self.instance_data.items.len == 0) return false;
+
+            const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
+            if (!@hasDecl(@TypeOf(resources), "updateBuffer")) return false;
+
+            const fi = self.frame_index;
+            if (self.instance_data.items.len > MAX_LOD_MDI_REGIONS) {
+                log.log.warn("LOD MDI: instance overflow ({} > {}), falling back to CPU draw", .{ self.instance_data.items.len, MAX_LOD_MDI_REGIONS });
+                return false;
+            }
+
+            var total_commands: usize = 0;
+            for (self.draw_commands) |commands| total_commands += commands.items.len;
+            if (total_commands == 0) return false;
+            if (total_commands != self.draw_list.items.len) return false;
+            if (total_commands > MAX_LOD_MDI_REGIONS) {
+                log.log.warn("LOD MDI: command overflow ({} > {}), falling back to CPU draw", .{ total_commands, MAX_LOD_MDI_REGIONS });
+                return false;
+            }
+
+            for (0..LODLevel.count) |lod_idx| {
+                if (self.draw_commands[lod_idx].items.len > 0 and self.vertex_pools[lod_idx].buffer_handle == 0) return false;
+            }
+
+            resources.updateBuffer(self.instance_buffers[fi], 0, std.mem.sliceAsBytes(self.instance_data.items)) catch |err| {
+                log.log.err("LOD MDI: failed to update instance buffer: {}", .{err});
+                return false;
+            };
+
+            var merged_commands = std.ArrayListUnmanaged(rhi_types.DrawIndirectCommand).empty;
+            defer merged_commands.deinit(self.allocator);
+            merged_commands.ensureTotalCapacity(self.allocator, total_commands) catch |err| {
+                log.log.err("LOD MDI: failed to reserve command staging: {}", .{err});
+                return false;
+            };
+
+            var lod_offsets: [LODLevel.count]usize = [_]usize{0} ** LODLevel.count;
+            var lod_counts: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count;
+            for (0..LODLevel.count) |lod_idx| {
+                lod_offsets[lod_idx] = merged_commands.items.len;
+                lod_counts[lod_idx] = @intCast(self.draw_commands[lod_idx].items.len);
+                merged_commands.appendSliceAssumeCapacity(self.draw_commands[lod_idx].items);
+            }
+
+            resources.updateBuffer(self.indirect_buffers[fi], 0, std.mem.sliceAsBytes(merged_commands.items)) catch |err| {
+                log.log.err("LOD MDI: failed to update indirect buffer: {}", .{err});
+                return false;
+            };
+
+            render_ctx.setLODInstanceBuffer(self.instance_buffers[fi]);
+            const stride = @sizeOf(rhi_types.DrawIndirectCommand);
+            for (0..LODLevel.count) |lod_idx| {
+                if (lod_counts[lod_idx] == 0) continue;
+                const pool_buffer = self.vertex_pools[lod_idx].buffer_handle;
+                render_ctx.drawIndirect(pool_buffer, self.indirect_buffers[fi], lod_offsets[lod_idx] * stride, lod_counts[lod_idx], stride);
+            }
+            return true;
         }
 
         fn collectVisibleMeshes(
@@ -212,6 +317,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
             max_distance_chunks: ?i32,
+            layer: LODRenderLayer,
             stats: ?*LODStats,
         ) !void {
             const meshes = &all_meshes[@intFromEnum(lod)];
@@ -233,7 +339,11 @@ pub fn LODRenderer(comptime RHI: type) type {
             while (iter.next()) |entry| {
                 diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
-                if (!mesh.ready or mesh.vertex_count == 0) {
+                const draw_range = meshDrawRange(mesh, layer) orelse {
+                    diag.not_ready += 1;
+                    continue;
+                };
+                if (!mesh.ready or draw_range.count == 0) {
                     diag.not_ready += 1;
                     continue;
                 }
@@ -263,8 +373,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                             const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
                             const pc_x = camera_chunk.chunk_x;
                             const pc_z = camera_chunk.chunk_z;
-                            const lod0_radius = config.getRadii()[0];
-                            const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, pc_x, pc_z, lod0_radius);
+                            const chunk_radius = config.getChunkRenderRadius();
+                            const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, pc_x, pc_z, chunk_radius);
                             if (cov.covered) {
                                 lod_covered += 1;
                                 diag.covered_chunks += 1;
@@ -295,17 +405,26 @@ pub fn LODRenderer(comptime RHI: type) type {
                     // Keep coarser LODs visible until full-detail chunks cover them.
                     // Culling against inner LOD bands creates visible holes while finer
                     // LOD regions are still streaming in.
+                    const fade = @min(calculateBandFade(config, lod, chunk_bounds, camera_pos), calculateTransitionFade(chunk));
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
-                        .padding = .{ 0, 0, 0 },
+                        .padding = .{ fade, 0, 0 },
                     });
                     try self.draw_list.append(self.allocator, mesh);
+                    if (mesh.pooled) {
+                        try self.draw_commands[@intFromEnum(lod)].append(self.allocator, .{
+                            .vertexCount = draw_range.count,
+                            .instanceCount = 1,
+                            .firstVertex = @intCast((mesh.vertex_offset + draw_range.offset) / @sizeOf(rhi_types.Vertex)),
+                            .firstInstance = @intCast(self.instance_data.items.len - 1),
+                        });
+                    }
                     diag.drawn += 1;
                     if (stats) |s| {
                         const lod_idx = @intFromEnum(lod);
-                        s.drawn[lod_idx] = diag.drawn;
-                        s.instances[lod_idx] = diag.drawn;
+                        s.drawn[lod_idx] += 1;
+                        s.instances[lod_idx] += 1;
                     }
                 } else {
                     diag.missing_region += 1;
@@ -366,10 +485,13 @@ pub fn LODRenderer(comptime RHI: type) type {
             chunk: *const LODChunk,
             config: ILODConfig,
         ) bool {
-            if (chunk.lod_level == .lod1) return false;
+            if (chunk.lod_level == .lod0) return false;
             const missing_children = 4 - @min(chunk.ready_children, 4);
             const missing_fraction = @as(f32, @floatFromInt(missing_children)) / 4.0;
-            return missing_fraction <= config.getFallbackMissingChildThreshold();
+            if (missing_fraction <= config.getFallbackMissingChildThreshold()) {
+                return chunk.transition_frames_remaining == 0;
+            }
+            return false;
         }
 
         const CoverageResult = struct {
@@ -444,11 +566,19 @@ pub fn LODRenderer(comptime RHI: type) type {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
+                    if (!renderer.enable_mdi) {
+                        return mesh.upload(resources);
+                    }
                     return renderer.vertex_pools[@intFromEnum(mesh.lod_level)].uploadMesh(mesh, resources);
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
-                    renderer.vertex_pools[@intFromEnum(mesh.lod_level)].destroyMesh(mesh);
+                    const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
+                    if (mesh.pooled) {
+                        renderer.vertex_pools[@intFromEnum(mesh.lod_level)].destroyMesh(mesh);
+                    } else {
+                        mesh.deinit(resources);
+                    }
                 }
                 fn onWaitIdle(ctx: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
@@ -477,10 +607,11 @@ pub fn LODRenderer(comptime RHI: type) type {
                     checker_ctx: ?*anyopaque,
                     use_frustum: bool,
                     max_distance_chunks: ?i32,
+                    layer: LODRenderLayer,
                     stats: ?*LODStats,
                 ) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
-                    renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats);
+                    renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats);
                 }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
@@ -499,6 +630,55 @@ pub fn LODRenderer(comptime RHI: type) type {
 fn isRegionInRange(bounds: ChunkBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
     const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
     return bounds.intersectsRadius(camera_chunk.chunk_x, camera_chunk.chunk_z, max_distance_chunks);
+}
+
+fn calculateBandFade(config: ILODConfig, lod: LODLevel, bounds: ChunkBounds, camera_pos: Vec3) f32 {
+    const lod_idx = @intFromEnum(lod);
+    if (lod_idx == 0) return 1.0;
+
+    const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+    const dist_sq = bounds.distanceSquaredToPoint(camera_chunk.chunk_x, camera_chunk.chunk_z);
+    const dist_chunks = @sqrt(@as(f32, @floatFromInt(dist_sq)));
+    const radii = config.getRadii();
+    const end = @as(f32, @floatFromInt(@max(radii[lod_idx], 1)));
+    const inner = @as(f32, @floatFromInt(@max(radii[lod_idx - 1], 0)));
+    const configured_start = end * std.math.clamp(config.getFogStartPercent(lod), 0.0, 1.0);
+    const start = @min(@max(inner, configured_start), end - 0.001);
+    return std.math.clamp((dist_chunks - start) / @max(end - start, 0.001), 0.0, 1.0);
+}
+
+fn calculateTransitionFade(chunk: *const LODChunk) f32 {
+    if (chunk.transition_frames_remaining == 0) return 1.0;
+    const remaining = @as(f32, @floatFromInt(chunk.transition_frames_remaining));
+    const total = @as(f32, @floatFromInt(lod_chunk.TRANSITION_FADE_FRAMES));
+    const t = @min(remaining / total, 1.0);
+    if (chunk.lod_level != .lod1 and chunk.ready_children >= 4) {
+        return t;
+    }
+    return 1.0 - t;
+}
+
+fn meshDrawRange(mesh: *const LODMesh, layer: LODRenderLayer) ?MeshDrawRange {
+    if (!mesh.ready or mesh.buffer_handle == 0) return null;
+    return switch (layer) {
+        .terrain => if (mesh.opaque_vertex_count > 0)
+            .{ .offset = 0, .count = mesh.opaque_vertex_count }
+        else if (mesh.water_vertex_count == 0 and mesh.vertex_count > 0)
+            .{ .offset = 0, .count = mesh.vertex_count }
+        else
+            null,
+        .fluid => if (mesh.water_vertex_count > 0)
+            .{ .offset = mesh.water_vertex_offset, .count = mesh.water_vertex_count }
+        else
+            null,
+    };
+}
+
+fn supportsLodIndirect(comptime RenderCtx: type, comptime Query: type, comptime RHI: type) bool {
+    _ = RHI;
+    return @hasDecl(RenderCtx, "drawIndirect") and
+        @hasDecl(RenderCtx, "setLODInstanceBuffer") and
+        @hasDecl(Query, "supportsIndirectFirstInstance");
 }
 
 fn isRegionInFrustum(frustum: Frustum, bounds: LODChunk.WorldBounds, camera_pos: Vec3) bool {
@@ -553,14 +733,151 @@ test "LODRenderer init/deinit lifecycle" {
     const Renderer = LODRenderer(MockRHI);
     const renderer = try Renderer.init(allocator, mock_rhi);
 
-    // Verify init created buffers for each frame in flight
-    try std.testing.expectEqual(@as(u32, rhi_types.MAX_FRAMES_IN_FLIGHT), mock_state.buffers_created);
+    // Verify init created instance + indirect buffers for each frame in flight.
+    try std.testing.expectEqual(@as(u32, rhi_types.MAX_FRAMES_IN_FLIGHT * 2), mock_state.buffers_created);
     try std.testing.expectEqual(@as(u32, 0), mock_state.buffers_destroyed);
 
     renderer.deinit();
 
     // Verify deinit destroyed all buffers
-    try std.testing.expectEqual(@as(u32, rhi_types.MAX_FRAMES_IN_FLIGHT), mock_state.buffers_destroyed);
+    try std.testing.expectEqual(@as(u32, rhi_types.MAX_FRAMES_IN_FLIGHT * 2), mock_state.buffers_destroyed);
+}
+
+test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        next_handle: u32 = 1,
+        draw_indirect_calls: u32 = 0,
+        direct_draw_calls: u32 = 0,
+        instance_updates: u32 = 0,
+        indirect_updates: u32 = 0,
+        last_draw_count: u32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(self: @This(), _: usize, usage: anytype) !u32 {
+            _ = usage;
+            const handle = self.state.next_handle;
+            self.state.next_handle += 1;
+            return handle;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn updateBuffer(self: @This(), _: u32, _: usize, data: []const u8) !void {
+            if (data.len % @sizeOf(rhi_types.InstanceData) == 0 and data.len != @sizeOf(rhi_types.DrawIndirectCommand)) {
+                self.state.instance_updates += 1;
+            } else {
+                self.state.indirect_updates += 1;
+            }
+        }
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn supportsIndirectFirstInstance(_: @This()) bool {
+            return true;
+        }
+        pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(_: @This(), _: u32, _: u32, _: anytype) void {}
+        pub fn drawOffset(_: @This(), _: u32, _: u32, _: anytype, _: usize) void {}
+        pub fn drawIndirect(self: @This(), _: u32, _: u32, _: usize, draw_count: u32, _: u32) void {
+            self.state.draw_indirect_calls += 1;
+            self.state.last_draw_count += draw_count;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+    renderer.enable_mdi = true;
+
+    renderer.vertex_pools[1].buffer_handle = 101;
+    renderer.vertex_pools[2].buffer_handle = 102;
+
+    var mesh_lod1 = LODMesh.init(allocator, .lod1);
+    mesh_lod1.buffer_handle = 101;
+    mesh_lod1.vertex_offset = 0;
+    mesh_lod1.vertex_count = 12;
+    mesh_lod1.pooled = true;
+    mesh_lod1.ready = true;
+
+    var mesh_lod2 = LODMesh.init(allocator, .lod2);
+    mesh_lod2.buffer_handle = 102;
+    mesh_lod2.vertex_offset = 4 * @sizeOf(rhi_types.Vertex);
+    mesh_lod2.vertex_count = 18;
+    mesh_lod2.pooled = true;
+    mesh_lod2.ready = true;
+
+    var chunk_lod1 = LODChunk.init(4, 0, .lod1);
+    chunk_lod1.state = .renderable;
+    var chunk_lod2 = LODChunk.init(8, 0, .lod2);
+    chunk_lod2.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    try meshes[1].put(.{ .rx = 4, .rz = 0, .lod = .lod1 }, &mesh_lod1);
+    try regions[1].put(.{ .rx = 4, .rz = 0, .lod = .lod1 }, &chunk_lod1);
+    try meshes[2].put(.{ .rx = 8, .rz = 0, .lod = .lod2 }, &mesh_lod2);
+    try regions[2].put(.{ .rx = 8, .rz = 0, .lod = .lod2 }, &chunk_lod2);
+
+    var mock_config = LODConfig{ .radii = .{ 16, 128, 256, 512, 1024 } };
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+
+    try std.testing.expectEqual(@as(u32, 2), mock_state.draw_indirect_calls);
+    try std.testing.expectEqual(@as(u32, 2), mock_state.last_draw_count);
+}
+
+test "LODRenderer band fade follows configured fog start percent" {
+    var config = LODConfig{
+        .radii = .{ 16, 40, 80, 160, 512 },
+        .fog_start_percent = .{ 1.0, 0.5, 0.5, 0.5, 0.5 },
+    };
+    const iface = config.interface();
+
+    const near_bounds = ChunkBounds{ .min_x = 16, .min_z = 0, .max_x = 16, .max_z = 0 };
+    try std.testing.expectEqual(@as(f32, 0.0), calculateBandFade(iface, .lod1, near_bounds, Vec3.zero));
+
+    const mid_bounds = ChunkBounds{ .min_x = 30, .min_z = 0, .max_x = 30, .max_z = 0 };
+    try std.testing.expect(calculateBandFade(iface, .lod1, mid_bounds, Vec3.zero) > 0.0);
+    try std.testing.expect(calculateBandFade(iface, .lod1, mid_bounds, Vec3.zero) < 1.0);
+
+    const far_bounds = ChunkBounds{ .min_x = 40, .min_z = 0, .max_x = 40, .max_z = 0 };
+    try std.testing.expectEqual(@as(f32, 1.0), calculateBandFade(iface, .lod1, far_bounds, Vec3.zero));
+}
+
+test "LODRenderer transition fade distinguishes child fade-in and parent fade-out" {
+    var child = LODChunk.init(0, 0, .lod1);
+    child.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
+    try std.testing.expectEqual(@as(f32, 0.0), calculateTransitionFade(&child));
+
+    child.transition_frames_remaining = 0;
+    try std.testing.expectEqual(@as(f32, 1.0), calculateTransitionFade(&child));
+
+    var parent = LODChunk.init(0, 0, .lod2);
+    parent.ready_children = 4;
+    parent.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
+    try std.testing.expectEqual(@as(f32, 1.0), calculateTransitionFade(&parent));
+
+    parent.transition_frames_remaining = 0;
+    try std.testing.expectEqual(@as(f32, 1.0), calculateTransitionFade(&parent));
 }
 
 test "LODRenderer render draw path" {
@@ -605,7 +922,10 @@ test "LODRenderer render draw path" {
     // Create mock mesh
     var mesh = LODMesh.init(allocator, .lod1);
     mesh.buffer_handle = 42;
-    mesh.vertex_count = 100;
+    mesh.vertex_count = 106;
+    mesh.opaque_vertex_count = 100;
+    mesh.water_vertex_offset = 100 * @sizeOf(rhi_types.Vertex);
+    mesh.water_vertex_count = 6;
     mesh.ready = true;
 
     // Create mock LODChunk in renderable state
@@ -640,7 +960,7 @@ test "LODRenderer render draw path" {
     var stats = LODStats{};
 
     // Call render with explicit parameters
-    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, &stats);
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .terrain, &stats);
 
     // Verify draw was called with correct parameters
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
@@ -649,6 +969,12 @@ test "LODRenderer render draw path" {
     try std.testing.expectEqual(@as(u32, 100), mock_state.last_vertex_count);
     try std.testing.expectEqual(@as(u32, 1), stats.drawn[1]);
     try std.testing.expectEqual(@as(u32, 1), stats.instances[1]);
+
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .fluid, &stats);
+    try std.testing.expectEqual(@as(u32, 2), mock_state.draw_calls);
+    try std.testing.expectEqual(@as(u32, 6), mock_state.last_vertex_count);
+    try std.testing.expectEqual(@as(u32, 2), stats.drawn[1]);
+    try std.testing.expectEqual(@as(u32, 2), stats.instances[1]);
 }
 
 test "LODRenderer keeps coarse LOD visible while finer bands stream" {
@@ -717,13 +1043,13 @@ test "LODRenderer keeps coarse LOD visible while finer bands stream" {
         .radii = .{ 16, 32, 64, 100, 256 },
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 1), mock_state.set_matrix_calls);
 }
 
-test "LODRenderer disables mask when chunks are missing inside LOD0 radius" {
+test "LODRenderer disables mask when chunks are missing inside chunk render radius" {
     const allocator = std.testing.allocator;
 
     const MockRHIState = struct {
@@ -791,10 +1117,90 @@ test "LODRenderer disables mask when chunks are missing inside LOD0 radius" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missingInRadius, &checker_ctx, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missingInRadius, &checker_ctx, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(LOD_UNMASKED_SENTINEL, mock_state.last_mask_radius);
+}
+
+test "LODRenderer chunk mask uses chunk render radius instead of LOD0 radius" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+        last_mask_radius: f32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
+            self.state.last_mask_radius = mask_radius;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod1);
+    mesh.buffer_handle = 7;
+    mesh.vertex_count = 12;
+    mesh.ready = true;
+
+    // Region rx=3 sits inside the LOD0 ring radius below, but outside the
+    // configured full-chunk render radius. Missing chunks there must not unmask
+    // the inner chunk/LOD handoff.
+    var chunk = LODChunk.init(3, 0, .lod1);
+    chunk.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    const key = LODRegionKey{ .rx = 3, .rz = 0, .lod = .lod1 };
+    try meshes[1].put(key, &mesh);
+    try regions[1].put(key, &chunk);
+
+    var mock_config = LODConfig{
+        .chunk_render_radius = 4,
+        .radii = .{ 16, 32, 64, 100, 256 },
+    };
+    var checker_ctx: u8 = 0;
+    const Checker = struct {
+        fn missing(_: i32, _: i32, _: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missing, &checker_ctx, false, null, .terrain, null);
+
+    try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
+    try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
 }
 
 test "LODRenderer keeps mask when only outside-radius chunks are uncovered" {
@@ -865,7 +1271,7 @@ test "LODRenderer keeps mask when only outside-radius chunks are uncovered" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.loaded, &checker_ctx, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.loaded, &checker_ctx, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
@@ -939,7 +1345,7 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
@@ -1025,9 +1431,76 @@ test "LODRenderer skips coarse LOD when finer coverage is ready" {
         .radii = .{ 16, 32, 64, 100, 256 },
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
+}
+
+test "LODRenderer always renders ready LOD0 regions" {
+    const allocator = std.testing.allocator;
+
+    const MockRHIState = struct {
+        draw_calls: u32 = 0,
+    };
+
+    const MockRHI = struct {
+        state: *MockRHIState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setSelectionMode(_: @This(), _: bool) void {}
+        pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
+            self.state.draw_calls += 1;
+        }
+    };
+
+    var mock_state = MockRHIState{};
+    const mock_rhi = MockRHI{ .state = &mock_state };
+
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, mock_rhi);
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod0);
+    mesh.buffer_handle = 7;
+    mesh.vertex_count = 12;
+    mesh.ready = true;
+
+    var chunk = LODChunk.init(2, 0, .lod0);
+    chunk.state = .renderable;
+    chunk.ready_children = 4;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            meshes[i].deinit();
+            regions[i].deinit();
+        }
+    }
+
+    const key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod0 };
+    try meshes[0].put(key, &mesh);
+    try regions[0].put(key, &chunk);
+
+    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
+    var stats = LODStats{};
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, &stats);
+
+    try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
+    try std.testing.expectEqual(@as(u32, 1), stats.drawn[0]);
+    try std.testing.expectEqual(@as(u32, 1), stats.instances[0]);
 }
 
 test "LODRenderer keeps coarse LOD when a finer child is missing" {
@@ -1108,7 +1581,7 @@ test "LODRenderer keeps coarse LOD when a finer child is missing" {
 
     var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 106), mock_state.handle_sum);
@@ -1193,7 +1666,7 @@ test "LODRenderer resolves finer coverage across negative region boundaries" {
 
     var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
 
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 10), mock_state.handle_sum);
@@ -1291,7 +1764,7 @@ test "LODRenderer createGPUBridge and toInterface round-trip" {
     var mock_config = LODConfig{};
 
     // Render through the type-erased interface
-    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, null);
+    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
 
     // Verify the real renderer's draw was invoked through the interface
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);

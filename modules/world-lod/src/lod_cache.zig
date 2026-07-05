@@ -14,7 +14,7 @@ const BlockType = world_core.BlockType;
 const BiomeId = world_core.BiomeId;
 
 pub const MAGIC: u32 = 0x5A4C4F44; // "ZLOD"
-pub const CACHE_VERSION: u8 = 2;
+pub const CACHE_VERSION: u8 = 10;
 pub const CACHE_VERSION_V1: u8 = 1;
 pub const HEADER_SIZE: usize = 42;
 

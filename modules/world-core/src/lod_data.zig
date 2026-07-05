@@ -135,17 +135,14 @@ pub const LODSimplifiedData = struct {
 
     pub fn getGridSize(lod_level: LODLevel) u32 {
         return switch (lod_level) {
-            .lod0 => 16,
-            .lod1 => 32,
-            .lod2 => 48,
-            // LOD3+ are the farthest bands. A 48x48 grid gave
-            // ~2.7 blocks/cell — far finer than is visible at that distance.
-            // 24x24 is plenty for the horizon silhouette and cuts heightmap
-            // generation cost 4x (columns) on top of the
-            // single-sample change — ~36x total, the difference between a vista
-            // that pops in over seconds vs. many minutes.
-            .lod3 => 24,
-            .lod4 => 24,
+            // Use region_size / (width - 1). The far bands need a denser
+            // source grid so visible terrain doesn't collapse into 8/16-block
+            // slabs before fog hides it.
+            .lod0 => 33,
+            .lod1 => 65,
+            .lod2 => 65,
+            .lod3 => 129,
+            .lod4 => 129,
         };
     }
 
@@ -322,8 +319,10 @@ pub const LODSimplifiedData = struct {
             .vegetation = vegetation_hint,
         });
 
-        if (water_state.is_surface and water_state.coverage > 0.0) {
-            _ = self.setVerticalSpan(gx, gz, 1, .{
+        var span_index: u8 = 1;
+
+        if (water_state.is_surface and water_state.coverage > 0.0 and span_index < MAX_LOD_VERTICAL_SPANS) {
+            _ = self.setVerticalSpan(gx, gz, span_index, .{
                 .min_height = terrain_height,
                 .max_height = @max(water_state.surface_height, terrain_height),
                 .biome = biome,
@@ -337,7 +336,37 @@ pub const LODSimplifiedData = struct {
                 .lighting = lighting_hint,
                 .vegetation = LODVegetationHint.empty,
             });
+            span_index += 1;
         }
+
+        if (vegetation_hint.tree_coverage > 0.0 and vegetation_hint.avg_tree_height >= 2.0 and span_index < MAX_LOD_VERTICAL_SPANS) {
+            const canopy_top = height + vegetation_hint.avg_tree_height;
+            const canopy_bottom = @max(height + 1.0, canopy_top - @max(vegetation_hint.avg_tree_height * 0.45, 2.0));
+            const leaves = if (vegetation_hint.leaves == .air) world_core.BlockType.leaves else vegetation_hint.leaves;
+            _ = self.setVerticalSpan(gx, gz, span_index, .{
+                .min_height = canopy_bottom,
+                .max_height = canopy_top,
+                .biome = biome,
+                .material_layers = .{
+                    .surface = leaves,
+                    .subsurface = leaves,
+                    .foundation = terrain_layers.foundation,
+                },
+                .color = blockDefaultColor(leaves, color),
+                .water = LODWaterState.empty,
+                .lighting = lighting_hint,
+                .vegetation = vegetation_hint,
+            });
+        }
+    }
+
+    fn blockDefaultColor(block: world_core.BlockType, fallback: u32) u32 {
+        if (block == .air) return fallback;
+        const color = world_core.block_registry.getBlockDefinition(block).default_color;
+        const r: u32 = @intFromFloat(@round(std.math.clamp(color[0], 0.0, 1.0) * 255.0));
+        const g: u32 = @intFromFloat(@round(std.math.clamp(color[1], 0.0, 1.0) * 255.0));
+        const b: u32 = @intFromFloat(@round(std.math.clamp(color[2], 0.0, 1.0) * 255.0));
+        return (r << 16) | (g << 8) | b;
     }
 
     fn terrainLayersForGeneratedSpan(layers: LODMaterialLayers, water_state: LODWaterState) LODMaterialLayers {
@@ -453,6 +482,14 @@ test "LODSimplifiedData initializes rich column defaults" {
     try std.testing.expect(!data.water[0].is_surface);
     try std.testing.expectEqual(@as(u8, 15), data.lighting[0].sky_light);
     try std.testing.expectEqual(@as(f32, 0.0), data.vegetation[0].tree_coverage);
+}
+
+test "LODSimplifiedData far levels use high-detail grids" {
+    try std.testing.expectEqual(@as(u32, 33), LODSimplifiedData.getGridSize(.lod0));
+    try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod1));
+    try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod2));
+    try std.testing.expectEqual(@as(u32, 129), LODSimplifiedData.getGridSize(.lod3));
+    try std.testing.expectEqual(@as(u32, 129), LODSimplifiedData.getGridSize(.lod4));
 }
 
 test "LODColumnProvenance orders overwrite authority" {
@@ -596,6 +633,32 @@ test "LODSimplifiedData generated columns emit surface and water spans" {
     try std.testing.expectEqual(@as(f32, 64.0), water.max_height);
     try std.testing.expectEqual(world_core.BlockType.water, water.material_layers.surface);
     try std.testing.expect(water.water.is_surface);
+}
+
+test "LODSimplifiedData generated columns emit canopy spans" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod1);
+    defer data.deinit();
+
+    data.setGeneratedColumn(2, 2, 70.0, .forest, .{
+        .surface = .grass,
+        .subsurface = .dirt,
+        .foundation = .stone,
+    }, 0x2E7A32, LODWaterState.empty, LODLightingHint.daylight, .{
+        .tree_coverage = 0.75,
+        .avg_tree_height = 8.0,
+        .offset_x = 0.0,
+        .offset_z = 0.0,
+        .trunk = .wood,
+        .leaves = .leaves,
+    });
+
+    try std.testing.expectEqual(@as(u8, 2), data.verticalSpanCount(2, 2));
+    const canopy = data.getVerticalSpan(2, 2, 1) orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(world_core.BlockType.leaves, canopy.material_layers.surface);
+    try std.testing.expect(canopy.min_height > 70.0);
+    try std.testing.expectEqual(@as(f32, 78.0), canopy.max_height);
+    try std.testing.expectEqual(@as(f32, 0.75), canopy.vegetation.tree_coverage);
 }
 
 test "setGeneratedColumn never overwrites chunk_derived or edited columns" {

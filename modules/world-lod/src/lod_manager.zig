@@ -7,8 +7,8 @@
 //! - LOD3 (64-100 chunks): 8x simplified, 16x16 chunks merged, heightmap only
 //!
 //! Key principles:
-//! - LOD3 generates first (fast heightmap), fills horizon quickly
-//! - LOD0 generates last but gets priority in movement direction
+//! - Near/fine LODs are queued first so coarse parents do not dominate mid-ground
+//! - Coarse LODs remain available as fallback while finer children stream
 //! - Smooth transitions via fog masking
 //!
 //! GPU operations are decoupled via LODGPUBridge and LODRenderInterface (Issue #246).
@@ -58,6 +58,7 @@ const TextureAtlas = @import("engine-assets").TextureAtlas;
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
+const LODRenderLayer = lod_gpu.LODRenderLayer;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const lod_scheduler = @import("lod_scheduler.zig");
@@ -123,6 +124,11 @@ const CHUNK_COVERAGE_PADDING: i32 = 1;
 const LOD_UPDATE_DIVISOR: u32 = 2;
 const MIN_LOD_WORKERS: usize = 4;
 const MAX_LOD_WORKERS: usize = 6;
+const MAX_MEMORY_EVICTIONS_PER_UPDATE: usize = 32;
+const MAX_MESH_DELETIONS_PER_SWEEP: usize = 64;
+const DELETION_SWEEP_SECONDS: f32 = 1.0;
+const DEFAULT_LOD_UPLOAD_BUDGET_BYTES: usize = 32 * 1024 * 1024;
+const LOD_UPLOAD_BUDGET_ENV = "ZIGCRAFT_LOD_UPLOAD_BUDGET_MB";
 
 // Chunk-derived ingestion tuning (issue #752 Phase 2).
 const MAX_PENDING_INGESTIONS: usize = 4096;
@@ -130,6 +136,27 @@ const MAX_DRAIN_BATCH: usize = 16;
 const PENDING_INGESTION_TTL: u16 = 240; // ~4s @ 60fps drain cadence
 const EDIT_FLUSH_COOLDOWN: f32 = 1.0; // coalesce rapid edits before re-ingesting
 const LOD_FRAME_DT_APPROX: f32 = 0.016;
+
+fn lodUploadBudgetBytes() usize {
+    const raw = engine_core.getenv(LOD_UPLOAD_BUDGET_ENV) orelse return DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+    const mb = std.fmt.parseUnsigned(usize, raw, 10) catch return DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+    if (mb == 0) return std.math.maxInt(usize);
+    return std.math.mul(usize, mb, 1024 * 1024) catch DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+}
+
+fn wouldExceedUploadBudget(uploaded_bytes: usize, pending_bytes: usize, budget_bytes: usize, uploads: u32) bool {
+    if (budget_bytes == 0 or budget_bytes == std.math.maxInt(usize)) return false;
+    if (pending_bytes == 0 or uploads == 0) return false;
+    if (uploaded_bytes >= budget_bytes) return true;
+    return pending_bytes > budget_bytes - uploaded_bytes;
+}
+
+fn isUploadPressureError(err: anyerror) bool {
+    return switch (err) {
+        error.OutOfMemory, error.PendingCopyOverflow => true,
+        else => false,
+    };
+}
 
 comptime {
     if (LODLevel.count < 2) {
@@ -340,8 +367,8 @@ pub const LODManager = struct {
         const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
         const lod_worker_count = std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS);
 
-        // All LOD jobs go through the shared far-distance queue so the worker pool can
-        // keep the horizon filled before near-detail transitions catch up.
+        // All LOD jobs go through one shared queue. LOD-aware priority bits keep
+        // fine near-detail jobs ahead of coarse fallback regions.
         mgr.lod_gen_pool = try WorkerPool.init(allocator, lod_worker_count, mgr.gen_queues[LODLevel.count - 1], mgr, processLODJob);
 
         const radii = config.getRadii();
@@ -396,14 +423,8 @@ pub const LODManager = struct {
 
         self.transition_queue.deinit(self.allocator);
 
-        // Process any pending deletions
-        if (self.deletion_queue.items.len > 0) {
-            self.gpu_bridge.waitIdle();
-            for (self.deletion_queue.items) |mesh| {
-                self.gpu_bridge.destroy(mesh);
-                self.allocator.destroy(mesh);
-            }
-        }
+        // Process any pending deletions after all LOD users have stopped.
+        self.processMeshDeletions(std.math.maxInt(usize));
         self.deletion_queue.deinit(self.allocator);
 
         if (self.cache_dir_path) |path| {
@@ -433,6 +454,9 @@ pub const LODManager = struct {
             if (stored_header.seed != live_header.seed) {
                 // Seed mismatch => the entire store is foreign; discard all.
                 log.log.warn("LOD store seed mismatch; discarding foreign LOD source store", .{});
+                try lod_store.deleteStore(self.allocator, save_dir_path);
+            } else if (stored_header.lod_data_version != live_header.lod_data_version) {
+                log.log.warn("LOD store data version changed; discarding stale LOD source store", .{});
                 try lod_store.deleteStore(self.allocator, save_dir_path);
             } else if (stored_header.generator_identity_hash != live_header.generator_identity_hash or
                 stored_header.generator_version != live_header.generator_version)
@@ -545,15 +569,14 @@ pub const LODManager = struct {
                     const region_size: i32 = @intCast(world_core.regionSizeBlocks(lod));
                     const min_x: i32 = lod_chunk_ptr.region_x * region_size;
                     const min_z: i32 = lod_chunk_ptr.region_z * region_size;
-                    _ = lod_ingest.downsampleChunkIntoRegion(chunk, cx, cz, data, min_x, min_z, region_size, provenance);
+                    const written = lod_ingest.downsampleChunkIntoRegion(chunk, cx, cz, data, min_x, min_z, region_size, provenance);
+                    if (written == 0) continue;
                     lod_chunk_ptr.dirty = true;
                     lod_chunk_ptr.store_dirty = true;
                     lod_chunk_ptr.updateHeightBoundsFromData();
                     // Force a remesh of already-rendered regions so the new
                     // chunk-derived data becomes visible.
-                    if (lod_chunk_ptr.state == .renderable or lod_chunk_ptr.state == .mesh_ready) {
-                        lod_chunk_ptr.state = .generated;
-                    }
+                    self.demoteRegionForRemesh(key, lod_chunk_ptr);
                 },
                 else => {
                     // Region exists but has no source data yet (not generated).
@@ -706,48 +729,66 @@ pub const LODManager = struct {
     }
 
     /// Persist at most one dirty region's source data to the LOD store per
-    /// frame. Runs under a shared lock; ingestion (which takes the exclusive
-    /// lock) serializes against it.
+    /// frame. Serializes under the manager lock, then writes outside it so file
+    /// I/O does not block LOD state updates.
     fn flushDirtyStores(self: *Self) void {
-        self.mutex.lockShared();
-        defer self.mutex.unlockShared();
-        const active = lod_chunk.activeLODCount(self.config);
-        var i: usize = 1;
-        while (i < active) : (i += 1) {
-            var it = self.regions[i].iterator();
-            while (it.next()) |entry| {
-                const lcp = entry.value_ptr.*;
-                if (!lcp.store_dirty) continue;
-                lcp.store_dirty = false;
-                switch (lcp.data) {
-                    .simplified => |*data| {
-                        const key = LODRegionKey{ .rx = lcp.region_x, .rz = lcp.region_z, .lod = lcp.lod_level };
-                        self.saveCachedSourceData(key, data);
-                    },
-                    else => {},
+        const save_dir_path = self.cacheDirPathSnapshot() orelse return;
+        defer self.allocator.free(save_dir_path);
+
+        var write_key: ?LODRegionKey = null;
+        var write_bytes: ?[]u8 = null;
+
+        {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            const active = lod_chunk.activeLODCount(self.config);
+            var i: usize = 1;
+            while (i < active) : (i += 1) {
+                var it = self.regions[i].iterator();
+                while (it.next()) |entry| {
+                    const lcp = entry.value_ptr.*;
+                    if (!lcp.store_dirty) continue;
+                    lcp.store_dirty = false;
+                    switch (lcp.data) {
+                        .simplified => |*data| {
+                            const key = LODRegionKey{ .rx = lcp.region_x, .rz = lcp.region_z, .lod = lcp.lod_level };
+                            const cache_key = self.cacheKey(key);
+                            const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
+                                log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+                                return;
+                            };
+                            write_key = key;
+                            write_bytes = bytes;
+                        },
+                        else => {},
+                    }
+                    break; // one region per frame keeps frame cost bounded
                 }
-                return; // one region per frame keeps frame cost bounded
+                if (write_bytes != null) break;
             }
         }
+
+        const key = write_key orelse return;
+        const bytes = write_bytes orelse return;
+        defer self.allocator.free(bytes);
+
+        const cache_key = self.cacheKey(key);
+        self.writeStorePayload(save_dir_path, cache_key, bytes) catch |err| {
+            log.log.warn("Failed to write LOD{} store ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+        };
     }
 
     /// Update LOD system with player position
     pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
         if (self.paused) return;
 
-        // Deferred deletion handling (Issue #119: Performance optimization)
-        // Clean up deleted meshes once per second to avoid waitIdle stalls
-        self.deletion_timer += 0.016; // Approx 60fps delta
-        if (self.deletion_timer >= 1.0 or self.deletion_queue.items.len > 50) {
-            if (self.deletion_queue.items.len > 0) {
-                // Ensure GPU is done with resources before deleting
-                self.gpu_bridge.waitIdle();
-                for (self.deletion_queue.items) |mesh| {
-                    self.gpu_bridge.destroy(mesh);
-                    self.allocator.destroy(mesh);
-                }
-                self.deletion_queue.clearRetainingCapacity();
-            }
+        // Deferred deletion handling. Runtime sweeps require vkDeviceWaitIdle
+        // until LOD meshes carry frame fences, so keep them opt-in. Defaulting
+        // this off avoids compositor ANRs during early-world LOD churn.
+        self.deletion_timer += LOD_FRAME_DT_APPROX;
+        if (engine_core.envFlag("ZIGCRAFT_LOD_DELETE_SWEEP", false) and self.deletion_timer >= DELETION_SWEEP_SECONDS) {
+            self.processMeshDeletions(MAX_MESH_DELETIONS_PER_SWEEP);
             self.deletion_timer = 0;
         }
 
@@ -771,6 +812,7 @@ pub const LODManager = struct {
         self.update_tick += 1;
         if (self.update_tick % LOD_UPDATE_DIVISOR != 0) {
             self.processUploads();
+            self.decayTransitionFrames();
             return;
         }
 
@@ -788,10 +830,11 @@ pub const LODManager = struct {
 
         const active_lod_count = lod_chunk.activeLODCount(self.config);
 
-        // Queue active LOD regions coarsest-first so the horizon fills before
-        // finer detail. Presets may intentionally disable coarser levels.
-        var i: usize = active_lod_count - 1;
-        while (i > 0) : (i -= 1) {
+        // Queue a small horizon seed first so something appears quickly, then
+        // let LOD0/LOD1/LOD2 refinements replace the coarse fallback.
+        var order_idx: usize = 0;
+        while (order_idx < active_lod_count) : (order_idx += 1) {
+            const i = lod_scheduler.priorityLevelIndex(order_idx, active_lod_count);
             self.queueLODRegions(@enumFromInt(@as(u3, @intCast(i))), player_velocity, chunk_checker, checker_ctx) catch |err| {
                 log.log.warn("LOD queue error for level {}: {} (non-fatal)", .{ i, err });
             };
@@ -841,6 +884,7 @@ pub const LODManager = struct {
         self.drainPendingIngestions();
         self.flushEditedChunks();
         self.flushDirtyStores();
+        self.decayTransitionFrames();
     }
 
     /// Queue LOD regions that need generation
@@ -879,7 +923,7 @@ pub const LODManager = struct {
         // before enqueueing. The regions HashMap iterates in arbitrary
         // (hash-bucket) order, so without sorting the meshing/upload order is
         // effectively random — far chunks can be processed before near ones.
-        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3 };
+        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3, coord_scale: i32 };
         var mesh_candidates = std.ArrayListUnmanaged(MeshCandidate).empty;
         defer mesh_candidates.deinit(self.allocator);
 
@@ -887,7 +931,7 @@ pub const LODManager = struct {
         var upload_candidates = std.ArrayListUnmanaged(UploadCandidate).empty;
         defer upload_candidates.deinit(self.allocator);
 
-        for (1..active_lod_count) |i| {
+        for (0..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
             const scale = @as(i32, @intCast(lod.chunksPerSide()));
             const level: u3 = @intCast(i);
@@ -897,25 +941,24 @@ pub const LODManager = struct {
                 if (chunk.state == .generated) {
                     const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                     const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
-                    const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - self.player_cx, center_cz - self.player_cz, velocity);
+                    const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - self.player_cx, center_cz - self.player_cz, velocity, active_lod_count);
                     // Append before flipping state so an allocation failure
                     // leaves the chunk in .generated (re-tried next tick)
                     // instead of stuck in .meshing with no queued job.
-                    try mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
+                    try mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale });
                     chunk.state = .meshing;
                 } else if (chunk.state == .mesh_ready) {
                     const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                     const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
-                    const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - self.player_cx, center_cz - self.player_cz, velocity);
+                    const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - self.player_cx, center_cz - self.player_cz, velocity, active_lod_count);
                     try upload_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
                     chunk.state = .uploading;
                 }
             }
         }
 
-        // Meshing jobs share one queue; sort by encoded priority so the
-        // LOD-bias bits keep coarse-first across levels and distance orders
-        // nearest-first within a level.
+        // Meshing jobs share one queue; sort by encoded priority so fine/near
+        // sections are built before coarse fallback.
         std.mem.sort(MeshCandidate, mesh_candidates.items, {}, struct {
             fn lt(_: void, a: MeshCandidate, b: MeshCandidate) bool {
                 return a.encoded_priority < b.encoded_priority;
@@ -931,16 +974,17 @@ pub const LODManager = struct {
                         .z = mc.chunk.region_z,
                         .job_token = mc.chunk.job_token,
                         .lod_level = mc.level,
+                        .coord_scale = mc.coord_scale,
                     },
                 },
             });
         }
 
-        // Uploads go to per-level FIFO queues; group by level (ascending) and
-        // nearest-first within each level so each queue receives close regions first.
+        // Uploads go to per-level FIFO queues. Sort by the same encoded priority
+        // used by generation/meshing: small horizon seed first, then detailed
+        // bands so fallback terrain is visible but short-lived.
         std.mem.sort(UploadCandidate, upload_candidates.items, {}, struct {
             fn lt(_: void, a: UploadCandidate, b: UploadCandidate) bool {
-                if (a.level != b.level) return a.level < b.level;
                 return a.encoded_priority < b.encoded_priority;
             }
         }.lt);
@@ -951,24 +995,26 @@ pub const LODManager = struct {
 
     /// Process GPU uploads (limited per frame)
     fn processUploads(self: *Self) void {
+        self.processUploadsWithBudget(lodUploadBudgetBytes());
+    }
+
+    fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         // Use exclusive lock since we modify chunk state (chunk.state = .renderable)
         self.mutex.lock();
         defer self.mutex.unlock();
 
         const max_uploads = self.config.getMaxUploadsPerFrame();
         var uploads: u32 = 0;
+        var uploaded_bytes: usize = 0;
 
-        // Process coarsest LOD first so the distant horizon (the "miles" vista)
-        // fills before near bands. Near LOD0/near chunks already cover the
-        // immediate surroundings, so prioritizing the horizon gives the best
-        // perceived draw distance. Finest-first was tried and starved the
-        // horizon (only a thin near LOD ring appeared). Within each level the
-        // upload queue is ordered nearest-first by processStateTransitions.
         const active_lod_count = lod_chunk.activeLODCount(self.config);
-        var i: usize = active_lod_count - 1;
-        while (i > 0) : (i -= 1) {
-            while (!self.upload_queues[i].isEmpty() and uploads < max_uploads) {
+        while (uploads < max_uploads) {
+            var made_progress = false;
+            var order_idx: usize = 0;
+            while (order_idx < active_lod_count and uploads < max_uploads) : (order_idx += 1) {
+                const i = lod_scheduler.priorityLevelIndex(order_idx, active_lod_count);
                 if (self.upload_queues[i].pop()) |chunk| {
+                    made_progress = true;
                     // Upload mesh to GPU via bridge callback
                     const key = LODRegionKey{
                         .rx = chunk.region_x,
@@ -976,18 +1022,40 @@ pub const LODManager = struct {
                         .lod = chunk.lod_level,
                     };
                     if (self.meshes[i].get(key)) |mesh| {
+                        const pending_bytes = mesh.pendingUploadBytes();
+                        if (wouldExceedUploadBudget(uploaded_bytes, pending_bytes, upload_budget_bytes, uploads)) {
+                            self.requeueUpload(i, chunk);
+                            return;
+                        }
+
                         self.gpu_bridge.upload(mesh) catch |err| {
                             log.log.warn("LOD{} mesh upload failed (will retry): {}", .{ i, err });
                             self.stats.upload_failures += 1;
+                            uploads += 1;
+                            if (isUploadPressureError(err)) {
+                                self.requeueUpload(i, chunk);
+                                return;
+                            }
                             chunk.state = .mesh_ready; // Revert to allow retry
                             continue;
                         };
+                        uploaded_bytes += pending_bytes;
                     }
                     self.markRegionRenderable(key, chunk);
                     uploads += 1;
                 }
             }
+            if (!made_progress) break;
         }
+    }
+
+    fn requeueUpload(self: *Self, lod_idx: usize, chunk: *LODChunk) void {
+        chunk.state = .uploading;
+        self.upload_queues[lod_idx].push(chunk) catch |err| {
+            log.log.warn("LOD{} upload requeue failed: {}", .{ lod_idx, err });
+            self.stats.upload_failures += 1;
+            chunk.state = .mesh_ready;
+        };
     }
 
     fn countRenderableChildren(self: *Self, key: LODRegionKey) u8 {
@@ -1010,20 +1078,43 @@ pub const LODManager = struct {
     fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void {
         const parent = key.parentKey() orelse return;
         const parent_chunk = self.regions[@intFromEnum(parent.lod)].get(parent) orelse return;
+        const before = parent_chunk.ready_children;
         if (delta > 0) {
             parent_chunk.ready_children = @min(parent_chunk.ready_children + @as(u8, @intCast(delta)), 4);
         } else if (delta < 0) {
             const amount: u8 = @intCast(-delta);
             parent_chunk.ready_children = if (amount >= parent_chunk.ready_children) 0 else parent_chunk.ready_children - amount;
         }
+        if (before < 4 and parent_chunk.ready_children >= 4) {
+            parent_chunk.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
+        } else if (parent_chunk.ready_children < 4) {
+            parent_chunk.transition_frames_remaining = 0;
+        }
     }
 
     fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
         if (chunk.state == .renderable) return;
         chunk.ready_children = self.countRenderableChildren(key);
+        chunk.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
         chunk.state = .renderable;
         if (self.regionContributesGeometry(key, chunk)) {
             self.adjustParentReadyChildren(key, 1);
+        }
+    }
+
+    fn decayTransitionFrames(self: *Self) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const active = lod_chunk.activeLODCount(self.config);
+        var i: usize = 1;
+        while (i < active) : (i += 1) {
+            var iter = self.regions[i].iterator();
+            while (iter.next()) |entry| {
+                const chunk = entry.value_ptr.*;
+                if (chunk.transition_frames_remaining > 0) {
+                    chunk.transition_frames_remaining -= 1;
+                }
+            }
         }
     }
 
@@ -1033,11 +1124,20 @@ pub const LODManager = struct {
         }
     }
 
+    fn demoteRegionForRemesh(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
+        if (chunk.state == .renderable) {
+            self.noteRegionRemoved(key, chunk);
+            chunk.state = .generated;
+        } else if (chunk.state == .mesh_ready) {
+            chunk.state = .generated;
+        }
+    }
+
     /// Unload regions that are too far from player
     fn unloadDistantRegions(self: *Self) !void {
         const radii = self.config.getRadii();
         const active_lod_count = lod_chunk.activeLODCount(self.config);
-        for (1..active_lod_count) |i| {
+        for (0..active_lod_count) |i| {
             try self.unloadDistantForLevel(@enumFromInt(@as(u3, @intCast(i))), radii[i]);
         }
     }
@@ -1099,6 +1199,24 @@ pub const LODManager = struct {
         };
     }
 
+    fn processMeshDeletions(self: *Self, max_count: usize) void {
+        const count = @min(max_count, self.deletion_queue.items.len);
+        if (count == 0) return;
+
+        // LODMesh does not carry a per-frame fence today, so destruction still
+        // requires GPU idle. Bound each sweep so a memory-pressure eviction burst
+        // cannot turn into an unbounded main-thread stall.
+        self.gpu_bridge.waitIdle();
+        var processed: usize = 0;
+        while (processed < count) : (processed += 1) {
+            const idx = self.deletion_queue.items.len - 1;
+            const mesh = self.deletion_queue.items[idx];
+            self.gpu_bridge.destroy(mesh);
+            self.allocator.destroy(mesh);
+            self.deletion_queue.items.len = idx;
+        }
+    }
+
     fn regionMemoryBytes(chunk: *const LODChunk, mesh: ?*LODMesh) usize {
         var total: usize = 0;
         switch (chunk.data) {
@@ -1142,7 +1260,7 @@ pub const LODManager = struct {
         defer self.mutex.unlock();
 
         const active_lod_count = lod_chunk.activeLODCount(self.config);
-        for (1..active_lod_count) |i| {
+        for (0..active_lod_count) |i| {
             var iter = self.regions[i].iterator();
             while (iter.next()) |entry| {
                 const key = entry.key_ptr.*;
@@ -1166,8 +1284,10 @@ pub const LODManager = struct {
         }.lt);
 
         var used = self.memory_used_bytes;
+        var evicted_count: usize = 0;
         for (candidates.items) |candidate| {
             if (used <= budget_bytes) break;
+            if (evicted_count >= MAX_MEMORY_EVICTIONS_PER_UPDATE) break;
             const idx = @intFromEnum(candidate.key.lod);
             const chunk = self.regions[idx].get(candidate.key) orelse continue;
             if (chunk.state != .renderable or chunk.isPinned()) continue;
@@ -1184,13 +1304,14 @@ pub const LODManager = struct {
             used = if (bytes >= used) 0 else used - bytes;
             self.memory_used_bytes = used;
             self.stats.evictions += 1;
+            evicted_count += 1;
         }
 
-        // Sustained pressure: still over budget after evicting everything we
-        // safely could. Shrink finer LOD radii so evicted regions do not
-        // immediately re-queue (hysteresis). The coarsest horizon band is
-        // exempt (never shrunk) so the vista never develops holes.
-        if (self.memory_used_bytes > budget_bytes) {
+        // Any eviction means the active radii are too ambitious for the current
+        // budget. Shrink finer bands immediately so evicted regions do not get
+        // queued again next update. The coarsest horizon band is exempt so the
+        // vista never develops holes.
+        if (evicted_count > 0 or self.memory_used_bytes > budget_bytes) {
             const active = lod_chunk.activeLODCount(self.config);
             var grew = false;
             var i: usize = 1;
@@ -1201,7 +1322,7 @@ pub const LODManager = struct {
                 }
             }
             if (grew) {
-                log.log.warn("LOD memory over budget after eviction; shrinking finer radii (shrink={any})", .{self.radius_shrink_chunks});
+                log.log.warn("LOD memory pressure; evicted {} regions this update and shrank finer radii (shrink={any})", .{ evicted_count, self.radius_shrink_chunks });
             }
         }
     }
@@ -1325,11 +1446,11 @@ pub const LODManager = struct {
     ///
     /// NOTE: Acquires a shared lock on LODManager. LODRenderer must NOT attempt to acquire
     /// a write lock on LODManager during rendering to avoid deadlocks.
-    pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32) void {
+    pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
         self.mutex.lockShared();
         defer self.mutex.unlockShared();
 
-        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, &self.stats);
+        self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats);
     }
 
     fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {
@@ -1345,7 +1466,7 @@ pub const LODManager = struct {
         defer self.mutex.unlock();
 
         const active_lod_count = lod_chunk.activeLODCount(self.config);
-        for (1..active_lod_count) |i| {
+        for (0..active_lod_count) |i| {
             const storage = &self.regions[i];
             const meshes = &self.meshes[i];
 
@@ -1386,9 +1507,8 @@ pub const LODManager = struct {
     /// are loaded and renderable. Chunks outside the LOD0 radius are skipped since
     /// they represent LOD terrain, not full-detail chunks that would cover this region.
     pub fn areAllChunksLoaded(self: *Self, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
-        const radii = self.config.getRadii();
-        const lod0_radius: i64 = @as(i64, radii[0]);
-        const radius_sq = lod0_radius * lod0_radius;
+        const chunk_radius: i64 = @as(i64, self.config.getChunkRenderRadius());
+        const radius_sq = chunk_radius * chunk_radius;
 
         const min_cx = @divFloor(bounds.min_x, CHUNK_SIZE_X) - CHUNK_COVERAGE_PADDING;
         const min_cz = @divFloor(bounds.min_z, CHUNK_SIZE_Z) - CHUNK_COVERAGE_PADDING;
@@ -1418,7 +1538,7 @@ pub const LODManager = struct {
         defer self.mutex.unlock();
 
         const lod_idx = @intFromEnum(key.lod);
-        if (lod_idx == 0 or lod_idx >= LODLevel.count) return error.InvalidLODLevel;
+        if (lod_idx >= LODLevel.count) return error.InvalidLODLevel;
 
         const meshes = &self.meshes[lod_idx];
 
@@ -1476,9 +1596,9 @@ pub const LODManager = struct {
     }
 
     fn effectiveMeshPath(self: *Self, lod: LODLevel) lod_chunk.LODMeshPath {
-        // Far bands (LOD3/LOD4) stay heightfield: at ~5+ blocks/cell the
-        // silhouette dominates and vertical spans would multiply source
-        // memory ~4-5x for no visible gain (issue #752 Phase 3.4).
+        // Far bands stay as high-resolution stepped block columns. LOD2 keeps
+        // the richer span path so mid-distance cliffs/trees remain voxel-like
+        // without turning the terrain into a smooth polygon surface.
         if (@intFromEnum(lod) >= @intFromEnum(LODLevel.lod3)) return .heightfield;
         if (lod == LODConfig.coarsestLOD()) return .heightfield;
         if (engine_core.envFlag("ZIGCRAFT_LOD_MESH_PATH_QEM", false)) return .qem;
@@ -1705,9 +1825,6 @@ pub const LODManager = struct {
         };
 
         const lod_idx = @intFromEnum(lod_level);
-        if (lod_idx == 0) {
-            return;
-        }
 
         // Phase 1: Acquire lock, validate job, pin chunk
         self.mutex.lock();
@@ -1773,7 +1890,7 @@ pub const LODManager = struct {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
                     const cache_enabled = self.cacheEnabled();
-                    const want_spans = self.config.getVerticalSpanBudget() > 0;
+                    const want_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(lod_level) == .column_spans;
                     var cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
                     if (cached_data) |*cached| {
                         if (want_spans and !cached.hasVerticalSpans()) {
@@ -1931,12 +2048,68 @@ test "LODManager cache helpers delete corrupt cache files" {
     try testing.expectError(error.FileNotFound, fs.cwd().openFile(path, .{}));
 }
 
+test "LODManager enableCache deletes stale generator-keyed store and writes live header" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    try lod_store.writeHeader(testing.allocator, save_dir_path, .{
+        .seed = 42,
+        .generator_identity_hash = 1234,
+        .generator_version = 1,
+    });
+    const stale_key = lod_cache.Key{ .seed = 42, .generator_identity_hash = 1234, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
+    try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
+
+    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    manager.cache_dir_path = null;
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+
+    try testing.expect((try lod_store.readPayload(testing.allocator, save_dir_path, stale_key)) == null);
+    const header = (try lod_store.readHeader(testing.allocator, save_dir_path)).?;
+    try testing.expectEqual(@as(u64, 42), header.seed);
+    try testing.expectEqual(@as(u64, 99), header.generator_identity_hash);
+    try testing.expectEqual(@as(u32, 7), header.generator_version);
+}
+
+test "LODManager enableCache deletes stale data-version store" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    try lod_store.writeHeader(testing.allocator, save_dir_path, .{
+        .seed = 42,
+        .generator_identity_hash = 99,
+        .generator_version = 7,
+        .lod_data_version = lod_cache.CACHE_VERSION - 1,
+    });
+    const stale_key = lod_cache.Key{ .seed = 42, .generator_identity_hash = 99, .generator_version = 7, .rx = 0, .rz = 0, .lod = .lod1 };
+    try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
+
+    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    manager.cache_dir_path = null;
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+
+    try testing.expect((try lod_store.readPayload(testing.allocator, save_dir_path, stale_key)) == null);
+    const header = (try lod_store.readHeader(testing.allocator, save_dir_path)).?;
+    try testing.expectEqual(lod_cache.CACHE_VERSION, header.lod_data_version);
+}
+
 fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {
     var manager = LODManager.initCacheTestManager(allocator, "");
     manager.config = config.interface();
     for (0..LODLevel.count) |i| {
         manager.regions[i] = RegionMap.init(allocator);
         manager.meshes[i] = MeshMap.init(allocator);
+        manager.upload_queues[i] = try RingBuffer(*LODChunk).init(allocator, 4);
     }
     var bridge_ctx: u8 = 0;
     manager.gpu_bridge = .{
@@ -1965,14 +2138,19 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
 
         var mesh_iter = manager.meshes[i].iterator();
         while (mesh_iter.next()) |entry| {
+            if (entry.value_ptr.*.pending_vertices) |pending| {
+                manager.allocator.free(pending);
+            }
             manager.allocator.destroy(entry.value_ptr.*);
         }
         manager.meshes[i].deinit();
+        manager.upload_queues[i].deinit();
     }
     for (manager.deletion_queue.items) |mesh| {
         manager.allocator.destroy(mesh);
     }
     manager.deletion_queue.deinit(manager.allocator);
+    manager.edit_dirty.deinit();
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
@@ -1993,6 +2171,96 @@ fn putTestMesh(manager: *LODManager, key: LODRegionKey, capacity: u32) !*LODMesh
     return mesh;
 }
 
+fn putTestPendingMesh(manager: *LODManager, key: LODRegionKey, vertex_count: usize) !*LODMesh {
+    const mesh = try manager.allocator.create(LODMesh);
+    mesh.* = LODMesh.init(manager.allocator, key.lod);
+    mesh.pending_vertices = try manager.allocator.alloc(Vertex, vertex_count);
+    try manager.meshes[@intFromEnum(key.lod)].put(key, mesh);
+    return mesh;
+}
+
+const UploadMock = struct {
+    allocator: std.mem.Allocator,
+    calls: u32 = 0,
+    fail_with_pressure: bool = false,
+
+    fn bridge(self: *UploadMock) LODGPUBridge {
+        return .{
+            .on_upload = upload,
+            .on_destroy = destroy,
+            .on_wait_idle = waitIdle,
+            .ctx = @ptrCast(self),
+        };
+    }
+
+    fn upload(mesh: *LODMesh, ctx: *anyopaque) @import("engine-rhi").RhiError!void {
+        const self: *UploadMock = @ptrCast(@alignCast(ctx));
+        self.calls += 1;
+        if (self.fail_with_pressure) return error.OutOfMemory;
+        if (mesh.pending_vertices) |pending| {
+            mesh.vertex_count = @intCast(pending.len);
+            mesh.opaque_vertex_count = @intCast(pending.len);
+            mesh.ready = true;
+            self.allocator.free(pending);
+            mesh.pending_vertices = null;
+        }
+    }
+
+    fn destroy(_: *LODMesh, _: *anyopaque) void {}
+    fn waitIdle(_: *anyopaque) void {}
+};
+
+test "LODManager upload budget defers remaining queued meshes" {
+    var config = LODConfig{ .max_uploads_per_frame = 8 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var mock = UploadMock{ .allocator = testing.allocator };
+    manager.gpu_bridge = mock.bridge();
+
+    const first_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const second_key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod1 };
+    const first = try putTestRegion(&manager, first_key, .uploading);
+    const second = try putTestRegion(&manager, second_key, .uploading);
+    _ = try putTestPendingMesh(&manager, first_key, 1);
+    _ = try putTestPendingMesh(&manager, second_key, 1);
+    try manager.upload_queues[1].push(first);
+    try manager.upload_queues[1].push(second);
+
+    manager.processUploadsWithBudget(@sizeOf(Vertex));
+
+    try testing.expectEqual(@as(u32, 1), mock.calls);
+    try testing.expectEqual(LODState.renderable, first.state);
+    try testing.expectEqual(LODState.uploading, second.state);
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
+}
+
+test "LODManager staging pressure failure stops upload sweep" {
+    var config = LODConfig{ .max_uploads_per_frame = 8 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var mock = UploadMock{ .allocator = testing.allocator, .fail_with_pressure = true };
+    manager.gpu_bridge = mock.bridge();
+
+    const first_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const second_key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod1 };
+    const first = try putTestRegion(&manager, first_key, .uploading);
+    const second = try putTestRegion(&manager, second_key, .uploading);
+    _ = try putTestPendingMesh(&manager, first_key, 1);
+    _ = try putTestPendingMesh(&manager, second_key, 1);
+    try manager.upload_queues[1].push(first);
+    try manager.upload_queues[1].push(second);
+
+    manager.processUploadsWithBudget(DEFAULT_LOD_UPLOAD_BUDGET_BYTES);
+
+    try testing.expectEqual(@as(u32, 1), mock.calls);
+    try testing.expectEqual(LODState.uploading, first.state);
+    try testing.expectEqual(LODState.uploading, second.state);
+    try testing.expectEqual(@as(usize, 2), manager.upload_queues[1].count());
+    try testing.expectEqual(@as(u32, 1), manager.stats.upload_failures);
+}
+
 test "LODManager ready child counters update on renderable transitions and removal" {
     var config = LODConfig{};
     var manager = try initEvictionTestManager(testing.allocator, &config);
@@ -2009,6 +2277,27 @@ test "LODManager ready child counters update on renderable transitions and remov
     try testing.expectEqual(@as(u8, 1), parent.ready_children);
 
     manager.noteRegionRemoved(child_key, child);
+    try testing.expectEqual(@as(u8, 0), parent.ready_children);
+}
+
+test "LODManager demoting renderable child clears parent coverage" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const child_key = LODRegionKey{ .rx = 2, .rz = 0, .lod = .lod1 };
+    const child = try putTestRegion(&manager, child_key, .mesh_ready);
+    _ = try putTestMesh(&manager, child_key, 1);
+    manager.markRegionRenderable(child_key, child);
+
+    const parent_key = child_key.parentKey().?;
+    const parent = try putTestRegion(&manager, parent_key, .mesh_ready);
+    manager.markRegionRenderable(parent_key, parent);
+    try testing.expectEqual(@as(u8, 1), parent.ready_children);
+
+    manager.demoteRegionForRemesh(child_key, child);
+
+    try testing.expectEqual(LODState.generated, child.state);
     try testing.expectEqual(@as(u8, 0), parent.ready_children);
 }
 

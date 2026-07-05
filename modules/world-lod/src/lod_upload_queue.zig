@@ -73,6 +73,11 @@ pub const RegionMap = std.HashMap(LODRegionKey, *LODChunk, LODRegionKeyContext, 
 /// Callback type to check if a regular chunk is loaded and renderable.
 pub const ChunkChecker = *const fn (chunk_x: i32, chunk_z: i32, ctx: *anyopaque) bool;
 
+pub const LODRenderLayer = enum {
+    terrain,
+    fluid,
+};
+
 /// Type-erased interface for LOD rendering.
 /// Allows LODManager to delegate rendering without knowing the concrete RHI type.
 pub const LODRenderInterface = struct {
@@ -88,6 +93,7 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        layer: LODRenderLayer,
         stats: ?*LODStats,
     ) void,
     /// Destroy renderer resources.
@@ -106,9 +112,10 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        layer: LODRenderLayer,
         stats: ?*LODStats,
     ) void {
-        self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats);
+        self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats);
     }
 
     pub fn deinit(self: LODRenderInterface) void {

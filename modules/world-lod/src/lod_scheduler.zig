@@ -3,6 +3,7 @@
 const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODChunk = lod_chunk.LODChunk;
+const LODConfig = lod_chunk.LODConfig;
 const LODRegionKey = lod_chunk.LODRegionKey;
 const ILODConfig = lod_chunk.ILODConfig;
 const Vec3 = @import("engine-math").Vec3;
@@ -40,12 +41,42 @@ const QueueDiag = struct {
     outside_radius: u32 = 0,
     covered_chunks: u32 = 0,
     existing: u32 = 0,
+    candidates: u32 = 0,
     queued: u32 = 0,
 };
 
-fn lodPriorityBias(lod: LODLevel) i32 {
-    const lod_idx: u3 = @intFromEnum(lod);
-    return @as(i32, @intCast(LODLevel.count - 1 - lod_idx)) << 28;
+const LOD0_QUEUE_CANDIDATE_LIMIT: usize = 96;
+const LOD1_QUEUE_CANDIDATE_LIMIT: usize = 64;
+const HORIZON_QUEUE_CANDIDATE_LIMIT: usize = 24;
+const REFINEMENT_QUEUE_CANDIDATE_LIMIT: usize = 48;
+
+pub fn priorityRank(lod: LODLevel, active_lod_count: usize) usize {
+    const lod_idx: usize = @intFromEnum(lod);
+    const coarsest_idx = if (active_lod_count == 0) 0 else active_lod_count - 1;
+    return if (lod_idx == coarsest_idx)
+        0
+    else
+        lod_idx + 1;
+}
+
+pub fn priorityLevelIndex(order_idx: usize, active_lod_count: usize) usize {
+    if (active_lod_count == 0) return 0;
+    if (order_idx == 0) return active_lod_count - 1;
+    return order_idx - 1;
+}
+
+fn lodPriorityBias(lod: LODLevel, active_lod_count: usize) i32 {
+    const rank = priorityRank(lod, active_lod_count);
+    return @as(i32, @intCast(rank)) << 28;
+}
+
+fn maxQueueCandidatesForLOD(lod: LODLevel, active_lod_count: usize) usize {
+    const lod_idx: usize = @intFromEnum(lod);
+    const coarsest_idx = if (active_lod_count == 0) 0 else active_lod_count - 1;
+    if (lod_idx == 0) return LOD0_QUEUE_CANDIDATE_LIMIT;
+    if (lod_idx == 1) return LOD1_QUEUE_CANDIDATE_LIMIT;
+    if (lod_idx == coarsest_idx) return HORIZON_QUEUE_CANDIDATE_LIMIT;
+    return REFINEMENT_QUEUE_CANDIDATE_LIMIT;
 }
 
 pub fn priorityWeightForVelocity(velocity: Vec3, chunk_dx: i32, chunk_dz: i32) f32 {
@@ -63,11 +94,11 @@ pub fn priorityWeightForVelocity(velocity: Vec3, chunk_dx: i32, chunk_dz: i32) f
     return 1.0 - dot * 0.5;
 }
 
-pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec3) i32 {
+pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec3, active_lod_count: usize) i32 {
     const dist_sq = @as(i64, chunk_dx) * @as(i64, chunk_dx) + @as(i64, chunk_dz) * @as(i64, chunk_dz);
     const weighted = @as(f64, @floatFromInt(dist_sq)) * @as(f64, priorityWeightForVelocity(velocity, chunk_dx, chunk_dz));
     const priority: i32 = @intFromFloat(@min(weighted, @as(f64, @floatFromInt(@as(i32, 0x0FFFFFFF)))));
-    return (priority & 0x0FFFFFFF) | lodPriorityBias(lod);
+    return (priority & 0x0FFFFFFF) | lodPriorityBias(lod, active_lod_count);
 }
 
 /// Queue LOD regions that need generation.
@@ -78,9 +109,6 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     // coarsest horizon band, which must keep filling regardless of pressure.
     const is_coarsest = (idx + 1 >= LODLevel.count) or (idx + 1 >= ctx.config.getActiveLODCount());
     const radius = if (is_coarsest) radii[idx] else @max(0, radii[idx] - ctx.radius_reduction[idx]);
-
-    // Skip LOD0 - handled by existing World system.
-    if (lod == .lod0) return;
 
     const scale: i32 = @intCast(lod.chunksPerSide());
     const region_radius = @divFloor(radius, scale) + 1;
@@ -94,6 +122,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     const storage = &ctx.regions[@intFromEnum(lod)];
     const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
     var diag = QueueDiag{};
+    const active_lod_count = lod_chunk.activeLODCount(ctx.config);
 
     // All LOD jobs go to the highest LOD queue. Encode the actual LOD in priority bits.
     const queue = ctx.gen_queues[LODLevel.count - 1];
@@ -145,18 +174,15 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                     break :blk c;
                 };
 
-                chunk.job_token = ctx.next_job_token.*;
-                ctx.next_job_token.* += 1;
-
                 const center_cx = key.rx * scale + @divFloor(scale, 2);
                 const center_cz = key.rz * scale + @divFloor(scale, 2);
-                const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity);
+                const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
 
-                // Append before flipping state so an allocation failure leaves
-                // the chunk re-queueable in .missing instead of stuck .generating.
+                // Append before flipping state so allocation failure or the
+                // per-frame cap leaves the chunk re-queueable in .missing
+                // instead of stuck .generating without a queued job.
                 try candidates.append(ctx.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority });
-                chunk.state = .generating;
-                diag.queued += 1;
+                diag.candidates += 1;
             }
         }
     }
@@ -167,8 +193,13 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         }
     }.lessThan);
 
-    for (candidates.items) |cand| {
-        try queue.push(.{
+    const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
+    const push_count = @min(candidates.items.len, max_candidates);
+    for (candidates.items[0..push_count]) |cand| {
+        cand.chunk.job_token = ctx.next_job_token.*;
+        ctx.next_job_token.* += 1;
+        cand.chunk.state = .generating;
+        queue.push(.{
             .type = .chunk_generation,
             .dist_sq = cand.encoded_priority,
             .data = .{
@@ -177,9 +208,14 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                     .z = cand.chunk.region_z,
                     .job_token = cand.chunk.job_token,
                     .lod_level = lod_idx,
+                    .coord_scale = scale,
                 },
             },
-        });
+        }) catch |err| {
+            cand.chunk.state = .missing;
+            return err;
+        };
+        diag.queued += 1;
     }
 
     if (diag_enabled) {
@@ -189,7 +225,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         const diag_lod_idx = @intFromEnum(lod);
         S.counter[diag_lod_idx] += 1;
         if (S.counter[diag_lod_idx] % 120 == 1) {
-            log.log.info("LOD_QUEUE_DIAG lod={} radius={} scale={} considered={} outside={} covered={} existing={} queued={} player_chunk=({}, {})", .{
+            log.log.info("LOD_QUEUE_DIAG lod={} radius={} scale={} considered={} outside={} covered={} existing={} candidates={} queued={} player_chunk=({}, {})", .{
                 diag_lod_idx,
                 radius,
                 scale,
@@ -197,6 +233,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                 diag.outside_radius,
                 diag.covered_chunks,
                 diag.existing,
+                diag.candidates,
                 diag.queued,
                 ctx.player_cx,
                 ctx.player_cz,
@@ -205,18 +242,169 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     }
 }
 
-test "LOD scheduling prioritizes coarse horizon before near LODs" {
-    try std.testing.expect(lodPriorityBias(.lod4) < lodPriorityBias(.lod3));
-    try std.testing.expect(lodPriorityBias(.lod3) < lodPriorityBias(.lod2));
-    try std.testing.expect(lodPriorityBias(.lod2) < lodPriorityBias(.lod1));
+test "LOD scheduling seeds horizon before detailed refinements" {
+    try std.testing.expect(lodPriorityBias(.lod4, LODLevel.count) < lodPriorityBias(.lod0, LODLevel.count));
+    try std.testing.expect(lodPriorityBias(.lod0, LODLevel.count) < lodPriorityBias(.lod1, LODLevel.count));
+    try std.testing.expect(lodPriorityBias(.lod1, LODLevel.count) < lodPriorityBias(.lod2, LODLevel.count));
+    try std.testing.expect(lodPriorityBias(.lod2, LODLevel.count) < lodPriorityBias(.lod3, LODLevel.count));
+
+    try std.testing.expect(lodPriorityBias(.lod3, 4) < lodPriorityBias(.lod0, 4));
+    try std.testing.expect(lodPriorityBias(.lod0, 4) < lodPriorityBias(.lod1, 4));
+
+    try std.testing.expectEqual(@as(usize, 4), priorityLevelIndex(0, LODLevel.count));
+    try std.testing.expectEqual(@as(usize, 0), priorityLevelIndex(1, LODLevel.count));
+    try std.testing.expectEqual(@as(usize, 1), priorityLevelIndex(2, LODLevel.count));
+    try std.testing.expectEqual(@as(usize, 2), priorityLevelIndex(3, LODLevel.count));
+    try std.testing.expectEqual(@as(usize, 3), priorityLevelIndex(4, LODLevel.count));
+}
+
+test "LOD scheduling queues LOD0 generation jobs" {
+    const allocator = std.testing.allocator;
+
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (&regions) |*region_map| region_map.* = RegionMap.init(allocator);
+    defer {
+        for (&regions) |*region_map| {
+            var it = region_map.iterator();
+            while (it.next()) |entry| {
+                const chunk = entry.value_ptr.*;
+                chunk.deinit(allocator);
+                allocator.destroy(chunk);
+            }
+            region_map.deinit();
+        }
+    }
+
+    var queues: [LODLevel.count]JobQueue = undefined;
+    var queue_ptrs: [LODLevel.count]*JobQueue = undefined;
+    for (&queues, 0..) |*queue, i| {
+        queue.* = JobQueue.init(allocator);
+        queue_ptrs[i] = queue;
+    }
+    defer for (&queues) |*queue| queue.deinit();
+
+    var config = LODConfig{
+        .chunk_render_radius = 2,
+        .radii = .{ 5, 12, 24, 48, 96 },
+    };
+    var mutex: sync.RwLock = .{};
+    var next_job_token: u32 = 1;
+    var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var coverage_ctx: u8 = 0;
+    const Coverage = struct {
+        fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
+            return false;
+        }
+    };
+
+    try queueLODRegions(.{
+        .allocator = allocator,
+        .config = config.interface(),
+        .regions = &regions,
+        .gen_queues = &queue_ptrs,
+        .mutex = &mutex,
+        .player_cx = 0,
+        .player_cz = 0,
+        .next_job_token = &next_job_token,
+        .cleanup_covered_regions = false,
+        .coverage_ptr = &coverage_ctx,
+        .are_all_chunks_loaded = Coverage.neverCovered,
+        .radius_reduction = &radius_reduction,
+    }, .lod0, Vec3.zero, null, null);
+
+    const queue = queue_ptrs[LODLevel.count - 1];
+    try std.testing.expect(queue.count() > 0);
+    const job = queue.pop().?;
+    try std.testing.expectEqual(engine_core.job_system.JobType.chunk_generation, job.type);
+    try std.testing.expectEqual(@as(u3, 0), job.data.chunk.lod_level);
+
+    const key = LODRegionKey{ .rx = job.data.chunk.x, .rz = job.data.chunk.z, .lod = .lod0 };
+    const chunk = regions[0].get(key).?;
+    try std.testing.expectEqual(lod_chunk.LODState.generating, chunk.state);
+}
+
+test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
+    const allocator = std.testing.allocator;
+
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (&regions) |*region_map| region_map.* = RegionMap.init(allocator);
+    defer {
+        for (&regions) |*region_map| {
+            var it = region_map.iterator();
+            while (it.next()) |entry| {
+                const chunk = entry.value_ptr.*;
+                chunk.deinit(allocator);
+                allocator.destroy(chunk);
+            }
+            region_map.deinit();
+        }
+    }
+
+    var queues: [LODLevel.count]JobQueue = undefined;
+    var queue_ptrs: [LODLevel.count]*JobQueue = undefined;
+    for (&queues, 0..) |*queue, i| {
+        queue.* = JobQueue.init(allocator);
+        queue_ptrs[i] = queue;
+    }
+    defer for (&queues) |*queue| queue.deinit();
+
+    var config = LODConfig{
+        .chunk_render_radius = 16,
+        .radii = .{ 64, 128, 256, 384, 512 },
+    };
+    var mutex: sync.RwLock = .{};
+    var next_job_token: u32 = 1;
+    var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var coverage_ctx: u8 = 0;
+    const Coverage = struct {
+        fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
+            return false;
+        }
+    };
+    const ctx = SchedulerContext{
+        .allocator = allocator,
+        .config = config.interface(),
+        .regions = &regions,
+        .gen_queues = &queue_ptrs,
+        .mutex = &mutex,
+        .player_cx = 0,
+        .player_cz = 0,
+        .next_job_token = &next_job_token,
+        .cleanup_covered_regions = false,
+        .coverage_ptr = &coverage_ctx,
+        .are_all_chunks_loaded = Coverage.neverCovered,
+        .radius_reduction = &radius_reduction,
+    };
+
+    try queueLODRegions(ctx, .lod0, Vec3.zero, null, null);
+    try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
+
+    const queue = queue_ptrs[LODLevel.count - 1];
+    const total = queue.count();
+    try std.testing.expectEqual(LOD0_QUEUE_CANDIDATE_LIMIT + HORIZON_QUEUE_CANDIDATE_LIMIT, total);
+
+    const first_job = queue.pop().?;
+    try std.testing.expectEqual(@intFromEnum(LODLevel.lod4), first_job.data.chunk.lod_level);
+
+    var lod0_count: usize = 0;
+    var horizon_count: usize = 1;
+    var i: usize = 1;
+    while (i < total) : (i += 1) {
+        const job = queue.pop().?;
+        if (job.data.chunk.lod_level == @intFromEnum(LODLevel.lod0)) lod0_count += 1;
+        if (job.data.chunk.lod_level == @intFromEnum(LODLevel.lod4)) horizon_count += 1;
+    }
+
+    try std.testing.expectEqual(LOD0_QUEUE_CANDIDATE_LIMIT, lod0_count);
+    try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, horizon_count);
 }
 
 test "LOD scheduling biases priorities toward movement direction" {
     const velocity = Vec3.init(10, 0, 0);
-    const ahead = encodePriority(.lod2, 10, 0, velocity) & 0x0FFFFFFF;
-    const behind = encodePriority(.lod2, -10, 0, velocity) & 0x0FFFFFFF;
-    const stationary_ahead = encodePriority(.lod2, 10, 0, Vec3.zero) & 0x0FFFFFFF;
-    const stationary_behind = encodePriority(.lod2, -10, 0, Vec3.zero) & 0x0FFFFFFF;
+    const ahead = encodePriority(.lod2, 10, 0, velocity, LODLevel.count) & 0x0FFFFFFF;
+    const behind = encodePriority(.lod2, -10, 0, velocity, LODLevel.count) & 0x0FFFFFFF;
+    const stationary_ahead = encodePriority(.lod2, 10, 0, Vec3.zero, LODLevel.count) & 0x0FFFFFFF;
+    const stationary_behind = encodePriority(.lod2, -10, 0, Vec3.zero, LODLevel.count) & 0x0FFFFFFF;
 
     try std.testing.expect(ahead < behind);
     try std.testing.expectEqual(stationary_ahead, stationary_behind);

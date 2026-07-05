@@ -115,17 +115,14 @@ pub const GameSession = struct {
 
         const effective_horizon_distance = @max(horizon_distance, effective_render_distance);
         const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0] or effective_horizon_distance != preset_cfg.horizon_radius;
-        var preset_radii = if (!strict_safe_mode and manual_distance_expanded)
-            LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance)
-        else blk: {
-            var radii = preset_cfg.lod_radii;
-            radii[LODLevel.count - 1] = effective_horizon_distance;
-            break :blk radii;
-        };
-        preset_radii[0] = if (strict_safe_mode)
+        const chunk_render_radius = if (strict_safe_mode)
             @min(effective_render_distance, 8)
         else
-            @min(effective_render_distance, preset_radii[0]);
+            effective_render_distance;
+        var preset_radii = if (strict_safe_mode)
+            LODConfig.radiiForDistances(chunk_render_radius, @max(effective_horizon_distance, 64))
+        else
+            LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance);
 
         const active_count = if (!strict_safe_mode and manual_distance_expanded)
             LODConfig.activeCountForRenderDistance(effective_render_distance)
@@ -140,16 +137,12 @@ pub const GameSession = struct {
 
         const lod_config = if (strict_safe_mode)
             LODConfig{
-                .radii = .{
-                    @min(effective_render_distance, 8),
-                    12,
-                    24,
-                    40,
-                    64,
-                },
+                .chunk_render_radius = chunk_render_radius,
+                .radii = preset_radii,
             }
         else
             LODConfig{
+                .chunk_render_radius = chunk_render_radius,
                 .radii = preset_radii,
                 .fog_start_percent = preset_cfg.fog_start_percent,
                 .horizontal_detail = preset_cfg.horizontal_detail,

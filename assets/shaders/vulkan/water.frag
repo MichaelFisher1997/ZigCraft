@@ -10,6 +10,8 @@ layout(location = 6) in vec3 vBlockLight;
 layout(location = 7) in vec3 vFragPosWorld;
 layout(location = 8) in float vViewDepth;
 layout(location = 9) in vec4 vClipPos;
+layout(location = 10) in float vMaskRadius;
+layout(location = 11) in float vLODFade;
 
 layout(location = 0) out vec4 FragColor;
 
@@ -70,6 +72,13 @@ float hash21(vec2 p) {
     return fract(p.x * p.y);
 }
 
+float lodTransitionNoise(vec2 worldXZ) {
+    vec2 p = floor(worldXZ * 0.25);
+    p = fract(p * vec2(0.1031, 0.1030));
+    p += dot(p, p.yx + 33.33);
+    return fract((p.x + p.y) * p.x);
+}
+
 float valueNoise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -120,6 +129,19 @@ vec2 atlasUV(int tileID, vec2 texCoord) {
 }
 
 void main() {
+    const float LOD_TRANSITION_WIDTH = 32.0;
+    bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
+    if (vMaskRadius >= 1.0) {
+        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
+        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
+        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
+        if (fade < lodTransitionNoise(worldXZ)) discard;
+    }
+    if (vMaskRadius > 0.0 && vLODFade < 0.999) {
+        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
+        if (vLODFade < lodTransitionNoise(worldXZ + vec2(19.37, 41.91))) discard;
+    }
+
     float time = global.params.x;
 
     vec3 base_normal = normalize(vNormal);
@@ -160,7 +182,13 @@ void main() {
     water_depth = max(water_depth, 0.0);
 
     float depth_factor = smoothstep(0.0, 1.0, clamp(water_depth / WATER_MAX_DEPTH, 0.0, 1.0));
+    float distance_water_mass = smoothstep(96.0, 520.0, vDistance);
+    float water_mass = max(depth_factor, distance_water_mass);
     float edge_depth = 1.0 - smoothstep(0.0, 2.5, water_depth);
+    if (isLOD) {
+        water_mass = max(water_mass, 0.82);
+        edge_depth *= 0.25;
+    }
 
     vec2 uv = atlasUV(vTileID, vTexCoord + vec2(time * 0.025, time * 0.012));
     vec2 uv2 = atlasUV(vTileID, vTexCoord * 0.5 + vec2(-time * 0.018, time * 0.020));
@@ -170,11 +198,13 @@ void main() {
 
     vec3 depth_color = mix(WATER_SHALLOW, mix(WATER_MID, WATER_DEEP, depth_factor), depth_factor);
     vec3 tint = mix(vec3(1.0), clamp(vColor * 1.35, 0.0, 1.0), 0.25);
-    vec3 waterColor = mix(depth_color, water_tex * depth_color * 1.8, 0.42) * tint;
+    float texture_mix = isLOD ? 0.18 : 0.42;
+    vec3 waterColor = mix(depth_color, water_tex * depth_color * 1.8, texture_mix) * tint;
 
     float tile_grid = max(smoothstep(0.030, 0.0, fract(vTexCoord.x)), smoothstep(0.030, 0.0, fract(vTexCoord.y)));
-    waterColor *= 1.0 - tile_grid * 0.045;
+    waterColor *= 1.0 - tile_grid * (isLOD ? 0.012 : 0.045);
     waterColor = mix(waterColor, WATER_SHALLOW * 1.18, edge_depth * 0.18);
+    waterColor = mix(waterColor, mix(WATER_MID, WATER_DEEP, water_mass), water_mass * 0.34);
 
     vec3 reflected = mix(reflectionColor, envColor, 0.45);
     waterColor = mix(waterColor, reflected, fresnel * 0.16);
@@ -194,13 +224,16 @@ void main() {
 
     if (global.params.z > 0.5) {
         float rawFog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
-        waterColor = mix(waterColor, global.fog_color.rgb, rawFog * rawFog * 0.65);
+        float fogBlend = max(rawFog * rawFog * 0.65, water_mass * 0.28);
+        if (isLOD) fogBlend = max(fogBlend, smoothstep(260.0, 1000.0, vDistance) * 0.56);
+        waterColor = mix(waterColor, global.fog_color.rgb, fogBlend);
     }
 
-    float alpha = mix(0.62, 0.84, depth_factor);
+    float alpha = mix(0.66, 0.94, water_mass);
     alpha = mix(alpha, 0.90, fresnel * 0.20);
     alpha = mix(alpha, 0.56, edge_depth * 0.18);
-    alpha = clamp(alpha, 0.52, 0.88);
+    if (isLOD) alpha = max(alpha, 0.93);
+    alpha = clamp(alpha, 0.56, 0.96);
 
     FragColor = vec4(waterColor, alpha);
 }
