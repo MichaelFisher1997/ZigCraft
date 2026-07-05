@@ -293,7 +293,7 @@ pub const World = struct {
         errdefer world.generator.deinit(allocator);
 
         log.log.info("World.init: initializing WorldRenderer", .{});
-        const culling_size = options.rhi.getRenderResolution();
+        const culling_size = options.rhi.query().getRenderResolution();
         var culling_system = if (!safe_mode) blk: {
             break :blk options.rhi.createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
                 log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
