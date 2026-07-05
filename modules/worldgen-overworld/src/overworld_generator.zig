@@ -423,7 +423,9 @@ pub const OverworldGenerator = struct {
 
         const hints = self.computeChunkTreeHints(chunk_x, chunk_z);
         const result = hints[idx];
-        cache.put(key, hints) catch {};
+        cache.put(key, hints) catch |err| {
+            log.log.warn("TreeHintCache: failed to cache tree hints for chunk ({}, {}): {}", .{ chunk_x, chunk_z, err });
+        };
         return result;
     }
 
@@ -448,10 +450,14 @@ pub const OverworldGenerator = struct {
             var chunk_x = min_chunk_x;
             while (chunk_x <= max_chunk_x) : (chunk_x += 1) {
                 const key = treeHintCacheKey(chunk_x, chunk_z);
-                if (!cache.contains(key)) {
-                    cache.put(key, self.computeChunkTreeHints(chunk_x, chunk_z)) catch {};
-                }
-                const hints = cache.get(key) orelse continue;
+                const hints = blk: {
+                    if (cache.get(key)) |cached| break :blk cached;
+                    const computed = self.computeChunkTreeHints(chunk_x, chunk_z);
+                    cache.put(key, computed) catch |err| {
+                        log.log.warn("TreeHintCache: failed to cache tree hints for chunk ({}, {}): {}", .{ chunk_x, chunk_z, err });
+                    };
+                    break :blk computed;
+                };
                 const chunk_world_x = chunk_x * @as(i32, @intCast(CHUNK_SIZE_X));
                 const chunk_world_z = chunk_z * @as(i32, @intCast(CHUNK_SIZE_Z));
 
