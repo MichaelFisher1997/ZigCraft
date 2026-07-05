@@ -79,7 +79,7 @@ pub const DECORATIONS = [_]Decoration{
         .requires_water = true,
         .min_water_depth = 2,
         .max_water_depth = 12,
-        .probability = 0.18,
+        .probability = 0.08,
     } },
     .{ .simple = .{
         .block = .tall_seagrass,
@@ -88,7 +88,7 @@ pub const DECORATIONS = [_]Decoration{
         .requires_water = true,
         .min_water_depth = 4,
         .max_water_depth = 14,
-        .probability = 0.08,
+        .probability = 0.04,
     } },
     .{ .simple = .{
         .block = .kelp,
@@ -97,7 +97,7 @@ pub const DECORATIONS = [_]Decoration{
         .requires_water = true,
         .min_water_depth = 6,
         .max_water_depth = 30,
-        .probability = 0.08,
+        .probability = 0.04,
     } },
     .{ .simple = .{
         .block = .coral_fan,
@@ -106,7 +106,7 @@ pub const DECORATIONS = [_]Decoration{
         .requires_water = true,
         .min_water_depth = 2,
         .max_water_depth = 10,
-        .probability = 0.06,
+        .probability = 0.035,
     } },
 
     // === Boulders (Rocky Patches: Variant > 0.6) ===

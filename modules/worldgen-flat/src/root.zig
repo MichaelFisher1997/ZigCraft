@@ -80,6 +80,16 @@ pub const FlatWorldGenerator = struct {
         @memset(data.water, world_core.LODWaterState.empty);
         @memset(data.lighting, world_core.LODLightingHint.daylight);
         @memset(data.vegetation, world_core.LODVegetationHint.empty);
+
+        if (data.hasVerticalSpans()) {
+            var gz: u32 = 0;
+            while (gz < data.width) : (gz += 1) {
+                var gx: u32 = 0;
+                while (gx < data.width) : (gx += 1) {
+                    data.setGeneratedColumn(gx, gz, @floatFromInt(FLAT_HEIGHT), .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, GRASS_COLOR, world_core.LODWaterState.empty, world_core.LODLightingHint.daylight, world_core.LODVegetationHint.empty);
+                }
+            }
+        }
     }
 
     pub fn maybeRecenterCache(self: *FlatWorldGenerator, player_x: i32, player_z: i32) bool {

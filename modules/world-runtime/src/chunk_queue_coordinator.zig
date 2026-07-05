@@ -19,6 +19,8 @@ const log = @import("engine-core").log;
 const SaveManager = @import("world-persistence").SaveManager;
 const LoadResult = @import("world-persistence").LoadResult;
 const GpuAccelerationCoordinator = @import("gpu_acceleration_coordinator.zig").GpuAccelerationCoordinator;
+const LODManager = @import("world-lod").LODManager;
+const LODColumnProvenance = @import("world-core").LODColumnProvenance;
 
 pub const ChunkQueueCoordinator = struct {
     allocator: std.mem.Allocator,
@@ -32,12 +34,15 @@ pub const ChunkQueueCoordinator = struct {
     gpu: *GpuAccelerationCoordinator,
     max_uploads_per_frame: usize,
     save_manager: ?*SaveManager = null,
+    // Optional LOD manager fed chunk-derived data after generation/load.
+    lod_manager: ?*LODManager = null,
 
     chunks_generated_total: std.atomic.Value(u64) = .init(0),
     chunks_meshed_total: std.atomic.Value(u64) = .init(0),
     chunks_uploaded_total: std.atomic.Value(u64) = .init(0),
-    last_pc: struct { x: i32, z: i32 } = .{ .x = 0, .z = 0 },
-    effective_render_dist: i32 = 0,
+    last_pc_x: std.atomic.Value(i32) = .init(0),
+    last_pc_z: std.atomic.Value(i32) = .init(0),
+    effective_render_dist: std.atomic.Value(i32) = .init(0),
 
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, gen_queue: *JobQueue, mesh_queue: *JobQueue, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu: *GpuAccelerationCoordinator) !ChunkQueueCoordinator {
         return .{
@@ -62,9 +67,14 @@ pub const ChunkQueueCoordinator = struct {
         self.save_manager = sm;
     }
 
+    pub fn setLODManager(self: *ChunkQueueCoordinator, mgr: ?*LODManager) void {
+        self.lod_manager = mgr;
+    }
+
     pub fn setView(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32) void {
-        self.last_pc = .{ .x = pc_x, .z = pc_z };
-        self.effective_render_dist = render_dist;
+        self.last_pc_x.store(pc_x, .release);
+        self.last_pc_z.store(pc_z, .release);
+        self.effective_render_dist.store(render_dist, .release);
     }
 
     pub fn resetPausedChunks(self: *ChunkQueueCoordinator) void {
@@ -217,9 +227,12 @@ pub const ChunkQueueCoordinator = struct {
             return;
         };
 
-        const dx = cx - self.last_pc.x;
-        const dz = cz - self.last_pc.z;
-        const max_dist = self.effective_render_dist + CHUNK_UNLOAD_BUFFER;
+        const pc_x = self.last_pc_x.load(.acquire);
+        const pc_z = self.last_pc_z.load(.acquire);
+        const render_dist = self.effective_render_dist.load(.acquire);
+        const dx = cx - pc_x;
+        const dz = cz - pc_z;
+        const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
         if (dx * dx + dz * dz > max_dist * max_dist) {
             self.storage.chunks_mutex.unlockShared();
 
@@ -292,6 +305,14 @@ pub const ChunkQueueCoordinator = struct {
             self.storage.chunks_mutex.unlock();
             if (chunk_data.chunk.generated) {
                 self.markNeighborsForRemesh(cx, cz);
+                // Feed the real chunk into the LOD system so distant terrain is
+                // derived from actual blocks (chunk_derived provenance) instead
+                // of worldgen sampling. The chunk is pinned for this call.
+                if (engine_core.envFlag("ZIGCRAFT_LOD_CHUNK_INGEST", false)) {
+                    if (self.lod_manager) |mgr| {
+                        mgr.ingestChunk(cx, cz, &chunk_data.chunk, .chunk_derived);
+                    }
+                }
             }
         }
     }
@@ -307,9 +328,12 @@ pub const ChunkQueueCoordinator = struct {
             return;
         };
 
-        const dx = cx - self.last_pc.x;
-        const dz = cz - self.last_pc.z;
-        const max_dist = self.effective_render_dist + CHUNK_UNLOAD_BUFFER;
+        const pc_x = self.last_pc_x.load(.acquire);
+        const pc_z = self.last_pc_z.load(.acquire);
+        const render_dist = self.effective_render_dist.load(.acquire);
+        const dx = cx - pc_x;
+        const dz = cz - pc_z;
+        const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
         if (dx * dx + dz * dz > max_dist * max_dist) {
             self.storage.chunks_mutex.unlockShared();
 
@@ -434,8 +458,9 @@ test "stale generation job resets chunk to missing" {
         .vertex_allocator = undefined,
         .gpu = &gpu,
         .max_uploads_per_frame = 8,
-        .last_pc = .{ .x = 0, .z = 0 },
-        .effective_render_dist = 8,
+        .last_pc_x = std.atomic.Value(i32).init(0),
+        .last_pc_z = std.atomic.Value(i32).init(0),
+        .effective_render_dist = std.atomic.Value(i32).init(8),
     };
     defer coordinator.deinit();
 
@@ -471,8 +496,9 @@ test "stale mesh job resets chunk to generated" {
         .vertex_allocator = undefined,
         .gpu = &gpu,
         .max_uploads_per_frame = 8,
-        .last_pc = .{ .x = 0, .z = 0 },
-        .effective_render_dist = 8,
+        .last_pc_x = std.atomic.Value(i32).init(0),
+        .last_pc_z = std.atomic.Value(i32).init(0),
+        .effective_render_dist = std.atomic.Value(i32).init(8),
     };
     defer coordinator.deinit();
 

@@ -5,8 +5,9 @@ pub const LODLevel = enum(u3) {
     lod1 = 1,
     lod2 = 2,
     lod3 = 3,
+    lod4 = 4,
 
-    pub const count = 4;
+    pub const count = 5;
 
     pub fn scale(self: LODLevel) u32 {
         return @as(u32, 1) << @intFromEnum(self);

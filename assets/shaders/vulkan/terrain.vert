@@ -25,6 +25,7 @@ layout(location = 13) out vec4 vClipPosPrev;
 layout(location = 14) out float vMaskRadius;
 layout(location = 15) out float vEntranceBounce;
 layout(location = 16) out vec2 vEntranceDir;
+layout(location = 17) out float vLODFade;
 
 layout(set = 0, binding = 0) uniform GlobalUniforms {
     mat4 view_proj;
@@ -48,7 +49,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 struct InstanceData {
     mat4 model;
     float mask_radius;
-    float _pad0;
+    float lod_fade;
     float _pad1;
     float _pad2;
 };
@@ -87,16 +88,19 @@ vec3 decodeNormal(uint packed) {
 void main() {
     mat4 model;
     float mask_radius;
+    float lod_fade;
     vec3 color_override;
 
     if (model_data.mask_radius < 0.0) {
         InstanceData inst = instance_buf.instances[gl_InstanceIndex];
         model = inst.model;
         mask_radius = inst.mask_radius;
+        lod_fade = inst.lod_fade;
         color_override = vec3(1.0);
     } else {
         model = model_data.model;
         mask_radius = model_data.mask_radius;
+        lod_fade = 1.0;
         color_override = model_data.color_override.xyz;
     }
 
@@ -144,6 +148,7 @@ void main() {
     vViewDepth = clipPos.w;
     vAO = ao;
     vMaskRadius = mask_radius;
+    vLODFade = clamp(lod_fade, 0.0, 1.0);
 
     vec3 absNormal = abs(decodedNormal);
     if (absNormal.y > 0.9) {

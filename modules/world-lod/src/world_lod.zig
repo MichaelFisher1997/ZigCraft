@@ -24,6 +24,7 @@ const LODManager = @import("lod_manager.zig").LODManager;
 const LODStats = @import("lod_manager.zig").LODStats;
 const lod_gpu = @import("lod_upload_queue.zig");
 const ChunkChecker = lod_gpu.ChunkChecker;
+const LODRenderLayer = lod_gpu.LODRenderLayer;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 
@@ -68,7 +69,7 @@ pub fn WorldLOD(comptime RHI: type) type {
             };
 
             const radii = config.getRadii();
-            log.log.info("WorldLOD initialized (LOD3 radius: {} chunks)", .{radii[3]});
+            log.log.info("WorldLOD initialized (horizon radius: {} chunks)", .{radii[LODLevel.count - 1]});
 
             return lod;
         }
@@ -108,26 +109,35 @@ pub fn WorldLOD(comptime RHI: type) type {
             chunk_checker: ?ChunkChecker,
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
+            layer: LODRenderLayer,
         ) void {
-            self.manager.render(view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum);
+            self.manager.render(view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, null, layer);
         }
 
         pub fn setLOD0Radius(self: *Self, radius: i32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setLOD0Radius(radius);
-            log.log.info("LOD0 radius updated to match render distance: {}", .{radius});
+            log.log.info("LOD0 radius updated: {}", .{radius});
+        }
+
+        pub fn setChunkRenderRadius(self: *Self, radius: i32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
+            self.manager.config.setChunkRenderRadius(radius);
+            log.log.info("Chunk render radius updated: {}", .{radius});
         }
 
         pub fn setRadii(self: *Self, radii: [LODLevel.count]i32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setRadii(radii);
-            log.log.info("LOD radii updated: LOD0={}, LOD1={}, LOD2={}, LOD3={}", .{
-                radii[0],
-                radii[1],
-                radii[2],
-                radii[3],
-            });
+            log.log.info("LOD radii updated: {any}", .{radii});
         }
 
         pub fn setActiveLODCount(self: *Self, count: u32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setActiveLODCount(count);
             log.log.info("Active LOD count updated: {}", .{self.manager.config.getActiveLODCount()});
         }
@@ -145,6 +155,8 @@ pub fn WorldLOD(comptime RHI: type) type {
         }
 
         pub fn getRadii(self: *const Self) [LODLevel.count]i32 {
+            self.manager.mutex.lockShared();
+            defer self.manager.mutex.unlockShared();
             return self.manager.config.getRadii();
         }
     };

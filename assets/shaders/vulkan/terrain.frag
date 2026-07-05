@@ -17,6 +17,7 @@ layout(location = 13) in vec4 vClipPosPrev;
 layout(location = 14) in float vMaskRadius;
 layout(location = 15) in float vEntranceBounce;
 layout(location = 16) in vec2 vEntranceDir;
+layout(location = 17) in float vLODFade;
 
 layout(location = 0) out vec4 FragColor;
 
@@ -549,10 +550,10 @@ vec3 computeNonPBR(vec3 albedo, vec3 N, float nDotL, float totalShadow, float sk
     return ambientColor + directColor;
 }
 
-vec3 computeLOD(vec3 albedo, float nDotL, float totalShadow, float skyLightVal, float skyVisibility, vec3 blockLight, float ao, float ssao) {
+vec3 computeLOD(vec3 albedo, vec3 N, float nDotL, float totalShadow, float skyLightVal, float skyVisibility, vec3 blockLight, float ao, float ssao) {
     float atmosphere = skyVisibilityFactor(skyVisibility);
     float shadowAmbientFactor = mix(1.0, 0.2, totalShadow);
-    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), vec3(0.0, 1.0, 0.0)); // LOD uses up-facing normal
+    vec3 indirect = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), N);
     vec3 ambientColor = albedo * (max(vec3(skyLightVal * 0.8 * atmosphere), vec3(global.lighting.x * 0.08)) + blockLight + indirect) * ao * ssao * shadowAmbientFactor;
     vec3 sunColor = global.sun_color.rgb * global.params.w * SUN_VOLUMETRIC_INTENSITY / PI;
     vec3 directColor = albedo * sunColor * nDotL * (1.0 - totalShadow);
@@ -692,6 +693,12 @@ void main() {
         float ditherThreshold = lodTransitionNoise(worldXZ);
         if (fade < ditherThreshold) discard;
     }
+
+    if (isLOD && vLODFade < 0.999) {
+        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
+        float ditherThreshold = lodTransitionNoise(worldXZ + vec2(19.37, 41.91));
+        if (vLODFade < ditherThreshold) discard;
+    }
     
     vec2 tileBase = vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) * (1.0 / 16.0);
     vec2 tiledUV = fract(vTexCoord);
@@ -699,9 +706,6 @@ void main() {
     vec2 uv = tileBase + tiledUV * (1.0 / 16.0);
 
     vec3 N = normalize(vNormal);
-    if (isLOD) {
-        N = vec3(0.0, 1.0, 0.0);
-    }
     vec4 normalMapSample = vec4(0.5, 0.5, 1.0, 0.0);
     if (global.lighting.z > 0.5 && global.pbr_params.x > 1.5 && vTileID >= 0 && textureDetail > 0.2) {
         normalMapSample = texture(uNormalMap, uv);
@@ -734,7 +738,7 @@ void main() {
 
     if (global.render_flags.w > 0.5) {
         vec3 albedo = vColor;
-        if (global.lighting.y > 0.5 && vTileID >= 0) {
+        if (!isLOD && global.lighting.y > 0.5 && vTileID >= 0) {
             vec4 texColor = texture(uTexture, uv);
             if (texColor.a < 0.1) discard;
             outputAlpha = texColor.a;
@@ -753,7 +757,7 @@ void main() {
         }
         float beautyShadowAmount = (global.shadow_params.w > 0.5) ? shadowFactor : 0.0;
         color = computeSimpleLighting(albedo, N, L, vSkyLight, vEntranceBounce, vEntranceDir, vBlockLight, ao, beautyShadowAmount, debugDirectKey, debugSkyFill, debugBlockLight, debugOutdoor);
-    } else if (global.lighting.y > 0.5 && vTileID >= 0) {
+    } else if (!isLOD && global.lighting.y > 0.5 && vTileID >= 0) {
         vec4 texColor = texture(uTexture, uv);
         if (texColor.a < 0.1) discard;
         outputAlpha = texColor.a;
@@ -772,7 +776,10 @@ void main() {
             color = computeLegacyDirect(albedo, nDotL, totalShadow, vSkyLight, vBlockLight, LEGACY_LIGHTING_INTENSITY) * ao * ssao;
         }
     } else if (isLOD) {
-        color = computeLOD(vColor, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
+        color = computeLOD(vColor, N, nDotL, totalShadow, vSkyLight * global.lighting.x, skyVisibility, vBlockLight, ao, ssao);
+        float verticalFace = 1.0 - smoothstep(0.35, 0.85, abs(N.y));
+        float lodSunSide = mix(0.76, 1.08, nDotL);
+        color *= mix(1.0, lodSunSide, verticalFace);
     } else {
         color = computeLegacyDirect(vColor, nDotL, totalShadow, vSkyLight, vBlockLight, LOD_LIGHTING_INTENSITY) * ao * ssao;
     }
@@ -789,6 +796,11 @@ void main() {
     if (global.params.z > 0.5) {
         float rawFog = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0);
         float fogFactor = rawFog * rawFog * 0.72 * atmosphericVisibility;
+        if (isLOD) {
+            float lodEdgeFog = smoothstep(0.65, 1.0, vLODFade) * rawFog * atmosphericVisibility;
+            float lodHorizonFog = smoothstep(420.0, 1400.0, viewDistance) * atmosphericVisibility;
+            fogFactor = max(fogFactor, max(lodEdgeFog * 0.9, lodHorizonFog * 0.82));
+        }
         color = mix(color, global.fog_color.rgb, fogFactor);
     }
 

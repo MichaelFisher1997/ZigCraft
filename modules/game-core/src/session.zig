@@ -89,7 +89,7 @@ pub const GameSession = struct {
     debug_cascade_idx: usize = 0,
     build_config: BuildConfig = .{},
 
-    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
+    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, horizon_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
 
@@ -113,15 +113,16 @@ pub const GameSession = struct {
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
-        const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0];
-        var preset_radii = if (!strict_safe_mode and manual_distance_expanded)
-            LODConfig.radiiForRenderDistance(effective_render_distance)
-        else
-            preset_cfg.lod_radii;
-        preset_radii[0] = if (strict_safe_mode)
+        const effective_horizon_distance = @max(horizon_distance, effective_render_distance);
+        const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0] or effective_horizon_distance != preset_cfg.horizon_radius;
+        const chunk_render_radius = if (strict_safe_mode)
             @min(effective_render_distance, 8)
         else
-            @min(effective_render_distance, preset_radii[0]);
+            effective_render_distance;
+        var preset_radii = if (strict_safe_mode)
+            LODConfig.radiiForDistances(chunk_render_radius, @max(effective_horizon_distance, 64))
+        else
+            LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance);
 
         const active_count = if (!strict_safe_mode and manual_distance_expanded)
             LODConfig.activeCountForRenderDistance(effective_render_distance)
@@ -136,15 +137,12 @@ pub const GameSession = struct {
 
         const lod_config = if (strict_safe_mode)
             LODConfig{
-                .radii = .{
-                    @min(effective_render_distance, 8),
-                    12,
-                    24,
-                    40,
-                },
+                .chunk_render_radius = chunk_render_radius,
+                .radii = preset_radii,
             }
         else
             LODConfig{
+                .chunk_render_radius = chunk_render_radius,
                 .radii = preset_radii,
                 .fog_start_percent = preset_cfg.fog_start_percent,
                 .horizontal_detail = preset_cfg.horizontal_detail,
@@ -152,6 +150,7 @@ pub const GameSession = struct {
                 .mesh_path = preset_cfg.mesh_path,
                 .qem_triangle_targets = preset_cfg.qem_targets,
                 .memory_budget_mb = preset_cfg.memory_budget_mb,
+                .lod_store_size_cap_mb = preset_cfg.lod_store_size_cap_mb,
                 .max_uploads_per_frame = preset_cfg.max_uploads_per_frame,
                 .skip_cutout_lod2 = preset_cfg.skip_cutout_lod2,
                 .skip_lighting_lod3 = preset_cfg.skip_lighting_lod3,

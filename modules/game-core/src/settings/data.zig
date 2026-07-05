@@ -88,6 +88,7 @@ pub const RESOLUTIONS = [_]Resolution{
 
 pub const Settings = struct {
     render_distance: i32 = 15,
+    horizon_distance: i32 = 512,
     mouse_sensitivity: f32 = 50.0,
     vsync: bool = true,
     fov: f32 = 45.0,
@@ -202,6 +203,14 @@ pub const Settings = struct {
         pub const render_distance = SettingMetadata{
             .label = "RENDER DISTANCE",
             .kind = .{ .int_range = .{ .min = 2, .max = 32, .step = 1 } },
+        };
+        pub const horizon_distance = SettingMetadata{
+            .label = "HORIZON DISTANCE",
+            .description = "Coarsest LOD radius in chunks, independent of full-detail render distance",
+            .kind = .{ .choice = .{
+                .labels = &[_][]const u8{ "256 CHUNKS", "512 CHUNKS", "1024 CHUNKS", "2048 CHUNKS" },
+                .values = &[_]u32{ 256, 512, 1024, 2048 },
+            } },
         };
         pub const mouse_sensitivity = SettingMetadata{
             .label = "SENSITIVITY",

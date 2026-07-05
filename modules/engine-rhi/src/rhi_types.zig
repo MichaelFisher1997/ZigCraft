@@ -247,7 +247,8 @@ pub const DrawIndirectCommand = extern struct {
 pub const InstanceData = extern struct {
     model: Mat4,
     mask_radius: f32,
-    padding: [3]f32,
+    lod_fade: f32,
+    padding: [2]f32,
 };
 
 pub const SkyParams = struct {
