@@ -306,3 +306,119 @@ test "Frustum forward view at y=80 sees all nearby chunks" {
     }
     try testing.expectEqual(@as(u32, 0), not_visible);
 }
+
+// ---------------------------------------------------------------------------
+// Regression coverage for intersectsChunkRelative camera-relative semantics.
+//
+// The renderer builds the terrain view-projection from Camera.getViewMatrixOriginCentered
+// (rotation only, camera at origin; see render_graph OpaquePass.execute and the chunk
+// model matrices in world_renderer.zig that subtract camera_pos). The frustum passed to
+// intersectsChunkRelative therefore lives in CAMERA-RELATIVE space, and the chunk's
+// vertical center in that space is (CHUNK_SIZE_Y * 0.5) - cam_y. Audit issue #741
+// incorrectly assumed world space and proposed anchoring world_y to 0, which would
+// detach the bounding sphere from the camera and cull terrain whenever the camera is
+// high above the world. These tests pin the correct behavior and would fail under the
+// proposed "fix".
+// ---------------------------------------------------------------------------
+
+test "Frustum forward view sees chunk ahead across camera heights" {
+    const view = Mat4.lookAt(Vec3.zero, Vec3.init(0, 0, -1), Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 4.0, 1.5, 0.5, 10000.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    // Camera at y = 0, 80, 200, 256 (issue acceptance criteria) must all see the
+    // chunk directly in front. center.y tracks the camera as (128 - cam_y).
+    const cam_heights = [_]f32{ 0.0, 80.0, 128.0, 200.0, 256.0 };
+    for (cam_heights) |cam_y| {
+        try testing.expect(
+            frustum.intersectsChunkRelative(0, -3, 0, cam_y, 0),
+        );
+    }
+}
+
+test "Frustum looking down at chunk from high camera still sees it" {
+    // Direct refutation of the audit's "missing terrain when camera is high" claim.
+    // Camera is far above the terrain and aimed straight at the chunk, so the chunk
+    // MUST be visible. The camera-relative chunk center (chunk_center - cam) lies on
+    // the view axis, so the correct sphere is dead-center in the frustum. The proposed
+    // world-space "fix" (anchoring center.y at 128 regardless of cam_y) would instead
+    // place the sphere ~cam_y units above the view axis, far outside this narrow
+    // downward frustum, and incorrectly cull the chunk. Camera height 600 >> radius
+    // 144 guarantees the detached sphere can never reach back into the frustum.
+    const cam = Vec3.init(8.0, 600.0, 300.0);
+    const chunk_center_world = Vec3.init(8.0, 128.0, 8.0); // chunk (0, 0)
+    const view_dir = chunk_center_world.sub(cam);
+    const view = Mat4.lookAt(Vec3.zero, view_dir, Vec3.init(0, 1, 0));
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 4.0, 1.5, 0.5, 10000.0);
+    const frustum = Frustum.fromViewProj(proj.multiply(view));
+
+    try testing.expect(frustum.intersectsChunkRelative(0, 0, cam.x, cam.y, cam.z));
+    // Same setup with the camera lower (y = 200) must also see the chunk.
+    const cam2 = Vec3.init(8.0, 200.0, 120.0);
+    const view2 = Mat4.lookAt(Vec3.zero, chunk_center_world.sub(cam2), Vec3.init(0, 1, 0));
+    const frustum2 = Frustum.fromViewProj(proj.multiply(view2));
+    try testing.expect(frustum2.intersectsChunkRelative(0, 0, cam2.x, cam2.y, cam2.z));
+}
+
+test "Frustum intersectsChunkRelative matches independent circumscribed sphere" {
+    // Independent reference: the bounding sphere MUST be centered at the
+    // camera-relative chunk center with radius >= the true circumscribed radius
+    // sqrt(8^2 + 128^2 + 8^2) ~= 128.5. Because the implementation reuses that exact
+    // center and a larger radius (144), intersectsChunkRelative is required to report
+    // visible whenever the reference sphere does, for any frustum/camera/chunk combo.
+    // This directly verifies the sphere contains the full chunk (all 256 Y levels)
+    // and would fail if the center drifted out of camera-relative space.
+    const CHUNK_SIZE_X: f32 = 16.0;
+    const CHUNK_SIZE_Y: f32 = 256.0;
+    const CHUNK_SIZE_Z: f32 = 16.0;
+    const half_x: f32 = CHUNK_SIZE_X * 0.5;
+    const half_y: f32 = CHUNK_SIZE_Y * 0.5;
+    const half_z: f32 = CHUNK_SIZE_Z * 0.5;
+    const ref_radius: f32 = @sqrt(half_x * half_x + half_y * half_y + half_z * half_z);
+
+    const Dir = struct { fwd: Vec3, up: Vec3 };
+    const directions = [_]Dir{
+        .{ .fwd = Vec3.init(0, 0, -1), .up = Vec3.init(0, 1, 0) }, // forward
+        .{ .fwd = Vec3.init(0, -1, 0), .up = Vec3.init(0, 0, -1) }, // straight down
+        .{ .fwd = Vec3.init(0, 1, 0), .up = Vec3.init(0, 0, 1) }, // straight up
+        .{ .fwd = Vec3.init(1, -1, -1), .up = Vec3.init(0, 1, 0) }, // angled
+    };
+    const cam_heights = [_]f32{ 0.0, 80.0, 128.0, 200.0, 256.0, 500.0 };
+    const chunks = [_]struct { x: i32, z: i32 }{
+        .{ .x = 0, .z = 0 },
+        .{ .x = 1, .z = 0 },
+        .{ .x = -1, .z = 1 },
+        .{ .x = 0, .z = -2 },
+    };
+    const cam_xz = [_]struct { x: f32, z: f32 }{
+        .{ .x = 0.0, .z = 0.0 },
+        .{ .x = 8.0, .z = 8.0 },
+    };
+
+    const proj = Mat4.perspectiveReverseZ(std.math.pi / 4.0, 1.5, 0.5, 10000.0);
+    var ref_visible_count: u32 = 0;
+    for (directions) |d| {
+        const view = Mat4.lookAt(Vec3.zero, d.fwd, d.up);
+        const frustum = Frustum.fromViewProj(proj.multiply(view));
+        for (cam_heights) |cam_y| {
+            for (cam_xz) |cxz| {
+                for (chunks) |ch| {
+                    const ref_center = Vec3.init(
+                        @as(f32, @floatFromInt(ch.x * 16)) + half_x - cxz.x,
+                        half_y - cam_y,
+                        @as(f32, @floatFromInt(ch.z * 16)) + half_z - cxz.z,
+                    );
+                    if (frustum.intersectsSphere(ref_center, ref_radius)) {
+                        ref_visible_count += 1;
+                        try testing.expect(
+                            frustum.intersectsChunkRelative(ch.x, ch.z, cxz.x, cam_y, cxz.z),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // Sanity: the battery must actually exercise the visible case, otherwise the
+    // implication above would hold vacuously.
+    try testing.expect(ref_visible_count > 0);
+}
