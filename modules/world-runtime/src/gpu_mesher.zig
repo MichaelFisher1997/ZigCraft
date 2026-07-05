@@ -170,7 +170,12 @@ pub const GpuMesher = struct {
             log.log.warn("GPU_MESHER: in_flight_fences[{}] is null (FrameManager fences not yet initialized); deferring finalize this frame", .{prev_fi});
             return;
         }
-        _ = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, std.math.maxInt(u64));
+        const wait_result = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, std.math.maxInt(u64));
+        if (wait_result != c.VK_SUCCESS) {
+            log.log.warn("GPU_MESHER: vkWaitForFences failed for prev_fi={} with result {} ({}); discarding submitted meshes", .{ prev_fi, wait_result, vkResultName(wait_result) });
+            self.submitted[prev_fi].clearRetainingCapacity();
+            return;
+        }
 
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
@@ -547,6 +552,26 @@ fn copyVertexRange(cmd: c.VkCommandBuffer, src_buffer: c.VkBuffer, dst_buffer: c
 
 fn slotOrMissing(slot: ?usize) i32 {
     return if (slot) |s| @intCast(s) else -1;
+}
+
+fn vkResultName(result: c.VkResult) []const u8 {
+    return switch (result) {
+        c.VK_SUCCESS => "VK_SUCCESS",
+        c.VK_NOT_READY => "VK_NOT_READY",
+        c.VK_TIMEOUT => "VK_TIMEOUT",
+        c.VK_EVENT_SET => "VK_EVENT_SET",
+        c.VK_EVENT_RESET => "VK_EVENT_RESET",
+        c.VK_INCOMPLETE => "VK_INCOMPLETE",
+        c.VK_ERROR_OUT_OF_HOST_MEMORY => "VK_ERROR_OUT_OF_HOST_MEMORY",
+        c.VK_ERROR_OUT_OF_DEVICE_MEMORY => "VK_ERROR_OUT_OF_DEVICE_MEMORY",
+        c.VK_ERROR_DEVICE_LOST => "VK_ERROR_DEVICE_LOST",
+        c.VK_ERROR_INITIALIZATION_FAILED => "VK_ERROR_INITIALIZATION_FAILED",
+        c.VK_ERROR_SURFACE_LOST_KHR => "VK_ERROR_SURFACE_LOST_KHR",
+        c.VK_ERROR_OUT_OF_DATE_KHR => "VK_ERROR_OUT_OF_DATE_KHR",
+        c.VK_ERROR_NATIVE_WINDOW_IN_USE_KHR => "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR",
+        c.VK_SUBOPTIMAL_KHR => "VK_SUBOPTIMAL_KHR",
+        else => "VK_<UNKNOWN>",
+    };
 }
 
 fn descriptorWrite(set: c.VkDescriptorSet, binding: u32, info: *const c.VkDescriptorBufferInfo) c.VkWriteDescriptorSet {
