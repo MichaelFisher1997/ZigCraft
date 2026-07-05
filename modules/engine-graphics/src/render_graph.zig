@@ -36,7 +36,6 @@
 //! parameters. This provides passes with everything needed for rendering.
 
 const std = @import("std");
-const c = @import("c").c;
 const build_options = @import("engine_graphics_options");
 const Camera = @import("engine-camera").Camera;
 const IWorldRenderView = @import("world_render_view.zig").IWorldRenderView;
@@ -635,32 +634,18 @@ pub const WaterPass = struct {
         const self: *WaterPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled) return;
 
-        const pipeline_u64 = ctx.render_ctx.getNativeWaterPipeline();
-        const layout_u64 = ctx.render_ctx.getNativeWaterPipelineLayout();
-        const descriptor_set_u64 = ctx.render_ctx.getNativeMainDescriptorSet();
-        const cmd_u64 = ctx.render_ctx.getNativeCommandBuffer();
         const reflection_handle = ctx.water_ctx.getReflectionTextureHandle();
         const scene_depth_handle = ctx.water_ctx.getSceneDepthTextureHandle();
 
-        if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0 or scene_depth_handle == 0) return;
-
-        const pipeline = @as(c.VkPipeline, @ptrFromInt(pipeline_u64));
-        const layout = @as(c.VkPipelineLayout, @ptrFromInt(layout_u64));
-        const descriptor_set = @as(c.VkDescriptorSet, @ptrFromInt(descriptor_set_u64));
-        const cmd = @as(c.VkCommandBuffer, @ptrFromInt(cmd_u64));
+        if (!ctx.render_ctx.beginWaterDraw(reflection_handle, scene_depth_handle)) return;
+        defer ctx.render_ctx.endWaterDraw();
 
         ctx.render_ctx.bindTexture(reflection_handle, 14);
         ctx.render_ctx.bindTexture(scene_depth_handle, 15);
-        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        if (descriptor_set_u64 != 0) {
-            c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
-        }
-        ctx.render_ctx.setTerrainPipelineBound(true);
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
         const render_lod_water = engine_core.envFlag("ZIGCRAFT_LOD_WATER", true);
         ctx.world.renderFluid(view_proj, ctx.camera.position, render_lod_water);
-        ctx.render_ctx.setTerrainPipelineBound(false);
     }
 };
 

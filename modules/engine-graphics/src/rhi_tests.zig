@@ -81,27 +81,6 @@ const MockContext = struct {
         _ = height;
     }
 
-    fn getNativeSkyPipeline(ptr: *anyopaque) u64 {
-        const self: *MockContext = @ptrCast(@alignCast(ptr));
-        self.sky_pipeline_requested = true;
-        return 0;
-    }
-    fn getNativeSkyPipelineLayout(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeWaterPipeline(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeWaterPipelineLayout(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeMainDescriptorSet(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
     fn getNativeCommandBuffer(ptr: *anyopaque) u64 {
         _ = ptr;
         return 0;
@@ -153,6 +132,21 @@ const MockContext = struct {
         _ = ptr;
         _ = cascade_index;
         _ = depth_map_handle;
+    }
+
+    fn drawSky(ptr: *anyopaque, params: rhi.SkyParams) rhi.RhiError!void {
+        const self: *MockContext = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.sky_pipeline_requested = true;
+    }
+
+    fn beginWaterDraw(ptr: *anyopaque, reflection: rhi.TextureHandle, scene_depth: rhi.TextureHandle) bool {
+        _ = ptr;
+        return reflection != 0 and scene_depth != 0;
+    }
+
+    fn endWaterDraw(ptr: *anyopaque) void {
+        _ = ptr;
     }
 
     fn getEncoder(ptr: *anyopaque) rhi.IGraphicsCommandEncoder {
@@ -268,12 +262,13 @@ const MockContext = struct {
         .computeDepthPyramid = undefined,
     };
 
+    const MOCK_EFFECTS_VTABLE = rhi.IRenderEffectsContext.VTable{
+        .drawSky = drawSky,
+        .beginWaterDraw = beginWaterDraw,
+        .endWaterDraw = endWaterDraw,
+    };
+
     const MOCK_NATIVE_VTABLE = rhi.INativeHandlesContext.VTable{
-        .getSkyPipeline = getNativeSkyPipeline,
-        .getSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getWaterPipeline = getNativeWaterPipeline,
-        .getWaterPipelineLayout = getNativeWaterPipelineLayout,
-        .getMainDescriptorSet = getNativeMainDescriptorSet,
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,
@@ -423,6 +418,7 @@ const MockContext = struct {
         .render = MOCK_RENDER_VTABLE,
         .passes = MOCK_PASSES_VTABLE,
         .post_process = MOCK_POST_PROCESS_VTABLE,
+        .effects = MOCK_EFFECTS_VTABLE,
         .native = MOCK_NATIVE_VTABLE,
         .ssao = MOCK_SSAO_VTABLE,
         .debug_overlay = MOCK_DEBUG_OVERLAY_VTABLE,
