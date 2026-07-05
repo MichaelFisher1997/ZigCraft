@@ -1,17 +1,14 @@
 const std = @import("std");
 const rhi = @import("engine-rhi");
-const ResourceManager = rhi.ResourceManager;
 const RenderContext = rhi.RenderContext;
 
 pub const AtmosphereSystem = struct {
     allocator: std.mem.Allocator,
-    resources: ResourceManager,
 
-    pub fn init(allocator: std.mem.Allocator, resources: ResourceManager) !*AtmosphereSystem {
+    pub fn init(allocator: std.mem.Allocator) !*AtmosphereSystem {
         const self = try allocator.create(AtmosphereSystem);
         self.* = .{
             .allocator = allocator,
-            .resources = resources,
         };
         return self;
     }

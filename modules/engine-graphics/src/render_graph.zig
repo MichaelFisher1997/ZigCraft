@@ -143,7 +143,7 @@ pub const RenderGraph = struct {
     material_system: ?*MaterialSystem,
 
     pub fn init(allocator: std.mem.Allocator, rhi: rhi_pkg.RHI, lpv_config: LPVConfig) !RenderGraph {
-        const atmosphere_system = try AtmosphereSystem.init(allocator, rhi.resourceManager());
+        const atmosphere_system = try AtmosphereSystem.init(allocator);
         errdefer atmosphere_system.deinit();
 
         const lpv_system = try LPVSystem.init(
