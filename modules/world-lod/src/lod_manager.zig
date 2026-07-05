@@ -856,7 +856,9 @@ pub const LODManager = struct {
         const player_wz: i32 = @intFromFloat(player_pos.z);
         _ = self.generator.maybeRecenterCache(player_wx, player_wz);
 
+        self.mutex.lock();
         const active_lod_count = lod_chunk.activeLODCount(self.config);
+        self.mutex.unlock();
 
         // Queue a small horizon seed first so something appears quickly, then
         // let LOD0/LOD1/LOD2 refinements replace the coarse fallback.
@@ -922,6 +924,12 @@ pub const LODManager = struct {
     /// Queue LOD regions that need generation
     fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
         const player = self.loadPlayerChunkPos();
+        self.mutex.lock();
+        const radii = self.config.getRadii();
+        const active_lod_count = lod_chunk.activeLODCount(self.config);
+        const use_vertical_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(lod) == .column_spans;
+        self.mutex.unlock();
+
         const Coverage = struct {
             fn areAllLoaded(ptr: *anyopaque, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
                 const mgr: *Self = @ptrCast(@alignCast(ptr));
@@ -931,6 +939,8 @@ pub const LODManager = struct {
         return lod_scheduler.queueLODRegions(.{
             .allocator = self.allocator,
             .config = self.config,
+            .radii = radii,
+            .active_lod_count = active_lod_count,
             .regions = &self.regions,
             .gen_queues = &self.gen_queues,
             .mutex = &self.mutex,
@@ -942,6 +952,7 @@ pub const LODManager = struct {
             .are_all_chunks_loaded = Coverage.areAllLoaded,
             .radius_reduction = &self.radius_shrink_chunks,
             .defer_generation_dispatch = self.cacheEnabled(),
+            .use_vertical_spans = use_vertical_spans,
         }, lod, velocity, chunk_checker, checker_ctx);
     }
 
@@ -953,6 +964,7 @@ pub const LODManager = struct {
             level: u3,
             coord_scale: i32,
             job_token: u32,
+            lod_radius: i32,
             want_spans: bool,
         };
 
@@ -965,6 +977,7 @@ pub const LODManager = struct {
 
         self.mutex.lock();
         active_lod_count = lod_chunk.activeLODCount(self.config);
+        const radii = self.config.getRadii();
         var i: usize = 0;
         while (i < active_lod_count) : (i += 1) {
             const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
@@ -983,6 +996,7 @@ pub const LODManager = struct {
                     .level = @intCast(i),
                     .coord_scale = scale,
                     .job_token = chunk.job_token,
+                    .lod_radius = radii[i],
                     .want_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(lod) == .column_spans,
                 }) catch |err| {
                     self.mutex.unlock();
@@ -1049,6 +1063,8 @@ pub const LODManager = struct {
                         .job_token = candidate.job_token,
                         .lod_level = candidate.level,
                         .coord_scale = candidate.coord_scale,
+                        .lod_radius = candidate.lod_radius,
+                        .use_vertical_spans = candidate.want_spans,
                     },
                 },
             }) catch |err| {
@@ -1068,7 +1084,7 @@ pub const LODManager = struct {
         // before enqueueing. The regions HashMap iterates in arbitrary
         // (hash-bucket) order, so without sorting the meshing/upload order is
         // effectively random — far chunks can be processed before near ones.
-        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3, coord_scale: i32, job_token: u32 };
+        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3, coord_scale: i32, job_token: u32, lod_radius: i32 };
         var mesh_candidates = std.ArrayListUnmanaged(MeshCandidate).empty;
         defer mesh_candidates.deinit(self.allocator);
 
@@ -1081,6 +1097,7 @@ pub const LODManager = struct {
 
         self.mutex.lock();
         active_lod_count = lod_chunk.activeLODCount(self.config);
+        const radii = self.config.getRadii();
         for (0..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
             const scale = @as(i32, @intCast(lod.chunksPerSide()));
@@ -1095,7 +1112,7 @@ pub const LODManager = struct {
                     // Append before flipping state so an allocation failure
                     // leaves the chunk in .generated (re-tried next tick)
                     // instead of stuck in .meshing with no queued job.
-                    mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale, .job_token = chunk.job_token }) catch |err| {
+                    mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale, .job_token = chunk.job_token, .lod_radius = radii[i] }) catch |err| {
                         self.mutex.unlock();
                         return err;
                     };
@@ -1132,6 +1149,7 @@ pub const LODManager = struct {
                         .job_token = mc.job_token,
                         .lod_level = mc.level,
                         .coord_scale = mc.coord_scale,
+                        .lod_radius = mc.lod_radius,
                     },
                 },
             }) catch |err| {
@@ -2057,10 +2075,8 @@ pub const LODManager = struct {
 
         // Stale job check (too far from player)
         const player = self.loadPlayerChunkPos();
-        const radii = self.config.getRadii();
-        const radius = radii[lod_idx];
-        const vertical_span_budget = self.config.getVerticalSpanBudget();
-        const mesh_path = self.effectiveMeshPath(lod_level);
+        const radius = job.data.chunk.lod_radius;
+        const use_vertical_spans = job.data.chunk.use_vertical_spans;
         const job_key = LODRegionKey{
             .rx = job.data.chunk.x,
             .rz = job.data.chunk.z,
@@ -2112,8 +2128,7 @@ pub const LODManager = struct {
             .chunk_generation => {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
-                    const want_spans = vertical_span_budget > 0 and mesh_path == .column_spans;
-                    var data = if (want_spans)
+                    var data = if (use_vertical_spans)
                         LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
                             new_state = .missing;
                             self.mutex.lock();

@@ -20,6 +20,8 @@ pub const CoverageFn = *const fn (ptr: *anyopaque, bounds: LODChunk.WorldBounds,
 pub const SchedulerContext = struct {
     allocator: std.mem.Allocator,
     config: ILODConfig,
+    radii: [LODLevel.count]i32,
+    active_lod_count: usize,
     regions: *[LODLevel.count]RegionMap,
     gen_queues: *[LODLevel.count]*JobQueue,
     mutex: *sync.RwLock,
@@ -35,6 +37,7 @@ pub const SchedulerContext = struct {
     // When true, queueLODRegions marks chunks queued_for_generation and lets
     // LODManager perform main-thread cache reads before dispatching workers.
     defer_generation_dispatch: bool = false,
+    use_vertical_spans: bool = false,
 };
 
 const std = @import("std");
@@ -106,11 +109,11 @@ pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec
 
 /// Queue LOD regions that need generation.
 pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
-    const radii = ctx.config.getRadii();
+    const radii = ctx.radii;
     const idx: u32 = @intFromEnum(lod);
     // Apply dynamic radius reduction (hysteresis) to every level except the
     // coarsest horizon band, which must keep filling regardless of pressure.
-    const is_coarsest = (idx + 1 >= LODLevel.count) or (idx + 1 >= ctx.config.getActiveLODCount());
+    const is_coarsest = (idx + 1 >= LODLevel.count) or (@as(usize, idx + 1) >= ctx.active_lod_count);
     const radius = if (is_coarsest) radii[idx] else @max(0, radii[idx] - ctx.radius_reduction[idx]);
 
     const scale: i32 = @intCast(lod.chunksPerSide());
@@ -121,7 +124,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
     const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
     var diag = QueueDiag{};
-    const active_lod_count = lod_chunk.activeLODCount(ctx.config);
+    const active_lod_count = ctx.active_lod_count;
 
     // All LOD jobs go to the highest LOD queue. Encode the actual LOD in priority bits.
     const queue = ctx.gen_queues[LODLevel.count - 1];
@@ -214,6 +217,8 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                         .job_token = chunk.job_token,
                         .lod_level = lod_idx,
                         .coord_scale = scale,
+                        .lod_radius = radii[idx],
+                        .use_vertical_spans = ctx.use_vertical_spans,
                     },
                 },
             }) catch |err| {
@@ -294,6 +299,7 @@ test "LOD scheduling queues LOD0 generation jobs" {
         .chunk_render_radius = 2,
         .radii = .{ 5, 12, 24, 48, 96 },
     };
+    const config_iface = config.interface();
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
@@ -306,7 +312,9 @@ test "LOD scheduling queues LOD0 generation jobs" {
 
     try queueLODRegions(.{
         .allocator = allocator,
-        .config = config.interface(),
+        .config = config_iface,
+        .radii = config_iface.getRadii(),
+        .active_lod_count = lod_chunk.activeLODCount(config_iface),
         .regions = &regions,
         .gen_queues = &queue_ptrs,
         .mutex = &mutex,
@@ -359,6 +367,7 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
         .chunk_render_radius = 16,
         .radii = .{ 64, 128, 256, 384, 512 },
     };
+    const config_iface = config.interface();
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
@@ -370,7 +379,9 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
     };
     const ctx = SchedulerContext{
         .allocator = allocator,
-        .config = config.interface(),
+        .config = config_iface,
+        .radii = config_iface.getRadii(),
+        .active_lod_count = lod_chunk.activeLODCount(config_iface),
         .regions = &regions,
         .gen_queues = &queue_ptrs,
         .mutex = &mutex,

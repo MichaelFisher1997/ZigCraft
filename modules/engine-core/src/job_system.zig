@@ -86,6 +86,9 @@ pub const Job = struct {
         /// Normal chunk jobs use chunk coords directly (1); LOD jobs store
         /// region coords and set this to that LOD's chunks-per-side.
         coord_scale: i32 = 1,
+        /// Immutable LOD config snapshot captured when a generation job is queued.
+        lod_radius: i32 = 0,
+        use_vertical_spans: bool = false,
     };
 
     pub const GenericJobData = struct {
