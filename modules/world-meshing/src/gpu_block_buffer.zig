@@ -42,6 +42,7 @@ pub const GpuBlockBuffer = struct {
     slot_size: usize,
     free_list: std.ArrayListUnmanaged(usize),
     slot_to_chunk: std.AutoArrayHashMapUnmanaged(usize, ChunkSlot),
+    chunk_to_slot: std.AutoArrayHashMapUnmanaged(ChunkSlot, usize),
 
     pub const ChunkSlot = struct {
         cx: i32,
@@ -65,6 +66,7 @@ pub const GpuBlockBuffer = struct {
             .slot_size = SLOT_SIZE,
             .free_list = .empty,
             .slot_to_chunk = .empty,
+            .chunk_to_slot = .empty,
         };
 
         try buffer.free_list.ensureTotalCapacity(allocator, capacity);
@@ -79,34 +81,33 @@ pub const GpuBlockBuffer = struct {
         self.rm.destroyBuffer(self.buffer);
         self.free_list.deinit(self.allocator);
         self.slot_to_chunk.deinit(self.allocator);
+        self.chunk_to_slot.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
     pub fn allocate(self: *GpuBlockBuffer, cx: i32, cz: i32) !usize {
         if (self.free_list.pop()) |slot| {
-            try self.slot_to_chunk.put(self.allocator, slot, ChunkSlot{ .cx = cx, .cz = cz });
+            const chunk_key = ChunkSlot{ .cx = cx, .cz = cz };
+            try self.slot_to_chunk.put(self.allocator, slot, chunk_key);
+            errdefer _ = self.slot_to_chunk.swapRemove(slot);
+            try self.chunk_to_slot.put(self.allocator, chunk_key, slot);
             return slot;
         }
         return error.OutOfMemory;
     }
 
     pub fn free(self: *GpuBlockBuffer, slot: usize) void {
-        if (self.slot_to_chunk.swapRemove(slot)) {
-            self.free_list.append(self.allocator, slot) catch {};
-        }
+        const chunk_key = self.slot_to_chunk.get(slot) orelse return;
+        _ = self.slot_to_chunk.swapRemove(slot);
+        _ = self.chunk_to_slot.swapRemove(chunk_key);
+        self.free_list.append(self.allocator, slot) catch {};
     }
 
     pub fn freeByChunk(self: *GpuBlockBuffer, cx: i32, cz: i32) ?usize {
-        var it = self.slot_to_chunk.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.cx == cx and entry.value_ptr.cz == cz) {
-                const slot = entry.key_ptr.*;
-                _ = self.slot_to_chunk.swapRemove(slot);
-                self.free_list.append(self.allocator, slot) catch {};
-                return slot;
-            }
-        }
-        return null;
+        const chunk_key = ChunkSlot{ .cx = cx, .cz = cz };
+        const slot = self.chunk_to_slot.get(chunk_key) orelse return null;
+        self.free(slot);
+        return slot;
     }
 
     pub fn upload(self: *GpuBlockBuffer, slot: usize, blocks: []const u8) !void {
@@ -129,13 +130,7 @@ pub const GpuBlockBuffer = struct {
     }
 
     pub fn getSlotForChunk(self: *GpuBlockBuffer, cx: i32, cz: i32) ?usize {
-        var it = self.slot_to_chunk.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.cx == cx and entry.value_ptr.cz == cz) {
-                return entry.key_ptr.*;
-            }
-        }
-        return null;
+        return self.chunk_to_slot.get(ChunkSlot{ .cx = cx, .cz = cz });
     }
 
     pub fn getBufferHandle(self: *GpuBlockBuffer) BufferHandle {

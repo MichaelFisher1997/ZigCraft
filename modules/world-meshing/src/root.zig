@@ -6,6 +6,7 @@ pub const chunk_storage_extended_tests = @import("chunk_storage_extended_tests.z
 pub const chunk_storage_interface_tests = @import("chunk_storage_interface_tests.zig");
 pub const chunk_storage_tests = @import("chunk_storage_tests.zig");
 pub const gpu_block_buffer = @import("gpu_block_buffer.zig");
+pub const gpu_block_buffer_tests = @import("gpu_block_buffer_tests.zig");
 pub const world_interface_vtable_tests = @import("world_interface_vtable_tests.zig");
 pub const world_tests = @import("world_tests.zig");
 pub const meshing = struct {

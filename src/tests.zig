@@ -87,6 +87,7 @@ test {
     _ = @import("world-meshing").meshing.quadric_simplifier;
     _ = @import("world-meshing").chunk_storage_tests;
     _ = @import("world-meshing").chunk_storage_extended_tests;
+    _ = @import("world-meshing").gpu_block_buffer_tests;
     _ = @import("world-core").block_tests;
     _ = @import("world-core").block_registry_tests;
     _ = @import("world-core").block_biome_tests;
