@@ -84,6 +84,24 @@ pub const Vec3 = struct {
         return .{ self.x, self.y, self.z };
     }
 
+    /// Decode an sRGB-encoded color to linear light via the sRGB
+    /// Electro-Optical Transfer Function (EOTF), using the standard 2.2 gamma
+    /// approximation. `self` holds sRGB *signal* values (e.g. an 8-bit color
+    /// picked as `byte/255.0`); the result is physical linear intensity.
+    ///
+    /// This DARKENS the input (exponent > 1) because sRGB 8-bit values are
+    /// perceptual signals, not linear intensities. This matches every other
+    /// sRGB→linear conversion in the engine:
+    ///   - `srgbByteToLinear` in `texture_atlas.zig` (precise 2.4 EOTF)
+    ///   - `agxEotf` in `assets/shaders/vulkan/post_process.frag` (pow 2.2)
+    ///   - `pow(vColor.rgb, vec3(2.2))` in `assets/shaders/vulkan/ui.frag`
+    ///   - `pow(vec3(0.9,0.9,1.0), vec3(2.2))` for the moon in `sky.frag`
+    ///
+    /// The swapchain is `VK_FORMAT_B8G8R8A8_SRGB`, so the GPU encodes
+    /// linear→sRGB on presentation; all shading happens in linear space and
+    /// CPU-side sRGB color constants must be decoded with this function.
+    ///
+    /// The inverse (linear→sRGB encoding / OETF) is exponent `1.0/2.2`.
     pub fn toLinear(self: Vec3) Vec3 {
         return .{
             .x = std.math.pow(f32, self.x, 2.2),

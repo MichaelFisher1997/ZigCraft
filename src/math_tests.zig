@@ -422,3 +422,53 @@ test "Frustum intersectsChunkRelative matches independent circumscribed sphere" 
     // implication above would hold vacuously.
     try testing.expect(ref_visible_count > 0);
 }
+
+// Regression guard for issue #715 (atmosphere sky-palette gamma audit).
+//
+// The audit claimed `Vec3.toLinear()` (which applies `pow(x, 2.2)`) was the
+// wrong direction and proposed `pow(x, 1/2.2)` instead. That proposal is
+// backwards. `pow(x, 2.2)` is the sRGB Electro-Optical Transfer Function
+// (signal -> linear light) and matches every other sRGB->linear conversion in
+// the engine:
+//   - `srgbByteToLinear` in modules/engine-graphics/src/texture_atlas.zig (pow 2.4)
+//   - `agxEotf` in assets/shaders/vulkan/post_process.frag (pow 2.2, commented
+//     "sRGB IEC 61966-2-1 2.2 Exponent Reference EOTF Display")
+//   - `pow(vColor.rgb, vec3(2.2))` in assets/shaders/vulkan/ui.frag
+//   - the moon color `pow(vec3(0.9,0.9,1.0), vec3(2.2))` in sky.frag
+// The swapchain is VK_FORMAT_B8G8R8A8_SRGB, so shading happens in linear space
+// and CPU-side sRGB color constants must be decoded with `toLinear()`.
+//
+// These tests pin the correct direction so the audit mistake is not reintroduced.
+
+test "Vec3.toLinear decodes sRGB to linear via the EOTF (darkens, exponent 2.2)" {
+    // A mid-tone sRGB signal (e.g. 97/255, the day-sky red channel).
+    const srgb_r = 97.0 / 255.0;
+
+    // Decoding sRGB signal to linear light darkens mid-tones (exponent > 1).
+    const decoded = Vec3.init(srgb_r, srgb_r, srgb_r).toLinear();
+    try testing.expect(decoded.x < srgb_r);
+
+    // The proposed-but-incorrect direction (pow 1/2.2) would *brighten*; make
+    // sure we are not doing that.
+    const wrong = std.math.pow(f32, srgb_r, 1.0 / 2.2);
+    try testing.expect(decoded.x < wrong);
+
+    // toLinear must apply pow(x, 2.2), matching the engine's other EOTFs.
+    try testing.expectApproxEqAbs(decoded.x, std.math.pow(f32, srgb_r, 2.2), 0.0001);
+
+    // Round-trip: applying the inverse OETF (pow 1/2.2) recovers the signal.
+    const recovered = std.math.pow(f32, decoded.x, 1.0 / 2.2);
+    try testing.expectApproxEqAbs(srgb_r, recovered, 0.001);
+}
+
+test "Vec3.toLinear matches the absolute linear-light value of sRGB day-sky blue" {
+    // day_sky is the sRGB triple (97, 181, 245). Its correct linear intensity is
+    // obtained by the sRGB EOTF (pow 2.2): approx (0.119, 0.471, 0.916). Assert
+    // absolute values so that flipping the exponent is caught independently of
+    // how the expectation is computed. (A pow 1/2.2 mistake would yield the
+    // much-too-bright approx (0.645, 0.855, 0.982) and wash the sky out.)
+    const day_sky = Vec3.init(97.0 / 255.0, 181.0 / 255.0, 245.0 / 255.0).toLinear();
+    try testing.expectApproxEqAbs(@as(f32, 0.119), day_sky.x, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 0.471), day_sky.y, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 0.916), day_sky.z, 0.01);
+}
