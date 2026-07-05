@@ -220,6 +220,31 @@ test "Overworld V2 generator is deterministic" {
     try testing.expectEqualSlices(BiomeId, &chunk1.biomes, &chunk2.biomes);
 }
 
+test "Overworld V2 stable chunk fingerprints for known seed" {
+    const allocator = testing.allocator;
+    const seed: u64 = 424242;
+    var gen = OverworldV2Generator.init(seed, allocator);
+
+    const positions = [_][2]i32{
+        .{ 0, 0 },
+        .{ 17, -9 },
+        .{ -23, 31 },
+    };
+
+    const expected = [_]u64{
+        17217192855331184094,
+        14865158333412773927,
+        9768666648150816461,
+    };
+
+    for (positions, 0..) |pos, i| {
+        var chunk = Chunk.init(pos[0], pos[1]);
+        gen.generate(&chunk, null);
+        const fp = chunkFingerprint(&chunk);
+        try testing.expectEqual(expected[i], fp);
+    }
+}
+
 test "Overworld V2 registry alias resolves" {
     const index = world_worldgen.findGeneratorIndex("overworld-v2") orelse return error.TestUnexpectedResult;
     try testing.expectEqualStrings("zigcraft:overworld-v2", world_worldgen.getGeneratorId(index));

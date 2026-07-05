@@ -9,6 +9,8 @@ const std = @import("std");
 const worldgen_api = @import("worldgen-api");
 const world_core = @import("world-core");
 const LightingComputer = @import("worldgen-common").LightingComputer;
+const block_colors = @import("block_colors.zig");
+const noise = @import("noise.zig");
 
 const Chunk = world_core.Chunk;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
@@ -22,6 +24,10 @@ const Generator = worldgen_api.Generator;
 const GeneratorInfo = worldgen_api.GeneratorInfo;
 const ColumnInfo = worldgen_api.ColumnInfo;
 const RegionInfo = worldgen_api.RegionInfo;
+const colorForBiome = block_colors.colorForBiome;
+const fillerBlock = block_colors.fillerBlock;
+const isLeafBlock = block_colors.isLeafBlock;
+const surfaceBlock = block_colors.surfaceBlock;
 
 const LUANTI_WATER_LEVEL: i32 = 1;
 const MGV7_MOUNTAINS: u32 = 0x01;
@@ -29,30 +35,8 @@ const MGV7_RIDGES: u32 = 0x02;
 const MGV7_CAVERNS: u32 = 0x08;
 const DEFAULT_SPFLAGS: u32 = MGV7_MOUNTAINS | MGV7_RIDGES | MGV7_CAVERNS;
 
-const NOISE_FLAG_DEFAULTS: u32 = 0x01;
-const NOISE_FLAG_EASED: u32 = 0x02;
-const NOISE_FLAG_ABSVALUE: u32 = 0x04;
-
-const Vec3f = struct {
-    x: f32,
-    y: f32,
-    z: f32,
-
-    fn uniform(v: f32) Vec3f {
-        return .{ .x = v, .y = v, .z = v };
-    }
-};
-
-const LuantiNoiseParams = struct {
-    offset: f32,
-    scale: f32,
-    spread: Vec3f,
-    seed: i32,
-    octaves: u16,
-    persist: f32,
-    lacunarity: f32,
-    flags: u32 = NOISE_FLAG_DEFAULTS,
-};
+const Vec3f = noise.Vec3f;
+const LuantiNoiseParams = noise.LuantiNoiseParams;
 
 const ClimateSample = struct {
     temperature: f32,
@@ -157,19 +141,19 @@ pub const OverworldV2Generator = struct {
             .seed32 = seed32,
             .allocator = allocator,
             .params = params,
-            .noise_terrain_base = np(4.0, 70.0, Vec3f.uniform(600), 82341, 5, 0.6, 2.0),
-            .noise_terrain_alt = np(4.0, 25.0, Vec3f.uniform(600), 5934, 5, 0.6, 2.0),
-            .noise_terrain_persist = np(0.6, 0.1, Vec3f.uniform(2000), 539, 3, 0.6, 2.0),
-            .noise_height_select = np(-8.0, 16.0, Vec3f.uniform(500), 4213, 6, 0.7, 2.0),
-            .noise_filler_depth = np(0.0, 1.2, Vec3f.uniform(150), 261, 3, 0.7, 2.0),
-            .noise_mount_height = np(256.0, 112.0, Vec3f.uniform(1000), 72449, 3, 0.6, 2.0),
-            .noise_ridge_uwater = np(0.0, 1.0, Vec3f.uniform(1000), 85039, 5, 0.6, 2.0),
-            .noise_mountain = np(-0.6, 1.0, .{ .x = 250, .y = 350, .z = 250 }, 5333, 5, 0.63, 2.0),
-            .noise_ridge = np(0.0, 1.0, Vec3f.uniform(100), 6467, 4, 0.75, 2.0),
-            .noise_cave1 = np(0.0, 12.0, Vec3f.uniform(61), 52534, 3, 0.5, 2.0),
-            .noise_cave2 = np(0.0, 12.0, Vec3f.uniform(67), 10325, 3, 0.5, 2.0),
-            .noise_temperature = np(0.0, 1.0, Vec3f.uniform(1400), 9130, 3, 0.55, 2.0),
-            .noise_humidity = np(0.0, 1.0, Vec3f.uniform(1200), 9171, 3, 0.55, 2.0),
+            .noise_terrain_base = noise.np(4.0, 70.0, Vec3f.uniform(600), 82341, 5, 0.6, 2.0),
+            .noise_terrain_alt = noise.np(4.0, 25.0, Vec3f.uniform(600), 5934, 5, 0.6, 2.0),
+            .noise_terrain_persist = noise.np(0.6, 0.1, Vec3f.uniform(2000), 539, 3, 0.6, 2.0),
+            .noise_height_select = noise.np(-8.0, 16.0, Vec3f.uniform(500), 4213, 6, 0.7, 2.0),
+            .noise_filler_depth = noise.np(0.0, 1.2, Vec3f.uniform(150), 261, 3, 0.7, 2.0),
+            .noise_mount_height = noise.np(256.0, 112.0, Vec3f.uniform(1000), 72449, 3, 0.6, 2.0),
+            .noise_ridge_uwater = noise.np(0.0, 1.0, Vec3f.uniform(1000), 85039, 5, 0.6, 2.0),
+            .noise_mountain = noise.np(-0.6, 1.0, .{ .x = 250, .y = 350, .z = 250 }, 5333, 5, 0.63, 2.0),
+            .noise_ridge = noise.np(0.0, 1.0, Vec3f.uniform(100), 6467, 4, 0.75, 2.0),
+            .noise_cave1 = noise.np(0.0, 12.0, Vec3f.uniform(61), 52534, 3, 0.5, 2.0),
+            .noise_cave2 = noise.np(0.0, 12.0, Vec3f.uniform(67), 10325, 3, 0.5, 2.0),
+            .noise_temperature = noise.np(0.0, 1.0, Vec3f.uniform(1400), 9130, 3, 0.55, 2.0),
+            .noise_humidity = noise.np(0.0, 1.0, Vec3f.uniform(1200), 9171, 3, 0.55, 2.0),
         };
     }
 
@@ -403,8 +387,8 @@ pub const OverworldV2Generator = struct {
             if (!isCaveCarvable(chunk.blocks[idx])) continue;
 
             const ly = self.toLuantiY(yi);
-            const d1 = contour(noiseFractal3D(&self.noise_cave1, @floatFromInt(wx), ly, @floatFromInt(wz), self.seed32));
-            const d2 = contour(noiseFractal3D(&self.noise_cave2, @floatFromInt(wx), ly, @floatFromInt(wz), self.seed32));
+            const d1 = contour(noise.noiseFractal3D(&self.noise_cave1, @floatFromInt(wx), ly, @floatFromInt(wz), self.seed32));
+            const d2 = contour(noise.noiseFractal3D(&self.noise_cave2, @floatFromInt(wx), ly, @floatFromInt(wz), self.seed32));
             if (d1 * d2 > self.params.cave_width) {
                 chunk.blocks[idx] = .air;
             }
@@ -448,11 +432,11 @@ pub const OverworldV2Generator = struct {
     fn baseTerrainLevelAtPoint(self: *const OverworldV2Generator, wx: i32, wz: i32) f32 {
         const x: f32 = @floatFromInt(wx);
         const z: f32 = @floatFromInt(wz);
-        const hselect = std.math.clamp(noiseFractal2D(&self.noise_height_select, x, z, self.seed32), 0.0, 1.0);
-        const persist = noiseFractal2D(&self.noise_terrain_persist, x, z, self.seed32);
+        const hselect = std.math.clamp(noise.noiseFractal2D(&self.noise_height_select, x, z, self.seed32), 0.0, 1.0);
+        const persist = noise.noiseFractal2D(&self.noise_terrain_persist, x, z, self.seed32);
 
-        const height_base = noiseFractal2DWithPersist(&self.noise_terrain_base, x, z, self.seed32, persist);
-        const height_alt = noiseFractal2DWithPersist(&self.noise_terrain_alt, x, z, self.seed32, persist);
+        const height_base = noise.noiseFractal2DWithPersist(&self.noise_terrain_base, x, z, self.seed32, persist);
+        const height_alt = noise.noiseFractal2DWithPersist(&self.noise_terrain_alt, x, z, self.seed32, persist);
         const luanti_height = if (height_alt > height_base)
             height_alt
         else
@@ -465,9 +449,9 @@ pub const OverworldV2Generator = struct {
         const x: f32 = @floatFromInt(wx);
         const z: f32 = @floatFromInt(wz);
         const luanti_y = self.toLuantiY(y);
-        const mount_height = @max(noiseFractal2D(&self.noise_mount_height, x, z, self.seed32), 1.0);
+        const mount_height = @max(noise.noiseFractal2D(&self.noise_mount_height, x, z, self.seed32), 1.0);
         const density_gradient = -((luanti_y - @as(f32, @floatFromInt(self.params.mount_zero_level))) / mount_height);
-        const mountain = noiseFractal3D(&self.noise_mountain, x, luanti_y, z, self.seed32);
+        const mountain = noise.noiseFractal3D(&self.noise_mountain, x, luanti_y, z, self.seed32);
         return mountain + density_gradient >= 0.0;
     }
 
@@ -475,13 +459,13 @@ pub const OverworldV2Generator = struct {
         const width: f32 = 0.2;
         const x: f32 = @floatFromInt(wx);
         const z: f32 = @floatFromInt(wz);
-        const absuwater = @abs(noiseFractal2D(&self.noise_ridge_uwater, x, z, self.seed32)) * 2.0;
+        const absuwater = @abs(noise.noiseFractal2D(&self.noise_ridge_uwater, x, z, self.seed32)) * 2.0;
         if (absuwater > width) return false;
 
         const altitude = @as(f32, @floatFromInt(y - self.params.sea_level));
         const height_mod = (altitude + 17.0) / 2.5;
         const width_mod = width - absuwater;
-        const ridge = noiseFractal3D(&self.noise_ridge, x, self.toLuantiY(y), z, self.seed32) * @max(altitude, 0.0) / 7.0;
+        const ridge = noise.noiseFractal3D(&self.noise_ridge, x, self.toLuantiY(y), z, self.seed32) * @max(altitude, 0.0) / 7.0;
         return ridge + width_mod * height_mod >= 0.6;
     }
 
@@ -489,19 +473,19 @@ pub const OverworldV2Generator = struct {
         if (self.params.spflags & MGV7_RIDGES == 0) return false;
         const x: f32 = @floatFromInt(wx);
         const z: f32 = @floatFromInt(wz);
-        return @abs(noiseFractal2D(&self.noise_ridge_uwater, x, z, self.seed32)) * 2.0 <= 0.2;
+        return @abs(noise.noiseFractal2D(&self.noise_ridge_uwater, x, z, self.seed32)) * 2.0 <= 0.2;
     }
 
     fn fillerDepth(self: *const OverworldV2Generator, wx: i32, wz: i32) i32 {
-        const depth = 4.0 + noiseFractal2D(&self.noise_filler_depth, @floatFromInt(wx), @floatFromInt(wz), self.seed32);
+        const depth = 4.0 + noise.noiseFractal2D(&self.noise_filler_depth, @floatFromInt(wx), @floatFromInt(wz), self.seed32);
         return @max(2, floorToI32(depth));
     }
 
     fn sampleClimate(self: *const OverworldV2Generator, wx: i32, wz: i32) ClimateSample {
         const x: f32 = @floatFromInt(wx);
         const z: f32 = @floatFromInt(wz);
-        const temp_raw = noiseFractal2D(&self.noise_temperature, x, z, self.seed32);
-        const humid_raw = noiseFractal2D(&self.noise_humidity, x + 913.0, z - 719.0, self.seed32);
+        const temp_raw = noise.noiseFractal2D(&self.noise_temperature, x, z, self.seed32);
+        const humid_raw = noise.noiseFractal2D(&self.noise_humidity, x + 913.0, z - 719.0, self.seed32);
         return .{
             .temperature = std.math.clamp((temp_raw + 1.0) * 0.5, 0.0, 1.0),
             .humidity = std.math.clamp((humid_raw + 1.0) * 0.5, 0.0, 1.0),
@@ -857,10 +841,6 @@ pub const OverworldV2Generator = struct {
     }
 };
 
-fn np(offset: f32, scale: f32, spread: Vec3f, seed: i32, octaves: u16, persist: f32, lacunarity: f32) LuantiNoiseParams {
-    return .{ .offset = offset, .scale = scale, .spread = spread, .seed = seed, .octaves = octaves, .persist = persist, .lacunarity = lacunarity };
-}
-
 fn highestSolidY(chunk: *const Chunk, local_x: u32, local_z: u32, max_y: i32) i32 {
     var y: i32 = @min(max_y, CHUNK_SIZE_Y - 1);
     while (y >= 0) : (y -= 1) {
@@ -868,112 +848,6 @@ fn highestSolidY(chunk: *const Chunk, local_x: u32, local_z: u32, max_y: i32) i3
         if (block != .air and block != .water) return y;
     }
     return 0;
-}
-
-fn surfaceBlock(biome: BiomeId, height: i32, sea_level: i32, underwater: bool) BlockType {
-    if (underwater) {
-        return switch (biome) {
-            .deep_ocean, .cold_ocean, .frozen_ocean => .gravel,
-            .river, .frozen_river, .ocean, .warm_ocean => .sand,
-            else => .sand,
-        };
-    }
-
-    return switch (biome) {
-        .beach => .sand,
-        .snowy_beach, .snow_tundra, .snowy_taiga, .snowy_slopes => .snow_block,
-        .desert => .sand,
-        .river => .sand,
-        .frozen_river => .gravel,
-        .jagged_peaks, .stony_peaks, .mountains => if (height > sea_level + 82) .stone else .grass,
-        .frozen_peaks => .packed_ice,
-        .taiga, .forest, .jungle, .savanna, .plains => .grass,
-        else => biome.getSurfaceBlock(),
-    };
-}
-
-fn fillerBlock(biome: BiomeId, underwater: bool) BlockType {
-    if (underwater) return switch (biome) {
-        .deep_ocean, .cold_ocean, .frozen_ocean, .frozen_river => .gravel,
-        else => .sand,
-    };
-
-    return switch (biome) {
-        .beach, .snowy_beach, .desert, .river => .sand,
-        .frozen_river => .gravel,
-        .jagged_peaks, .frozen_peaks, .stony_peaks, .mountains => .stone,
-        else => biome.getFillerBlock(),
-    };
-}
-
-const BiomeColors = struct {
-    grass: [3]f32 = .{ 0.22, 0.72, 0.16 },
-    foliage: [3]f32 = .{ 0.14, 0.58, 0.12 },
-    water: [3]f32 = .{ 0.12, 0.38, 0.78 },
-};
-
-fn colorForBiome(biome: BiomeId, block: BlockType) u32 {
-    const colors = biomeTintColors(biome);
-    if (block == .water) return packRgb(colors.water);
-    if (block == .grass) return packRgb(colors.grass);
-    if (isLeafBlock(block)) return leafTintColor(block, colors.foliage);
-    return packRgb(world_core.block_registry.getBlockDefinition(block).default_color);
-}
-
-fn biomeTintColors(biome: BiomeId) BiomeColors {
-    return switch (biome) {
-        .deep_ocean => .{ .water = .{ 0.1, 0.2, 0.5 } },
-        .frozen_ocean => .{ .grass = .{ 0.78, 0.88, 0.92 }, .foliage = .{ 0.66, 0.78, 0.82 }, .water = .{ 0.32, 0.54, 0.74 } },
-        .cold_ocean => .{ .water = .{ 0.10, 0.32, 0.62 } },
-        .warm_ocean => .{ .water = .{ 0.08, 0.50, 0.82 } },
-        .tropical => .{ .grass = .{ 0.18, 0.74, 0.18 }, .foliage = .{ 0.10, 0.62, 0.10 }, .water = .{ 0.05, 0.55, 0.85 } },
-        .plains => .{},
-        .forest => .{ .grass = .{ 0.18, 0.64, 0.16 }, .foliage = .{ 0.12, 0.52, 0.12 } },
-        .birch_forest => .{ .grass = .{ 0.24, 0.68, 0.18 }, .foliage = .{ 0.18, 0.58, 0.14 } },
-        .dark_forest => .{ .grass = .{ 0.12, 0.46, 0.12 }, .foliage = .{ 0.08, 0.36, 0.08 } },
-        .flower_forest => .{ .grass = .{ 0.30, 0.72, 0.18 }, .foliage = .{ 0.20, 0.58, 0.12 } },
-        .taiga => .{ .grass = .{ 0.24, 0.56, 0.24 }, .foliage = .{ 0.18, 0.46, 0.18 } },
-        .snowy_taiga => .{ .grass = .{ 0.62, 0.74, 0.70 }, .foliage = .{ 0.16, 0.40, 0.24 } },
-        .old_growth_taiga => .{ .grass = .{ 0.20, 0.48, 0.28 }, .foliage = .{ 0.12, 0.34, 0.20 } },
-        .desert => .{ .grass = .{ 0.75, 0.70, 0.35 } },
-        .snow_tundra => .{ .grass = .{ 0.7, 0.75, 0.8 } },
-        .snowy_mountains => .{ .grass = .{ 0.85, 0.90, 0.95 } },
-        .stony_shore => .{ .grass = .{ 0.48, 0.52, 0.50 }, .foliage = .{ 0.34, 0.42, 0.36 }, .water = .{ 0.10, 0.34, 0.62 } },
-        .snowy_beach => .{ .grass = .{ 0.82, 0.90, 0.94 }, .foliage = .{ 0.68, 0.78, 0.82 }, .water = .{ 0.22, 0.46, 0.70 } },
-        .meadow => .{ .grass = .{ 0.32, 0.74, 0.24 }, .foliage = .{ 0.20, 0.58, 0.18 } },
-        .grove => .{ .grass = .{ 0.20, 0.48, 0.24 }, .foliage = .{ 0.16, 0.38, 0.18 } },
-        .snowy_slopes => .{ .grass = .{ 0.82, 0.88, 0.94 }, .foliage = .{ 0.64, 0.72, 0.70 } },
-        .jagged_peaks => .{ .grass = .{ 0.56, 0.56, 0.54 }, .foliage = .{ 0.44, 0.46, 0.42 } },
-        .frozen_peaks => .{ .grass = .{ 0.76, 0.88, 0.96 }, .foliage = .{ 0.68, 0.78, 0.82 } },
-        .stony_peaks => .{ .grass = .{ 0.62, 0.58, 0.48 }, .foliage = .{ 0.46, 0.44, 0.34 } },
-        .swamp => .{ .grass = .{ 0.26, 0.58, 0.18 }, .foliage = .{ 0.22, 0.52, 0.16 }, .water = .{ 0.16, 0.38, 0.30 } },
-        .frozen_river => .{ .grass = .{ 0.78, 0.88, 0.92 }, .foliage = .{ 0.66, 0.78, 0.82 }, .water = .{ 0.36, 0.58, 0.78 } },
-        .jungle => .{ .grass = .{ 0.10, 0.76, 0.08 }, .foliage = .{ 0.08, 0.62, 0.08 } },
-        .savanna => .{ .grass = .{ 0.55, 0.55, 0.30 }, .foliage = .{ 0.50, 0.50, 0.28 } },
-        .badlands => .{ .grass = .{ 0.5, 0.4, 0.3 } },
-        .mushroom_fields => .{ .grass = .{ 0.4, 0.8, 0.4 } },
-        .foothills => .{ .grass = .{ 0.24, 0.62, 0.22 }, .foliage = .{ 0.18, 0.50, 0.16 } },
-        .dry_plains => .{ .grass = .{ 0.55, 0.50, 0.28 } },
-        .coastal_plains => .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
-        else => .{},
-    };
-}
-
-fn leafTintColor(block: BlockType, biome_foliage: [3]f32) u32 {
-    if (block == .leaves) return packRgb(biome_foliage);
-    const base = world_core.block_registry.getBlockDefinition(block).default_color;
-    return packRgb(.{
-        base[0] * 0.70 + biome_foliage[0] * 0.30,
-        base[1] * 0.70 + biome_foliage[1] * 0.30,
-        base[2] * 0.70 + biome_foliage[2] * 0.30,
-    });
-}
-
-fn packRgb(color: [3]f32) u32 {
-    const r: u32 = @intFromFloat(@round(std.math.clamp(color[0], 0.0, 1.0) * 255.0));
-    const g: u32 = @intFromFloat(@round(std.math.clamp(color[1], 0.0, 1.0) * 255.0));
-    const b: u32 = @intFromFloat(@round(std.math.clamp(color[2], 0.0, 1.0) * 255.0));
-    return (r << 16) | (g << 8) | b;
 }
 
 fn dominantBlock(counts: [world_core.MAX_BLOCK_TYPES]u32) BlockType {
@@ -1263,13 +1137,6 @@ fn setTreeBlock(chunk: *Chunk, x: u32, y: u32, z: u32, block: BlockType, leaves_
     chunk.blocks[idx] = block;
 }
 
-fn isLeafBlock(block: BlockType) bool {
-    return switch (block) {
-        .leaves, .birch_leaves, .spruce_leaves, .jungle_leaves, .acacia_leaves => true,
-        else => false,
-    };
-}
-
 fn isReplaceableTreeBase(block: BlockType) bool {
     return switch (block) {
         .tall_grass, .flower_red, .flower_yellow, .dead_bush, .snow_layer, .seagrass, .tall_seagrass, .kelp, .seaweed => true,
@@ -1297,131 +1164,6 @@ fn contour(v_in: f32) f32 {
 
 fn floorToI32(v: f32) i32 {
     return @intFromFloat(@floor(v));
-}
-
-fn noiseFractal2D(params: *const LuantiNoiseParams, x_in: f32, y_in: f32, seed: i32) f32 {
-    return noiseFractal2DWithPersist(params, x_in, y_in, seed, params.persist);
-}
-
-fn noiseFractal2DWithPersist(params: *const LuantiNoiseParams, x_in: f32, y_in: f32, seed: i32, persist: f32) f32 {
-    const x = x_in / params.spread.x;
-    const y = y_in / params.spread.y;
-    var frequency: f32 = 1.0;
-    var amplitude: f32 = 1.0;
-    var value: f32 = 0.0;
-    const eased = params.flags & (NOISE_FLAG_DEFAULTS | NOISE_FLAG_EASED) != 0;
-    const noise_seed = seed +% params.seed;
-
-    var octave: u16 = 0;
-    while (octave < params.octaves) : (octave += 1) {
-        var noise_val = noise2dValue(x * frequency, y * frequency, noise_seed +% @as(i32, @intCast(octave)), eased);
-        if (params.flags & NOISE_FLAG_ABSVALUE != 0) noise_val = @abs(noise_val);
-        value += amplitude * noise_val;
-        frequency *= params.lacunarity;
-        amplitude *= persist;
-    }
-
-    return params.offset + value * params.scale;
-}
-
-fn noiseFractal3D(params: *const LuantiNoiseParams, x_in: f32, y_in: f32, z_in: f32, seed: i32) f32 {
-    const x = x_in / params.spread.x;
-    const y = y_in / params.spread.y;
-    const z = z_in / params.spread.z;
-    var frequency: f32 = 1.0;
-    var amplitude: f32 = 1.0;
-    var value: f32 = 0.0;
-    const eased = params.flags & NOISE_FLAG_EASED != 0;
-    const noise_seed = seed +% params.seed;
-
-    var octave: u16 = 0;
-    while (octave < params.octaves) : (octave += 1) {
-        var noise_val = noise3dValue(x * frequency, y * frequency, z * frequency, noise_seed +% @as(i32, @intCast(octave)), eased);
-        if (params.flags & NOISE_FLAG_ABSVALUE != 0) noise_val = @abs(noise_val);
-        value += amplitude * noise_val;
-        frequency *= params.lacunarity;
-        amplitude *= params.persist;
-    }
-
-    return params.offset + value * params.scale;
-}
-
-fn noise2dValue(x: f32, y: f32, seed: i32, eased: bool) f32 {
-    const x0 = myFloor(x);
-    const y0 = myFloor(y);
-    var xl = x - @as(f32, @floatFromInt(x0));
-    var yl = y - @as(f32, @floatFromInt(y0));
-    const v00 = noise2d(x0, y0, seed);
-    const v10 = noise2d(x0 + 1, y0, seed);
-    const v01 = noise2d(x0, y0 + 1, seed);
-    const v11 = noise2d(x0 + 1, y0 + 1, seed);
-    if (eased) {
-        xl = easeCurve(xl);
-        yl = easeCurve(yl);
-    }
-    const u = lerp(v00, v10, xl);
-    const v = lerp(v01, v11, xl);
-    return lerp(u, v, yl);
-}
-
-fn noise3dValue(x: f32, y: f32, z: f32, seed: i32, eased: bool) f32 {
-    const x0 = myFloor(x);
-    const y0 = myFloor(y);
-    const z0 = myFloor(z);
-    var xl = x - @as(f32, @floatFromInt(x0));
-    var yl = y - @as(f32, @floatFromInt(y0));
-    var zl = z - @as(f32, @floatFromInt(z0));
-    if (eased) {
-        xl = easeCurve(xl);
-        yl = easeCurve(yl);
-        zl = easeCurve(zl);
-    }
-
-    const v000 = noise3d(x0, y0, z0, seed);
-    const v100 = noise3d(x0 + 1, y0, z0, seed);
-    const v010 = noise3d(x0, y0 + 1, z0, seed);
-    const v110 = noise3d(x0 + 1, y0 + 1, z0, seed);
-    const v001 = noise3d(x0, y0, z0 + 1, seed);
-    const v101 = noise3d(x0 + 1, y0, z0 + 1, seed);
-    const v011 = noise3d(x0, y0 + 1, z0 + 1, seed);
-    const v111 = noise3d(x0 + 1, y0 + 1, z0 + 1, seed);
-
-    const x00 = lerp(v000, v100, xl);
-    const x10 = lerp(v010, v110, xl);
-    const x01 = lerp(v001, v101, xl);
-    const x11 = lerp(v011, v111, xl);
-    const v0 = lerp(x00, x10, yl);
-    const v1 = lerp(x01, x11, yl);
-    return lerp(v0, v1, zl);
-}
-
-fn noise2d(x: i32, y: i32, seed: i32) f32 {
-    var n = @as(u32, @bitCast(x)) *% 1619 +% @as(u32, @bitCast(y)) *% 31337 +% @as(u32, @bitCast(seed)) *% 1013;
-    n &= 0x7fffffff;
-    n = (n >> 13) ^ n;
-    n = (n *% (n *% n *% 60493 +% 19990303) +% 1376312589) & 0x7fffffff;
-    return 1.0 - @as(f32, @floatFromInt(n)) / 0x40000000;
-}
-
-fn noise3d(x: i32, y: i32, z: i32, seed: i32) f32 {
-    var n = @as(u32, @bitCast(x)) *% 1619 +% @as(u32, @bitCast(y)) *% 31337 +% @as(u32, @bitCast(z)) *% 52591 +% @as(u32, @bitCast(seed)) *% 1013;
-    n &= 0x7fffffff;
-    n = (n >> 13) ^ n;
-    n = (n *% (n *% n *% 60493 +% 19990303) +% 1376312589) & 0x7fffffff;
-    return 1.0 - @as(f32, @floatFromInt(n)) / 0x40000000;
-}
-
-fn myFloor(v: f32) i32 {
-    const truncated: i32 = @intFromFloat(v);
-    return if (v < 0.0) truncated - 1 else truncated;
-}
-
-fn easeCurve(t: f32) f32 {
-    return t * t * t * (t * (6.0 * t - 15.0) + 10.0);
-}
-
-fn lerp(a: f32, b: f32, t: f32) f32 {
-    return a + (b - a) * t;
 }
 
 pub fn create(context: worldgen_api.CreateContext) worldgen_api.RegistryError!Generator {
