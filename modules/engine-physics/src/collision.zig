@@ -39,8 +39,10 @@ pub const CollisionResult = struct {
 pub const CollisionConfig = struct {
     /// Small epsilon to prevent floating point issues at block boundaries
     epsilon: f32 = 0.001,
-    /// Maximum number of iterations for collision resolution
-    max_iterations: u32 = 4,
+    /// Maximum number of iterations for collision resolution binary search.
+    /// Higher values give more precise collision points at the cost of CPU;
+    /// lower values are faster but may stop further from the surface.
+    max_iterations: u32 = 16,
 };
 
 /// Move an AABB through the world, detecting and resolving collisions.
@@ -83,7 +85,7 @@ pub fn moveAndCollide(
 
         if (collidesWithWorld(world, test_aabb)) {
             // Find the exact collision point
-            const resolved_y = resolveAxis(world, pos, half_size, move.y, 1, config.epsilon);
+            const resolved_y = resolveAxis(world, pos, half_size, move.y, 1, config.epsilon, config.max_iterations);
             pos.y = resolved_y;
 
             if (move.y < 0) {
@@ -106,7 +108,7 @@ pub fn moveAndCollide(
         );
 
         if (collidesWithWorld(world, test_aabb)) {
-            const resolved_x = resolveAxis(world, pos, half_size, move.x, 0, config.epsilon);
+            const resolved_x = resolveAxis(world, pos, half_size, move.x, 0, config.epsilon, config.max_iterations);
             pos.x = resolved_x;
             vel.x = 0;
             result.hit_wall = true;
@@ -124,7 +126,7 @@ pub fn moveAndCollide(
         );
 
         if (collidesWithWorld(world, test_aabb)) {
-            const resolved_z = resolveAxis(world, pos, half_size, move.z, 2, config.epsilon);
+            const resolved_z = resolveAxis(world, pos, half_size, move.z, 2, config.epsilon, config.max_iterations);
             pos.z = resolved_z;
             vel.z = 0;
             result.hit_wall = true;
@@ -147,6 +149,7 @@ fn resolveAxis(
     movement: f32,
     axis: u2,
     epsilon: f32,
+    max_iterations: u32,
 ) f32 {
     var current = switch (axis) {
         0 => pos.x,
@@ -159,7 +162,7 @@ fn resolveAxis(
 
     // Binary search to find the furthest valid position
     var iterations: u32 = 0;
-    while (@abs(target - current) > epsilon and iterations < 16) : (iterations += 1) {
+    while (@abs(target - current) > epsilon and iterations < max_iterations) : (iterations += 1) {
         const mid = (current + target) * 0.5;
         const test_pos = switch (axis) {
             0 => Vec3.init(mid, pos.y, pos.z),
