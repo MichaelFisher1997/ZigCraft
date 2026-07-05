@@ -331,7 +331,18 @@ pub const App = struct {
         }
 
         log.log.info("PENDING WORLD LAUNCH: creating world after swapchain settled at {}x{}", .{ swapchain_extent[0], swapchain_extent[1] });
-        const world_screen = try WorldScreen.init(self.allocator, self.engineContext(), pending.seed, pending.generator_index);
+        const world_screen = WorldScreen.init(self.allocator, self.engineContext(), pending.seed, pending.generator_index) catch |err| {
+            log.log.err("PENDING WORLD LAUNCH FAILED (seed={}, generator_index={}): {} - returning to home screen", .{ pending.seed, pending.generator_index, err });
+            self.pending_world_launch = null;
+            self.direct_launch_resize_guard_frames = 0;
+            self.resize_debounce_frames = 0;
+            const home_screen = HomeScreen.init(self.allocator, self.engineContext()) catch |home_err| {
+                log.log.err("Failed to initialize home screen after world launch failure: {}", .{home_err});
+                return home_err;
+            };
+            self.screen_manager.setScreen(home_screen.screen());
+            return;
+        };
         self.screen_manager.setScreen(world_screen.screen());
         self.pending_world_launch = null;
         self.direct_launch_resize_guard_frames = 0;
