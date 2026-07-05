@@ -1193,6 +1193,24 @@ fn computePipelineBarrier(ctx_ptr: *anyopaque, src_stage: rhi.PipelineStageFlags
     c.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 1, &barrier, 0, null, 0, null);
 }
 
+fn computeBufferBarrier(ctx_ptr: *anyopaque, buffer: u64, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    if (buffer == 0 or size == 0) return;
+
+    var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
+    barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.srcAccessMask = src_access;
+    barrier.dstAccessMask = dst_access;
+    barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = @ptrFromInt(buffer);
+    barrier.offset = offset;
+    barrier.size = size;
+
+    c.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, null, 1, &barrier, 0, null);
+}
+
 fn waitForFrameFence(ctx_ptr: *anyopaque, frame_index: usize) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT) return false;
@@ -1224,6 +1242,7 @@ const VULKAN_COMPUTE_CONTEXT_VTABLE = rhi.IComputeContext.VTable{
     .fillBuffer = fillComputeBuffer,
     .copyBuffer = copyComputeBuffer,
     .pipelineBarrier = computePipelineBarrier,
+    .bufferBarrier = computeBufferBarrier,
     .waitForFrameFence = waitForFrameFence,
     .getNativeBuffer = getNativeBuffer,
     .hasCommandBuffer = hasComputeCommandBuffer,

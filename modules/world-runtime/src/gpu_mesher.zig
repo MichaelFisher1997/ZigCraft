@@ -165,8 +165,6 @@ pub const GpuMesher = struct {
             return;
         };
 
-        var copied_any = false;
-
         storage.chunks_mutex.lock();
         defer storage.chunks_mutex.unlock();
 
@@ -214,15 +212,15 @@ pub const GpuMesher = struct {
 
                 if (solid_alloc) |alloc| {
                     copyVertexRange(self, src, dst, request_base_vertices, alloc.offset, result.solid_count);
-                    copied_any = true;
+                    vertexReadBarrier(self, dst, alloc.offset, result.solid_count);
                 }
                 if (cutout_alloc) |alloc| {
                     copyVertexRange(self, src, dst, request_base_vertices + MAX_PASS_VERTICES, alloc.offset, result.cutout_count);
-                    copied_any = true;
+                    vertexReadBarrier(self, dst, alloc.offset, result.cutout_count);
                 }
                 if (fluid_alloc) |alloc| {
                     copyVertexRange(self, src, dst, request_base_vertices + (MAX_PASS_VERTICES * 2), alloc.offset, result.fluid_count);
-                    copied_any = true;
+                    vertexReadBarrier(self, dst, alloc.offset, result.fluid_count);
                 }
 
                 data.render.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
@@ -230,10 +228,6 @@ pub const GpuMesher = struct {
                 data.chunk.dirty = false;
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
             }
-        }
-
-        if (copied_any) {
-            self.compute.pipelineBarrier(rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_VERTEX_INPUT_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
         }
 
         self.submitted[prev_fi].clearRetainingCapacity();
@@ -251,7 +245,7 @@ pub const GpuMesher = struct {
         const result_buf = self.result_buffers[fi].buffer;
         const result_size: u64 = MAX_GPU_MESH_BATCH * @sizeOf(MeshBuildResult);
         self.compute.fillBuffer(result_buf, 0, result_size, 0);
-        self.compute.pipelineBarrier(rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_SHADER_READ_BIT | rhi_pkg.ACCESS_SHADER_WRITE_BIT);
+        self.compute.bufferBarrier(result_buf, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_SHADER_READ_BIT | rhi_pkg.ACCESS_SHADER_WRITE_BIT, 0, result_size);
 
         self.compute.bindComputePipeline(self.pipeline.pipeline);
         self.compute.bindDescriptorSet(self.pipeline.layout, self.pipeline.descriptor_sets[fi]);
@@ -274,7 +268,8 @@ pub const GpuMesher = struct {
             self.compute.dispatch(CHUNK_Y, 1, 1);
         }
 
-        self.compute.pipelineBarrier(rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_HOST_BIT | rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_HOST_READ_BIT | rhi_pkg.ACCESS_TRANSFER_READ_BIT);
+        self.compute.bufferBarrier(self.result_buffers[fi].buffer, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_HOST_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_HOST_READ_BIT, 0, result_size);
+        self.compute.bufferBarrier(self.compute.getNativeBuffer(self.output_handles[fi]), rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_TRANSFER_READ_BIT, 0, outputBufferSize());
 
         self.stats.chunks_dispatched = @intCast(self.mesh_queue.items.len);
         self.mesh_queue.clearRetainingCapacity();
@@ -386,6 +381,15 @@ fn freeTempAllocations(vertex_allocator: *GlobalVertexAllocator, solid: ?VertexA
 fn copyVertexRange(self: *GpuMesher, src_buffer: u64, dst_buffer: u64, src_vertex_offset: u64, dst_byte_offset: usize, count: u32) void {
     if (count == 0) return;
     self.compute.copyBuffer(src_buffer, dst_buffer, src_vertex_offset * VERTEX_SIZE, dst_byte_offset, @as(u64, count) * VERTEX_SIZE);
+}
+
+fn vertexReadBarrier(self: *GpuMesher, buffer: u64, dst_byte_offset: usize, count: u32) void {
+    if (count == 0) return;
+    self.compute.bufferBarrier(buffer, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_VERTEX_INPUT_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_VERTEX_ATTRIBUTE_READ_BIT, dst_byte_offset, @as(u64, count) * VERTEX_SIZE);
+}
+
+fn outputBufferSize() u64 {
+    return @as(u64, MAX_GPU_MESH_BATCH) * @as(u64, MAX_VERTICES_PER_CHUNK) * @as(u64, VERTEX_SIZE);
 }
 
 fn slotOrMissing(slot: ?usize) i32 {

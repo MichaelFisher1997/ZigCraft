@@ -312,6 +312,16 @@ const MockContext = struct {
         _ = src_access;
         _ = dst_access;
     }
+    fn computeBufferBarrier(ptr: *anyopaque, buffer: u64, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
+        _ = ptr;
+        _ = buffer;
+        _ = src_stage;
+        _ = dst_stage;
+        _ = src_access;
+        _ = dst_access;
+        _ = offset;
+        _ = size;
+    }
     fn waitForFrameFence(ptr: *anyopaque, frame_index: usize) bool {
         _ = ptr;
         _ = frame_index;
@@ -530,6 +540,7 @@ const MockContext = struct {
             .fillBuffer = fillComputeBuffer,
             .copyBuffer = copyComputeBuffer,
             .pipelineBarrier = computePipelineBarrier,
+            .bufferBarrier = computeBufferBarrier,
             .waitForFrameFence = waitForFrameFence,
             .getNativeBuffer = getNativeBuffer,
             .hasCommandBuffer = hasCommandBuffer,

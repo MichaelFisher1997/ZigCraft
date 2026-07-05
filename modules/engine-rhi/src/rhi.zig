@@ -702,6 +702,7 @@ pub const IComputeContext = struct {
         fillBuffer: *const fn (ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void,
         copyBuffer: *const fn (ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void,
         pipelineBarrier: *const fn (ptr: *anyopaque, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void,
+        bufferBarrier: *const fn (ptr: *anyopaque, buffer: u64, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void,
         waitForFrameFence: *const fn (ptr: *anyopaque, frame_index: usize) bool,
         getNativeBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) u64,
         hasCommandBuffer: *const fn (ptr: *anyopaque) bool,
@@ -742,6 +743,9 @@ pub const IComputeContext = struct {
     }
     pub fn pipelineBarrier(self: IComputeContext, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void {
         self.vtable.pipelineBarrier(self.ptr, src_stage, dst_stage, src_access, dst_access);
+    }
+    pub fn bufferBarrier(self: IComputeContext, buffer: u64, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void {
+        self.vtable.bufferBarrier(self.ptr, buffer, src_stage, dst_stage, src_access, dst_access, offset, size);
     }
     pub fn waitForFrameFence(self: IComputeContext, frame_index: usize) bool {
         return self.vtable.waitForFrameFence(self.ptr, frame_index);
