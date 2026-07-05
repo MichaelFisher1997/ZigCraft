@@ -3,7 +3,8 @@
   "permission": {
     "external_directory": {
       "/tmp/**": "allow",
-      "/nix/**": "allow"
+      "/nix/**": "allow",
+      "/home/runner/**": "allow"
     }
   }
 }
