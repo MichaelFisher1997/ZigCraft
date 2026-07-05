@@ -656,6 +656,108 @@ pub const IDebugOverlayContext = struct {
     }
 };
 
+pub const PipelineStageFlags = u32;
+pub const AccessFlags = u32;
+
+pub const PIPELINE_STAGE_HOST_BIT: PipelineStageFlags = 0x00004000;
+pub const PIPELINE_STAGE_TRANSFER_BIT: PipelineStageFlags = 0x00001000;
+pub const PIPELINE_STAGE_COMPUTE_SHADER_BIT: PipelineStageFlags = 0x00000800;
+pub const PIPELINE_STAGE_VERTEX_INPUT_BIT: PipelineStageFlags = 0x00000004;
+
+pub const ACCESS_HOST_READ_BIT: AccessFlags = 0x00002000;
+pub const ACCESS_TRANSFER_READ_BIT: AccessFlags = 0x00000800;
+pub const ACCESS_TRANSFER_WRITE_BIT: AccessFlags = 0x00001000;
+pub const ACCESS_SHADER_READ_BIT: AccessFlags = 0x00000020;
+pub const ACCESS_SHADER_WRITE_BIT: AccessFlags = 0x00000040;
+pub const ACCESS_VERTEX_ATTRIBUTE_READ_BIT: AccessFlags = 0x00000004;
+
+pub const ComputeBuffer = struct {
+    buffer: u64 = 0,
+    memory: u64 = 0,
+    mapped_ptr: ?*anyopaque = null,
+};
+
+pub const ComputePipeline = struct {
+    pipeline: u64 = 0,
+    layout: u64 = 0,
+    descriptor_pool: u64 = 0,
+    descriptor_set_layout: u64 = 0,
+    descriptor_sets: [MAX_FRAMES_IN_FLIGHT]u64 = .{0} ** MAX_FRAMES_IN_FLIGHT,
+};
+
+pub const IComputeContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        bindComputePipeline: *const fn (ptr: *anyopaque, pipeline: u64) void,
+        bindDescriptorSet: *const fn (ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void,
+        createComputeBuffer: *const fn (ptr: *anyopaque, size: usize, host_visible: bool) RhiError!ComputeBuffer,
+        destroyComputeBuffer: *const fn (ptr: *anyopaque, buffer: *ComputeBuffer) void,
+        createComputePipeline: *const fn (ptr: *anyopaque, allocator: Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!ComputePipeline,
+        updateComputeDescriptors: *const fn (ptr: *anyopaque, pipeline: ComputePipeline, frame_index: usize, buffers: []const u64) void,
+        destroyComputePipeline: *const fn (ptr: *anyopaque, pipeline: *ComputePipeline) void,
+        dispatch: *const fn (ptr: *anyopaque, group_count_x: u32, group_count_y: u32, group_count_z: u32) void,
+        pushConstants: *const fn (ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void,
+        fillBuffer: *const fn (ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void,
+        copyBuffer: *const fn (ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void,
+        pipelineBarrier: *const fn (ptr: *anyopaque, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void,
+        bufferBarrier: *const fn (ptr: *anyopaque, buffer: u64, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void,
+        waitForFrameFence: *const fn (ptr: *anyopaque, frame_index: usize) bool,
+        getNativeBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) u64,
+        hasCommandBuffer: *const fn (ptr: *anyopaque) bool,
+    };
+
+    pub fn bindComputePipeline(self: IComputeContext, pipeline: u64) void {
+        self.vtable.bindComputePipeline(self.ptr, pipeline);
+    }
+    pub fn bindDescriptorSet(self: IComputeContext, pipeline_layout: u64, descriptor_set: u64) void {
+        self.vtable.bindDescriptorSet(self.ptr, pipeline_layout, descriptor_set);
+    }
+    pub fn createComputeBuffer(self: IComputeContext, size: usize, host_visible: bool) RhiError!ComputeBuffer {
+        return self.vtable.createComputeBuffer(self.ptr, size, host_visible);
+    }
+    pub fn destroyComputeBuffer(self: IComputeContext, buffer: *ComputeBuffer) void {
+        self.vtable.destroyComputeBuffer(self.ptr, buffer);
+    }
+    pub fn createComputePipeline(self: IComputeContext, allocator: Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!ComputePipeline {
+        return self.vtable.createComputePipeline(self.ptr, allocator, shader_path, storage_binding_count, push_constant_size);
+    }
+    pub fn updateComputeDescriptors(self: IComputeContext, pipeline: ComputePipeline, frame_index: usize, buffers: []const u64) void {
+        self.vtable.updateComputeDescriptors(self.ptr, pipeline, frame_index, buffers);
+    }
+    pub fn destroyComputePipeline(self: IComputeContext, pipeline: *ComputePipeline) void {
+        self.vtable.destroyComputePipeline(self.ptr, pipeline);
+    }
+    pub fn dispatch(self: IComputeContext, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
+        self.vtable.dispatch(self.ptr, group_count_x, group_count_y, group_count_z);
+    }
+    pub fn pushConstants(self: IComputeContext, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+        self.vtable.pushConstants(self.ptr, pipeline_layout, offset, size, data);
+    }
+    pub fn fillBuffer(self: IComputeContext, buffer: u64, offset: u64, size: u64, data: u32) void {
+        self.vtable.fillBuffer(self.ptr, buffer, offset, size, data);
+    }
+    pub fn copyBuffer(self: IComputeContext, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+        self.vtable.copyBuffer(self.ptr, src_buffer, dst_buffer, src_offset, dst_offset, size);
+    }
+    pub fn pipelineBarrier(self: IComputeContext, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void {
+        self.vtable.pipelineBarrier(self.ptr, src_stage, dst_stage, src_access, dst_access);
+    }
+    pub fn bufferBarrier(self: IComputeContext, buffer: u64, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void {
+        self.vtable.bufferBarrier(self.ptr, buffer, src_stage, dst_stage, src_access, dst_access, offset, size);
+    }
+    pub fn waitForFrameFence(self: IComputeContext, frame_index: usize) bool {
+        return self.vtable.waitForFrameFence(self.ptr, frame_index);
+    }
+    pub fn getNativeBuffer(self: IComputeContext, handle: BufferHandle) u64 {
+        return self.vtable.getNativeBuffer(self.ptr, handle);
+    }
+    pub fn hasCommandBuffer(self: IComputeContext) bool {
+        return self.vtable.hasCommandBuffer(self.ptr);
+    }
+};
+
 pub const IRenderContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -788,6 +890,7 @@ pub const INativeHandlesContext = struct {
         getDescriptorPool: *const fn (ptr: *anyopaque) u64,
         getUiRenderPass: *const fn (ptr: *anyopaque) u64,
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
+        getBackendContext: *const fn (ptr: *anyopaque) u64,
     };
 
     pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
@@ -819,6 +922,9 @@ pub const INativeHandlesContext = struct {
     }
     pub fn getSwapchainImageCount(self: INativeHandlesContext) u32 {
         return self.vtable.getSwapchainImageCount(self.ptr);
+    }
+    pub fn getBackendContext(self: INativeHandlesContext) u64 {
+        return self.vtable.getBackendContext(self.ptr);
     }
 };
 
@@ -1033,6 +1139,7 @@ pub const RHI = struct {
         debug_overlay: IDebugOverlayContext.VTable,
         shadow: IShadowContext.VTable,
         water: IWaterContext.VTable,
+        compute: IComputeContext.VTable,
         ui: IUIContext.VTable,
         query: IDeviceQuery.VTable,
         timing: IDeviceTiming.VTable,
@@ -1095,6 +1202,9 @@ pub const RHI = struct {
     }
     pub fn water(self: RHI) IWaterContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.water };
+    }
+    pub fn compute(self: RHI) IComputeContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.compute };
     }
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };
