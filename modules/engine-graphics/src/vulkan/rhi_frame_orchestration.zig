@@ -152,7 +152,12 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
 pub fn markSwapchainRecreateFailed(ctx: anytype, stage: []const u8, err: anyerror) bool {
     const already_failed = ctx.runtime.swapchain_recreate_failed;
     ctx.runtime.swapchain_recreate_failed = true;
-    ctx.runtime.framebuffer_resized = true;
+    // Consume the resize request instead of re-arming it. Re-arming here would
+    // cause beginFrame to retry the recreation every frame; if the failure is
+    // persistent (e.g. SSAO allocation under memory pressure) this loops
+    // forever. The swapchain_recreate_failed flag above gates retries until a
+    // fresh request (resize / vsync / msaa change) clears it.
+    ctx.runtime.framebuffer_resized = false;
     ctx.runtime.pipeline_rebuild_needed = true;
     if (!already_failed) {
         log.log.errWithTrace("Failed to recreate swapchain at {s}: {}", .{ stage, err });
