@@ -350,6 +350,15 @@ pub const WorkerPool = struct {
             .process_job_fn = process_fn,
         };
 
+        // Cleanup ordering on error: Zig errdefers run LIFO (last registered fires
+        // first), and each stays active for ALL subsequent failure points in scope:
+        //   1. this block  -> stop the queue, join already-spawned threads,
+        //   2. allocator.free(threads) (registered above),
+        //   3. allocator.destroy(pool)  (registered first, above).
+        // Because allocator.destroy(pool) is registered first, it remains active even
+        // for a Thread.spawn failure in the loop below, so the pool struct is never
+        // leaked on a partial/total thread-spawn failure.
+        //
         // Note: Partial Thread.spawn failure (where some threads spawn but others fail)
         // cannot be reliably tested in unit tests because Thread.spawn rarely fails
         // deterministically. The spawned_count tracking and errdefer cleanup logic
