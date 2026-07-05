@@ -829,26 +829,6 @@ fn computeWaterReflectedViewProj(ctx_ptr: *anyopaque, view: Mat4, proj: Mat4, ca
     return water_bridge.computeWaterReflectedViewProj(ctx, view, proj, camera_pos);
 }
 
-fn getNativeSkyPipeline(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeSkyPipeline(ctx);
-}
-fn getNativeSkyPipelineLayout(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeSkyPipelineLayout(ctx);
-}
-fn getNativeWaterPipeline(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeWaterPipeline(ctx);
-}
-fn getNativeWaterPipelineLayout(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeWaterPipelineLayout(ctx);
-}
-fn getNativeMainDescriptorSet(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeMainDescriptorSet(ctx);
-}
 fn getNativeCommandBuffer(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeCommandBuffer(ctx);
@@ -901,6 +881,68 @@ fn computeSsao(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         inv_proj,
     );
 }
+
+fn drawSkyEffect(ctx_ptr: *anyopaque, params: rhi.SkyParams) rhi.RhiError!void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const pipeline = ctx.pipeline_manager.sky_pipeline;
+    const layout = ctx.pipeline_manager.sky_pipeline_layout;
+    const cmd = ctx.frames.command_buffers[ctx.frames.current_frame];
+
+    if (pipeline == null or layout == null or cmd == null) {
+        log.log.warn("Vulkan RHI: Sky rendering skipped, handles missing (pipeline={}, layout={}, cmd={})", .{ pipeline != null, layout != null, cmd != null });
+        if (pipeline == null) return error.SkyPipelineNotReady;
+        if (layout == null) return error.SkyPipelineLayoutNotReady;
+        if (cmd == null) return error.CommandBufferNotReady;
+        return error.ResourceNotReady;
+    }
+
+    const pc = rhi.SkyPushConstants{
+        .cam_forward = .{ params.cam_forward.x, params.cam_forward.y, params.cam_forward.z, 0.0 },
+        .cam_right = .{ params.cam_right.x, params.cam_right.y, params.cam_right.z, 0.0 },
+        .cam_up = .{ params.cam_up.x, params.cam_up.y, params.cam_up.z, 0.0 },
+        .sun_dir = .{ params.sun_dir.x, params.sun_dir.y, params.sun_dir.z, 0.0 },
+        .sky_color = .{ params.sky_color.x, params.sky_color.y, params.sky_color.z, 1.0 },
+        .horizon_color = .{ params.horizon_color.x, params.horizon_color.y, params.horizon_color.z, 1.0 },
+        .params = .{ params.aspect, params.tan_half_fov, params.sun_intensity, params.moon_intensity },
+        .time = .{ params.time, params.cam_pos.x, params.cam_pos.y, params.cam_pos.z },
+    };
+
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const descriptor_set = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+    if (descriptor_set != null) {
+        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
+    }
+    c.vkCmdPushConstants(cmd, layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(rhi.SkyPushConstants), &pc);
+    c.vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
+fn beginWaterDrawEffect(ctx_ptr: *anyopaque, reflection: rhi.TextureHandle, scene_depth: rhi.TextureHandle) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const pipeline = ctx.water_system.water_pipeline;
+    const layout = ctx.water_system.water_pipeline_layout;
+    const cmd = ctx.frames.command_buffers[ctx.frames.current_frame];
+
+    if (pipeline == null or layout == null or cmd == null or reflection == 0 or scene_depth == 0) return false;
+
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const descriptor_set = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+    if (descriptor_set != null) {
+        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
+    }
+    ctx.draw.terrain_pipeline_bound = true;
+    return true;
+}
+
+fn endWaterDrawEffect(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.draw.terrain_pipeline_bound = false;
+}
+
+const VULKAN_RENDER_EFFECTS_VTABLE = rhi.IRenderEffectsContext.VTable{
+    .drawSky = drawSkyEffect,
+    .beginWaterDraw = beginWaterDrawEffect,
+    .endWaterDraw = endWaterDrawEffect,
+};
 
 fn drawDebugShadowMap(ctx_ptr: *anyopaque, cascade_index: usize, depth_map_handle: rhi.TextureHandle) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
@@ -997,12 +1039,8 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .computeTAA = computeTAA,
         .computeDepthPyramid = computeDepthPyramid,
     },
+    .effects = VULKAN_RENDER_EFFECTS_VTABLE,
     .native = .{
-        .getSkyPipeline = getNativeSkyPipeline,
-        .getSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getWaterPipeline = getNativeWaterPipeline,
-        .getWaterPipelineLayout = getNativeWaterPipelineLayout,
-        .getMainDescriptorSet = getNativeMainDescriptorSet,
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,

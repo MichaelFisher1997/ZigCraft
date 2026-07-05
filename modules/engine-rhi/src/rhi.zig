@@ -234,6 +234,7 @@ pub const RenderContext = struct {
     render: IRenderContext,
     passes: IPassOrchestrationContext,
     post_process: IPostProcessContext,
+    effects: IRenderEffectsContext,
     native: INativeHandlesContext,
     encoder: IGraphicsCommandEncoder,
     state: IRenderStateContext,
@@ -282,29 +283,20 @@ pub const RenderContext = struct {
     pub fn computeDepthPyramid(self: RenderContext) void {
         self.post_process.computeDepthPyramid();
     }
+    pub fn drawSky(self: RenderContext, params: SkyParams) RhiError!void {
+        return self.effects.drawSky(params);
+    }
+    pub fn beginWaterDraw(self: RenderContext, reflection: TextureHandle, scene_depth: TextureHandle) bool {
+        return self.effects.beginWaterDraw(reflection, scene_depth);
+    }
+    pub fn endWaterDraw(self: RenderContext) void {
+        self.effects.endWaterDraw();
+    }
     pub fn requestSwapchainRecreate(self: RenderContext) void {
         self.render.requestSwapchainRecreate();
     }
     pub fn setClearColor(self: RenderContext, color: Vec3) void {
         self.render.vtable.setClearColor(self.render.ptr, color);
-    }
-    pub fn getNativeSkyPipeline(self: RenderContext) u64 {
-        return self.native.getSkyPipeline();
-    }
-    pub fn getNativeSkyPipelineLayout(self: RenderContext) u64 {
-        return self.native.getSkyPipelineLayout();
-    }
-    pub fn getNativeWaterPipeline(self: RenderContext) u64 {
-        return self.native.getWaterPipeline();
-    }
-    pub fn getNativeWaterPipelineLayout(self: RenderContext) u64 {
-        return self.native.getWaterPipelineLayout();
-    }
-    pub fn getNativeMainDescriptorSet(self: RenderContext) u64 {
-        return self.native.getMainDescriptorSet();
-    }
-    pub fn getNativeCommandBuffer(self: RenderContext) u64 {
-        return self.native.getCommandBuffer();
     }
     pub fn getNativeSwapchainExtent(self: RenderContext) [2]u32 {
         return self.native.getSwapchainExtent();
@@ -760,16 +752,32 @@ pub const IPostProcessContext = struct {
     }
 };
 
+pub const IRenderEffectsContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        drawSky: *const fn (ptr: *anyopaque, params: SkyParams) RhiError!void,
+        beginWaterDraw: *const fn (ptr: *anyopaque, reflection: TextureHandle, scene_depth: TextureHandle) bool,
+        endWaterDraw: *const fn (ptr: *anyopaque) void,
+    };
+
+    pub fn drawSky(self: IRenderEffectsContext, params: SkyParams) RhiError!void {
+        return self.vtable.drawSky(self.ptr, params);
+    }
+    pub fn beginWaterDraw(self: IRenderEffectsContext, reflection: TextureHandle, scene_depth: TextureHandle) bool {
+        return self.vtable.beginWaterDraw(self.ptr, reflection, scene_depth);
+    }
+    pub fn endWaterDraw(self: IRenderEffectsContext) void {
+        self.vtable.endWaterDraw(self.ptr);
+    }
+};
+
 pub const INativeHandlesContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        getSkyPipeline: *const fn (ptr: *anyopaque) u64,
-        getSkyPipelineLayout: *const fn (ptr: *anyopaque) u64,
-        getWaterPipeline: *const fn (ptr: *anyopaque) u64,
-        getWaterPipelineLayout: *const fn (ptr: *anyopaque) u64,
-        getMainDescriptorSet: *const fn (ptr: *anyopaque) u64,
         getCommandBuffer: *const fn (ptr: *anyopaque) u64,
         getSwapchainExtent: *const fn (ptr: *anyopaque) [2]u32,
         getDevice: *const fn (ptr: *anyopaque) u64,
@@ -782,21 +790,6 @@ pub const INativeHandlesContext = struct {
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
     };
 
-    pub fn getSkyPipeline(self: INativeHandlesContext) u64 {
-        return self.vtable.getSkyPipeline(self.ptr);
-    }
-    pub fn getSkyPipelineLayout(self: INativeHandlesContext) u64 {
-        return self.vtable.getSkyPipelineLayout(self.ptr);
-    }
-    pub fn getWaterPipeline(self: INativeHandlesContext) u64 {
-        return self.vtable.getWaterPipeline(self.ptr);
-    }
-    pub fn getWaterPipelineLayout(self: INativeHandlesContext) u64 {
-        return self.vtable.getWaterPipelineLayout(self.ptr);
-    }
-    pub fn getMainDescriptorSet(self: INativeHandlesContext) u64 {
-        return self.vtable.getMainDescriptorSet(self.ptr);
-    }
     pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
         return self.vtable.getCommandBuffer(self.ptr);
     }
@@ -1034,6 +1027,7 @@ pub const RHI = struct {
         render: IRenderContext.VTable,
         passes: IPassOrchestrationContext.VTable,
         post_process: IPostProcessContext.VTable,
+        effects: IRenderEffectsContext.VTable,
         native: INativeHandlesContext.VTable,
         ssao: ISSAOContext.VTable,
         debug_overlay: IDebugOverlayContext.VTable,
@@ -1060,6 +1054,7 @@ pub const RHI = struct {
             .render = rc,
             .passes = self.passOrchestration(),
             .post_process = self.postProcess(),
+            .effects = self.renderEffects(),
             .native = self.nativeHandles(),
             .encoder = rc.getEncoder(),
             .state = rc.getState(),
@@ -1070,6 +1065,9 @@ pub const RHI = struct {
     }
     pub fn postProcess(self: RHI) IPostProcessContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.post_process };
+    }
+    pub fn renderEffects(self: RHI) IRenderEffectsContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.effects };
     }
     pub fn nativeHandles(self: RHI) INativeHandlesContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.native };
