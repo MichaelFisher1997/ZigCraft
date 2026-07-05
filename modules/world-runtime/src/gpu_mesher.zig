@@ -172,7 +172,7 @@ pub const GpuMesher = struct {
         }
         const wait_result = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, std.math.maxInt(u64));
         if (wait_result != c.VK_SUCCESS) {
-            log.log.warn("GPU_MESHER: vkWaitForFences failed for prev_fi={} with result {} ({}); discarding submitted meshes", .{ prev_fi, wait_result, vkResultName(wait_result) });
+            log.log.warn("GPU_MESHER: vkWaitForFences failed for prev_fi={} with result {} ({s}); discarding submitted meshes", .{ prev_fi, wait_result, vkResultName(wait_result) });
             self.submitted[prev_fi].clearRetainingCapacity();
             return;
         }
