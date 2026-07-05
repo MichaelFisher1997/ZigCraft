@@ -104,7 +104,9 @@ pub const InputSettings = struct {
         }
 
         if (healed) {
-            settings.save() catch {};
+            settings.save() catch |err| {
+                log.log.err("Failed to persist healed input settings: {}", .{err});
+            };
         }
 
         log.log.info("InputSettings: toggle_shadow_debug_vis is bound to {s}", .{settings.input_mapper.getBinding(.toggle_shadow_debug_vis).primary.getName()});

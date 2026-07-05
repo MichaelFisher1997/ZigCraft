@@ -300,7 +300,9 @@ pub const App = struct {
     }
 
     pub fn saveAllSettings(self: *const App) void {
-        self.settings_manager.save();
+        self.settings_manager.save() catch |err| {
+            log.log.errWithTrace("Failed to save game settings: {}", .{err});
+        };
         InputSettings.saveFromMapper(self.allocator, self.input_mapper.interface()) catch |err| {
             log.log.errWithTrace("Failed to save input settings: {}", .{err});
         };

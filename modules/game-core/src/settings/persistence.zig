@@ -107,45 +107,32 @@ pub fn setEnvironmentMap(settings: *Settings, allocator: std.mem.Allocator, name
 }
 
 /// Save settings to ~/.config/zigcraft/settings.json
-pub fn save(settings: *const Settings, allocator: std.mem.Allocator) void {
-    const home = getenv("HOME") orelse {
-        log.log.warn("Cannot save settings: HOME not set", .{});
-        return;
-    };
+///
+/// Errors are propagated to the caller so they can be reported to the user.
+/// Returns error.NoHomeDir if the HOME environment variable is not set.
+pub fn save(settings: *const Settings, allocator: std.mem.Allocator) !void {
+    const home = getenv("HOME") orelse return error.NoHomeDir;
 
     // Open home directory
-    var home_dir = fs.openDirAbsolute(home, .{}) catch |err| {
-        log.log.warn("Cannot open home directory: {}", .{err});
-        return;
-    };
+    var home_dir = try fs.openDirAbsolute(home, .{});
     defer home_dir.close();
 
-    // Create config directory if it doesn't exist
-    home_dir.makePath(CONFIG_DIR) catch |err| {
-        log.log.warn("Failed to create config directory: {}", .{err});
-        return;
+    // Create config directory if it doesn't exist (idempotent).
+    home_dir.makePath(CONFIG_DIR) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
     };
 
     // Open/create the settings file
     const config_path = CONFIG_DIR ++ "/" ++ CONFIG_FILE;
-    const file = home_dir.createFile(config_path, .{}) catch |err| {
-        log.log.warn("Failed to create settings file: {}", .{err});
-        return;
-    };
+    const file = try home_dir.createFile(config_path, .{});
     defer file.close();
 
     // Serialize settings to JSON and write to file
-    const json_str = std.json.Stringify.valueAlloc(allocator, settings.*, .{ .whitespace = .indent_2 }) catch |err| {
-        log.log.warn("Failed to serialize settings: {}", .{err});
-        return;
-    };
+    const json_str = try std.json.Stringify.valueAlloc(allocator, settings.*, .{ .whitespace = .indent_2 });
     defer allocator.free(json_str);
 
-    // Write to file
-    _ = file.writeAll(json_str) catch |err| {
-        log.log.warn("Failed to write settings: {}", .{err});
-        return;
-    };
+    try file.writeAll(json_str);
 
     log.log.info("Settings saved to ~/{s}", .{config_path});
 }

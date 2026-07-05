@@ -172,7 +172,9 @@ pub const WorldContext = struct {
 };
 
 fn saveSettingsShared(allocator: std.mem.Allocator, settings: *Settings, input_mapper: IInputMapper) void {
-    settings_pkg.persistence.save(settings, allocator);
+    settings_pkg.persistence.save(settings, allocator) catch |err| {
+        @import("engine-core").log.log.err("Failed to save game settings: {}", .{err});
+    };
     @import("game-core").InputSettings.saveFromMapper(allocator, input_mapper) catch |err| {
         @import("engine-core").log.log.err("Failed to save input settings: {}", .{err});
     };
