@@ -48,6 +48,88 @@ const Voice = struct {
     generation: u64 = 0,
 };
 
+/// One decoded source frame, expressed as a stereo pair of S16-scaled float
+/// samples (range roughly [-32768, 32767]). This is independent of the source's
+/// native format/channel count; format conversion and channel routing happen in
+/// `readSourceFrame`.
+const StereoSample = struct { l: f32, r: f32 };
+
+/// Number of bytes a single (per-channel) sample occupies for `format`.
+fn bytesPerSample(format: types.AudioFormat) usize {
+    return switch (format) {
+        .unsigned8 => 1,
+        .signed16 => 2,
+        .float32 => 4,
+    };
+}
+
+/// Reads a single sample (one channel) at byte offset `byte_off` from `buf`,
+/// converting it to an S16-scaled float value regardless of the source format.
+/// The output scale matches the i32 mix accumulators so every format mixes at
+/// consistent loudness before final clipping to i16.
+fn readSampleAt(buf: []const u8, format: types.AudioFormat, byte_off: usize) f32 {
+    return switch (format) {
+        .unsigned8 => blk: {
+            // Unsigned 8-bit is centered at 128. Center it and scale to the
+            // signed 16-bit range so it mixes at the same loudness as S16 data.
+            const u: u8 = buf[byte_off];
+            const centered: i16 = @as(i16, u) - 128; // [-128, 127]
+            const s16: i16 = centered * 256; // [-32768, 32512]
+            break :blk @floatFromInt(s16);
+        },
+        .signed16 => blk: {
+            const sample: i16 = std.mem.readInt(i16, buf[byte_off..][0..2], .little);
+            break :blk @floatFromInt(sample);
+        },
+        .float32 => blk: {
+            const bits: u32 = std.mem.readInt(u32, buf[byte_off..][0..4], .little);
+            const f: f32 = @bitCast(bits);
+            // Guard against NaN/inf which would produce undefined behavior
+            // when converted to the i32 accumulators via @intFromFloat.
+            if (!std.math.isFinite(f)) break :blk 0.0;
+            const clamped: f32 = std.math.clamp(f, -1.0, 1.0);
+            break :blk clamped * 32767.0;
+        },
+    };
+}
+
+/// Reads one source frame at frame index `frame_idx` and returns it as a stereo
+/// pair of S16-scaled float samples.
+///
+/// Channel routing:
+///   - mono (1 ch): single sample duplicated to both outputs
+///   - stereo (2 ch): left and right samples kept separate
+///   - 3+ channels: folded to stereo using the first two channels
+///
+/// Returns null when the frame is out of bounds (or the source is empty /
+/// malformed), so callers can handle looping or voice stop without indexing
+/// past the buffer. This is the single source of truth for source sample
+/// interpretation; `mix()` must never read `data.buffer` directly.
+fn readSourceFrame(data: *const types.SoundData, frame_idx: usize) ?StereoSample {
+    const bps = bytesPerSample(data.format);
+    const src_channels: usize = if (data.channels == 0) 1 else data.channels;
+    const frame_bytes = bps * src_channels;
+
+    const buf = data.buffer;
+    if (buf.len == 0 or frame_bytes == 0) return null;
+
+    // Overflow-safe bounds check for the whole frame.
+    const start_ov = @mulWithOverflow(frame_idx, frame_bytes);
+    if (start_ov[1] != 0) return null;
+    const end_ov = @addWithOverflow(start_ov[0], frame_bytes);
+    if (end_ov[1] != 0) return null;
+    if (end_ov[0] > buf.len) return null;
+
+    const start = start_ov[0];
+    const l = readSampleAt(buf, data.format, start);
+    const r = if (src_channels >= 2)
+        readSampleAt(buf, data.format, start + bps)
+    else
+        l;
+
+    return .{ .l = l, .r = r };
+}
+
 const Mixer = struct {
     /// Mutex protecting all mixer state.
     /// Acquired by all public methods: play, stop, update, mix.
@@ -244,55 +326,38 @@ const Mixer = struct {
             }
 
             const data = voice.sound_data.?;
-            const u8_buf = data.buffer;
-
-            // Assuming S16 format for now from Manager
-            // TODO: Handle other formats
 
             var i: usize = 0;
             while (i < SAMPLES_TO_MIX) : (i += 1) {
-                // Nearest-neighbor resampling
+                // Nearest-neighbor resampling. The cursor is a frame index into
+                // the source buffer (see readSourceFrame for frame sizing).
                 const pos_idx = @as(usize, @intFromFloat(voice.cursor));
 
-                // Critical Issue 2: Fix OOB check & Overflow
-                // Check if pos_idx is so large that * 2 would overflow (usize max / 2)
-                if (pos_idx > std.math.maxInt(usize) / 2) {
-                    voice.active = false;
-                    break;
-                }
-
-                // We need 2 bytes for a sample
-                if (pos_idx * 2 + 2 > u8_buf.len) {
-                    if (voice.loop) {
-                        voice.cursor = 0.0;
+                // readSourceFrame validates the source format, channel count,
+                // and byte bounds. It returns null when the cursor has reached
+                // or passed the end of the buffer (or the source is empty /
+                // malformed), so we never index past `data.buffer` here.
+                if (readSourceFrame(data, pos_idx)) |frame| {
+                    mix_buf[i * 2] += @intFromFloat(frame.l * voice.effective_volume_l);
+                    mix_buf[i * 2 + 1] += @intFromFloat(frame.r * voice.effective_volume_r);
+                    voice.cursor += voice.pitch;
+                } else if (voice.loop) {
+                    // Wrap to the start and retry once so looping voices emit
+                    // continuous audio instead of a frame of silence.
+                    voice.cursor = 0.0;
+                    if (readSourceFrame(data, 0)) |frame| {
+                        mix_buf[i * 2] += @intFromFloat(frame.l * voice.effective_volume_l);
+                        mix_buf[i * 2 + 1] += @intFromFloat(frame.r * voice.effective_volume_r);
+                        voice.cursor += voice.pitch;
                     } else {
+                        // Empty/invalid source: cannot loop, give up on voice.
                         voice.active = false;
                         break;
                     }
-                }
-
-                // Re-calculate pos after potential loop wrap
-                const valid_pos_idx = @as(usize, @intFromFloat(voice.cursor));
-                if (valid_pos_idx > std.math.maxInt(usize) / 2 or valid_pos_idx * 2 + 2 > u8_buf.len) {
-                    // Double check in case pitch incremented past end exactly at loop point
+                } else {
                     voice.active = false;
                     break;
                 }
-
-                // Read sample (Mono S16)
-                const lo = u8_buf[valid_pos_idx * 2];
-                const hi = u8_buf[valid_pos_idx * 2 + 1];
-
-                // Bug Risk 4: Endianness - Use SDL_AUDIO_S16 (Little Endian)
-                // Use portable conversion instead of manual bit shifting
-                const sample: i16 = std.mem.readInt(i16, &[2]u8{ lo, hi }, .little);
-
-                // Mix stereo
-                mix_buf[i * 2] += @intFromFloat(@as(f32, @floatFromInt(sample)) * voice.effective_volume_l);
-                mix_buf[i * 2 + 1] += @intFromFloat(@as(f32, @floatFromInt(sample)) * voice.effective_volume_r);
-
-                // Advance cursor by pitch
-                voice.cursor += voice.pitch;
             }
         }
 
@@ -464,3 +529,191 @@ pub const SDLAudioBackend = struct {
         .setCategoryVolume = setCategoryVolume,
     };
 };
+
+// ---------------------------------------------------------------------------
+// Tests for source sample decoding (Issue #731).
+//
+// These cover the format/channel handling that mix() now delegates to
+// readSourceFrame. They require no SDL/audio device: the helpers are pure.
+// ---------------------------------------------------------------------------
+
+const testing = std.testing;
+
+test "bytesPerSample matches format sizes" {
+    try testing.expectEqual(@as(usize, 1), bytesPerSample(.unsigned8));
+    try testing.expectEqual(@as(usize, 2), bytesPerSample(.signed16));
+    try testing.expectEqual(@as(usize, 4), bytesPerSample(.float32));
+}
+
+test "readSourceFrame mono S16 reads correct value and duplicates to both channels" {
+    // Two mono S16 samples: 100, -200
+    var buf: [4]u8 = undefined;
+    std.mem.writeInt(i16, buf[0..2], 100, .little);
+    std.mem.writeInt(i16, buf[2..4], -200, .little);
+    const data = types.SoundData{
+        .buffer = &buf,
+        .frequency = 44100,
+        .channels = 1,
+        .format = .signed16,
+        .length_samples = 2,
+    };
+
+    const f0 = readSourceFrame(&data, 0).?;
+    try testing.expectEqual(@as(f32, 100.0), f0.l);
+    try testing.expectEqual(@as(f32, 100.0), f0.r);
+
+    const f1 = readSourceFrame(&data, 1).?;
+    try testing.expectEqual(@as(f32, -200.0), f1.l);
+    try testing.expectEqual(@as(f32, -200.0), f1.r);
+
+    // Out of bounds -> null (no buffer overrun).
+    try testing.expect(readSourceFrame(&data, 2) == null);
+}
+
+test "readSourceFrame stereo S16 keeps left/right channel separation" {
+    // One stereo frame: L=500, R=-500
+    var buf: [4]u8 = undefined;
+    std.mem.writeInt(i16, buf[0..2], 500, .little);
+    std.mem.writeInt(i16, buf[2..4], -500, .little);
+    const data = types.SoundData{
+        .buffer = &buf,
+        .frequency = 44100,
+        .channels = 2,
+        .format = .signed16,
+        .length_samples = 1,
+    };
+
+    const f = readSourceFrame(&data, 0).?;
+    try testing.expectEqual(@as(f32, 500.0), f.l);
+    try testing.expectEqual(@as(f32, -500.0), f.r);
+
+    // Second frame is out of bounds even though there are 4 bytes, because a
+    // stereo frame consumes 4 bytes per frame.
+    try testing.expect(readSourceFrame(&data, 1) == null);
+}
+
+test "readSourceFrame mono unsigned8 scales to S16 range with 128 as silence" {
+    // unsigned8: 128 == silence (0), 255 == max positive, 0 == max negative
+    var buf = [_]u8{ 128, 255, 0 };
+    const data = types.SoundData{
+        .buffer = &buf,
+        .frequency = 8000,
+        .channels = 1,
+        .format = .unsigned8,
+        .length_samples = 3,
+    };
+
+    const silence = readSourceFrame(&data, 0).?;
+    try testing.expectEqual(@as(f32, 0.0), silence.l);
+    try testing.expectEqual(@as(f32, 0.0), silence.r);
+
+    const max_pos = readSourceFrame(&data, 1).?;
+    try testing.expectEqual(@as(f32, 127.0 * 256.0), max_pos.l);
+
+    const max_neg = readSourceFrame(&data, 2).?;
+    try testing.expectEqual(@as(f32, -128.0 * 256.0), max_neg.l);
+
+    try testing.expect(readSourceFrame(&data, 3) == null);
+}
+
+test "readSourceFrame float32 converts to S16 scale and clamps out-of-range" {
+    // Three mono float32 samples: 0.5, -1.0, 2.0 (over-driven -> clamp to 1.0)
+    var buf: [12]u8 = undefined;
+    std.mem.writeInt(u32, buf[0..4], @bitCast(@as(f32, 0.5)), .little);
+    std.mem.writeInt(u32, buf[4..8], @bitCast(@as(f32, -1.0)), .little);
+    std.mem.writeInt(u32, buf[8..12], @bitCast(@as(f32, 2.0)), .little);
+    const data = types.SoundData{
+        .buffer = &buf,
+        .frequency = 44100,
+        .channels = 1,
+        .format = .float32,
+        .length_samples = 3,
+    };
+
+    const a = readSourceFrame(&data, 0).?;
+    try testing.expectApproxEqAbs(@as(f32, 0.5 * 32767.0), a.l, 0.5);
+
+    const b = readSourceFrame(&data, 1).?;
+    try testing.expectApproxEqAbs(@as(f32, -32767.0), b.l, 0.5);
+
+    const over = readSourceFrame(&data, 2).?;
+    try testing.expectApproxEqAbs(@as(f32, 32767.0), over.l, 0.5);
+
+    try testing.expect(readSourceFrame(&data, 3) == null);
+}
+
+test "readSourceFrame stereo float32 preserves channel separation" {
+    // One stereo float32 frame: L=0.25, R=-0.75
+    var buf: [8]u8 = undefined;
+    std.mem.writeInt(u32, buf[0..4], @bitCast(@as(f32, 0.25)), .little);
+    std.mem.writeInt(u32, buf[4..8], @bitCast(@as(f32, -0.75)), .little);
+    const data = types.SoundData{
+        .buffer = &buf,
+        .frequency = 44100,
+        .channels = 2,
+        .format = .float32,
+        .length_samples = 1,
+    };
+
+    const f = readSourceFrame(&data, 0).?;
+    try testing.expectApproxEqAbs(@as(f32, 0.25 * 32767.0), f.l, 0.5);
+    try testing.expectApproxEqAbs(@as(f32, -0.75 * 32767.0), f.r, 0.5);
+    try testing.expect(readSourceFrame(&data, 1) == null);
+}
+
+test "readSourceFrame sanitizes NaN float32 data" {
+    // A NaN must not reach @intFromFloat (which would be UB). Expect silence.
+    var buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, buf[0..4], 0x7FC00000, .little); // quiet NaN
+    const data = types.SoundData{
+        .buffer = &buf,
+        .frequency = 44100,
+        .channels = 1,
+        .format = .float32,
+        .length_samples = 1,
+    };
+
+    const f = readSourceFrame(&data, 0).?;
+    try testing.expectEqual(@as(f32, 0.0), f.l);
+    try testing.expectEqual(@as(f32, 0.0), f.r);
+}
+
+test "readSourceFrame rejects empty and malformed sources safely" {
+    const empty = types.SoundData{
+        .buffer = &[_]u8{},
+        .frequency = 44100,
+        .channels = 1,
+        .format = .signed16,
+        .length_samples = 0,
+    };
+    try testing.expect(readSourceFrame(&empty, 0) == null);
+
+    // channels == 0 is treated as mono (channel 0) rather than crashing.
+    var sample: [2]u8 = undefined;
+    std.mem.writeInt(i16, &sample, 42, .little);
+    const zero_ch = types.SoundData{
+        .buffer = &sample,
+        .frequency = 44100,
+        .channels = 0,
+        .format = .signed16,
+        .length_samples = 1,
+    };
+    const f = readSourceFrame(&zero_ch, 0).?;
+    try testing.expectEqual(@as(f32, 42.0), f.l);
+    try testing.expectEqual(@as(f32, 42.0), f.r);
+}
+
+test "readSourceFrame handles large frame index without overflow overrun" {
+    // A huge frame index that, when multiplied by frame_bytes, would overflow
+    // usize must return null instead of wrapping into a valid-looking offset.
+    var sample: [2]u8 = undefined;
+    std.mem.writeInt(i16, &sample, 1, .little);
+    const data = types.SoundData{
+        .buffer = &sample,
+        .frequency = 44100,
+        .channels = 1,
+        .format = .signed16,
+        .length_samples = 1,
+    };
+    try testing.expect(readSourceFrame(&data, std.math.maxInt(usize)) == null);
+}
