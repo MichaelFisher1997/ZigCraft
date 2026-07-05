@@ -1118,10 +1118,21 @@ fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shad
 
 fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const u64) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    var infos: [8]c.VkDescriptorBufferInfo = undefined;
-    var writes: [8]c.VkWriteDescriptorSet = undefined;
-    const count = @min(buffers.len, infos.len);
-    for (buffers[0..count], 0..) |buffer, i| {
+    if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT or buffers.len == 0) return;
+
+    const infos = ctx.allocator.alloc(c.VkDescriptorBufferInfo, buffers.len) catch |err| {
+        log.log.err("Failed to allocate compute descriptor buffer infos: {}", .{err});
+        return;
+    };
+    defer ctx.allocator.free(infos);
+
+    const writes = ctx.allocator.alloc(c.VkWriteDescriptorSet, buffers.len) catch |err| {
+        log.log.err("Failed to allocate compute descriptor writes: {}", .{err});
+        return;
+    };
+    defer ctx.allocator.free(writes);
+
+    for (buffers, 0..) |buffer, i| {
         infos[i] = .{ .buffer = @ptrFromInt(buffer), .offset = 0, .range = c.VK_WHOLE_SIZE };
         writes[i] = std.mem.zeroes(c.VkWriteDescriptorSet);
         writes[i].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1131,7 +1142,7 @@ fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, 
         writes[i].descriptorCount = 1;
         writes[i].pBufferInfo = &infos[i];
     }
-    c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, @intCast(count), &writes[0], 0, null);
+    c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, @intCast(writes.len), writes.ptr, 0, null);
 }
 
 fn destroyComputePipeline(ctx_ptr: *anyopaque, pipeline: *rhi.ComputePipeline) void {

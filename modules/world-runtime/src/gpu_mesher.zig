@@ -151,7 +151,7 @@ pub const GpuMesher = struct {
         if (self.submitted[prev_fi].items.len == 0) return;
 
         if (!self.compute.waitForFrameFence(prev_fi)) {
-            log.log.warn("GPU_MESHER: in_flight_fences[{}] is null (FrameManager fences not yet initialized); deferring finalize this frame", .{prev_fi});
+            log.log.warn("GPU_MESHER: frame fence wait failed for frame {} (missing fence, timeout, or GPU/device error); deferring finalize this frame", .{prev_fi});
             return;
         }
 
