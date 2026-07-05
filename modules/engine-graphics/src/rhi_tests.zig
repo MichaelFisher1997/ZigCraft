@@ -11,6 +11,7 @@ const MockContext = struct {
     draw_called: bool = false,
     draw_depth_texture_called: bool = false,
     sky_pipeline_requested: bool = false,
+    sky_pipeline_ready: bool = false,
     dynamic_resolution_called: bool = false,
     dynamic_resolution_enabled: bool = false,
     dynamic_resolution_min_scale: f32 = 0.0,
@@ -138,6 +139,7 @@ const MockContext = struct {
         const self: *MockContext = @ptrCast(@alignCast(ptr));
         _ = params;
         self.sky_pipeline_requested = true;
+        if (!self.sky_pipeline_ready) return error.SkyPipelineNotReady;
     }
 
     fn beginWaterDraw(ptr: *anyopaque, reflection: rhi.TextureHandle, scene_depth: rhi.TextureHandle) bool {
