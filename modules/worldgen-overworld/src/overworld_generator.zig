@@ -83,6 +83,15 @@ pub const OverworldGenerator = struct {
         };
     }
 
+    /// Release owned resources before the struct is destroyed.
+    ///
+    /// All fields of `OverworldGenerator` are inline value types with no heap
+    /// allocations (`classification_cache` is a fixed 256x256 inline grid,
+    /// `cache_mutex` is an inline primitive, and `terrain_shape` /
+    /// `biome_decorator` own no heap memory), so there is nothing to free here
+    /// today. This hook is still invoked by `deinitWrapper` so that any future
+    /// heap-owning field is cleaned up through the erased `Generator` interface
+    /// instead of leaking silently.
     pub fn deinit(self: *OverworldGenerator) void {
         _ = self;
     }
@@ -802,6 +811,7 @@ pub const OverworldGenerator = struct {
 
     fn deinitWrapper(ptr: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *OverworldGenerator = @ptrCast(@alignCast(ptr));
+        self.deinit();
         allocator.destroy(self);
     }
 };
