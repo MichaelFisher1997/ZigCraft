@@ -165,7 +165,12 @@ pub const GpuMesher = struct {
         const prev_fi = (fi + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
         if (self.submitted[prev_fi].items.len == 0) return;
 
-        _ = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &self.vk_ctx.frames.in_flight_fences[prev_fi], c.VK_TRUE, std.math.maxInt(u64));
+        const fence = self.vk_ctx.frames.in_flight_fences[prev_fi];
+        if (fence == null) {
+            log.log.warn("GPU_MESHER: in_flight_fences[{}] is null (FrameManager fences not yet initialized); deferring finalize this frame", .{prev_fi});
+            return;
+        }
+        _ = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, std.math.maxInt(u64));
 
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
