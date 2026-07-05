@@ -45,6 +45,7 @@ const MockRuntime = struct {
     gpu_fault_detected: bool = false,
     framebuffer_resized: bool = false,
     pipeline_rebuild_needed: bool = false,
+    swapchain_recreate_failed: bool = false,
     main_pass_active: bool = false,
     g_pass_active: bool = false,
     ssao_pass_active: bool = false,
@@ -280,6 +281,19 @@ test "rhi_state_control.requestSwapchainRecreate sets both resize flags" {
     try testing.expect(ctx.swapchain.framebuffer_resized);
 }
 
+test "rhi_state_control.requestSwapchainRecreate clears prior recreate failure" {
+    // After a failed recreation, a fresh resize request must clear the failed
+    // flag so beginFrame is allowed to attempt recreation again (issue #725).
+    var ctx = MockSimpleContext{ .allocator = testing.allocator };
+    ctx.runtime.swapchain_recreate_failed = true;
+
+    rhi_state_control.requestSwapchainRecreate(&ctx);
+
+    try testing.expect(!ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(ctx.swapchain.framebuffer_resized);
+}
+
 // ============================================================================
 // MSAA State Tests
 // ============================================================================
@@ -289,6 +303,7 @@ test "rhi_state_control.setMSAA clamps to max samples" {
     ctx.vulkan_device.max_msaa_samples = 4;
     ctx.options.msaa_samples = 1;
     ctx.swapchain.msaa_samples = 1;
+    ctx.runtime.swapchain_recreate_failed = true;
 
     rhi_state_control.setMSAA(&ctx, 8);
 
@@ -297,6 +312,8 @@ test "rhi_state_control.setMSAA clamps to max samples" {
     try testing.expectEqual(@as(u8, 4), ctx.swapchain.msaa_samples);
     try testing.expect(ctx.runtime.framebuffer_resized);
     try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+    // A settings change is a fresh recreate request, so it must clear a prior failure.
+    try testing.expect(!ctx.runtime.swapchain_recreate_failed);
 }
 
 test "rhi_state_control.setMSAA no-op when unchanged" {

@@ -41,6 +41,7 @@ pub fn setViewport(ctx: anytype, width: u32, height: u32) void {
 
 pub fn requestSwapchainRecreate(ctx: anytype) void {
     ctx.runtime.framebuffer_resized = true;
+    ctx.runtime.swapchain_recreate_failed = false;
     ctx.swapchain.framebuffer_resized = true;
 }
 
@@ -145,6 +146,7 @@ pub fn setVSync(ctx: anytype, enabled: bool) void {
     }
 
     ctx.runtime.framebuffer_resized = true;
+    ctx.runtime.swapchain_recreate_failed = false;
 
     const mode_name: []const u8 = switch (ctx.options.present_mode) {
         c.VK_PRESENT_MODE_IMMEDIATE_KHR => "IMMEDIATE (VSync OFF)",
@@ -173,6 +175,7 @@ pub fn setMSAA(ctx: anytype, samples: u8) void {
     ctx.options.msaa_samples = clamped;
     ctx.swapchain.msaa_samples = clamped;
     ctx.runtime.framebuffer_resized = true;
+    ctx.runtime.swapchain_recreate_failed = false;
     ctx.runtime.pipeline_rebuild_needed = true;
     log.log.info("Vulkan MSAA set to {}x (pending swapchain recreation)", .{clamped});
 }

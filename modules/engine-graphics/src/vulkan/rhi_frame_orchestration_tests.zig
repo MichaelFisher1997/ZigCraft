@@ -29,12 +29,15 @@ test "prepareFrameState texture binding needs_update detection" {
 
 test "markSwapchainRecreateFailed sets explicit retry state" {
     var ctx = MockSwapchainContext{};
+    ctx.runtime.framebuffer_resized = true;
 
     const logged = frame_orchestration.markSwapchainRecreateFailed(&ctx, "test stage", error.OutOfMemory);
 
     try testing.expect(logged);
     try testing.expect(ctx.runtime.swapchain_recreate_failed);
-    try testing.expect(ctx.runtime.framebuffer_resized);
+    // The resize request is consumed on failure so beginFrame does not retry
+    // every frame (which would loop when the failure is persistent).
+    try testing.expect(!ctx.runtime.framebuffer_resized);
     try testing.expect(ctx.runtime.pipeline_rebuild_needed);
 }
 
@@ -47,8 +50,35 @@ test "markSwapchainRecreateFailed logs only first failure" {
     try testing.expect(first_logged);
     try testing.expect(!second_logged);
     try testing.expect(ctx.runtime.swapchain_recreate_failed);
-    try testing.expect(ctx.runtime.framebuffer_resized);
+    try testing.expect(!ctx.runtime.framebuffer_resized);
     try testing.expect(ctx.runtime.pipeline_rebuild_needed);
+}
+
+test "beginFrame recreate guard blocks retry after persistent SSAO failure" {
+    // Simulates the swapchain-recreate loop fixed in issue #725:
+    //   frame 1: resize requested -> recreate attempted -> SSAO fails
+    //   frame 2+: beginFrame must NOT retry the recreation every frame
+    var ctx = MockSwapchainContext{};
+
+    // Resize requested by the windowing layer.
+    ctx.runtime.framebuffer_resized = true;
+    const attempt_frame1 = (ctx.runtime.framebuffer_resized) and !ctx.runtime.swapchain_recreate_failed;
+    try testing.expect(attempt_frame1);
+
+    // SSAO creation fails during recreateSwapchainInternal.
+    _ = frame_orchestration.markSwapchainRecreateFailed(&ctx, "SSAO resources", error.OutOfMemory);
+
+    // Subsequent frames: the guard condition must be false so no retry occurs.
+    const attempt_frame2 = (ctx.runtime.framebuffer_resized) and !ctx.runtime.swapchain_recreate_failed;
+    try testing.expect(!attempt_frame2);
+    try testing.expect(ctx.runtime.swapchain_recreate_failed);
+    try testing.expect(!ctx.runtime.framebuffer_resized);
+
+    // A fresh resize request clears the failed flag, allowing a new attempt.
+    ctx.runtime.framebuffer_resized = true;
+    ctx.runtime.swapchain_recreate_failed = false;
+    const attempt_after_new_resize = (ctx.runtime.framebuffer_resized) and !ctx.runtime.swapchain_recreate_failed;
+    try testing.expect(attempt_after_new_resize);
 }
 
 test "markSwapchainRecreateSucceeded clears failure state" {
