@@ -122,6 +122,9 @@ const MockContext = struct {
         _ = ptr;
         return 2;
     }
+    fn getNativeBackendContext(ptr: *anyopaque) u64 {
+        return @intFromPtr(ptr);
+    }
 
     fn computeSsao(ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         _ = ptr;
@@ -281,6 +284,7 @@ const MockContext = struct {
         .getDescriptorPool = getNativeDescriptorPool,
         .getUiRenderPass = getNativeUiRenderPass,
         .getSwapchainImageCount = getNativeSwapchainImageCount,
+        .getBackendContext = getNativeBackendContext,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
@@ -426,6 +430,17 @@ const MockContext = struct {
         .debug_overlay = MOCK_DEBUG_OVERLAY_VTABLE,
         .shadow = MOCK_SHADOW_VTABLE,
         .water = MOCK_WATER_VTABLE,
+        .compute = .{
+            .bindComputePipeline = undefined,
+            .bindDescriptorSet = undefined,
+            .dispatch = undefined,
+            .pushConstants = undefined,
+            .fillBuffer = undefined,
+            .copyBuffer = undefined,
+            .pipelineBarrier = undefined,
+            .waitForFrameFence = undefined,
+            .getNativeBuffer = undefined,
+        },
         .ui = MOCK_UI_VTABLE,
         .query = MOCK_QUERY_VTABLE,
         .timing = .{

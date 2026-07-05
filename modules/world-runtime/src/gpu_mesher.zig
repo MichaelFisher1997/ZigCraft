@@ -58,6 +58,7 @@ pub const GpuMesher = struct {
     allocator: std.mem.Allocator,
     rhi: rhi_pkg.RHI,
     rm: rhi_pkg.ResourceManager,
+    compute: rhi_pkg.IComputeContext,
     vk_ctx: *VulkanContext,
     available: bool,
 
@@ -86,7 +87,7 @@ pub const GpuMesher = struct {
         errdefer allocator.destroy(self);
 
         const rm = rhi.resourceManager();
-        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
+        const vk_ctx: *VulkanContext = @ptrFromInt(rhi.nativeHandles().getBackendContext());
         const output_size = @as(usize, MAX_GPU_MESH_BATCH) * @as(usize, MAX_VERTICES_PER_CHUNK) * @as(usize, VERTEX_SIZE);
         const result_size = MAX_GPU_MESH_BATCH * @sizeOf(MeshBuildResult);
 
@@ -94,6 +95,7 @@ pub const GpuMesher = struct {
             .allocator = allocator,
             .rhi = rhi,
             .rm = rm,
+            .compute = rhi.compute(),
             .vk_ctx = vk_ctx,
             .available = false,
             .descriptor_sets = std.mem.zeroes([MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet),
@@ -165,18 +167,17 @@ pub const GpuMesher = struct {
         const prev_fi = (fi + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
         if (self.submitted[prev_fi].items.len == 0) return;
 
-        const fence = self.vk_ctx.frames.in_flight_fences[prev_fi];
-        if (fence == null) {
+        if (!self.compute.waitForFrameFence(prev_fi)) {
             log.log.warn("GPU_MESHER: in_flight_fences[{}] is null (FrameManager fences not yet initialized); deferring finalize this frame", .{prev_fi});
             return;
         }
-        _ = c.vkWaitForFences(self.vk_ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, std.math.maxInt(u64));
 
         const cmd = self.vk_ctx.frames.command_buffers[fi];
         if (cmd == null) return;
 
-        const src = self.vk_ctx.resources.buffers.get(self.output_handles[prev_fi]) orelse return;
-        const dst = self.vk_ctx.resources.buffers.get(vertex_allocator.buffer) orelse return;
+        const src = self.compute.getNativeBuffer(self.output_handles[prev_fi]);
+        const dst = self.compute.getNativeBuffer(vertex_allocator.buffer);
+        if (src == 0 or dst == 0) return;
         const results = self.getMappedResults(prev_fi) orelse {
             log.log.warn("GPU_MESHER_FINALIZE: no mapped results for prev_fi={}", .{prev_fi});
             return;
@@ -230,15 +231,15 @@ pub const GpuMesher = struct {
                 const request_base_vertices = @as(u64, @intCast(idx)) * @as(u64, MAX_VERTICES_PER_CHUNK);
 
                 if (solid_alloc) |alloc| {
-                    copyVertexRange(cmd, src.buffer, dst.buffer, request_base_vertices, alloc.offset, result.solid_count);
+                    copyVertexRange(self, src, dst, request_base_vertices, alloc.offset, result.solid_count);
                     copied_any = true;
                 }
                 if (cutout_alloc) |alloc| {
-                    copyVertexRange(cmd, src.buffer, dst.buffer, request_base_vertices + MAX_PASS_VERTICES, alloc.offset, result.cutout_count);
+                    copyVertexRange(self, src, dst, request_base_vertices + MAX_PASS_VERTICES, alloc.offset, result.cutout_count);
                     copied_any = true;
                 }
                 if (fluid_alloc) |alloc| {
-                    copyVertexRange(cmd, src.buffer, dst.buffer, request_base_vertices + (MAX_PASS_VERTICES * 2), alloc.offset, result.fluid_count);
+                    copyVertexRange(self, src, dst, request_base_vertices + (MAX_PASS_VERTICES * 2), alloc.offset, result.fluid_count);
                     copied_any = true;
                 }
 
@@ -250,22 +251,7 @@ pub const GpuMesher = struct {
         }
 
         if (copied_any) {
-            var barrier = std.mem.zeroes(c.VkMemoryBarrier);
-            barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-            c.vkCmdPipelineBarrier(
-                cmd,
-                c.VK_PIPELINE_STAGE_TRANSFER_BIT,
-                c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-                0,
-                1,
-                &barrier,
-                0,
-                null,
-                0,
-                null,
-            );
+            self.compute.pipelineBarrier(c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, c.VK_ACCESS_TRANSFER_WRITE_BIT, c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
         }
 
         self.submitted[prev_fi].clearRetainingCapacity();
@@ -281,19 +267,13 @@ pub const GpuMesher = struct {
 
         self.submitted[fi].appendSlice(self.allocator, self.mesh_queue.items) catch return;
 
-        const result_buf = self.result_buffers[fi].buffer;
+        const result_buf = @intFromPtr(self.result_buffers[fi].buffer);
         const result_size: c.VkDeviceSize = MAX_GPU_MESH_BATCH * @sizeOf(MeshBuildResult);
-        c.vkCmdFillBuffer(cmd, result_buf, 0, result_size, 0);
-        {
-            var fill_barrier = std.mem.zeroes(c.VkMemoryBarrier);
-            fill_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            fill_barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
-            fill_barrier.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_SHADER_WRITE_BIT;
-            c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fill_barrier, 0, null, 0, null);
-        }
+        self.compute.fillBuffer(result_buf, 0, result_size, 0);
+        self.compute.pipelineBarrier(c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_ACCESS_TRANSFER_WRITE_BIT, c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_SHADER_WRITE_BIT);
 
-        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
-        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[fi], 0, null);
+        self.compute.bindComputePipeline(@intFromPtr(self.pipeline));
+        self.compute.bindDescriptorSet(@intFromPtr(self.pipeline_layout), @intFromPtr(self.descriptor_sets[fi]));
 
         for (self.mesh_queue.items, 0..) |req, idx| {
             const n_slot = gpu_block_buffer.getSlotForChunk(req.cx, req.cz - 1);
@@ -309,26 +289,11 @@ pub const GpuMesher = struct {
                 .neighbor_east_slot = slotOrMissing(e_slot),
                 .neighbor_west_slot = slotOrMissing(w_slot),
             };
-            c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(MeshPushConstants), &push);
-            c.vkCmdDispatch(cmd, CHUNK_Y, 1, 1);
+            self.compute.pushConstants(@intFromPtr(self.pipeline_layout), 0, @sizeOf(MeshPushConstants), &push);
+            self.compute.dispatch(CHUNK_Y, 1, 1);
         }
 
-        var barrier = std.mem.zeroes(c.VkMemoryBarrier);
-        barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        barrier.srcAccessMask = c.VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = c.VK_ACCESS_HOST_READ_BIT | c.VK_ACCESS_TRANSFER_READ_BIT;
-        c.vkCmdPipelineBarrier(
-            cmd,
-            c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            c.VK_PIPELINE_STAGE_HOST_BIT | c.VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0,
-            1,
-            &barrier,
-            0,
-            null,
-            0,
-            null,
-        );
+        self.compute.pipelineBarrier(c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_PIPELINE_STAGE_HOST_BIT | c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_ACCESS_SHADER_WRITE_BIT, c.VK_ACCESS_HOST_READ_BIT | c.VK_ACCESS_TRANSFER_READ_BIT);
 
         self.stats.chunks_dispatched = @intCast(self.mesh_queue.items.len);
         self.mesh_queue.clearRetainingCapacity();
@@ -536,13 +501,9 @@ fn freeTempAllocations(vertex_allocator: *GlobalVertexAllocator, solid: ?VertexA
     if (fluid) |alloc| vertex_allocator.free(alloc);
 }
 
-fn copyVertexRange(cmd: c.VkCommandBuffer, src_buffer: c.VkBuffer, dst_buffer: c.VkBuffer, src_vertex_offset: u64, dst_byte_offset: usize, count: u32) void {
+fn copyVertexRange(self: *GpuMesher, src_buffer: u64, dst_buffer: u64, src_vertex_offset: u64, dst_byte_offset: usize, count: u32) void {
     if (count == 0) return;
-    var region = std.mem.zeroes(c.VkBufferCopy);
-    region.srcOffset = src_vertex_offset * VERTEX_SIZE;
-    region.dstOffset = dst_byte_offset;
-    region.size = @as(u64, count) * VERTEX_SIZE;
-    c.vkCmdCopyBuffer(cmd, src_buffer, dst_buffer, 1, &region);
+    self.compute.copyBuffer(src_buffer, dst_buffer, src_vertex_offset * VERTEX_SIZE, dst_byte_offset, @as(u64, count) * VERTEX_SIZE);
 }
 
 fn slotOrMissing(slot: ?usize) i32 {

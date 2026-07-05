@@ -656,6 +656,54 @@ pub const IDebugOverlayContext = struct {
     }
 };
 
+pub const PipelineStageFlags = u32;
+pub const AccessFlags = u32;
+
+pub const IComputeContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        bindComputePipeline: *const fn (ptr: *anyopaque, pipeline: u64) void,
+        bindDescriptorSet: *const fn (ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void,
+        dispatch: *const fn (ptr: *anyopaque, group_count_x: u32, group_count_y: u32, group_count_z: u32) void,
+        pushConstants: *const fn (ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void,
+        fillBuffer: *const fn (ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void,
+        copyBuffer: *const fn (ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void,
+        pipelineBarrier: *const fn (ptr: *anyopaque, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void,
+        waitForFrameFence: *const fn (ptr: *anyopaque, frame_index: usize) bool,
+        getNativeBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) u64,
+    };
+
+    pub fn bindComputePipeline(self: IComputeContext, pipeline: u64) void {
+        self.vtable.bindComputePipeline(self.ptr, pipeline);
+    }
+    pub fn bindDescriptorSet(self: IComputeContext, pipeline_layout: u64, descriptor_set: u64) void {
+        self.vtable.bindDescriptorSet(self.ptr, pipeline_layout, descriptor_set);
+    }
+    pub fn dispatch(self: IComputeContext, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
+        self.vtable.dispatch(self.ptr, group_count_x, group_count_y, group_count_z);
+    }
+    pub fn pushConstants(self: IComputeContext, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+        self.vtable.pushConstants(self.ptr, pipeline_layout, offset, size, data);
+    }
+    pub fn fillBuffer(self: IComputeContext, buffer: u64, offset: u64, size: u64, data: u32) void {
+        self.vtable.fillBuffer(self.ptr, buffer, offset, size, data);
+    }
+    pub fn copyBuffer(self: IComputeContext, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+        self.vtable.copyBuffer(self.ptr, src_buffer, dst_buffer, src_offset, dst_offset, size);
+    }
+    pub fn pipelineBarrier(self: IComputeContext, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void {
+        self.vtable.pipelineBarrier(self.ptr, src_stage, dst_stage, src_access, dst_access);
+    }
+    pub fn waitForFrameFence(self: IComputeContext, frame_index: usize) bool {
+        return self.vtable.waitForFrameFence(self.ptr, frame_index);
+    }
+    pub fn getNativeBuffer(self: IComputeContext, handle: BufferHandle) u64 {
+        return self.vtable.getNativeBuffer(self.ptr, handle);
+    }
+};
+
 pub const IRenderContext = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -788,6 +836,7 @@ pub const INativeHandlesContext = struct {
         getDescriptorPool: *const fn (ptr: *anyopaque) u64,
         getUiRenderPass: *const fn (ptr: *anyopaque) u64,
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
+        getBackendContext: *const fn (ptr: *anyopaque) u64,
     };
 
     pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
@@ -819,6 +868,9 @@ pub const INativeHandlesContext = struct {
     }
     pub fn getSwapchainImageCount(self: INativeHandlesContext) u32 {
         return self.vtable.getSwapchainImageCount(self.ptr);
+    }
+    pub fn getBackendContext(self: INativeHandlesContext) u64 {
+        return self.vtable.getBackendContext(self.ptr);
     }
 };
 
@@ -1033,6 +1085,7 @@ pub const RHI = struct {
         debug_overlay: IDebugOverlayContext.VTable,
         shadow: IShadowContext.VTable,
         water: IWaterContext.VTable,
+        compute: IComputeContext.VTable,
         ui: IUIContext.VTable,
         query: IDeviceQuery.VTable,
         timing: IDeviceTiming.VTable,
@@ -1095,6 +1148,9 @@ pub const RHI = struct {
     }
     pub fn water(self: RHI) IWaterContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.water };
+    }
+    pub fn compute(self: RHI) IComputeContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.compute };
     }
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };
