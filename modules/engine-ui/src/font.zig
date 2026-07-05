@@ -59,7 +59,25 @@ pub fn measureTextWidth(text: []const u8, scale: f32) f32 {
     }
 
     if (text.len == 0) return 0;
-    return @as(f32, @floatFromInt(text.len)) * 6.0 * scale - scale;
+    return @as(f32, @floatFromInt(text.len)) * 6.0 * scale;
+}
+
+test "font measureTextWidth matches drawText advance (fallback path)" {
+    const scale: f32 = 2.0;
+    const cases = [_][]const u8{ "", "A", "AB", "ABC", "12345" };
+    for (cases) |t| {
+        const expected: f32 = @as(f32, @floatFromInt(t.len)) * 6.0 * scale;
+        try std.testing.expectEqual(expected, measureTextWidth(t, scale));
+    }
+    try std.testing.expectEqual(@as(f32, 0), measureTextWidth("", 1.0));
+}
+
+test "font measureTextWidth fallback scales linearly" {
+    const text = "HELLO";
+    try std.testing.expectEqual(
+        measureTextWidth(text, 1.0) * 3.0,
+        measureTextWidth(text, 3.0),
+    );
 }
 
 pub fn drawTextCentered(u: *UISystem, text: []const u8, cx: f32, y: f32, scale: f32, color: Color) void {
