@@ -7,8 +7,8 @@ on:
     types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.comment.id }}
-  cancel-in-progress: true
+  group: opencode-serial
+  cancel-in-progress: false
 
 jobs:
   opencode:
@@ -53,4 +53,5 @@ jobs:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         with:
           model: zhipuai-coding-plan/glm-5.2
+          variant: max
           use_github_token: true
