@@ -113,3 +113,55 @@ test "ChunkMesh emits custom stair fixture solid mesh" {
     try testing.expectEqual(null, mesh.pending_cutout);
     try testing.expectEqual(null, mesh.pending_fluid);
 }
+
+test "ChunkMesh tall_cross emits 2-block billboard from single block" {
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 5, 1, .tall_grass);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    // tall_cross emits 2 diagonal quads × 6 verts = 12 cutout vertices
+    try testing.expectEqual(@as(usize, 12), mesh.pending_cutout.?.len);
+    // The quad should span 2 blocks vertically (y=5 to y=7)
+    const verts = mesh.pending_cutout.?;
+    var found_y5 = false;
+    var found_y7 = false;
+    for (verts) |v| {
+        if (v.pos[1] == 5.0) found_y5 = true;
+        if (v.pos[1] == 7.0) found_y7 = true;
+    }
+    try testing.expect(found_y5);
+    try testing.expect(found_y7);
+}
+
+test "ChunkMesh tall_cross renders full height at subchunk top boundary" {
+    // Place tall_grass at the LAST y of subchunk 0 (y=15). The 2-block-tall
+    // billboard extends into subchunk 1's range but should still be fully meshed.
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 15, 1, .tall_grass);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    try testing.expectEqual(@as(usize, 12), mesh.pending_cutout.?.len);
+    const verts = mesh.pending_cutout.?;
+    var found_y15 = false;
+    var found_y17 = false;
+    for (verts) |v| {
+        if (v.pos[1] == 15.0) found_y15 = true;
+        if (v.pos[1] == 17.0) found_y17 = true;
+    }
+    try testing.expect(found_y15);
+    try testing.expect(found_y17);
+}
