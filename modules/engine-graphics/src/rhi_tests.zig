@@ -240,6 +240,93 @@ const MockContext = struct {
         self.draw_depth_texture_called = true;
     }
 
+    fn bindComputePipeline(ptr: *anyopaque, pipeline: u64) void {
+        _ = ptr;
+        _ = pipeline;
+    }
+    fn bindDescriptorSet(ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void {
+        _ = ptr;
+        _ = pipeline_layout;
+        _ = descriptor_set;
+    }
+    fn createComputeBuffer(ptr: *anyopaque, size: usize, host_visible: bool) rhi.RhiError!rhi.ComputeBuffer {
+        _ = ptr;
+        _ = size;
+        _ = host_visible;
+        return .{};
+    }
+    fn destroyComputeBuffer(ptr: *anyopaque, buffer: *rhi.ComputeBuffer) void {
+        _ = ptr;
+        buffer.* = .{};
+    }
+    fn createComputePipeline(ptr: *anyopaque, allocator: std.mem.Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!rhi.ComputePipeline {
+        _ = ptr;
+        _ = allocator;
+        _ = shader_path;
+        _ = storage_binding_count;
+        _ = push_constant_size;
+        return .{};
+    }
+    fn updateComputeDescriptors(ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const u64) void {
+        _ = ptr;
+        _ = pipeline;
+        _ = frame_index;
+        _ = buffers;
+    }
+    fn destroyComputePipeline(ptr: *anyopaque, pipeline: *rhi.ComputePipeline) void {
+        _ = ptr;
+        pipeline.* = .{};
+    }
+    fn dispatchCompute(ptr: *anyopaque, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
+        _ = ptr;
+        _ = group_count_x;
+        _ = group_count_y;
+        _ = group_count_z;
+    }
+    fn pushComputeConstants(ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+        _ = ptr;
+        _ = pipeline_layout;
+        _ = offset;
+        _ = size;
+        _ = data;
+    }
+    fn fillComputeBuffer(ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void {
+        _ = ptr;
+        _ = buffer;
+        _ = offset;
+        _ = size;
+        _ = data;
+    }
+    fn copyComputeBuffer(ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+        _ = ptr;
+        _ = src_buffer;
+        _ = dst_buffer;
+        _ = src_offset;
+        _ = dst_offset;
+        _ = size;
+    }
+    fn computePipelineBarrier(ptr: *anyopaque, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags) void {
+        _ = ptr;
+        _ = src_stage;
+        _ = dst_stage;
+        _ = src_access;
+        _ = dst_access;
+    }
+    fn waitForFrameFence(ptr: *anyopaque, frame_index: usize) bool {
+        _ = ptr;
+        _ = frame_index;
+        return true;
+    }
+    fn getNativeBuffer(ptr: *anyopaque, handle: rhi.BufferHandle) u64 {
+        _ = ptr;
+        _ = handle;
+        return 0;
+    }
+    fn hasCommandBuffer(ptr: *anyopaque) bool {
+        _ = ptr;
+        return true;
+    }
+
     const MOCK_RENDER_VTABLE = rhi.IRenderContext.VTable{
         .beginFrame = undefined,
         .endFrame = undefined,
@@ -431,15 +518,21 @@ const MockContext = struct {
         .shadow = MOCK_SHADOW_VTABLE,
         .water = MOCK_WATER_VTABLE,
         .compute = .{
-            .bindComputePipeline = undefined,
-            .bindDescriptorSet = undefined,
-            .dispatch = undefined,
-            .pushConstants = undefined,
-            .fillBuffer = undefined,
-            .copyBuffer = undefined,
-            .pipelineBarrier = undefined,
-            .waitForFrameFence = undefined,
-            .getNativeBuffer = undefined,
+            .bindComputePipeline = bindComputePipeline,
+            .bindDescriptorSet = bindDescriptorSet,
+            .createComputeBuffer = createComputeBuffer,
+            .destroyComputeBuffer = destroyComputeBuffer,
+            .createComputePipeline = createComputePipeline,
+            .updateComputeDescriptors = updateComputeDescriptors,
+            .destroyComputePipeline = destroyComputePipeline,
+            .dispatch = dispatchCompute,
+            .pushConstants = pushComputeConstants,
+            .fillBuffer = fillComputeBuffer,
+            .copyBuffer = copyComputeBuffer,
+            .pipelineBarrier = computePipelineBarrier,
+            .waitForFrameFence = waitForFrameFence,
+            .getNativeBuffer = getNativeBuffer,
+            .hasCommandBuffer = hasCommandBuffer,
         },
         .ui = MOCK_UI_VTABLE,
         .query = MOCK_QUERY_VTABLE,
