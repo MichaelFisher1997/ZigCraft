@@ -20,6 +20,7 @@ test {
     _ = @import("shadow_cascade_tests.zig");
     _ = @import("interface_mock_tests.zig");
     _ = @import("world_inline_tests.zig");
+    _ = @import("collision_tests.zig");
 
     // ECS and engine tests
     _ = @import("ecs_tests.zig");
