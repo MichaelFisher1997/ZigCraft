@@ -98,15 +98,11 @@ pub const Input = struct {
             },
             c.SDL_EVENT_KEY_DOWN => {
                 if (!event.key.repeat) {
-                    const key = Key.fromSDL(event.key.key);
-                    self.keys_down.put(key, {}) catch {};
-                    self.keys_pressed.put(key, {}) catch {};
+                    self.recordKeyDown(Key.fromSDL(event.key.key));
                 }
             },
             c.SDL_EVENT_KEY_UP => {
-                const key = Key.fromSDL(event.key.key);
-                _ = self.keys_down.remove(key);
-                self.keys_released.put(key, {}) catch {};
+                self.recordKeyUp(Key.fromSDL(event.key.key));
             },
             c.SDL_EVENT_MOUSE_MOTION => {
                 self.mouse_x = @intFromFloat(event.motion.x);
@@ -147,6 +143,26 @@ pub const Input = struct {
             },
             else => {},
         }
+    }
+
+    /// Record a key press, keeping `keys_pressed` and `keys_down` consistent.
+    /// `keys_pressed` is updated first; if it fails the press is dropped entirely.
+    /// If `keys_down` then fails, `keys_pressed` is rolled back so `isKeyDown`
+    /// and `isKeyPressed` never disagree for the same key.
+    pub fn recordKeyDown(self: *Input, key: Key) void {
+        self.keys_pressed.put(key, {}) catch return;
+        self.keys_down.put(key, {}) catch {
+            _ = self.keys_pressed.remove(key);
+        };
+    }
+
+    /// Record a key release, keeping `keys_released` and `keys_down` consistent.
+    /// `keys_released` is updated first; if it fails `keys_down` is left
+    /// untouched so the key does not disappear from held state without a
+    /// matching release signal.
+    pub fn recordKeyUp(self: *Input, key: Key) void {
+        self.keys_released.put(key, {}) catch return;
+        _ = self.keys_down.remove(key);
     }
 
     // ========================================================================

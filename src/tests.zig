@@ -102,4 +102,5 @@ test {
     _ = @import("world-core").world_block_fill_tests;
     _ = @import("world-meshing").world_interface_vtable_tests;
     _ = @import("world-runtime").world_mutation;
+    _ = @import("input_tests.zig");
 }
