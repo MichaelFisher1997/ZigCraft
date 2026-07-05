@@ -38,7 +38,7 @@ pub const LightingEngine = struct {
             while (dx <= max_dx) : (dx += 1) {
                 if (self.storage.get(center_cx + dx, center_cz + dz)) |data| {
                     resetChunkLighting(&data.chunk);
-                    seedChunkSunlight(&data.chunk, self.allocator, &skylight_queue) catch |err| return err;
+                    try seedChunkSunlight(&data.chunk, self.allocator, &skylight_queue);
                     try seedChunkBlockLight(&data.chunk, self.allocator, &blocklight_queue);
                     data.chunk.dirty = true;
                 }
@@ -287,4 +287,41 @@ fn isInRecomputeArea(center_cx: i32, center_cz: i32, min_dx: i32, max_dx: i32, m
     const dx = cx - center_cx;
     const dz = cz - center_cz;
     return dx >= min_dx and dx <= max_dx and dz >= min_dz and dz <= max_dz;
+}
+
+test "LightingEngine recomputeArea seeds skylight and block light" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const data = try storage.getOrCreate(0, 0);
+    for (0..CHUNK_SIZE_Z) |z| {
+        for (0..CHUNK_SIZE_X) |x| {
+            data.chunk.setBlock(@intCast(x), 5, @intCast(z), .stone);
+        }
+    }
+    data.chunk.setBlock(4, 4, 4, .torch);
+
+    var lighting = LightingEngine.init(&storage, testing.allocator);
+    try lighting.recomputeArea(0, 0, 4, 4);
+
+    try testing.expectEqual(@as(u4, MAX_LIGHT), data.chunk.getSkyLight(4, 6, 4));
+    try testing.expectEqual(@as(u4, 0), data.chunk.getSkyLight(4, 4, 4));
+    try testing.expect(data.chunk.getLight(5, 4, 4).getBlockLightR() > 0);
+}
+
+test "LightingEngine afterBlockRemoval seeds from lit neighbors" {
+    const testing = std.testing;
+
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const data = try storage.getOrCreate(0, 0);
+    data.chunk.setSkyLight(4, 4, 1, MAX_LIGHT);
+
+    var lighting = LightingEngine.init(&storage, testing.allocator);
+    try lighting.afterBlockRemoval(0, 0, 5, 4, 1);
+
+    try testing.expectEqual(@as(u4, MAX_LIGHT - 1), data.chunk.getSkyLight(5, 4, 1));
 }

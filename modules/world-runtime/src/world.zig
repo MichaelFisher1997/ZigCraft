@@ -295,7 +295,7 @@ pub const World = struct {
         log.log.info("World.init: initializing WorldRenderer", .{});
         const culling_size = options.rhi.query().getRenderResolution();
         var culling_system = if (!safe_mode) blk: {
-            break :blk options.rhi.createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
+            break :blk options.rhi.options().createCullingSystem(allocator, MAX_MDI_CHUNKS) catch |err| {
                 log.log.warn("GPU culling init failed ({}), falling back to CPU culling", .{err});
                 break :blk null;
             };

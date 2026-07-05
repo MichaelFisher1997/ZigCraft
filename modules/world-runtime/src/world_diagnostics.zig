@@ -85,8 +85,8 @@ pub const CpuCullDiagnostics = struct {
     }
 
     pub fn recordNotRenderable(self: *CpuCullDiagnostics, cx: i64, cz: i64, dist_sq: i64, r_dist: i64) void {
-        self.not_renderable += 1;
         self.recordMissingIfInCircle(cx, cz, dist_sq, r_dist);
+        self.not_renderable += 1;
     }
 
     pub fn recordNotInStorage(self: *CpuCullDiagnostics, cx: i64, cz: i64, dist_sq: i64, r_dist: i64) void {
