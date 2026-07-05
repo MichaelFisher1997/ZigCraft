@@ -154,8 +154,8 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &cmd_buffer;
 
-    Utils.checkVk(c.vkQueueSubmit(device.queue, 1, &submit_info, fence)) catch {
-        log.log.err("screenshot: failed to submit command buffer", .{});
+    device.submitGuarded(submit_info, fence) catch |err| {
+        log.log.err("screenshot: vkQueueSubmit failed: {}", .{err});
         return false;
     };
     const fence_result = c.vkWaitForFences(vk, 1, &fence, c.VK_TRUE, 5_000_000_000);
