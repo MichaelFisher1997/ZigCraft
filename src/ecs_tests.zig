@@ -3,6 +3,8 @@ const testing = std.testing;
 const ecs_manager = @import("engine-ecs").manager;
 const ECSRegistry = ecs_manager.Registry;
 const ecs_components = @import("engine-ecs").components;
+const ComponentStorage = @import("engine-ecs").ComponentStorage;
+const EntityId = @import("engine-ecs").EntityId;
 const Vec3 = @import("zig-math").Vec3;
 
 test "ECS registry basic operations" {
@@ -90,4 +92,74 @@ test "ECS Serialization" {
 
     try testing.expect(registry3.transforms.has(e1));
     try testing.expectEqual(@as(f32, 10), registry3.transforms.get(e1).?.position.x);
+}
+
+test "ComponentStorage.remove returns false on empty storage" {
+    const allocator = testing.allocator;
+    var storage = ComponentStorage(ecs_components.Transform).init(allocator);
+    defer storage.deinit();
+
+    // Removing from a fresh (empty) storage must not crash and must report
+    // nothing was removed.
+    try testing.expect(!storage.remove(123));
+}
+
+test "ComponentStorage.remove handles stale map entry with empty arrays (desync)" {
+    // Simulate a desync condition where the sparse map still references an
+    // entity but the dense arrays have been drained. Previously this triggered
+    // a usize underflow on `len - 1` followed by an out-of-bounds access.
+    const allocator = testing.allocator;
+    var storage = ComponentStorage(ecs_components.Transform).init(allocator);
+    defer storage.deinit();
+
+    const entity: EntityId = 42;
+    // Inject a stale map entry while leaving the dense arrays empty.
+    try storage.map.put(entity, 0);
+    try testing.expect(storage.has(entity));
+    try testing.expectEqual(@as(usize, 0), storage.components.items.len);
+
+    // Should gracefully report not-found and repair the stale map entry.
+    try testing.expect(!storage.remove(entity));
+    try testing.expect(!storage.has(entity));
+}
+
+test "ComponentStorage.remove handles stale map entry with out-of-bounds index (desync)" {
+    // Simulate a desync where the stored index is beyond the dense array
+    // length. The defensive guard should drop the stale entry and return
+    // false instead of indexing out of bounds.
+    const allocator = testing.allocator;
+    var storage = ComponentStorage(ecs_components.Transform).init(allocator);
+    defer storage.deinit();
+
+    const entity: EntityId = 7;
+    try storage.set(entity, .{ .position = Vec3.init(1, 2, 3) });
+    // Corrupt the stored index to point past the end of the dense arrays.
+    try storage.map.put(entity, 999);
+
+    try testing.expect(!storage.remove(entity));
+    try testing.expect(!storage.has(entity));
+}
+
+test "ComponentStorage.remove keeps dense arrays consistent under normal use" {
+    // Regression coverage to ensure the defensive guard does not interfere
+    // with the normal swap-remove behavior.
+    const allocator = testing.allocator;
+    var storage = ComponentStorage(ecs_components.Transform).init(allocator);
+    defer storage.deinit();
+
+    const a: EntityId = 1;
+    const b: EntityId = 2;
+    const c: EntityId = 3;
+    try storage.set(a, .{ .position = Vec3.init(1, 0, 0) });
+    try storage.set(b, .{ .position = Vec3.init(2, 0, 0) });
+    try storage.set(c, .{ .position = Vec3.init(3, 0, 0) });
+
+    // Remove the middle entity; the remaining two must still be retrievable.
+    try testing.expect(storage.remove(b));
+    try testing.expect(!storage.has(b));
+    try testing.expect(storage.has(a));
+    try testing.expect(storage.has(c));
+    try testing.expectEqual(@as(f32, 1), storage.get(a).?.position.x);
+    try testing.expectEqual(@as(f32, 3), storage.get(c).?.position.x);
+    try testing.expectEqual(@as(usize, 2), storage.components.items.len);
 }

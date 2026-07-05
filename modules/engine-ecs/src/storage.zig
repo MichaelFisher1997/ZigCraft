@@ -63,6 +63,22 @@ pub fn ComponentStorage(comptime T: type) type {
 
         pub fn remove(self: *Self, entity: EntityId) bool {
             if (self.map.get(entity)) |index| {
+                // Defensive guard: if the dense arrays are empty or the stored
+                // index is out of bounds, the sparse map and dense arrays have
+                // desynchronized. This cannot happen through correct API usage
+                // (set/remove/clear keep them in sync), but we guard against it
+                // to avoid usize underflow on `len - 1` and subsequent
+                // out-of-bounds access if internal state becomes corrupted.
+                if (self.components.items.len == 0 or
+                    self.entities.items.len == 0 or
+                    index >= self.components.items.len or
+                    index >= self.entities.items.len)
+                {
+                    // Repair state by dropping the stale map entry.
+                    _ = self.map.remove(entity);
+                    return false;
+                }
+
                 // Swap with last element to keep dense
                 const last_index = self.components.items.len - 1;
                 const last_entity = self.entities.items[last_index];
@@ -77,8 +93,8 @@ pub fn ComponentStorage(comptime T: type) type {
                 }
 
                 // Pop back
-                _ = self.components.pop(self.allocator);
-                _ = self.entities.pop(self.allocator);
+                _ = self.components.pop();
+                _ = self.entities.pop();
                 _ = self.map.remove(entity);
                 return true;
             }
