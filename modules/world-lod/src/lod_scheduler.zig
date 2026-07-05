@@ -32,6 +32,9 @@ pub const SchedulerContext = struct {
     // Dynamic per-level radius reduction (hysteresis under memory pressure).
     // Applied to all levels EXCEPT the coarsest (horizon is never shrunk).
     radius_reduction: *const [LODLevel.count]i32,
+    // When true, queueLODRegions marks chunks queued_for_generation and lets
+    // LODManager perform main-thread cache reads before dispatching workers.
+    defer_generation_dispatch: bool = false,
 };
 
 const std = @import("std");
@@ -116,10 +119,6 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     const player_rx = @divFloor(ctx.player_cx, scale);
     const player_rz = @divFloor(ctx.player_cz, scale);
 
-    ctx.mutex.lock();
-    defer ctx.mutex.unlock();
-
-    const storage = &ctx.regions[@intFromEnum(lod)];
     const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
     var diag = QueueDiag{};
     const active_lod_count = lod_chunk.activeLODCount(ctx.config);
@@ -136,7 +135,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     // ascending encoded priority (lower = closer, within a single LOD level the
     // bias bits are identical) ensures nearer regions enter — and thus leave —
     // the heap first.
-    const Candidate = struct { chunk: *LODChunk, encoded_priority: i32 };
+    const Candidate = struct { key: LODRegionKey, encoded_priority: i32 };
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
     defer candidates.deinit(ctx.allocator);
 
@@ -162,29 +161,11 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                 }
             }
 
-            const existing = storage.get(key);
-            if (existing != null) diag.existing += 1;
-            const needs_queue = if (existing) |chunk| chunk.state == .missing else true;
-
-            if (needs_queue) {
-                const chunk = if (existing) |c| c else blk: {
-                    const c = try ctx.allocator.create(LODChunk);
-                    errdefer ctx.allocator.destroy(c);
-                    c.* = LODChunk.init(rx, rz, lod);
-                    try storage.put(key, c);
-                    break :blk c;
-                };
-
-                const center_cx = key.rx * scale + @divFloor(scale, 2);
-                const center_cz = key.rz * scale + @divFloor(scale, 2);
-                const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
-
-                // Append before flipping state so allocation failure or the
-                // per-frame cap leaves the chunk re-queueable in .missing
-                // instead of stuck .generating without a queued job.
-                try candidates.append(ctx.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority });
-                diag.candidates += 1;
-            }
+            const center_cx = key.rx * scale + @divFloor(scale, 2);
+            const center_cz = key.rz * scale + @divFloor(scale, 2);
+            const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
+            try candidates.append(ctx.allocator, .{ .key = key, .encoded_priority = encoded_priority });
+            diag.candidates += 1;
         }
     }
 
@@ -195,28 +176,53 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     }.lessThan);
 
     const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
-    const push_count = @min(candidates.items.len, max_candidates);
-    for (candidates.items[0..push_count]) |cand| {
-        cand.chunk.job_token = ctx.next_job_token.*;
-        ctx.next_job_token.* += 1;
-        cand.chunk.state = .generating;
-        queue.push(.{
-            .type = .chunk_generation,
-            .dist_sq = cand.encoded_priority,
-            .data = .{
-                .chunk = .{
-                    .x = cand.chunk.region_x,
-                    .z = cand.chunk.region_z,
-                    .job_token = cand.chunk.job_token,
-                    .lod_level = lod_idx,
-                    .coord_scale = scale,
-                },
-            },
-        }) catch |err| {
-            cand.chunk.state = .missing;
-            return err;
+    var queued_count: usize = 0;
+
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+
+    const storage = &ctx.regions[@intFromEnum(lod)];
+    for (candidates.items) |cand| {
+        if (queued_count >= max_candidates) break;
+
+        const existing = storage.get(cand.key);
+        if (existing != null) diag.existing += 1;
+        const needs_queue = if (existing) |chunk| chunk.state == .missing else true;
+        if (!needs_queue) continue;
+
+        const chunk = if (existing) |c| c else blk: {
+            const c = try ctx.allocator.create(LODChunk);
+            errdefer ctx.allocator.destroy(c);
+            c.* = LODChunk.init(cand.key.rx, cand.key.rz, lod);
+            try storage.put(cand.key, c);
+            break :blk c;
         };
+
+        chunk.job_token = ctx.next_job_token.*;
+        ctx.next_job_token.* += 1;
+        if (ctx.defer_generation_dispatch) {
+            chunk.state = .queued_for_generation;
+        } else {
+            chunk.state = .generating;
+            queue.push(.{
+                .type = .chunk_generation,
+                .dist_sq = cand.encoded_priority,
+                .data = .{
+                    .chunk = .{
+                        .x = chunk.region_x,
+                        .z = chunk.region_z,
+                        .job_token = chunk.job_token,
+                        .lod_level = lod_idx,
+                        .coord_scale = scale,
+                    },
+                },
+            }) catch |err| {
+                chunk.state = .missing;
+                return err;
+            };
+        }
         diag.queued += 1;
+        queued_count += 1;
     }
 
     if (diag_enabled) {

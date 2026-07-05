@@ -1,19 +1,27 @@
 const std = @import("std");
 
+const TextureAtlas = @import("engine-assets").TextureAtlas;
+const Mat4 = @import("engine-math").Mat4;
+const Vec3 = @import("engine-math").Vec3;
+const rhi_types = @import("engine-rhi").rhi_types;
+const Chunk = @import("world-core").Chunk;
+const world_core = @import("world-core");
 const lod_manager = @import("world-lod").lod_manager;
 const LODManager = lod_manager.LODManager;
 const LODStats = lod_manager.LODStats;
 const MAX_LOD_REGIONS = lod_manager.MAX_LOD_REGIONS;
-
 const lod_chunk = @import("world-lod").lod_chunk;
 const LODLevel = lod_chunk.LODLevel;
 const LODConfig = lod_chunk.LODConfig;
 const ILODConfig = lod_chunk.ILODConfig;
 const LODChunk = lod_chunk.LODChunk;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
-
-const Chunk = @import("world-core").Chunk;
-const world_core = @import("world-core");
+const LODMesh = @import("world-lod").LODMesh;
+const lod_gpu = @import("world-lod").lod_upload_queue;
+const LODGPUBridge = lod_gpu.LODGPUBridge;
+const LODRenderInterface = lod_gpu.LODRenderInterface;
+const MeshMap = lod_gpu.MeshMap;
+const RegionMap = lod_gpu.RegionMap;
 const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const regionSizeBlocks = world_core.regionSizeBlocks;
@@ -21,17 +29,6 @@ const world_worldgen = @import("world-worldgen");
 const ColumnInfo = world_worldgen.ColumnInfo;
 const Generator = world_worldgen.Generator;
 const RegionInfo = world_worldgen.region.RegionInfo;
-const TextureAtlas = @import("engine-assets").TextureAtlas;
-const Mat4 = @import("engine-math").Mat4;
-const Vec3 = @import("engine-math").Vec3;
-const rhi_types = @import("engine-rhi").rhi_types;
-const LODMesh = @import("world-lod").LODMesh;
-
-const lod_gpu = @import("world-lod").lod_upload_queue;
-const LODGPUBridge = lod_gpu.LODGPUBridge;
-const LODRenderInterface = lod_gpu.LODRenderInterface;
-const MeshMap = lod_gpu.MeshMap;
-const RegionMap = lod_gpu.RegionMap;
 
 test "LODManager initialization" {
     const allocator = std.testing.allocator;

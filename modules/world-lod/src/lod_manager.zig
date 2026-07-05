@@ -129,6 +129,7 @@ const MAX_MESH_DELETIONS_PER_SWEEP: usize = 64;
 const DELETION_SWEEP_SECONDS: f32 = 1.0;
 const DEFAULT_LOD_UPLOAD_BUDGET_BYTES: usize = 32 * 1024 * 1024;
 const LOD_UPLOAD_BUDGET_ENV = "ZIGCRAFT_LOD_UPLOAD_BUDGET_MB";
+const MAX_CACHE_LOADS_PER_UPDATE: usize = 8;
 
 // Chunk-derived ingestion tuning (issue #752 Phase 2).
 const MAX_PENDING_INGESTIONS: usize = 4096;
@@ -867,6 +868,10 @@ pub const LODManager = struct {
             };
         }
 
+        self.processQueuedGenerations(player_velocity) catch |err| {
+            log.log.warn("LOD cache/generation dispatch error: {} (non-fatal)", .{err});
+        };
+
         // Process state transitions
         self.processStateTransitions(player_velocity) catch |err| {
             log.log.warn("LOD state transitions error: {} (non-fatal)", .{err});
@@ -936,23 +941,135 @@ pub const LODManager = struct {
             .coverage_ptr = self,
             .are_all_chunks_loaded = Coverage.areAllLoaded,
             .radius_reduction = &self.radius_shrink_chunks,
+            .defer_generation_dispatch = self.cacheEnabled(),
         }, lod, velocity, chunk_checker, checker_ctx);
+    }
+
+    fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
+        const Candidate = struct {
+            key: LODRegionKey,
+            chunk: *LODChunk,
+            encoded_priority: i32,
+            level: u3,
+            coord_scale: i32,
+            job_token: u32,
+            want_spans: bool,
+        };
+
+        var candidates = std.ArrayListUnmanaged(Candidate).empty;
+        defer candidates.deinit(self.allocator);
+
+        const player = self.loadPlayerChunkPos();
+        const cache_enabled = self.cacheEnabled();
+        var active_lod_count: usize = 0;
+
+        self.mutex.lock();
+        active_lod_count = lod_chunk.activeLODCount(self.config);
+        var i: usize = 0;
+        while (i < active_lod_count) : (i += 1) {
+            const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
+            const scale: i32 = @intCast(lod.chunksPerSide());
+            var iter = self.regions[i].iterator();
+            while (iter.next()) |entry| {
+                const chunk = entry.value_ptr.*;
+                if (chunk.state != .queued_for_generation) continue;
+                const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
+                const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
+                const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - player.cx, center_cz - player.cz, velocity, active_lod_count);
+                candidates.append(self.allocator, .{
+                    .key = entry.key_ptr.*,
+                    .chunk = chunk,
+                    .encoded_priority = encoded_priority,
+                    .level = @intCast(i),
+                    .coord_scale = scale,
+                    .job_token = chunk.job_token,
+                    .want_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(lod) == .column_spans,
+                }) catch |err| {
+                    self.mutex.unlock();
+                    return err;
+                };
+            }
+        }
+        self.mutex.unlock();
+
+        std.mem.sort(Candidate, candidates.items, {}, struct {
+            fn lt(_: void, a: Candidate, b: Candidate) bool {
+                return a.encoded_priority < b.encoded_priority;
+            }
+        }.lt);
+
+        var cache_reads: usize = 0;
+        for (candidates.items) |candidate| {
+            var cached_data: ?LODSimplifiedData = null;
+            var attempted_cache = false;
+            if (cache_enabled and cache_reads < MAX_CACHE_LOADS_PER_UPDATE) {
+                cache_reads += 1;
+                attempted_cache = true;
+                cached_data = self.loadCachedSourceData(candidate.key);
+                if (cached_data) |*cached| {
+                    if (candidate.want_spans and !cached.hasVerticalSpans()) {
+                        cached.deinit();
+                        cached_data = null;
+                    }
+                }
+            }
+
+            if (cached_data) |data| {
+                self.recordCacheHit();
+                self.mutex.lock();
+                if (candidate.chunk.state == .queued_for_generation and candidate.chunk.job_token == candidate.job_token) {
+                    candidate.chunk.data = .{ .simplified = data };
+                    candidate.chunk.updateHeightBoundsFromData();
+                    candidate.chunk.state = .generated;
+                } else {
+                    var stale_data = data;
+                    stale_data.deinit();
+                }
+                self.mutex.unlock();
+                continue;
+            }
+
+            if (attempted_cache) self.recordCacheMiss();
+            if (cache_enabled and !attempted_cache) break;
+
+            self.mutex.lock();
+            if (candidate.chunk.state != .queued_for_generation or candidate.chunk.job_token != candidate.job_token) {
+                self.mutex.unlock();
+                continue;
+            }
+            candidate.chunk.state = .generating;
+            self.mutex.unlock();
+
+            self.gen_queues[LODLevel.count - 1].push(.{
+                .type = .chunk_generation,
+                .dist_sq = candidate.encoded_priority,
+                .data = .{
+                    .chunk = .{
+                        .x = candidate.chunk.region_x,
+                        .z = candidate.chunk.region_z,
+                        .job_token = candidate.job_token,
+                        .lod_level = candidate.level,
+                        .coord_scale = candidate.coord_scale,
+                    },
+                },
+            }) catch |err| {
+                self.mutex.lock();
+                if (candidate.chunk.state == .generating and candidate.chunk.job_token == candidate.job_token) {
+                    candidate.chunk.state = .queued_for_generation;
+                }
+                self.mutex.unlock();
+                return err;
+            };
+        }
     }
 
     /// Process state transitions (generated -> meshing -> ready)
     fn processStateTransitions(self: *Self, velocity: Vec3) !void {
-        // Use exclusive lock since we modify chunk state
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        const player = self.loadPlayerChunkPos();
-        const active_lod_count = lod_chunk.activeLODCount(self.config);
-
         // Collect generated/mesh-ready chunks, then sort by ascending distance
         // before enqueueing. The regions HashMap iterates in arbitrary
         // (hash-bucket) order, so without sorting the meshing/upload order is
         // effectively random — far chunks can be processed before near ones.
-        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3, coord_scale: i32 };
+        const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3, coord_scale: i32, job_token: u32 };
         var mesh_candidates = std.ArrayListUnmanaged(MeshCandidate).empty;
         defer mesh_candidates.deinit(self.allocator);
 
@@ -960,6 +1077,11 @@ pub const LODManager = struct {
         var upload_candidates = std.ArrayListUnmanaged(UploadCandidate).empty;
         defer upload_candidates.deinit(self.allocator);
 
+        const player = self.loadPlayerChunkPos();
+        var active_lod_count: usize = 0;
+
+        self.mutex.lock();
+        active_lod_count = lod_chunk.activeLODCount(self.config);
         for (0..active_lod_count) |i| {
             const lod = @as(LODLevel, @enumFromInt(@as(u3, @intCast(i))));
             const scale = @as(i32, @intCast(lod.chunksPerSide()));
@@ -974,17 +1096,24 @@ pub const LODManager = struct {
                     // Append before flipping state so an allocation failure
                     // leaves the chunk in .generated (re-tried next tick)
                     // instead of stuck in .meshing with no queued job.
-                    try mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale });
+                    mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale, .job_token = chunk.job_token }) catch |err| {
+                        self.mutex.unlock();
+                        return err;
+                    };
                     chunk.state = .meshing;
                 } else if (chunk.state == .mesh_ready) {
                     const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                     const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
                     const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - player.cx, center_cz - player.cz, velocity, active_lod_count);
-                    try upload_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level });
+                    upload_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level }) catch |err| {
+                        self.mutex.unlock();
+                        return err;
+                    };
                     chunk.state = .uploading;
                 }
             }
         }
+        self.mutex.unlock();
 
         // Meshing jobs share one queue; sort by encoded priority so fine/near
         // sections are built before coarse fallback.
@@ -994,19 +1123,26 @@ pub const LODManager = struct {
             }
         }.lt);
         for (mesh_candidates.items) |mc| {
-            try self.gen_queues[LODLevel.count - 1].push(.{
+            self.gen_queues[LODLevel.count - 1].push(.{
                 .type = .chunk_meshing,
                 .dist_sq = mc.encoded_priority,
                 .data = .{
                     .chunk = .{
                         .x = mc.chunk.region_x,
                         .z = mc.chunk.region_z,
-                        .job_token = mc.chunk.job_token,
+                        .job_token = mc.job_token,
                         .lod_level = mc.level,
                         .coord_scale = mc.coord_scale,
                     },
                 },
-            });
+            }) catch |err| {
+                self.mutex.lock();
+                if (mc.chunk.state == .meshing and mc.chunk.job_token == mc.job_token) {
+                    mc.chunk.state = .generated;
+                }
+                self.mutex.unlock();
+                return err;
+            };
         }
 
         // Uploads go to per-level FIFO queues. Sort by the same encoded priority
@@ -1018,7 +1154,14 @@ pub const LODManager = struct {
             }
         }.lt);
         for (upload_candidates.items) |uc| {
-            try self.upload_queues[uc.level].push(uc.chunk);
+            self.upload_queues[uc.level].push(uc.chunk) catch |err| {
+                self.mutex.lock();
+                if (uc.chunk.state == .uploading) {
+                    uc.chunk.state = .mesh_ready;
+                }
+                self.mutex.unlock();
+                return err;
+            };
         }
     }
 
@@ -1970,49 +2113,9 @@ pub const LODManager = struct {
             .chunk_generation => {
                 // Initialize simplified data if needed
                 if (needs_data_init) {
-                    const cache_enabled = self.cacheEnabled();
                     const want_spans = vertical_span_budget > 0 and mesh_path == .column_spans;
-                    var cached_data = if (cache_enabled) self.loadCachedSourceData(key) else null;
-                    if (cached_data) |*cached| {
-                        if (want_spans and !cached.hasVerticalSpans()) {
-                            cached.deinit();
-                            cached_data = null;
-                        }
-                    }
-                    const data = if (cached_data) |cached| blk: {
-                        self.recordCacheHit();
-                        break :blk cached;
-                    } else blk: {
-                        if (cache_enabled) self.recordCacheMiss();
-                        var generated = if (want_spans)
-                            LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
-                                new_state = .missing;
-                                self.mutex.lock();
-                                if (chunk.job_token == job.data.chunk.job_token) chunk.state = new_state;
-                                chunk.unpin();
-                                self.mutex.unlock();
-                                return;
-                            }
-                        else
-                            LODSimplifiedData.init(self.allocator, lod_level) catch {
-                                new_state = .missing;
-                                self.mutex.lock();
-                                if (chunk.job_token == job.data.chunk.job_token) chunk.state = new_state;
-                                chunk.unpin();
-                                self.mutex.unlock();
-                                return;
-                            };
-
-                        // Generate heightmap data (expensive, done without lock).
-                        // Pass the stop flag so teardown/pause can interrupt the
-                        // multi-second coarse-LOD heightmap loop instead of
-                        // forcing the worker-join to block until it finishes.
-                        self.generator.generateHeightmapOnly(&generated, chunk.region_x, chunk.region_z, lod_level, &self.stop_flag);
-
-                        // If generation was aborted, discard the partial data
-                        // and leave the chunk in .missing so it re-generates later.
-                        if (self.stop_flag.load(.acquire)) {
-                            generated.deinit();
+                    var data = if (want_spans)
+                        LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
                             new_state = .missing;
                             self.mutex.lock();
                             if (chunk.job_token == job.data.chunk.job_token) chunk.state = new_state;
@@ -2020,15 +2123,39 @@ pub const LODManager = struct {
                             self.mutex.unlock();
                             return;
                         }
+                    else
+                        LODSimplifiedData.init(self.allocator, lod_level) catch {
+                            new_state = .missing;
+                            self.mutex.lock();
+                            if (chunk.job_token == job.data.chunk.job_token) chunk.state = new_state;
+                            chunk.unpin();
+                            self.mutex.unlock();
+                            return;
+                        };
 
-                        self.saveCachedSourceData(key, &generated);
-                        break :blk generated;
-                    };
+                    // Generate heightmap data (expensive, done without lock).
+                    // Pass the stop flag so teardown/pause can interrupt the
+                    // multi-second coarse-LOD heightmap loop instead of
+                    // forcing the worker-join to block until it finishes.
+                    self.generator.generateHeightmapOnly(&data, chunk.region_x, chunk.region_z, lod_level, &self.stop_flag);
+
+                    // If generation was aborted, discard the partial data
+                    // and leave the chunk in .missing so it re-generates later.
+                    if (self.stop_flag.load(.acquire)) {
+                        data.deinit();
+                        new_state = .missing;
+                        self.mutex.lock();
+                        if (chunk.job_token == job.data.chunk.job_token) chunk.state = new_state;
+                        chunk.unpin();
+                        self.mutex.unlock();
+                        return;
+                    }
 
                     // Acquire lock to update chunk data
                     self.mutex.lock();
                     chunk.data = .{ .simplified = data };
                     chunk.updateHeightBoundsFromData();
+                    chunk.store_dirty = true;
                     self.mutex.unlock();
                 }
                 success = true;
@@ -2175,6 +2302,84 @@ test "LODManager enableCache deletes stale data-version store" {
     try testing.expect((try lod_store.readPayload(testing.allocator, save_dir_path, stale_key)) == null);
     const header = (try lod_store.readHeader(testing.allocator, save_dir_path)).?;
     try testing.expectEqual(lod_cache.CACHE_VERSION, header.lod_data_version);
+}
+
+test "LODManager queued generation reloads source store on main thread" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{};
+    const key = LODRegionKey{ .rx = 4, .rz = -2, .lod = .lod1 };
+
+    var source = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer source.deinit();
+    source.setColumn(2, 3, 81.0, .forest, .{
+        .surface = .grass,
+        .subsurface = .dirt,
+        .foundation = .stone,
+    }, 0xFF445566, .empty, .daylight, .empty);
+
+    var writer = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    writer.config = config.interface();
+    writer.cache_dir_path = null;
+    try writer.enableCache(save_dir_path);
+    writer.saveCachedSourceData(key, &source);
+    if (writer.cache_dir_path) |path| testing.allocator.free(path);
+    writer.edit_dirty.deinit();
+
+    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    manager.config = config.interface();
+    manager.cache_dir_path = null;
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+    defer manager.edit_dirty.deinit();
+    defer manager.deletion_queue.deinit(testing.allocator);
+
+    for (0..LODLevel.count) |i| {
+        manager.regions[i] = RegionMap.init(testing.allocator);
+        manager.meshes[i] = MeshMap.init(testing.allocator);
+        manager.upload_queues[i] = try RingBuffer(*LODChunk).init(testing.allocator, 4);
+        manager.gen_queues[i] = try testing.allocator.create(JobQueue);
+        manager.gen_queues[i].* = JobQueue.init(testing.allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            var region_iter = manager.regions[i].iterator();
+            while (region_iter.next()) |entry| {
+                entry.value_ptr.*.deinit(testing.allocator);
+                testing.allocator.destroy(entry.value_ptr.*);
+            }
+            manager.regions[i].deinit();
+            manager.meshes[i].deinit();
+            manager.upload_queues[i].deinit();
+            manager.gen_queues[i].deinit();
+            testing.allocator.destroy(manager.gen_queues[i]);
+        }
+    }
+
+    const chunk = try testing.allocator.create(LODChunk);
+    chunk.* = LODChunk.init(key.rx, key.rz, key.lod);
+    chunk.state = .queued_for_generation;
+    chunk.job_token = 9;
+    try manager.regions[@intFromEnum(key.lod)].put(key, chunk);
+
+    try manager.processQueuedGenerations(Vec3.zero);
+
+    try testing.expectEqual(@as(u32, 1), manager.cache_hits);
+    try testing.expectEqual(@as(usize, 0), manager.gen_queues[LODLevel.count - 1].count());
+    try testing.expectEqual(LODState.generated, chunk.state);
+    switch (chunk.data) {
+        .simplified => |*loaded| {
+            const idx = 2 + 3 * loaded.width;
+            try testing.expectEqual(source.heightmap[idx], loaded.heightmap[idx]);
+            try testing.expectEqual(source.material_layers[idx].foundation, loaded.material_layers[idx].foundation);
+        },
+        else => return error.ExpectedSimplifiedData,
+    }
 }
 
 fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {

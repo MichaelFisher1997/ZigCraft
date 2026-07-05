@@ -63,10 +63,11 @@ must emit water tops at identical heights.
 
 ### W3: acceptance for water
 
-- [ ] Flying over open ocean: one continuous flat translucent plane to the
-      horizon, zero grid lines, zero vertical blue walls.
-- [ ] Coastlines: beach steps down under the water plane, seafloor visible
-      through shallow water.
+- Status: visual acceptance still needs manual verification on a live scene.
+- Expected open-ocean result: one continuous flat translucent plane to the
+  horizon, zero grid lines, zero vertical blue walls.
+- Expected coastline result: beach steps down under the water plane, seafloor
+  visible through shallow water.
 
 ## L — Fix time-to-first-LOD
 
@@ -94,6 +95,10 @@ instantly, detail streams in":
    check them in a headless run.
 4. Measure with `-Dstartup-diagnostic-seconds=10`: log LOD counts per level
    at 1s intervals; attach the numbers to the PR.
+
+Status: automated build/test/shader validation is covered by PR verification;
+manual startup timing numbers are still pending because bounded headless runs
+timed out in the local environment before useful LOD diagnostics were emitted.
 
 ## Carry-over polish (unchanged, lower priority)
 
