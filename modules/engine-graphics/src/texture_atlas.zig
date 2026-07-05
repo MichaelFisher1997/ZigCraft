@@ -53,6 +53,11 @@ pub const TextureAtlas = struct {
     has_pbr: bool,
 
     tile_mappings: [MAX_BLOCK_TYPES]BlockTiles,
+    /// Average diffuse luminance per block face, sampled after pack/fallback loading.
+    tile_luminance: [MAX_BLOCK_TYPES]BlockTileLuminance = [_]BlockTileLuminance{BlockTileLuminance.uniform(1.0)} ** MAX_BLOCK_TYPES,
+    /// Average diffuse RGB color per block face, sampled after pack/fallback loading.
+    /// Values are stored in linear space, matching `rgba_srgb` texture sampling.
+    tile_colors: [MAX_BLOCK_TYPES]BlockTileColor = [_]BlockTileColor{BlockTileColor.uniform(0xFFFFFF)} ** MAX_BLOCK_TYPES,
 
     /// Tile indices for block faces [top, bottom, side]
     pub const BlockTiles = struct {
@@ -65,9 +70,37 @@ pub const TextureAtlas = struct {
         }
     };
 
+    pub const BlockTileLuminance = struct {
+        top: f32,
+        bottom: f32,
+        side: f32,
+
+        pub fn uniform(value: f32) BlockTileLuminance {
+            return .{ .top = value, .bottom = value, .side = value };
+        }
+    };
+
+    pub const BlockTileColor = struct {
+        top: u32,
+        bottom: u32,
+        side: u32,
+
+        pub fn uniform(value: u32) BlockTileColor {
+            return .{ .top = value, .bottom = value, .side = value };
+        }
+    };
+
     /// Block type to tile mapping
     pub fn getTilesForBlock(self: *const TextureAtlas, block_id: u8) BlockTiles {
         return self.tile_mappings[block_id];
+    }
+
+    pub fn getLuminanceForBlock(self: *const TextureAtlas, block_id: u8) BlockTileLuminance {
+        return self.tile_luminance[block_id];
+    }
+
+    pub fn getAverageColorForBlock(self: *const TextureAtlas, block_id: u8) BlockTileColor {
+        return self.tile_colors[block_id];
     }
 
     pub fn init(allocator: std.mem.Allocator, resources: rhi.ResourceManager, pack_manager: ?*resource_pack.ResourcePackManager, max_resolution: u32, block_textures: []const BlockTextureDefinition) !TextureAtlas {
@@ -85,7 +118,9 @@ pub const TextureAtlas = struct {
         // 3. Load block textures into atlas buffers
         var stats = LoadStats{};
         var tile_mappings = [_]BlockTiles{BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES;
-        try loadBlockTextures(allocator, pack_manager, &buffers, &tile_mappings, tile_size, atlas_size, &stats, block_textures);
+        var tile_luminance = [_]BlockTileLuminance{BlockTileLuminance.uniform(1.0)} ** MAX_BLOCK_TYPES;
+        var tile_colors = [_]BlockTileColor{BlockTileColor.uniform(0xFFFFFF)} ** MAX_BLOCK_TYPES;
+        try loadBlockTextures(allocator, pack_manager, &buffers, &tile_mappings, &tile_luminance, &tile_colors, tile_size, atlas_size, &stats, block_textures);
 
         log.log.info("Texture atlas: loaded {} textures ({} with PBR) across {} blocks", .{ stats.loaded_count, stats.pbr_count, stats.block_count });
         if (stats.fallback_count > 0) {
@@ -119,6 +154,8 @@ pub const TextureAtlas = struct {
             .atlas_size = atlas_size,
             .has_pbr = has_pbr,
             .tile_mappings = tile_mappings,
+            .tile_luminance = tile_luminance,
+            .tile_colors = tile_colors,
         };
     }
 
@@ -204,6 +241,8 @@ fn loadBlockTextures(
     pack_manager: ?*resource_pack.ResourcePackManager,
     buffers: *AtlasBuffers,
     tile_mappings: *[MAX_BLOCK_TYPES]TextureAtlas.BlockTiles,
+    tile_luminance: *[MAX_BLOCK_TYPES]TextureAtlas.BlockTileLuminance,
+    tile_colors: *[MAX_BLOCK_TYPES]TextureAtlas.BlockTileColor,
     tile_size: u32,
     atlas_size: u32,
     stats: *LoadStats,
@@ -258,6 +297,16 @@ fn loadBlockTextures(
             .top = indices[0],
             .bottom = indices[1],
             .side = indices[2],
+        };
+        tile_luminance[block_idx] = .{
+            .top = sampleTileAverageLuminance(buffers.diffuse, indices[0], tile_size, atlas_size),
+            .bottom = sampleTileAverageLuminance(buffers.diffuse, indices[1], tile_size, atlas_size),
+            .side = sampleTileAverageLuminance(buffers.diffuse, indices[2], tile_size, atlas_size),
+        };
+        tile_colors[block_idx] = .{
+            .top = sampleTileAverageColor(buffers.diffuse, indices[0], tile_size, atlas_size),
+            .bottom = sampleTileAverageColor(buffers.diffuse, indices[1], tile_size, atlas_size),
+            .side = sampleTileAverageColor(buffers.diffuse, indices[2], tile_size, atlas_size),
         };
     }
 }
@@ -431,6 +480,112 @@ fn fillTileWithColor(atlas_pixels: []u8, tile_index: u16, color: [3]u8, tile_siz
             }
         }
     }
+}
+
+fn sampleTileAverageLuminance(atlas_pixels: []const u8, tile_index: u16, tile_size: u32, atlas_size: u32) f32 {
+    if (tile_index == 0) return 1.0;
+
+    const tile_col = tile_index % TILES_PER_ROW;
+    const tile_row = tile_index / TILES_PER_ROW;
+    const start_x = tile_col * tile_size;
+    const start_y = tile_row * tile_size;
+
+    var weighted_sum: f32 = 0.0;
+    var alpha_sum: f32 = 0.0;
+    var py: u32 = 0;
+    while (py < tile_size) : (py += 1) {
+        var px: u32 = 0;
+        while (px < tile_size) : (px += 1) {
+            const dest_x = start_x + px;
+            const dest_y = start_y + py;
+            const idx = (dest_y * atlas_size + dest_x) * 4;
+            if (idx + 3 >= atlas_pixels.len) continue;
+
+            const alpha = @as(f32, @floatFromInt(atlas_pixels[idx + 3])) / 255.0;
+            if (alpha <= 0.01) continue;
+            const r = @as(f32, @floatFromInt(atlas_pixels[idx + 0])) / 255.0;
+            const g = @as(f32, @floatFromInt(atlas_pixels[idx + 1])) / 255.0;
+            const b = @as(f32, @floatFromInt(atlas_pixels[idx + 2])) / 255.0;
+            weighted_sum += (r * 0.2126 + g * 0.7152 + b * 0.0722) * alpha;
+            alpha_sum += alpha;
+        }
+    }
+
+    if (alpha_sum <= 0.001) return 1.0;
+    return std.math.clamp(weighted_sum / alpha_sum, 0.18, 1.0);
+}
+
+fn sampleTileAverageColor(atlas_pixels: []const u8, tile_index: u16, tile_size: u32, atlas_size: u32) u32 {
+    if (tile_index == 0) return 0xFFFFFF;
+
+    const tile_col = tile_index % TILES_PER_ROW;
+    const tile_row = tile_index / TILES_PER_ROW;
+    const start_x = tile_col * tile_size;
+    const start_y = tile_row * tile_size;
+
+    var r_sum: f32 = 0.0;
+    var g_sum: f32 = 0.0;
+    var b_sum: f32 = 0.0;
+    var weight_sum: f32 = 0.0;
+    const offsets = [_][2]f32{
+        .{ 0.25, 0.25 },
+        .{ 0.75, 0.25 },
+        .{ 0.25, 0.75 },
+        .{ 0.75, 0.75 },
+    };
+    for (offsets) |offset| {
+        const sample = sampleTileLinearColor(atlas_pixels, start_x, start_y, tile_size, atlas_size, offset[0], offset[1]);
+        const weight = smoothstep(0.05, 0.5, sample.a);
+        r_sum += sample.r * 255.0 * weight;
+        g_sum += sample.g * 255.0 * weight;
+        b_sum += sample.b * 255.0 * weight;
+        weight_sum += weight;
+    }
+
+    if (weight_sum <= 0.001) {
+        const sample = sampleTileLinearColor(atlas_pixels, start_x, start_y, tile_size, atlas_size, 0.5, 0.5);
+        const r: u32 = @intFromFloat(@round(std.math.clamp(sample.r * 255.0, 0.0, 255.0)));
+        const g: u32 = @intFromFloat(@round(std.math.clamp(sample.g * 255.0, 0.0, 255.0)));
+        const b: u32 = @intFromFloat(@round(std.math.clamp(sample.b * 255.0, 0.0, 255.0)));
+        return (r << 16) | (g << 8) | b;
+    }
+
+    const r: u32 = @intFromFloat(@round(std.math.clamp(r_sum / weight_sum, 0.0, 255.0)));
+    const g: u32 = @intFromFloat(@round(std.math.clamp(g_sum / weight_sum, 0.0, 255.0)));
+    const b: u32 = @intFromFloat(@round(std.math.clamp(b_sum / weight_sum, 0.0, 255.0)));
+    return (r << 16) | (g << 8) | b;
+}
+
+const LinearColorSample = struct {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+};
+
+fn sampleTileLinearColor(atlas_pixels: []const u8, start_x: u32, start_y: u32, tile_size: u32, atlas_size: u32, u: f32, v: f32) LinearColorSample {
+    const max_px = if (tile_size == 0) 0 else tile_size - 1;
+    const px: u32 = @intFromFloat(@round(std.math.clamp(u, 0.0, 1.0) * @as(f32, @floatFromInt(max_px))));
+    const py: u32 = @intFromFloat(@round(std.math.clamp(v, 0.0, 1.0) * @as(f32, @floatFromInt(max_px))));
+    const idx = ((start_y + py) * atlas_size + (start_x + px)) * 4;
+    if (idx + 3 >= atlas_pixels.len) return .{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 0.0 };
+    return .{
+        .r = srgbByteToLinear(atlas_pixels[idx + 0]),
+        .g = srgbByteToLinear(atlas_pixels[idx + 1]),
+        .b = srgbByteToLinear(atlas_pixels[idx + 2]),
+        .a = @as(f32, @floatFromInt(atlas_pixels[idx + 3])) / 255.0,
+    };
+}
+
+fn srgbByteToLinear(value: u8) f32 {
+    const channel = @as(f32, @floatFromInt(value)) / 255.0;
+    if (channel <= 0.04045) return channel / 12.92;
+    return std.math.pow(f32, (channel + 0.055) / 1.055, 2.4);
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) f32 {
+    const t = std.math.clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
 }
 
 fn setTileAlpha(atlas_pixels: []u8, tile_index: u16, alpha: u8, tile_size: u32, atlas_size: u32) void {

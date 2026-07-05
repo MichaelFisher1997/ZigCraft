@@ -1,34 +1,37 @@
 const std = @import("std");
 
+const TextureAtlas = @import("engine-assets").TextureAtlas;
+const Mat4 = @import("engine-math").Mat4;
+const Vec3 = @import("engine-math").Vec3;
+const rhi_types = @import("engine-rhi").rhi_types;
+const Chunk = @import("world-core").Chunk;
+const world_core = @import("world-core");
 const lod_manager = @import("world-lod").lod_manager;
 const LODManager = lod_manager.LODManager;
 const LODStats = lod_manager.LODStats;
 const MAX_LOD_REGIONS = lod_manager.MAX_LOD_REGIONS;
-
 const lod_chunk = @import("world-lod").lod_chunk;
 const LODLevel = lod_chunk.LODLevel;
 const LODConfig = lod_chunk.LODConfig;
 const ILODConfig = lod_chunk.ILODConfig;
 const LODChunk = lod_chunk.LODChunk;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
-
-const Chunk = @import("world-core").Chunk;
-const Generator = @import("world-worldgen").Generator;
-const TextureAtlas = @import("engine-assets").TextureAtlas;
-const Mat4 = @import("engine-math").Mat4;
-const Vec3 = @import("engine-math").Vec3;
-const rhi_types = @import("engine-rhi").rhi_types;
 const LODMesh = @import("world-lod").LODMesh;
-
 const lod_gpu = @import("world-lod").lod_upload_queue;
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
+const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
+const LODColumnProvenance = world_core.LODColumnProvenance;
+const regionSizeBlocks = world_core.regionSizeBlocks;
+const world_worldgen = @import("world-worldgen");
+const ColumnInfo = world_worldgen.ColumnInfo;
+const Generator = world_worldgen.Generator;
+const RegionInfo = world_worldgen.region.RegionInfo;
 
 test "LODManager initialization" {
     const allocator = std.testing.allocator;
-    const MAX_BLOCK_TYPES = @import("world-core").MAX_BLOCK_TYPES;
 
     const MockState = struct {
         buffer_created: bool = false,
@@ -44,10 +47,10 @@ test "LODManager initialization" {
         fn getSeed(_: *anyopaque) u64 {
             return 0;
         }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").region.RegionInfo {
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) RegionInfo {
             return undefined;
         }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("world-worldgen").ColumnInfo {
+        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) ColumnInfo {
             return undefined;
         }
         fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
@@ -71,7 +74,7 @@ test "LODManager initialization" {
     };
 
     var config = LODConfig{
-        .radii = .{ 8, 16, 32, 64 },
+        .radii = .{ 8, 16, 32, 64, 128 },
     };
 
     var mock_state = MockState{};
@@ -93,7 +96,7 @@ test "LODManager initialization" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -131,7 +134,6 @@ test "LODManager initialization" {
 
 test "LODManager end-to-end covered cleanup" {
     const allocator = std.testing.allocator;
-    const MAX_BLOCK_TYPES = @import("world-core").MAX_BLOCK_TYPES;
 
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
@@ -142,10 +144,10 @@ test "LODManager end-to-end covered cleanup" {
         fn getSeed(_: *anyopaque) u64 {
             return 0;
         }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").region.RegionInfo {
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) RegionInfo {
             return undefined;
         }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("world-worldgen").ColumnInfo {
+        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) ColumnInfo {
             return .{ .height = 0, .biome = .plains, .is_ocean = false, .temperature = 0, .humidity = 0, .continentalness = 0 };
         }
         fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
@@ -169,7 +171,7 @@ test "LODManager end-to-end covered cleanup" {
     };
 
     var config = LODConfig{
-        .radii = .{ 2, 4, 8, 16 },
+        .radii = .{ 2, 4, 8, 16, 32 },
     };
 
     var noop_ctx: u8 = 0;
@@ -188,7 +190,7 @@ test "LODManager end-to-end covered cleanup" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -273,4 +275,219 @@ test "LODStats aggregation" {
 test "LODManager constants" {
     try std.testing.expect(MAX_LOD_REGIONS > 0);
     try std.testing.expect(LODLevel.count >= 2);
+}
+
+// ---------------------------------------------------------------------------
+// Chunk-derived LOD ingestion (issue #752 Phase 2)
+// ---------------------------------------------------------------------------
+
+/// Minimal manager + mock glue shared by the ingestion tests. The caller owns
+/// `config` (it must outlive the returned manager, since ILODConfig references it).
+fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LODManager {
+    const MockGenerator = struct {
+        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
+        fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
+        fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
+            return false;
+        }
+        fn getSeed(_: *anyopaque) u64 {
+            return 0;
+        }
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) RegionInfo {
+            return undefined;
+        }
+        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) ColumnInfo {
+            return .{ .height = 0, .biome = .plains, .is_ocean = false, .temperature = 0, .humidity = 0, .continentalness = 0 };
+        }
+        fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
+
+        const vtable = Generator.VTable{
+            .generate = generate,
+            .generateHeightmapOnly = generateHeightmapOnly,
+            .maybeRecenterCache = maybeRecenterCache,
+            .getSeed = getSeed,
+            .getRegionInfo = getRegionInfo,
+            .getColumnInfo = getColumnInfo,
+            .deinit = deinit,
+        };
+    };
+
+    var mock_gen_impl = MockGenerator{};
+    const mock_gen = Generator{
+        .ptr = &mock_gen_impl,
+        .vtable = &MockGenerator.vtable,
+        .info = .{ .name = "Mock", .description = "Mock Generator" },
+    };
+
+    var noop_ctx: u8 = 0;
+    const mock_bridge = LODGPUBridge{
+        .on_upload = struct {
+            fn f(_: *LODMesh, _: *anyopaque) rhi_types.RhiError!void {}
+        }.f,
+        .on_destroy = struct {
+            fn f(_: *LODMesh, _: *anyopaque) void {}
+        }.f,
+        .on_wait_idle = struct {
+            fn f(_: *anyopaque) void {}
+        }.f,
+        .ctx = @ptrCast(&noop_ctx),
+    };
+
+    const mock_render = LODRenderInterface{
+        .render_fn = struct {
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+        }.f,
+        .deinit_fn = struct {
+            fn f(_: *anyopaque) void {}
+        }.f,
+        .ptr = @ptrCast(&noop_ctx),
+    };
+
+    const mock_atlas = TextureAtlas{
+        .texture = undefined,
+        .normal_texture = null,
+        .roughness_texture = null,
+        .displacement_texture = null,
+        .allocator = allocator,
+        .pack_manager = null,
+        .tile_size = 16,
+        .atlas_size = 256,
+        .has_pbr = false,
+        .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
+    };
+
+    const mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen.toLODGenerator(), &mock_atlas);
+    mgr.cleanup_covered_regions = false;
+    return mgr;
+}
+
+/// Place a region at (rx,rz,lod) with simplified data, pre-seeding cell
+/// (gx,gz) as worldgen so ingestion can be observed upgrading it.
+fn placeSimplifiedRegion(mgr: *LODManager, allocator: std.mem.Allocator, rx: i32, rz: i32, lod: LODLevel) !*LODChunk {
+    const key = lod_chunk.LODRegionKey{ .rx = rx, .rz = rz, .lod = lod };
+    const lchunk = try allocator.create(LODChunk);
+    lchunk.* = LODChunk.init(rx, rz, lod);
+    lchunk.data = .{ .simplified = try LODSimplifiedData.init(allocator, lod) };
+    lchunk.state = .renderable;
+    try mgr.regions[@intFromEnum(lod)].put(key, lchunk);
+    return lchunk;
+}
+
+test "ingestChunk upgrades worldgen region data and schedules a remesh" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    // Pre-seed cell (0,0) as worldgen at height 10.
+    lchunk.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .{ .is_surface = false, .surface_height = 0, .depth = 0, .coverage = 0 }, .{ .sky_light = 15, .block_light = 0, .ambient_occlusion = 1.0 }, .{ .tree_coverage = 0, .avg_tree_height = 0, .offset_x = 0, .offset_z = 0, .trunk = .air, .leaves = .air });
+    try std.testing.expectEqual(LODColumnProvenance.worldgen, lchunk.data.simplified.getColumnProvenance(0, 0));
+
+    // Real chunk at (0,0) with terrain at y=64.
+    var chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 64) : (y += 1) {
+        const block: world_core.BlockType = if (y == 64) .grass else if (y > 60) .dirt else .stone;
+        chunk.setBlock(0, y, 0, block);
+    }
+
+    mgr.ingestChunk(0, 0, &chunk, .chunk_derived);
+
+    try std.testing.expectEqual(@as(f32, 64.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.chunk_derived, lchunk.data.simplified.getColumnProvenance(0, 0));
+    // A renderable region is flipped back to .generated to trigger a remesh.
+    try std.testing.expectEqual(lod_chunk.LODState.generated, lchunk.state);
+    try std.testing.expect(lchunk.dirty);
+    try std.testing.expect(lchunk.store_dirty);
+}
+
+test "ingestChunk provenance authority: edited beats chunk_derived, worldgen cannot overwrite" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+
+    var derived_chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 50) : (y += 1) chunk_derived_setBlock(&derived_chunk, 0, y, 0, .stone);
+
+    // 1. chunk_derived sets height to 50.
+    mgr.ingestChunk(0, 0, &derived_chunk, .chunk_derived);
+    try std.testing.expectEqual(@as(f32, 50.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.chunk_derived, lchunk.data.simplified.getColumnProvenance(0, 0));
+
+    // 2. An edit raises the column to y=80 with edited provenance.
+    var edited_chunk = Chunk.init(0, 0);
+    var ey: u32 = 0;
+    while (ey <= 80) : (ey += 1) chunk_derived_setBlock(&edited_chunk, 0, ey, 0, .stone);
+    mgr.ingestChunk(0, 0, &edited_chunk, .edited);
+    try std.testing.expectEqual(@as(f32, 80.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.edited, lchunk.data.simplified.getColumnProvenance(0, 0));
+
+    // 3. A later worldgen regeneration must NOT overwrite the edited column.
+    var regen_chunk = Chunk.init(0, 0);
+    var ry: u32 = 0;
+    while (ry <= 5) : (ry += 1) chunk_derived_setBlock(&regen_chunk, 0, ry, 0, .stone);
+    mgr.ingestChunk(0, 0, &regen_chunk, .worldgen);
+    try std.testing.expectEqual(@as(f32, 80.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.edited, lchunk.data.simplified.getColumnProvenance(0, 0));
+}
+
+test "markChunkEdited coalesces and re-ingests via the resolver on update" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+
+    // Resolver returns a fixed edited chunk for any coordinate.
+    const ResolverState = struct { chunk: *const Chunk };
+    var edited_chunk = Chunk.init(0, 0);
+    var ey: u32 = 0;
+    while (ey <= 90) : (ey += 1) chunk_derived_setBlock(&edited_chunk, 0, ey, 0, .stone);
+    var rstate = ResolverState{ .chunk = &edited_chunk };
+    const resolve_fn = struct {
+        fn f(ptr: *anyopaque, cx: i32, cz: i32) ?*const Chunk {
+            _ = cx;
+            _ = cz;
+            const s: *ResolverState = @ptrCast(@alignCast(ptr));
+            return s.chunk;
+        }
+    }.f;
+    mgr.setChunkResolver(.{ .ptr = @ptrCast(&rstate), .resolve_fn = resolve_fn });
+
+    // Queue several rapid edits to the same chunk; they should coalesce.
+    mgr.markChunkEdited(0, 0);
+    mgr.markChunkEdited(0, 0);
+    mgr.markChunkEdited(0, 0);
+
+    // update() drains the edit queue on its cooldown (starts expired).
+    try mgr.update(Vec3.zero, Vec3.zero, null, null);
+
+    try std.testing.expectEqual(@as(f32, 90.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.edited, lchunk.data.simplified.getColumnProvenance(0, 0));
+}
+
+fn chunk_derived_setBlock(chunk: *Chunk, x: u32, y: u32, z: u32, block: world_core.BlockType) void {
+    chunk.setBlock(x, y, z, block);
+}
+
+test "enforceMemoryBudget shrinks finer radii under sustained pressure and spares the horizon" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 }, .memory_budget_mb = 1 };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    // Force sustained over-budget state with no evictable regions, so the
+    // hysteresis grow path must fire.
+    mgr.memory_used_bytes = 50_000_000;
+    try mgr.update(Vec3.zero, Vec3.zero, null, null);
+
+    // Finer levels (1..count-2) must have grown; coarsest (horizon) untouched.
+    try std.testing.expect(mgr.radius_shrink_chunks[1] > 0);
+    try std.testing.expectEqual(@as(i32, 0), mgr.radius_shrink_chunks[LODLevel.count - 1]);
 }

@@ -11,6 +11,7 @@ const MockContext = struct {
     draw_called: bool = false,
     draw_depth_texture_called: bool = false,
     sky_pipeline_requested: bool = false,
+    sky_pipeline_ready: bool = false,
     dynamic_resolution_called: bool = false,
     dynamic_resolution_enabled: bool = false,
     dynamic_resolution_min_scale: f32 = 0.0,
@@ -81,27 +82,6 @@ const MockContext = struct {
         _ = height;
     }
 
-    fn getNativeSkyPipeline(ptr: *anyopaque) u64 {
-        const self: *MockContext = @ptrCast(@alignCast(ptr));
-        self.sky_pipeline_requested = true;
-        return 0;
-    }
-    fn getNativeSkyPipelineLayout(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeWaterPipeline(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeWaterPipelineLayout(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
-    fn getNativeMainDescriptorSet(ptr: *anyopaque) u64 {
-        _ = ptr;
-        return 0;
-    }
     fn getNativeCommandBuffer(ptr: *anyopaque) u64 {
         _ = ptr;
         return 0;
@@ -142,6 +122,9 @@ const MockContext = struct {
         _ = ptr;
         return 2;
     }
+    fn getNativeBackendContext(ptr: *anyopaque) u64 {
+        return @intFromPtr(ptr);
+    }
 
     fn computeSsao(ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         _ = ptr;
@@ -153,6 +136,22 @@ const MockContext = struct {
         _ = ptr;
         _ = cascade_index;
         _ = depth_map_handle;
+    }
+
+    fn drawSky(ptr: *anyopaque, params: rhi.SkyParams) rhi.RhiError!void {
+        const self: *MockContext = @ptrCast(@alignCast(ptr));
+        _ = params;
+        self.sky_pipeline_requested = true;
+        if (!self.sky_pipeline_ready) return error.SkyPipelineNotReady;
+    }
+
+    fn beginWaterDraw(ptr: *anyopaque, reflection: rhi.TextureHandle, scene_depth: rhi.TextureHandle) bool {
+        _ = ptr;
+        return reflection != 0 and scene_depth != 0;
+    }
+
+    fn endWaterDraw(ptr: *anyopaque) void {
+        _ = ptr;
     }
 
     fn getEncoder(ptr: *anyopaque) rhi.IGraphicsCommandEncoder {
@@ -241,6 +240,103 @@ const MockContext = struct {
         self.draw_depth_texture_called = true;
     }
 
+    fn bindComputePipeline(ptr: *anyopaque, pipeline: u64) void {
+        _ = ptr;
+        _ = pipeline;
+    }
+    fn bindDescriptorSet(ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void {
+        _ = ptr;
+        _ = pipeline_layout;
+        _ = descriptor_set;
+    }
+    fn createComputeBuffer(ptr: *anyopaque, size: usize, host_visible: bool) rhi.RhiError!rhi.ComputeBuffer {
+        _ = ptr;
+        _ = size;
+        _ = host_visible;
+        return .{};
+    }
+    fn destroyComputeBuffer(ptr: *anyopaque, buffer: *rhi.ComputeBuffer) void {
+        _ = ptr;
+        buffer.* = .{};
+    }
+    fn createComputePipeline(ptr: *anyopaque, allocator: std.mem.Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!rhi.ComputePipeline {
+        _ = ptr;
+        _ = allocator;
+        _ = shader_path;
+        _ = storage_binding_count;
+        _ = push_constant_size;
+        return .{};
+    }
+    fn updateComputeDescriptors(ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const u64) void {
+        _ = ptr;
+        _ = pipeline;
+        _ = frame_index;
+        _ = buffers;
+    }
+    fn destroyComputePipeline(ptr: *anyopaque, pipeline: *rhi.ComputePipeline) void {
+        _ = ptr;
+        pipeline.* = .{};
+    }
+    fn dispatchCompute(ptr: *anyopaque, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
+        _ = ptr;
+        _ = group_count_x;
+        _ = group_count_y;
+        _ = group_count_z;
+    }
+    fn pushComputeConstants(ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+        _ = ptr;
+        _ = pipeline_layout;
+        _ = offset;
+        _ = size;
+        _ = data;
+    }
+    fn fillComputeBuffer(ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void {
+        _ = ptr;
+        _ = buffer;
+        _ = offset;
+        _ = size;
+        _ = data;
+    }
+    fn copyComputeBuffer(ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+        _ = ptr;
+        _ = src_buffer;
+        _ = dst_buffer;
+        _ = src_offset;
+        _ = dst_offset;
+        _ = size;
+    }
+    fn computePipelineBarrier(ptr: *anyopaque, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags) void {
+        _ = ptr;
+        _ = src_stage;
+        _ = dst_stage;
+        _ = src_access;
+        _ = dst_access;
+    }
+    fn computeBufferBarrier(ptr: *anyopaque, buffer: u64, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
+        _ = ptr;
+        _ = buffer;
+        _ = src_stage;
+        _ = dst_stage;
+        _ = src_access;
+        _ = dst_access;
+        _ = offset;
+        _ = size;
+    }
+    fn waitForFrameFence(ptr: *anyopaque, frame_index: usize) bool {
+        _ = ptr;
+        _ = frame_index;
+        return true;
+    }
+    fn getNativeBuffer(ptr: *anyopaque, handle: rhi.BufferHandle) u64 {
+        _ = ptr;
+        _ = handle;
+        return 0;
+    }
+    fn hasCommandBuffer(ptr: *anyopaque) bool {
+        _ = ptr;
+        return true;
+    }
+
     const MOCK_RENDER_VTABLE = rhi.IRenderContext.VTable{
         .beginFrame = undefined,
         .endFrame = undefined,
@@ -268,12 +364,13 @@ const MockContext = struct {
         .computeDepthPyramid = undefined,
     };
 
+    const MOCK_EFFECTS_VTABLE = rhi.IRenderEffectsContext.VTable{
+        .drawSky = drawSky,
+        .beginWaterDraw = beginWaterDraw,
+        .endWaterDraw = endWaterDraw,
+    };
+
     const MOCK_NATIVE_VTABLE = rhi.INativeHandlesContext.VTable{
-        .getSkyPipeline = getNativeSkyPipeline,
-        .getSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getWaterPipeline = getNativeWaterPipeline,
-        .getWaterPipelineLayout = getNativeWaterPipelineLayout,
-        .getMainDescriptorSet = getNativeMainDescriptorSet,
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,
@@ -284,6 +381,7 @@ const MockContext = struct {
         .getDescriptorPool = getNativeDescriptorPool,
         .getUiRenderPass = getNativeUiRenderPass,
         .getSwapchainImageCount = getNativeSwapchainImageCount,
+        .getBackendContext = getNativeBackendContext,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{
@@ -423,11 +521,30 @@ const MockContext = struct {
         .render = MOCK_RENDER_VTABLE,
         .passes = MOCK_PASSES_VTABLE,
         .post_process = MOCK_POST_PROCESS_VTABLE,
+        .effects = MOCK_EFFECTS_VTABLE,
         .native = MOCK_NATIVE_VTABLE,
         .ssao = MOCK_SSAO_VTABLE,
         .debug_overlay = MOCK_DEBUG_OVERLAY_VTABLE,
         .shadow = MOCK_SHADOW_VTABLE,
         .water = MOCK_WATER_VTABLE,
+        .compute = .{
+            .bindComputePipeline = bindComputePipeline,
+            .bindDescriptorSet = bindDescriptorSet,
+            .createComputeBuffer = createComputeBuffer,
+            .destroyComputeBuffer = destroyComputeBuffer,
+            .createComputePipeline = createComputePipeline,
+            .updateComputeDescriptors = updateComputeDescriptors,
+            .destroyComputePipeline = destroyComputePipeline,
+            .dispatch = dispatchCompute,
+            .pushConstants = pushComputeConstants,
+            .fillBuffer = fillComputeBuffer,
+            .copyBuffer = copyComputeBuffer,
+            .pipelineBarrier = computePipelineBarrier,
+            .bufferBarrier = computeBufferBarrier,
+            .waitForFrameFence = waitForFrameFence,
+            .getNativeBuffer = getNativeBuffer,
+            .hasCommandBuffer = hasCommandBuffer,
+        },
         .ui = MOCK_UI_VTABLE,
         .query = MOCK_QUERY_VTABLE,
         .timing = .{

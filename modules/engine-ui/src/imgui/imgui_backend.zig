@@ -19,12 +19,14 @@ pub const Backend = struct {
         if (!build_options.imgui) return error.ImguiDisabled;
 
         c.ZigCraft_ImGui_CreateContext();
+        errdefer c.ZigCraft_ImGui_DestroyContext();
         c.ZigCraft_ImGui_StyleColorsDark();
 
         if (!c.ZigCraft_ImGui_ImplSDL3_InitForVulkan(@ptrCast(window))) {
             log.log.err("Failed to initialize ImGui SDL3 backend", .{});
             return error.ImguiBackendInitFailed;
         }
+        errdefer c.ZigCraft_ImGui_ImplSDL3_Shutdown();
 
         const native = rhi_ptr.nativeHandles();
         const image_count = native.getSwapchainImageCount();
@@ -42,7 +44,6 @@ pub const Backend = struct {
             .msaa_samples = 1,
         };
         if (!c.ZigCraft_ImGui_ImplVulkan_Init(&init_info)) {
-            c.ZigCraft_ImGui_ImplSDL3_Shutdown();
             log.log.err("Failed to initialize ImGui Vulkan backend", .{});
             return error.ImguiBackendInitFailed;
         }

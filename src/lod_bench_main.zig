@@ -27,7 +27,7 @@ pub fn main(init: std.process.Init) !void {
 
     try stdout.print("=== LOD heightmap generation benchmark (generator='overworld' seed={}) ===\n", .{seed});
 
-    const levels = [_]LODLevel{ .lod1, .lod2, .lod3 };
+    const levels = [_]LODLevel{ .lod1, .lod2, .lod3, .lod4 };
     const samples: u32 = 6;
 
     for (levels) |lvl| {
@@ -67,8 +67,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try stdout.print("\nInterpretation:\n", .{});
-    try stdout.print("  - If LOD3 avg < ~500ms: generation is cheap; LOD loading is bounded by\n", .{});
+    try stdout.print("  - If LOD4 avg < ~500ms: generation is cheap; LOD loading is bounded by\n", .{});
     try stdout.print("    worker throughput/contention, not per-region cost.\n", .{});
-    try stdout.print("  - If LOD3 avg > ~2000ms: generation itself is the bottleneck.\n", .{});
+    try stdout.print("  - If LOD4 avg > ~2000ms: generation itself is the bottleneck.\n", .{});
     try stdout.flush();
 }

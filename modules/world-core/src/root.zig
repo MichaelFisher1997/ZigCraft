@@ -53,6 +53,7 @@ pub const LODDataVersion = lod_data.LODDataVersion;
 pub const LODLightingHint = lod_data.LODLightingHint;
 pub const LODMaterialLayers = lod_data.LODMaterialLayers;
 pub const LODSimplifiedData = lod_data.LODSimplifiedData;
+pub const LODColumnProvenance = lod_data.LODColumnProvenance;
 pub const LODVegetationHint = lod_data.LODVegetationHint;
 pub const LODVerticalSpan = lod_data.LODVerticalSpan;
 pub const LODWaterState = lod_data.LODWaterState;

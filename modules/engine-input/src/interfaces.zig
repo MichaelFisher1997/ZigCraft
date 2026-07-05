@@ -75,18 +75,15 @@ pub const InputBinding = union(enum) {
     none: void,
 
     pub fn eql(self: InputBinding, other: InputBinding) bool {
-        const self_key = switch (self) {
-            .key, .key_alt => |k| k,
-            else => null,
-        };
-        const other_key = switch (other) {
-            .key, .key_alt => |k| k,
-            else => null,
-        };
-
-        if (self_key != null and other_key != null) return self_key.? == other_key.?;
-
         return switch (self) {
+            .key => |k| switch (other) {
+                .key => |ok| k == ok,
+                else => false,
+            },
+            .key_alt => |k| switch (other) {
+                .key_alt => |ok| k == ok,
+                else => false,
+            },
             .mouse_button => |mb| switch (other) {
                 .mouse_button => |omb| mb == omb,
                 else => false,
@@ -95,7 +92,6 @@ pub const InputBinding = union(enum) {
                 .none => true,
                 else => false,
             },
-            else => false,
         };
     }
 

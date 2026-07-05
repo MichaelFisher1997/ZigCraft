@@ -11,6 +11,7 @@ const LODChunk = lod_chunk.LODChunk;
 const LODRegionKey = lod_chunk.LODRegionKey;
 const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const ILODConfig = lod_chunk.ILODConfig;
+const LODStats = @import("lod_stats.zig").LODStats;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
@@ -72,6 +73,11 @@ pub const RegionMap = std.HashMap(LODRegionKey, *LODChunk, LODRegionKeyContext, 
 /// Callback type to check if a regular chunk is loaded and renderable.
 pub const ChunkChecker = *const fn (chunk_x: i32, chunk_z: i32, ctx: *anyopaque) bool;
 
+pub const LODRenderLayer = enum {
+    terrain,
+    fluid,
+};
+
 /// Type-erased interface for LOD rendering.
 /// Allows LODManager to delegate rendering without knowing the concrete RHI type.
 pub const LODRenderInterface = struct {
@@ -87,6 +93,8 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        layer: LODRenderLayer,
+        stats: ?*LODStats,
     ) void,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
@@ -104,8 +112,10 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        layer: LODRenderLayer,
+        stats: ?*LODStats,
     ) void {
-        self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks);
+        self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats);
     }
 
     pub fn deinit(self: LODRenderInterface) void {

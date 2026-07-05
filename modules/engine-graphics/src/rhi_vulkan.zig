@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = @import("fs");
 const c = @import("c").c;
 const rhi = @import("engine-rhi").rhi;
 const log = @import("engine-core").log;
@@ -19,6 +20,7 @@ const render_state = @import("vulkan/rhi_render_state.zig");
 const init_deinit = @import("vulkan/rhi_init_deinit.zig");
 const rhi_timing = @import("vulkan/rhi_timing.zig");
 const screenshot = @import("vulkan/screenshot.zig");
+const Utils = @import("vulkan/utils.zig");
 const CullingSystem = @import("vulkan/culling_system.zig").CullingSystem;
 
 const QUERY_COUNT_PER_FRAME = rhi_timing.QUERY_COUNT_PER_FRAME;
@@ -829,26 +831,6 @@ fn computeWaterReflectedViewProj(ctx_ptr: *anyopaque, view: Mat4, proj: Mat4, ca
     return water_bridge.computeWaterReflectedViewProj(ctx, view, proj, camera_pos);
 }
 
-fn getNativeSkyPipeline(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeSkyPipeline(ctx);
-}
-fn getNativeSkyPipelineLayout(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeSkyPipelineLayout(ctx);
-}
-fn getNativeWaterPipeline(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeWaterPipeline(ctx);
-}
-fn getNativeWaterPipelineLayout(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeWaterPipelineLayout(ctx);
-}
-fn getNativeMainDescriptorSet(ctx_ptr: *anyopaque) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    return native_access.getNativeMainDescriptorSet(ctx);
-}
 fn getNativeCommandBuffer(ctx_ptr: *anyopaque) u64 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeCommandBuffer(ctx);
@@ -889,6 +871,9 @@ fn getNativeSwapchainImageCount(ctx_ptr: *anyopaque) u32 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeSwapchainImageCount(ctx);
 }
+fn getNativeBackendContext(ctx_ptr: *anyopaque) u64 {
+    return @intFromPtr(ctx_ptr);
+}
 
 fn computeSsao(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
@@ -901,6 +886,68 @@ fn computeSsao(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         inv_proj,
     );
 }
+
+fn drawSkyEffect(ctx_ptr: *anyopaque, params: rhi.SkyParams) rhi.RhiError!void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const pipeline = ctx.pipeline_manager.sky_pipeline;
+    const layout = ctx.pipeline_manager.sky_pipeline_layout;
+    const cmd = ctx.frames.command_buffers[ctx.frames.current_frame];
+
+    if (pipeline == null or layout == null or cmd == null) {
+        log.log.warn("Vulkan RHI: Sky rendering skipped, handles missing (pipeline={}, layout={}, cmd={})", .{ pipeline != null, layout != null, cmd != null });
+        if (pipeline == null) return error.SkyPipelineNotReady;
+        if (layout == null) return error.SkyPipelineLayoutNotReady;
+        if (cmd == null) return error.CommandBufferNotReady;
+        return error.ResourceNotReady;
+    }
+
+    const pc = rhi.SkyPushConstants{
+        .cam_forward = .{ params.cam_forward.x, params.cam_forward.y, params.cam_forward.z, 0.0 },
+        .cam_right = .{ params.cam_right.x, params.cam_right.y, params.cam_right.z, 0.0 },
+        .cam_up = .{ params.cam_up.x, params.cam_up.y, params.cam_up.z, 0.0 },
+        .sun_dir = .{ params.sun_dir.x, params.sun_dir.y, params.sun_dir.z, 0.0 },
+        .sky_color = .{ params.sky_color.x, params.sky_color.y, params.sky_color.z, 1.0 },
+        .horizon_color = .{ params.horizon_color.x, params.horizon_color.y, params.horizon_color.z, 1.0 },
+        .params = .{ params.aspect, params.tan_half_fov, params.sun_intensity, params.moon_intensity },
+        .time = .{ params.time, params.cam_pos.x, params.cam_pos.y, params.cam_pos.z },
+    };
+
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const descriptor_set = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+    if (descriptor_set != null) {
+        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
+    }
+    c.vkCmdPushConstants(cmd, layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(rhi.SkyPushConstants), &pc);
+    c.vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
+fn beginWaterDrawEffect(ctx_ptr: *anyopaque, reflection: rhi.TextureHandle, scene_depth: rhi.TextureHandle) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const pipeline = ctx.water_system.water_pipeline;
+    const layout = ctx.water_system.water_pipeline_layout;
+    const cmd = ctx.frames.command_buffers[ctx.frames.current_frame];
+
+    if (pipeline == null or layout == null or cmd == null or reflection == 0 or scene_depth == 0) return false;
+
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const descriptor_set = ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+    if (descriptor_set != null) {
+        c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
+    }
+    ctx.draw.terrain_pipeline_bound = true;
+    return true;
+}
+
+fn endWaterDrawEffect(ctx_ptr: *anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.draw.terrain_pipeline_bound = false;
+}
+
+const VULKAN_RENDER_EFFECTS_VTABLE = rhi.IRenderEffectsContext.VTable{
+    .drawSky = drawSkyEffect,
+    .beginWaterDraw = beginWaterDrawEffect,
+    .endWaterDraw = endWaterDrawEffect,
+};
 
 fn drawDebugShadowMap(ctx_ptr: *anyopaque, cascade_index: usize, depth_map_handle: rhi.TextureHandle) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
@@ -956,6 +1003,251 @@ const VULKAN_COMMAND_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{
     .setViewport = setViewport,
 };
 
+fn currentCommandBuffer(ctx: *VulkanContext) ?c.VkCommandBuffer {
+    return ctx.frames.command_buffers[ctx.frames.current_frame];
+}
+
+fn bindComputePipeline(ctx_ptr: *anyopaque, pipeline: u64) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, @ptrFromInt(pipeline));
+}
+
+fn bindComputeDescriptorSet(ctx_ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    const set: c.VkDescriptorSet = @ptrFromInt(descriptor_set);
+    c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, @ptrFromInt(pipeline_layout), 0, 1, &set, 0, null);
+}
+
+fn createComputeBuffer(ctx_ptr: *anyopaque, size: usize, host_visible: bool) rhi.RhiError!rhi.ComputeBuffer {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const properties: c.VkMemoryPropertyFlags = if (host_visible)
+        c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    else
+        c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    const buffer = try Utils.createVulkanBuffer(&ctx.vulkan_device, size, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, properties);
+    return .{ .buffer = @intFromPtr(buffer.buffer), .memory = @intFromPtr(buffer.memory), .mapped_ptr = buffer.mapped_ptr };
+}
+
+fn destroyComputeBuffer(ctx_ptr: *anyopaque, buffer: *rhi.ComputeBuffer) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const vk = ctx.vulkan_device.vk_device;
+    const vk_buffer: c.VkBuffer = @ptrFromInt(buffer.buffer);
+    const vk_memory: c.VkDeviceMemory = @ptrFromInt(buffer.memory);
+    if (buffer.mapped_ptr != null) c.vkUnmapMemory(vk, vk_memory);
+    if (vk_buffer != null) c.vkDestroyBuffer(vk, vk_buffer, null);
+    if (vk_memory != null) c.vkFreeMemory(vk, vk_memory, null);
+    buffer.* = .{};
+}
+
+fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!rhi.ComputePipeline {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const vk = ctx.vulkan_device.vk_device;
+    var result = rhi.ComputePipeline{};
+    errdefer destroyComputePipeline(ctx_ptr, &result);
+
+    var pool_size = c.VkDescriptorPoolSize{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = storage_binding_count * rhi.MAX_FRAMES_IN_FLIGHT };
+    var pool_info = std.mem.zeroes(c.VkDescriptorPoolCreateInfo);
+    pool_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.maxSets = rhi.MAX_FRAMES_IN_FLIGHT;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes = &pool_size;
+    var descriptor_pool: c.VkDescriptorPool = null;
+    try Utils.checkVk(c.vkCreateDescriptorPool(vk, &pool_info, null, &descriptor_pool));
+    result.descriptor_pool = @intFromPtr(descriptor_pool);
+
+    const bindings = try allocator.alloc(c.VkDescriptorSetLayoutBinding, storage_binding_count);
+    defer allocator.free(bindings);
+    for (bindings, 0..) |*binding, i| {
+        binding.* = .{ .binding = @intCast(i), .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = null };
+    }
+
+    var layout_info = std.mem.zeroes(c.VkDescriptorSetLayoutCreateInfo);
+    layout_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = storage_binding_count;
+    layout_info.pBindings = bindings.ptr;
+    var descriptor_set_layout: c.VkDescriptorSetLayout = null;
+    try Utils.checkVk(c.vkCreateDescriptorSetLayout(vk, &layout_info, null, &descriptor_set_layout));
+    result.descriptor_set_layout = @intFromPtr(descriptor_set_layout);
+
+    var layouts = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSetLayout);
+    for (&layouts) |*layout| layout.* = descriptor_set_layout;
+    var alloc_info = std.mem.zeroes(c.VkDescriptorSetAllocateInfo);
+    alloc_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool = descriptor_pool;
+    alloc_info.descriptorSetCount = rhi.MAX_FRAMES_IN_FLIGHT;
+    alloc_info.pSetLayouts = &layouts;
+    var descriptor_sets = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet);
+    try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &alloc_info, &descriptor_sets));
+    for (descriptor_sets, 0..) |set, i| result.descriptor_sets[i] = @intFromPtr(set);
+
+    var pc_range = std.mem.zeroes(c.VkPushConstantRange);
+    pc_range.stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT;
+    pc_range.size = push_constant_size;
+    var pipeline_layout_info = std.mem.zeroes(c.VkPipelineLayoutCreateInfo);
+    pipeline_layout_info.sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = if (push_constant_size == 0) 0 else 1;
+    pipeline_layout_info.pPushConstantRanges = if (push_constant_size == 0) null else &pc_range;
+    var pipeline_layout: c.VkPipelineLayout = null;
+    try Utils.checkVk(c.vkCreatePipelineLayout(vk, &pipeline_layout_info, null, &pipeline_layout));
+    result.layout = @intFromPtr(pipeline_layout);
+
+    const bytes = try fs.cwd().readFileAlloc(shader_path, allocator, 16 * 1024 * 1024);
+    defer allocator.free(bytes);
+    if (bytes.len % 4 != 0) return error.InvalidShader;
+    const shader_module = try Utils.createShaderModule(vk, bytes);
+    defer c.vkDestroyShaderModule(vk, shader_module, null);
+
+    var stage = std.mem.zeroes(c.VkPipelineShaderStageCreateInfo);
+    stage.sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = c.VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = shader_module;
+    stage.pName = "main";
+    var pipeline_info = std.mem.zeroes(c.VkComputePipelineCreateInfo);
+    pipeline_info.sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.stage = stage;
+    pipeline_info.layout = pipeline_layout;
+    var pipeline: c.VkPipeline = null;
+    try Utils.checkVk(c.vkCreateComputePipelines(vk, null, 1, &pipeline_info, null, &pipeline));
+    result.pipeline = @intFromPtr(pipeline);
+    return result;
+}
+
+fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const u64) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT or buffers.len == 0) return;
+
+    const infos = ctx.allocator.alloc(c.VkDescriptorBufferInfo, buffers.len) catch |err| {
+        log.log.err("Failed to allocate compute descriptor buffer infos: {}", .{err});
+        return;
+    };
+    defer ctx.allocator.free(infos);
+
+    const writes = ctx.allocator.alloc(c.VkWriteDescriptorSet, buffers.len) catch |err| {
+        log.log.err("Failed to allocate compute descriptor writes: {}", .{err});
+        return;
+    };
+    defer ctx.allocator.free(writes);
+
+    for (buffers, 0..) |buffer, i| {
+        infos[i] = .{ .buffer = @ptrFromInt(buffer), .offset = 0, .range = c.VK_WHOLE_SIZE };
+        writes[i] = std.mem.zeroes(c.VkWriteDescriptorSet);
+        writes[i].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = @ptrFromInt(pipeline.descriptor_sets[frame_index]);
+        writes[i].dstBinding = @intCast(i);
+        writes[i].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].descriptorCount = 1;
+        writes[i].pBufferInfo = &infos[i];
+    }
+    c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, @intCast(writes.len), writes.ptr, 0, null);
+}
+
+fn destroyComputePipeline(ctx_ptr: *anyopaque, pipeline: *rhi.ComputePipeline) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const vk = ctx.vulkan_device.vk_device;
+    if (pipeline.pipeline != 0) c.vkDestroyPipeline(vk, @ptrFromInt(pipeline.pipeline), null);
+    if (pipeline.layout != 0) c.vkDestroyPipelineLayout(vk, @ptrFromInt(pipeline.layout), null);
+    if (pipeline.descriptor_set_layout != 0) c.vkDestroyDescriptorSetLayout(vk, @ptrFromInt(pipeline.descriptor_set_layout), null);
+    if (pipeline.descriptor_pool != 0) c.vkDestroyDescriptorPool(vk, @ptrFromInt(pipeline.descriptor_pool), null);
+    pipeline.* = .{};
+}
+
+fn dispatchCompute(ctx_ptr: *anyopaque, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    c.vkCmdDispatch(cmd, group_count_x, group_count_y, group_count_z);
+}
+
+fn pushComputeConstants(ctx_ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    c.vkCmdPushConstants(cmd, @ptrFromInt(pipeline_layout), c.VK_SHADER_STAGE_COMPUTE_BIT, offset, size, data);
+}
+
+fn fillComputeBuffer(ctx_ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    c.vkCmdFillBuffer(cmd, @ptrFromInt(buffer), offset, size, data);
+}
+
+fn copyComputeBuffer(ctx_ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    var region = std.mem.zeroes(c.VkBufferCopy);
+    region.srcOffset = src_offset;
+    region.dstOffset = dst_offset;
+    region.size = size;
+    c.vkCmdCopyBuffer(cmd, @ptrFromInt(src_buffer), @ptrFromInt(dst_buffer), 1, &region);
+}
+
+fn computePipelineBarrier(ctx_ptr: *anyopaque, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    var barrier = std.mem.zeroes(c.VkMemoryBarrier);
+    barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = src_access;
+    barrier.dstAccessMask = dst_access;
+    c.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 1, &barrier, 0, null, 0, null);
+}
+
+fn computeBufferBarrier(ctx_ptr: *anyopaque, buffer: u64, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    if (buffer == 0 or size == 0) return;
+
+    var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
+    barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.srcAccessMask = src_access;
+    barrier.dstAccessMask = dst_access;
+    barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = @ptrFromInt(buffer);
+    barrier.offset = offset;
+    barrier.size = size;
+
+    c.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, null, 1, &barrier, 0, null);
+}
+
+fn waitForFrameFence(ctx_ptr: *anyopaque, frame_index: usize) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT) return false;
+    const fence = ctx.frames.in_flight_fences[frame_index] orelse return false;
+    return c.vkWaitForFences(ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, 5_000_000_000) == c.VK_SUCCESS;
+}
+
+fn getNativeBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) u64 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const buffer = ctx.resources.buffers.get(handle) orelse return 0;
+    return @intFromPtr(buffer.buffer);
+}
+
+fn hasComputeCommandBuffer(ctx_ptr: *anyopaque) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return currentCommandBuffer(ctx) != null;
+}
+
+const VULKAN_COMPUTE_CONTEXT_VTABLE = rhi.IComputeContext.VTable{
+    .bindComputePipeline = bindComputePipeline,
+    .bindDescriptorSet = bindComputeDescriptorSet,
+    .createComputeBuffer = createComputeBuffer,
+    .destroyComputeBuffer = destroyComputeBuffer,
+    .createComputePipeline = createComputePipeline,
+    .updateComputeDescriptors = updateComputeDescriptors,
+    .destroyComputePipeline = destroyComputePipeline,
+    .dispatch = dispatchCompute,
+    .pushConstants = pushComputeConstants,
+    .fillBuffer = fillComputeBuffer,
+    .copyBuffer = copyComputeBuffer,
+    .pipelineBarrier = computePipelineBarrier,
+    .bufferBarrier = computeBufferBarrier,
+    .waitForFrameFence = waitForFrameFence,
+    .getNativeBuffer = getNativeBuffer,
+    .hasCommandBuffer = hasComputeCommandBuffer,
+};
+
 const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
     .init = initContext,
     .deinit = deinit,
@@ -997,12 +1289,8 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .computeTAA = computeTAA,
         .computeDepthPyramid = computeDepthPyramid,
     },
+    .effects = VULKAN_RENDER_EFFECTS_VTABLE,
     .native = .{
-        .getSkyPipeline = getNativeSkyPipeline,
-        .getSkyPipelineLayout = getNativeSkyPipelineLayout,
-        .getWaterPipeline = getNativeWaterPipeline,
-        .getWaterPipelineLayout = getNativeWaterPipelineLayout,
-        .getMainDescriptorSet = getNativeMainDescriptorSet,
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,
@@ -1013,11 +1301,13 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .getDescriptorPool = getNativeDescriptorPool,
         .getUiRenderPass = getNativeUiRenderPass,
         .getSwapchainImageCount = getNativeSwapchainImageCount,
+        .getBackendContext = getNativeBackendContext,
     },
     .ssao = VULKAN_SSAO_VTABLE,
     .debug_overlay = VULKAN_DEBUG_OVERLAY_VTABLE,
     .shadow = VULKAN_SHADOW_CONTEXT_VTABLE,
     .water = VULKAN_WATER_CONTEXT_VTABLE,
+    .compute = VULKAN_COMPUTE_CONTEXT_VTABLE,
     .ui = VULKAN_UI_CONTEXT_VTABLE,
     .query = .{
         .getFrameIndex = getFrameIndex,

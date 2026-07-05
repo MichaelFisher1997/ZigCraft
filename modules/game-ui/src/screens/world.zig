@@ -76,7 +76,7 @@ pub const WorldScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
         const render_system = context.render_system;
-        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.horizon_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
         errdefer session.deinit();
         const world = session.world.interface();
 
@@ -133,6 +133,9 @@ pub const WorldScreen = struct {
 
         if (self.session.world.render_distance != ctx.settings.render_distance) {
             self.session.world.setRenderDistance(ctx.settings.render_distance);
+        }
+        if (self.session.world.horizon_distance != ctx.settings.horizon_distance) {
+            self.session.world.setHorizonDistance(ctx.settings.horizon_distance);
         }
 
         self.maybeLogStartupDiagnostic(now);
@@ -282,22 +285,23 @@ pub const WorldScreen = struct {
         );
         if (lod_stats) |ls| {
             log.log.warn(
-                "STARTUP_DIAG_LOD_STATES: loaded=[{},{},{},{}] generating=[{},{},{},{}] generated=[{},{},{},{}] meshing=[{},{},{},{}]",
+                "STARTUP_DIAG_LOD_STATES: loaded=[{},{},{},{},{}] generating=[{},{},{},{},{}] generated=[{},{},{},{},{}] meshing=[{},{},{},{},{}]",
                 .{
-                    ls.loaded[0],     ls.loaded[1],     ls.loaded[2],     ls.loaded[3],
-                    ls.generating[0], ls.generating[1], ls.generating[2], ls.generating[3],
-                    ls.generated[0],  ls.generated[1],  ls.generated[2],  ls.generated[3],
-                    ls.meshing[0],    ls.meshing[1],    ls.meshing[2],    ls.meshing[3],
+                    ls.loaded[0],     ls.loaded[1],     ls.loaded[2],     ls.loaded[3],     ls.loaded[4],
+                    ls.generating[0], ls.generating[1], ls.generating[2], ls.generating[3], ls.generating[4],
+                    ls.generated[0],  ls.generated[1],  ls.generated[2],  ls.generated[3],  ls.generated[4],
+                    ls.meshing[0],    ls.meshing[1],    ls.meshing[2],    ls.meshing[3],    ls.meshing[4],
                 },
             );
             log.log.warn(
-                "STARTUP_DIAG_LOD_QUEUES: mesh_ready=[{},{},{},{}] uploading=[{},{},{},{}] meshes=[{},{},{},{}] genQ={} uploadQ=[{},{},{}] memory_mb={}",
+                "STARTUP_DIAG_LOD_QUEUES: mesh_ready=[{},{},{},{},{}] uploading=[{},{},{},{},{}] meshes=[{},{},{},{},{}] genQ={} uploadQ=[{},{},{},{},{}] memory_mb={} cache_hit/miss={}/{} store_hit/miss={}/{}",
                 .{
-                    ls.mesh_ready[0],                               ls.mesh_ready[1],         ls.mesh_ready[2],         ls.mesh_ready[3],
-                    ls.uploading[0],                                ls.uploading[1],          ls.uploading[2],          ls.uploading[3],
-                    ls.mesh_count[0],                               ls.mesh_count[1],         ls.mesh_count[2],         ls.mesh_count[3],
-                    ls.gen_queue_depth[ls.gen_queue_depth.len - 1], ls.upload_queue_depth[1], ls.upload_queue_depth[2], ls.upload_queue_depth[3],
-                    ls.memory_used_mb,
+                    ls.mesh_ready[0],                               ls.mesh_ready[1],         ls.mesh_ready[2],         ls.mesh_ready[3],         ls.mesh_ready[4],
+                    ls.uploading[0],                                ls.uploading[1],          ls.uploading[2],          ls.uploading[3],          ls.uploading[4],
+                    ls.mesh_count[0],                               ls.mesh_count[1],         ls.mesh_count[2],         ls.mesh_count[3],         ls.mesh_count[4],
+                    ls.gen_queue_depth[ls.gen_queue_depth.len - 1], ls.upload_queue_depth[0], ls.upload_queue_depth[1], ls.upload_queue_depth[2], ls.upload_queue_depth[3],
+                    ls.upload_queue_depth[4],                       ls.memory_used_mb,        ls.cache_hits,            ls.cache_misses,          ls.store_hits,
+                    ls.store_misses,
                 },
             );
         }

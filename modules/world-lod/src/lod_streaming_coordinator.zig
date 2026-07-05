@@ -122,7 +122,7 @@ pub const LODStreamingCoordinator = struct {
     }
 
     pub fn targetRenderDistance(self: *const LODStreamingCoordinator) i32 {
-        return if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getRadii()[0]) else self.render_distance;
+        return if (self.lod_manager) |mgr| @min(self.render_distance, mgr.config.getChunkRenderRadius()) else self.render_distance;
     }
 
     pub fn beginFrame(self: *LODStreamingCoordinator, storage: *ChunkStorage, gen_queue: *JobQueue, mesh_queue: *JobQueue, player_pos: Vec3, dt: f32, frame_counter: u64) StreamingFrame {
@@ -165,7 +165,7 @@ pub const LODStreamingCoordinator = struct {
 
     pub fn isStartupBusy(self: *const LODStreamingCoordinator, stats: QueueStats, target_render_dist: i32) bool {
         const startup_target = if (self.lod_manager) |mgr|
-            @min(target_render_dist, mgr.config.getRadii()[0])
+            @min(target_render_dist, mgr.config.getChunkRenderRadius())
         else
             target_render_dist;
 

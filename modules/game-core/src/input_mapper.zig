@@ -267,10 +267,12 @@ test "InputBinding equality" {
     const b1 = InputBinding{ .key = .w };
     const b2 = InputBinding{ .key_alt = .w };
     const b3 = InputBinding{ .key = .s };
+    const b4 = InputBinding{ .key_alt = .w };
 
-    try std.testing.expect(b1.eql(b2));
-    try std.testing.expect(b2.eql(b1));
+    try std.testing.expect(!b1.eql(b2));
+    try std.testing.expect(!b2.eql(b1));
     try std.testing.expect(!b1.eql(b3));
+    try std.testing.expect(b2.eql(b4));
 }
 
 test "InputMapper resetActionToDefault" {

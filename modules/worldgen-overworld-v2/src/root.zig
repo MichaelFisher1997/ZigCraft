@@ -259,10 +259,11 @@ pub const OverworldV2Generator = struct {
         if (roll > density) return null;
 
         return switch (biome) {
-            .taiga, .snowy_taiga, .snow_tundra => .spruce,
-            .jungle => .jungle,
-            .savanna => .acacia,
-            .forest => if (hashUnit(wx, wz, self.seed32 +% 4133) < 0.25) .birch else .oak,
+            .taiga, .snowy_taiga, .snow_tundra, .old_growth_taiga, .grove => .spruce,
+            .jungle, .bamboo_jungle, .sparse_jungle => .jungle,
+            .savanna, .savanna_plateau, .windswept_savanna => .acacia,
+            .birch_forest => .birch,
+            .forest, .flower_forest => if (hashUnit(wx, wz, self.seed32 +% 4133) < 0.25) .birch else .oak,
             else => .oak,
         };
     }
@@ -321,7 +322,7 @@ pub const OverworldV2Generator = struct {
         const place_y = surface_y + 1;
         if (chunk.getBlock(x, place_y, z) != .water) return;
 
-        if ((biome == .warm_ocean or biome == .tropical) and scatter < 0.08 and water_depth <= 10) {
+        if ((biome == .warm_ocean or biome == .tropical) and scatter < 0.04 and water_depth <= 10) {
             if (variant < 0.35) {
                 setDecorationBlock(chunk, x, surface_y, z, .coral_block);
             } else {
@@ -330,11 +331,11 @@ pub const OverworldV2Generator = struct {
             return;
         }
 
-        if (water_depth >= 6 and scatter < 0.16) {
+        if (water_depth >= 6 and scatter < 0.06) {
             placeKelp(chunk, x, place_y, z, @min(water_depth - 1, 2 + @as(u8, @intFromFloat(variant * 7.0))));
-        } else if (water_depth >= 4 and scatter < 0.30) {
+        } else if (water_depth >= 4 and scatter < 0.13) {
             setDecorationBlock(chunk, x, place_y, z, .tall_seagrass);
-        } else if (scatter < 0.55) {
+        } else if (scatter < 0.24) {
             setDecorationBlock(chunk, x, place_y, z, if (variant < 0.75) .seagrass else .seaweed);
         }
     }
@@ -376,7 +377,7 @@ pub const OverworldV2Generator = struct {
             }
 
             if (layer_depth >= 0) {
-                const underwater = above == .water or y < self.params.sea_level - 1;
+                const underwater = above == .water;
                 chunk.blocks[idx] = if (layer_depth == 0)
                     surfaceBlock(sample.biome, sample.terrain_height, self.params.sea_level, underwater)
                 else if (layer_depth <= filler_depth)
@@ -562,7 +563,7 @@ pub const OverworldV2Generator = struct {
                 const wx_f = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
                 const wz_f = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
                 const sample = self.sampleRepresentativeLODColumn(wx_f, wz_f, cell_span);
-                data.setColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
+                data.setGeneratedColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
             }
         }
     }
@@ -621,12 +622,11 @@ pub const OverworldV2Generator = struct {
         const center_height = center_sample.terrain_height;
         const height_blend: f32 = if (terrain_range > 24.0 and center_height > avg_height) 0.82 else 0.68;
         const land_height = center_height * height_blend + avg_height * (1.0 - height_blend);
-        const vegetation = if (render_water_surface) world_core.LODVegetationHint.empty else self.lodVegetationHintInArea(wx, wz, sample_radius, dominant_biome);
-        const avg_color = packAverageColor(color_r, color_g, color_b, sample_count);
-        const representative_color = if (vegetation.tree_coverage > 0.0)
-            blendColor(avg_color, foliageColorForTree(vegetation.leaves, dominant_biome), vegetation.tree_coverage * 0.35)
+        const vegetation = if (render_water_surface)
+            world_core.LODVegetationHint.empty
         else
-            avg_color;
+            self.lodVegetationHintInArea(wx, wz, sample_radius, dominant_biome);
+        const avg_color = packAverageColor(color_r, color_g, color_b, sample_count);
 
         return .{
             .height = if (render_water_surface) @floatFromInt(self.params.sea_level) else land_height,
@@ -636,7 +636,7 @@ pub const OverworldV2Generator = struct {
                 .subsurface = fillerBlock(dominant_biome, render_water_surface),
                 .foundation = .stone,
             },
-            .color = representative_color,
+            .color = avg_color,
             .water = if (render_water_surface) .{
                 .is_surface = true,
                 .surface_height = @floatFromInt(self.params.sea_level),
@@ -716,13 +716,7 @@ pub const OverworldV2Generator = struct {
                 const wx: i32 = @intFromFloat(@floor(center_wx + ox * radius));
                 const wz: i32 = @intFromFloat(@floor(center_wz + oz * radius));
                 total_columns += 1;
-                const sample = self.sampleLODColumn(wx, wz);
-                if (sample.terrain_height <= self.params.sea_level or sample.terrain_height >= CHUNK_SIZE_Y - 8) continue;
-
-                const surface = surfaceBlock(sample.biome, sample.terrain_height, self.params.sea_level, false);
-                if (surface != .grass and surface != .dirt and surface != .snow_block and surface != .sand) continue;
-
-                const shape = self.treeForColumn(sample.biome, wx, wz) orelse continue;
+                const shape = self.treeForColumn(dominant_biome, wx, wz) orelse continue;
                 tree_count += 1;
                 height_sum += treeHeightForShape(shape);
                 offset_x_sum += @as(f32, @floatFromInt(wx)) - center_wx;
@@ -734,14 +728,30 @@ pub const OverworldV2Generator = struct {
         if (tree_count == 0) return world_core.LODVegetationHint.empty;
 
         const area = @as(f32, @floatFromInt(@max(total_columns, 1)));
-        const coverage = std.math.clamp(@as(f32, @floatFromInt(tree_count)) / area, 0.0, 1.0);
+        const sampled_coverage = std.math.clamp(@as(f32, @floatFromInt(tree_count)) / area, 0.0, 1.0);
         const blocks = treeBlocksForShape(best_shape orelse defaultTreeShapeForBiome(dominant_biome));
 
         return .{
-            .tree_coverage = coverage,
+            .tree_coverage = sampled_coverage,
             .avg_tree_height = height_sum / @as(f32, @floatFromInt(tree_count)),
             .offset_x = offset_x_sum / @as(f32, @floatFromInt(tree_count)),
             .offset_z = offset_z_sum / @as(f32, @floatFromInt(tree_count)),
+            .trunk = blocks.trunk,
+            .leaves = blocks.leaves,
+        };
+    }
+
+    fn estimatedLODVegetationHint(self: *const OverworldV2Generator, biome: BiomeId, wx: i32, wz: i32) world_core.LODVegetationHint {
+        const density = treeDensityForBiome(biome);
+        if (density <= 0.0) return world_core.LODVegetationHint.empty;
+        const shape = defaultTreeShapeForBiome(biome);
+        const blocks = treeBlocksForShape(shape);
+        const jitter = hashUnit(wx, wz, self.seed32 +% 6131);
+        return .{
+            .tree_coverage = std.math.clamp(density * (0.75 + jitter * 0.3), 0.0, 1.0),
+            .avg_tree_height = treeHeightForShape(shape),
+            .offset_x = (hashUnit(wx, wz, self.seed32 +% 6133) - 0.5) * 2.0,
+            .offset_z = (hashUnit(wx, wz, self.seed32 +% 6137) - 0.5) * 2.0,
             .trunk = blocks.trunk,
             .leaves = blocks.leaves,
         };
@@ -896,20 +906,74 @@ fn fillerBlock(biome: BiomeId, underwater: bool) BlockType {
     };
 }
 
+const BiomeColors = struct {
+    grass: [3]f32 = .{ 0.22, 0.72, 0.16 },
+    foliage: [3]f32 = .{ 0.14, 0.58, 0.12 },
+    water: [3]f32 = .{ 0.12, 0.38, 0.78 },
+};
+
 fn colorForBiome(biome: BiomeId, block: BlockType) u32 {
-    if (block == .water) return 0xFF2F5FA8;
+    const colors = biomeTintColors(biome);
+    if (block == .water) return packRgb(colors.water);
+    if (block == .grass) return packRgb(colors.grass);
+    if (isLeafBlock(block)) return leafTintColor(block, colors.foliage);
+    return packRgb(world_core.block_registry.getBlockDefinition(block).default_color);
+}
+
+fn biomeTintColors(biome: BiomeId) BiomeColors {
     return switch (biome) {
-        .deep_ocean, .ocean, .cold_ocean, .frozen_ocean => 0xFF496B82,
-        .beach, .snowy_beach => 0xFFD9CA8B,
-        .desert => 0xFFE3C36B,
-        .river, .frozen_river => 0xFF6A8FB2,
-        .forest, .taiga, .snowy_taiga => 0xFF2F6D36,
-        .jungle => 0xFF287A2F,
-        .savanna => 0xFF9FAE55,
-        .mountains, .jagged_peaks, .stony_peaks => 0xFF7E7E78,
-        .frozen_peaks, .snow_tundra, .snowy_slopes => 0xFFE3EDF1,
-        else => 0xFF5FA34A,
+        .deep_ocean => .{ .water = .{ 0.1, 0.2, 0.5 } },
+        .frozen_ocean => .{ .grass = .{ 0.78, 0.88, 0.92 }, .foliage = .{ 0.66, 0.78, 0.82 }, .water = .{ 0.32, 0.54, 0.74 } },
+        .cold_ocean => .{ .water = .{ 0.10, 0.32, 0.62 } },
+        .warm_ocean => .{ .water = .{ 0.08, 0.50, 0.82 } },
+        .tropical => .{ .grass = .{ 0.18, 0.74, 0.18 }, .foliage = .{ 0.10, 0.62, 0.10 }, .water = .{ 0.05, 0.55, 0.85 } },
+        .plains => .{},
+        .forest => .{ .grass = .{ 0.18, 0.64, 0.16 }, .foliage = .{ 0.12, 0.52, 0.12 } },
+        .birch_forest => .{ .grass = .{ 0.24, 0.68, 0.18 }, .foliage = .{ 0.18, 0.58, 0.14 } },
+        .dark_forest => .{ .grass = .{ 0.12, 0.46, 0.12 }, .foliage = .{ 0.08, 0.36, 0.08 } },
+        .flower_forest => .{ .grass = .{ 0.30, 0.72, 0.18 }, .foliage = .{ 0.20, 0.58, 0.12 } },
+        .taiga => .{ .grass = .{ 0.24, 0.56, 0.24 }, .foliage = .{ 0.18, 0.46, 0.18 } },
+        .snowy_taiga => .{ .grass = .{ 0.62, 0.74, 0.70 }, .foliage = .{ 0.16, 0.40, 0.24 } },
+        .old_growth_taiga => .{ .grass = .{ 0.20, 0.48, 0.28 }, .foliage = .{ 0.12, 0.34, 0.20 } },
+        .desert => .{ .grass = .{ 0.75, 0.70, 0.35 } },
+        .snow_tundra => .{ .grass = .{ 0.7, 0.75, 0.8 } },
+        .snowy_mountains => .{ .grass = .{ 0.85, 0.90, 0.95 } },
+        .stony_shore => .{ .grass = .{ 0.48, 0.52, 0.50 }, .foliage = .{ 0.34, 0.42, 0.36 }, .water = .{ 0.10, 0.34, 0.62 } },
+        .snowy_beach => .{ .grass = .{ 0.82, 0.90, 0.94 }, .foliage = .{ 0.68, 0.78, 0.82 }, .water = .{ 0.22, 0.46, 0.70 } },
+        .meadow => .{ .grass = .{ 0.32, 0.74, 0.24 }, .foliage = .{ 0.20, 0.58, 0.18 } },
+        .grove => .{ .grass = .{ 0.20, 0.48, 0.24 }, .foliage = .{ 0.16, 0.38, 0.18 } },
+        .snowy_slopes => .{ .grass = .{ 0.82, 0.88, 0.94 }, .foliage = .{ 0.64, 0.72, 0.70 } },
+        .jagged_peaks => .{ .grass = .{ 0.56, 0.56, 0.54 }, .foliage = .{ 0.44, 0.46, 0.42 } },
+        .frozen_peaks => .{ .grass = .{ 0.76, 0.88, 0.96 }, .foliage = .{ 0.68, 0.78, 0.82 } },
+        .stony_peaks => .{ .grass = .{ 0.62, 0.58, 0.48 }, .foliage = .{ 0.46, 0.44, 0.34 } },
+        .swamp => .{ .grass = .{ 0.26, 0.58, 0.18 }, .foliage = .{ 0.22, 0.52, 0.16 }, .water = .{ 0.16, 0.38, 0.30 } },
+        .frozen_river => .{ .grass = .{ 0.78, 0.88, 0.92 }, .foliage = .{ 0.66, 0.78, 0.82 }, .water = .{ 0.36, 0.58, 0.78 } },
+        .jungle => .{ .grass = .{ 0.10, 0.76, 0.08 }, .foliage = .{ 0.08, 0.62, 0.08 } },
+        .savanna => .{ .grass = .{ 0.55, 0.55, 0.30 }, .foliage = .{ 0.50, 0.50, 0.28 } },
+        .badlands => .{ .grass = .{ 0.5, 0.4, 0.3 } },
+        .mushroom_fields => .{ .grass = .{ 0.4, 0.8, 0.4 } },
+        .foothills => .{ .grass = .{ 0.24, 0.62, 0.22 }, .foliage = .{ 0.18, 0.50, 0.16 } },
+        .dry_plains => .{ .grass = .{ 0.55, 0.50, 0.28 } },
+        .coastal_plains => .{ .grass = .{ 0.24, 0.66, 0.24 }, .foliage = .{ 0.18, 0.52, 0.16 } },
+        else => .{},
     };
+}
+
+fn leafTintColor(block: BlockType, biome_foliage: [3]f32) u32 {
+    if (block == .leaves) return packRgb(biome_foliage);
+    const base = world_core.block_registry.getBlockDefinition(block).default_color;
+    return packRgb(.{
+        base[0] * 0.70 + biome_foliage[0] * 0.30,
+        base[1] * 0.70 + biome_foliage[1] * 0.30,
+        base[2] * 0.70 + biome_foliage[2] * 0.30,
+    });
+}
+
+fn packRgb(color: [3]f32) u32 {
+    const r: u32 = @intFromFloat(@round(std.math.clamp(color[0], 0.0, 1.0) * 255.0));
+    const g: u32 = @intFromFloat(@round(std.math.clamp(color[1], 0.0, 1.0) * 255.0));
+    const b: u32 = @intFromFloat(@round(std.math.clamp(color[2], 0.0, 1.0) * 255.0));
+    return (r << 16) | (g << 8) | b;
 }
 
 fn dominantBlock(counts: [world_core.MAX_BLOCK_TYPES]u32) BlockType {
@@ -943,35 +1007,6 @@ fn packAverageColor(r_sum: u32, g_sum: u32, b_sum: u32, count: u32) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
-fn blendColor(a: u32, b: u32, t: f32) u32 {
-    const clamped = std.math.clamp(t, 0.0, 1.0);
-    const ar: f32 = @floatFromInt((a >> 16) & 0xFF);
-    const ag: f32 = @floatFromInt((a >> 8) & 0xFF);
-    const ab: f32 = @floatFromInt(a & 0xFF);
-    const br: f32 = @floatFromInt((b >> 16) & 0xFF);
-    const bg: f32 = @floatFromInt((b >> 8) & 0xFF);
-    const bb: f32 = @floatFromInt(b & 0xFF);
-    const r: u32 = @intFromFloat(@round(ar + (br - ar) * clamped));
-    const g: u32 = @intFromFloat(@round(ag + (bg - ag) * clamped));
-    const blue: u32 = @intFromFloat(@round(ab + (bb - ab) * clamped));
-    return (r << 16) | (g << 8) | blue;
-}
-
-fn foliageColorForTree(leaves: BlockType, biome: BiomeId) u32 {
-    return switch (leaves) {
-        .spruce_leaves => 0xFF365D42,
-        .jungle_leaves => 0xFF1F7D28,
-        .acacia_leaves => 0xFF70843E,
-        .birch_leaves => 0xFF67A24A,
-        else => switch (biome) {
-            .jungle => 0xFF1E7A2A,
-            .taiga, .snowy_taiga => 0xFF3F6C45,
-            .savanna => 0xFF7B8A40,
-            else => 0xFF2E7A32,
-        },
-    };
-}
-
 fn treeBlocksForShape(shape: TreeShape) TreeBlocks {
     return switch (shape) {
         .birch => .{ .trunk = .birch_log, .leaves = .birch_leaves },
@@ -993,9 +1028,10 @@ fn treeHeightForShape(shape: TreeShape) f32 {
 
 fn defaultTreeShapeForBiome(biome: BiomeId) TreeShape {
     return switch (biome) {
-        .taiga, .snowy_taiga, .snow_tundra => .spruce,
-        .jungle => .jungle,
-        .savanna => .acacia,
+        .taiga, .snowy_taiga, .snow_tundra, .old_growth_taiga, .grove => .spruce,
+        .jungle, .bamboo_jungle, .sparse_jungle => .jungle,
+        .savanna, .savanna_plateau, .windswept_savanna => .acacia,
+        .birch_forest => .birch,
         else => .oak,
     };
 }
@@ -1024,10 +1060,17 @@ fn isVegetationBlock(block: BlockType) bool {
 fn treeDensityForBiome(biome: BiomeId) f32 {
     return switch (biome) {
         .forest => 0.72,
+        .birch_forest => 0.68,
+        .dark_forest => 0.92,
+        .flower_forest => 0.42,
         .taiga, .snowy_taiga => 0.58,
-        .jungle => 0.86,
-        .savanna => 0.30,
-        .plains => 0.10,
+        .old_growth_taiga => 0.82,
+        .grove => 0.46,
+        .jungle, .bamboo_jungle => 0.86,
+        .sparse_jungle => 0.48,
+        .swamp, .mangrove_swamp => 0.42,
+        .savanna, .savanna_plateau, .windswept_savanna => 0.30,
+        .plains, .coastal_plains, .foothills => 0.14,
         .mountains => 0.08,
         else => 0.0,
     };
@@ -1476,4 +1519,16 @@ test "overworld-v2 generates representative LOD data" {
 
     try std.testing.expect(filled_columns > 0);
     try std.testing.expect(material_columns > 0);
+}
+
+test "overworld-v2 LOD tree density covers forest variants" {
+    try std.testing.expect(treeDensityForBiome(.forest) > 0.5);
+    try std.testing.expect(treeDensityForBiome(.birch_forest) > 0.5);
+    try std.testing.expect(treeDensityForBiome(.dark_forest) > treeDensityForBiome(.forest));
+    try std.testing.expect(treeDensityForBiome(.old_growth_taiga) > treeDensityForBiome(.taiga));
+    try std.testing.expect(treeDensityForBiome(.bamboo_jungle) > 0.5);
+    try std.testing.expect(treeDensityForBiome(.plains) >= 0.1);
+    try std.testing.expectEqual(TreeShape.birch, defaultTreeShapeForBiome(.birch_forest));
+    try std.testing.expectEqual(TreeShape.spruce, defaultTreeShapeForBiome(.old_growth_taiga));
+    try std.testing.expectEqual(TreeShape.jungle, defaultTreeShapeForBiome(.bamboo_jungle));
 }

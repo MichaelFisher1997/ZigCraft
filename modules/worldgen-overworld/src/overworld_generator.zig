@@ -285,7 +285,7 @@ pub const OverworldGenerator = struct {
                 const wx = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
                 const wz = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
                 const sample = self.sampleRepresentativeLODColumn(wx, wz, region_size_f / grid_max, sea_level, controls, &tree_hint_cache, lod_level);
-                data.setColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
+                data.setGeneratedColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
             }
         }
     }
@@ -322,15 +322,15 @@ pub const OverworldGenerator = struct {
         // loading bottleneck; was producing <1 region/sec/worker).
         const sample_offsets = [_]f32{0.0};
         const sample_radius = @min(cell_span * 0.5, 48.0);
-        // Tree-coverage hints are computed via computeChunkTreeHints, which
+        // Exact tree-coverage hints are computed via computeChunkTreeHints, which
         // evaluates a full 256-column chunk of biome/decoration/tree noise per
         // cache miss. LOD columns span many chunks with little reuse, so tree
         // hints dominated gen cost (~30x the heightmap on lod3: 5.3s -> 0.04s
-        // per region) while the foliage tint is subtle at LOD distance (real
-        // trees render in the near LOD0 chunks). Disabled per-level below; flip
-        // a level back on if its foliage tint is wanted and it's cheap enough.
-        const compute_tree_hints: bool = switch (lod_level) {
-            .lod0, .lod1, .lod2, .lod3 => false,
+        // per region). Keep that path disabled by default and use a cheap
+        // biome/tree-registry estimate so distant forests still have canopy
+        // geometry without regressing generation latency.
+        const compute_exact_tree_hints: bool = switch (lod_level) {
+            .lod0, .lod1, .lod2, .lod3, .lod4 => false,
         };
 
         var block_counts = [_]u32{0} ** world_core.MAX_BLOCK_TYPES;
@@ -384,17 +384,17 @@ pub const OverworldGenerator = struct {
         else
             land_height;
         const avg_color = packAverageColor(color_r, color_g, color_b, @max(total_samples, 1));
-        const vegetation_hint = if (render_water_surface or !compute_tree_hints) world_core.LODVegetationHint.empty else self.actualTreeHintInArea(wx, wz, sample_radius, dominant_biome, tree_hint_cache);
-        const representative_color = if (vegetation_hint.tree_coverage > 0.0)
-            blendColor(avg_color, foliageColorForBiome(dominant_biome, vegetation_hint.leaves), vegetation_hint.tree_coverage * 0.45)
+        const vegetation_hint = if (render_water_surface)
+            world_core.LODVegetationHint.empty
+        else if (compute_exact_tree_hints)
+            self.actualTreeHintInArea(wx, wz, sample_radius, dominant_biome, tree_hint_cache)
         else
-            avg_color;
-
+            self.estimatedTreeHintForBiome(dominant_biome, wx, wz);
         return .{
             .height = height,
             .biome = dominant_biome,
             .layers = makeMaterialLayers(surface_block, dominant_biome, render_water_surface),
-            .color = representative_color,
+            .color = avg_color,
             .water = .{
                 .is_surface = render_water_surface,
                 .surface_height = if (render_water_surface) @floatFromInt(sea_level) else 0.0,
@@ -493,6 +493,54 @@ pub const OverworldGenerator = struct {
             .trunk = blocks.trunk,
             .leaves = blocks.leaves,
         };
+    }
+
+    fn estimatedTreeHintForBiome(self: *const OverworldGenerator, biome_id: BiomeId, wx: f32, wz: f32) world_core.LODVegetationHint {
+        const tree_types = biome_mod.getBiomeDefinition(biome_id).vegetation.tree_types;
+        if (tree_types.len == 0) return world_core.LODVegetationHint.empty;
+
+        var best_type = tree_types[0];
+        var best_probability: f32 = 0.0;
+        var probability_sum: f32 = 0.0;
+        for (tree_types) |tree_type| {
+            const def = tree_registry.getTreeDefinition(tree_type) orelse continue;
+            probability_sum += def.probability;
+            if (def.probability > best_probability) {
+                best_probability = def.probability;
+                best_type = tree_type;
+            }
+        }
+
+        const base_coverage = std.math.clamp(probability_sum * 7.5, 0.0, 1.0);
+        if (base_coverage < 0.035) return world_core.LODVegetationHint.empty;
+
+        const wx_i: i32 = @intFromFloat(@floor(wx));
+        const wz_i: i32 = @intFromFloat(@floor(wz));
+        const jitter = hashUnit2D(wx_i, wz_i, self.terrain_shape.getSeed());
+        const placement_roll = hashUnit2D(wx_i, wz_i, self.terrain_shape.getSeed() ^ 0x6D2B79F5);
+        const placement_probability = std.math.clamp(base_coverage * 0.32, 0.025, 0.55);
+        if (placement_roll > placement_probability) return world_core.LODVegetationHint.empty;
+
+        const blocks = treeBlocksForType(best_type);
+        return .{
+            .tree_coverage = std.math.clamp(0.12 + base_coverage * (0.18 + jitter * 0.08), 0.0, 0.45),
+            .avg_tree_height = treeHeightForType(best_type),
+            .offset_x = (hashUnit2D(wx_i, wz_i, self.terrain_shape.getSeed() ^ 0xA53A9D13) - 0.5) * 2.0,
+            .offset_z = (hashUnit2D(wx_i, wz_i, self.terrain_shape.getSeed() ^ 0xC2B2AE35) - 0.5) * 2.0,
+            .trunk = blocks.trunk,
+            .leaves = blocks.leaves,
+        };
+    }
+
+    fn hashUnit2D(x: i32, z: i32, seed: u64) f32 {
+        var h = seed;
+        h ^= @as(u64, @bitCast(@as(i64, x))) *% 0x9E3779B97F4A7C15;
+        h ^= @as(u64, @bitCast(@as(i64, z))) *% 0xC2B2AE3D27D4EB4F;
+        h ^= h >> 33;
+        h *%= 0xFF51AFD7ED558CCD;
+        h ^= h >> 33;
+        const bucket: u32 = @intCast(h & 0xFFFF);
+        return @as(f32, @floatFromInt(bucket)) / 65535.0;
     }
 
     fn computeChunkTreeHints(self: *const OverworldGenerator, chunk_x: i32, chunk_z: i32) TreeHintChunk {
@@ -657,14 +705,6 @@ pub const OverworldGenerator = struct {
         };
     }
 
-    fn foliageColorForBiome(biome_id: BiomeId, block: BlockType) u32 {
-        return switch (block) {
-            .leaves => packFloatColor(biomeFoliageTint(biome_id)),
-            .spruce_leaves, .jungle_leaves, .acacia_leaves, .mangrove_leaves, .birch_leaves => packBlockColor(block),
-            else => packFloatColor(biomeFoliageTint(biome_id)),
-        };
-    }
-
     fn biomeGrassTint(biome_id: BiomeId) [3]f32 {
         return switch (biome_id) {
             .forest => .{ 0.18, 0.64, 0.16 },
@@ -728,20 +768,6 @@ pub const OverworldGenerator = struct {
             .swamp => .{ 0.16, 0.38, 0.30 },
             else => .{ 0.12, 0.38, 0.78 },
         };
-    }
-
-    fn blendColor(a: u32, b: u32, t: f32) u32 {
-        const clamped = std.math.clamp(t, 0.0, 1.0);
-        const ar: f32 = @floatFromInt((a >> 16) & 0xFF);
-        const ag: f32 = @floatFromInt((a >> 8) & 0xFF);
-        const ab: f32 = @floatFromInt(a & 0xFF);
-        const br: f32 = @floatFromInt((b >> 16) & 0xFF);
-        const bg: f32 = @floatFromInt((b >> 8) & 0xFF);
-        const bb: f32 = @floatFromInt(b & 0xFF);
-        const r: u32 = @intFromFloat(@round(ar + (br - ar) * clamped));
-        const g: u32 = @intFromFloat(@round(ag + (bg - ag) * clamped));
-        const blue: u32 = @intFromFloat(@round(ab + (bb - ab) * clamped));
-        return (r << 16) | (g << 8) | blue;
     }
 
     fn treeBlocksForBiome(biome_id: BiomeId) TreeBlocks {

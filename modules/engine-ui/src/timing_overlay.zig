@@ -82,6 +82,7 @@ pub const TimingOverlay = struct {
                 drawStatLine(ui, "LOD1:", ls.loaded[1], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
                 drawStatLine(ui, "LOD2:", ls.loaded[2], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
                 drawStatLine(ui, "LOD3:", ls.loaded[3], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawStatLine(ui, "LOD4:", ls.loaded[4], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
                 drawStatLine(ui, "LOD MEM:", ls.memory_used_mb, label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
             }
         }

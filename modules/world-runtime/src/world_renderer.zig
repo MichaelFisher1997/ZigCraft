@@ -14,6 +14,7 @@ const ResourceManager = rhi_mod.ResourceManager;
 const RenderContext = rhi_mod.RenderContext;
 const IDeviceQuery = rhi_mod.IDeviceQuery;
 const LODManager = @import("world-lod").LODManager;
+const LODRenderLayer = @import("world-lod").LODRenderLayer;
 const math = @import("engine-math");
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
@@ -285,7 +286,12 @@ pub const WorldRenderer = struct {
 
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
-                lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null);
+                if (layer != .fluid) {
+                    lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
+                }
+                if (layer != .terrain and parseEnabledEnv(getenv("ZIGCRAFT_LOD_WATER"), true)) {
+                    lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
+                }
             }
         }
 
@@ -305,7 +311,7 @@ pub const WorldRenderer = struct {
         const pc_x: i64 = pc.chunk_x;
         const pc_z: i64 = pc.chunk_z;
 
-        const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, @as(i32, @intCast(mgr.config.getRadii()[0]))) else render_distance;
+        const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, mgr.config.getChunkRenderRadius()) else render_distance;
         const r_dist: i64 = @as(i64, @intCast(r_dist_val));
         const count_stats = layer != .fluid;
 
@@ -362,7 +368,8 @@ pub const WorldRenderer = struct {
             self.instance_data.append(self.allocator, .{
                 .model = model,
                 .mask_radius = 0,
-                .padding = .{ 0, 0, 0 },
+                .lod_fade = 1.0,
+                .padding = .{ 0, 0 },
             }) catch |err| {
                 log.log.debug("MDI: instance append failed: {}", .{err});
                 continue;

@@ -36,7 +36,6 @@
 //! parameters. This provides passes with everything needed for rendering.
 
 const std = @import("std");
-const c = @import("c").c;
 const build_options = @import("engine_graphics_options");
 const Camera = @import("engine-camera").Camera;
 const IWorldRenderView = @import("world_render_view.zig").IWorldRenderView;
@@ -48,6 +47,7 @@ const WaterSystemWrapper = rhi_pkg.WaterSystemWrapper;
 const ISSAOContext = rhi_pkg.ISSAOContext;
 const IDeviceTiming = rhi_pkg.IDeviceTiming;
 const Vec3 = @import("engine-math").Vec3;
+const engine_core = @import("engine-core");
 const log = @import("engine-core").log;
 const CSM = @import("engine-shadows").csm;
 pub const AtmosphereSystem = @import("engine-atmosphere").AtmosphereSystem;
@@ -338,7 +338,8 @@ pub const GPass = struct {
         const atlas = self.material_system.getAtlasHandles(ctx.env_map_handle);
         ctx.render_ctx.bindTexture(atlas.diffuse, 1);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        ctx.world.render(view_proj, ctx.camera.position, false);
+        const render_lod = engine_core.envFlag("ZIGCRAFT_LOD_GPASS", false);
+        ctx.world.renderOpaque(view_proj, ctx.camera.position, render_lod);
         ctx.render_ctx.endGPass();
     }
 };
@@ -462,7 +463,7 @@ pub const OpaquePass = struct {
         ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.blue, 13);
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        ctx.world.render(view_proj, ctx.camera.position, true);
+        ctx.world.renderOpaque(view_proj, ctx.camera.position, true);
     }
 };
 
@@ -611,7 +612,7 @@ pub const WaterReflectionPass = struct {
         ctx.render_ctx.bindTexture(ctx.lpv_textures.green, 12);
         ctx.render_ctx.bindTexture(ctx.lpv_textures.blue, 13);
 
-        ctx.world.renderOpaque(reflected_vp, ctx.camera.position, true);
+        ctx.world.renderOpaque(reflected_vp, ctx.camera.position, false);
     }
 };
 
@@ -633,33 +634,18 @@ pub const WaterPass = struct {
         const self: *WaterPass = @ptrCast(@alignCast(ptr));
         if (!self.enabled) return;
 
-        const pipeline_u64 = ctx.render_ctx.getNativeWaterPipeline();
-        const layout_u64 = ctx.render_ctx.getNativeWaterPipelineLayout();
-        const descriptor_set_u64 = ctx.render_ctx.getNativeMainDescriptorSet();
-        const cmd_u64 = ctx.render_ctx.getNativeCommandBuffer();
         const reflection_handle = ctx.water_ctx.getReflectionTextureHandle();
         const scene_depth_handle = ctx.water_ctx.getSceneDepthTextureHandle();
 
-        if (pipeline_u64 == 0 or layout_u64 == 0 or cmd_u64 == 0 or reflection_handle == 0 or scene_depth_handle == 0) return;
-
-        const pipeline = @as(c.VkPipeline, @ptrFromInt(pipeline_u64));
-        const layout = @as(c.VkPipelineLayout, @ptrFromInt(layout_u64));
-        const descriptor_set = @as(c.VkDescriptorSet, @ptrFromInt(descriptor_set_u64));
-        const cmd = @as(c.VkCommandBuffer, @ptrFromInt(cmd_u64));
+        if (!ctx.render_ctx.beginWaterDraw(reflection_handle, scene_depth_handle)) return;
+        defer ctx.render_ctx.endWaterDraw();
 
         ctx.render_ctx.bindTexture(reflection_handle, 14);
         ctx.render_ctx.bindTexture(scene_depth_handle, 15);
-        c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        if (descriptor_set_u64 != 0) {
-            c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptor_set, 0, null);
-        }
-        ctx.render_ctx.setTerrainPipelineBound(true);
 
         const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
-        // Reflection rendering skips LOD water here to avoid doubling distant water with
-        // the dedicated water pass and to keep the reflection pass aligned with chunk water.
-        ctx.world.renderFluid(view_proj, ctx.camera.position, false);
-        ctx.render_ctx.setTerrainPipelineBound(false);
+        const render_lod_water = engine_core.envFlag("ZIGCRAFT_LOD_WATER", true);
+        ctx.world.renderFluid(view_proj, ctx.camera.position, render_lod_water);
     }
 };
 

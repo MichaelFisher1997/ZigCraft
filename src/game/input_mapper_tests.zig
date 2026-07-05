@@ -55,11 +55,28 @@ test "InputBinding.eql with .none values" {
     try testing.expect(b.eql(a));
 }
 
-test "InputBinding.eql key vs key_alt same key" {
+test "InputBinding.eql key vs key_alt same key are distinct" {
     const a = InputBinding{ .key = .w };
     const b = InputBinding{ .key_alt = .w };
+    try testing.expect(!a.eql(b));
+    try testing.expect(!b.eql(a));
+}
+
+test "InputBinding.eql key vs key_alt different keys are distinct" {
+    const a = InputBinding{ .key = .w };
+    const b = InputBinding{ .key_alt = .space };
+    try testing.expect(!a.eql(b));
+    try testing.expect(!b.eql(a));
+}
+
+test "InputBinding.eql same key variant equal" {
+    const a = InputBinding{ .key = .w };
+    const b = InputBinding{ .key = .w };
     try testing.expect(a.eql(b));
-    try testing.expect(b.eql(a));
+
+    const c = InputBinding{ .key_alt = .up };
+    const d = InputBinding{ .key_alt = .up };
+    try testing.expect(c.eql(d));
 }
 
 test "InputBinding.eql different key types" {

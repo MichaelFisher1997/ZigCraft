@@ -97,6 +97,7 @@ pub const GraphicsScreen = struct {
             if (comptime std.mem.eql(u8, decl.name, "msaa_samples")) continue;
             if (comptime std.mem.eql(u8, decl.name, "render_distance_preset")) continue;
             if (comptime std.mem.eql(u8, decl.name, "render_distance")) continue;
+            if (comptime std.mem.eql(u8, decl.name, "horizon_distance")) continue;
             total_rows += 1;
         }
         const section_extra = @as(f32, @floatFromInt(countSettingSections())) * 34.0 * ui_scale;
@@ -146,6 +147,7 @@ pub const GraphicsScreen = struct {
                 settings.render_distance_preset = @enumFromInt(next_value);
                 const preset_cfg = render_settings_mod.getPresetConfig(settings.render_distance_preset);
                 settings.render_distance = preset_cfg.lod_radii[0];
+                settings.horizon_distance = preset_cfg.horizon_radius;
             }
         }
         sy += row_height + 8.0 * ui_scale;
@@ -168,6 +170,7 @@ pub const GraphicsScreen = struct {
             if (comptime std.mem.eql(u8, decl.name, "msaa_samples")) continue;
             if (comptime std.mem.eql(u8, decl.name, "render_distance_preset")) continue;
             if (comptime std.mem.eql(u8, decl.name, "render_distance")) continue;
+            if (comptime std.mem.eql(u8, decl.name, "horizon_distance")) continue;
 
             sy = drawSectionBoundary(ui, decl.name, row_x, sy, content_top, content_bottom, ui_scale);
 
@@ -315,6 +318,7 @@ fn countSettingSections() usize {
         if (comptime std.mem.eql(u8, decl.name, "msaa_samples")) continue;
         if (comptime std.mem.eql(u8, decl.name, "render_distance_preset")) continue;
         if (comptime std.mem.eql(u8, decl.name, "render_distance")) continue;
+        if (comptime std.mem.eql(u8, decl.name, "horizon_distance")) continue;
         if (comptime sectionBoundaryLabel(decl.name).len > 0) count += 1;
     }
     return count;

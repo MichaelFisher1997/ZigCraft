@@ -24,6 +24,7 @@ test {
 
     // ECS and engine tests
     _ = @import("ecs_tests.zig");
+    _ = @import("job_system_tests.zig");
     _ = @import("engine-graphics").vulkan_device;
     _ = @import("engine-graphics").vulkan_device_tests;
     _ = @import("engine-graphics").vulkan_device_internal_tests;
@@ -86,6 +87,7 @@ test {
     _ = @import("world-meshing").meshing.quadric_simplifier;
     _ = @import("world-meshing").chunk_storage_tests;
     _ = @import("world-meshing").chunk_storage_extended_tests;
+    _ = @import("world-meshing").gpu_block_buffer_tests;
     _ = @import("world-core").block_tests;
     _ = @import("world-core").block_registry_tests;
     _ = @import("world-core").block_biome_tests;
@@ -102,4 +104,6 @@ test {
     _ = @import("world-core").world_block_fill_tests;
     _ = @import("world-meshing").world_interface_vtable_tests;
     _ = @import("world-runtime").world_mutation;
+    _ = @import("engine-audio").sdl_audio;
+    _ = @import("input_tests.zig");
 }
