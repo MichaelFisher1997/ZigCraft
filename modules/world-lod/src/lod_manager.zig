@@ -1030,7 +1030,6 @@ pub const LODManager = struct {
             }
 
             if (attempted_cache) self.recordCacheMiss();
-            if (cache_enabled and !attempted_cache) break;
 
             self.mutex.lock();
             if (candidate.chunk.state != .queued_for_generation or candidate.chunk.job_token != candidate.job_token) {
@@ -2380,6 +2379,61 @@ test "LODManager queued generation reloads source store on main thread" {
         },
         else => return error.ExpectedSimplifiedData,
     }
+}
+
+test "LODManager queued generation dispatches beyond cache read budget" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{};
+    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    manager.config = config.interface();
+    manager.cache_dir_path = null;
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+    defer manager.edit_dirty.deinit();
+    defer manager.deletion_queue.deinit(testing.allocator);
+
+    for (0..LODLevel.count) |i| {
+        manager.regions[i] = RegionMap.init(testing.allocator);
+        manager.meshes[i] = MeshMap.init(testing.allocator);
+        manager.upload_queues[i] = try RingBuffer(*LODChunk).init(testing.allocator, 4);
+        manager.gen_queues[i] = try testing.allocator.create(JobQueue);
+        manager.gen_queues[i].* = JobQueue.init(testing.allocator);
+    }
+    defer {
+        for (0..LODLevel.count) |i| {
+            var region_iter = manager.regions[i].iterator();
+            while (region_iter.next()) |entry| {
+                entry.value_ptr.*.deinit(testing.allocator);
+                testing.allocator.destroy(entry.value_ptr.*);
+            }
+            manager.regions[i].deinit();
+            manager.meshes[i].deinit();
+            manager.upload_queues[i].deinit();
+            manager.gen_queues[i].deinit();
+            testing.allocator.destroy(manager.gen_queues[i]);
+        }
+    }
+
+    const candidate_count = MAX_CACHE_LOADS_PER_UPDATE + 4;
+    for (0..candidate_count) |i| {
+        const key = LODRegionKey{ .rx = @intCast(i), .rz = 0, .lod = .lod1 };
+        const chunk = try testing.allocator.create(LODChunk);
+        chunk.* = LODChunk.init(key.rx, key.rz, key.lod);
+        chunk.state = .queued_for_generation;
+        chunk.job_token = @intCast(i + 1);
+        try manager.regions[@intFromEnum(key.lod)].put(key, chunk);
+    }
+
+    try manager.processQueuedGenerations(Vec3.zero);
+
+    try testing.expectEqual(@as(u32, @intCast(MAX_CACHE_LOADS_PER_UPDATE)), manager.cache_misses);
+    try testing.expectEqual(candidate_count, manager.gen_queues[LODLevel.count - 1].count());
 }
 
 fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {
