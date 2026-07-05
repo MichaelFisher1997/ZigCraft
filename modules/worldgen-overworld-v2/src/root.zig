@@ -481,6 +481,101 @@ test "overworld-v2 places ground vegetation" {
     try std.testing.expect(vegetation_blocks > 0);
 }
 
+test "overworld-v2 tree bounds check is signed at high altitude" {
+    var gen = OverworldV2Generator.init(12345, std.testing.allocator);
+
+    // At the skip threshold (CHUNK_SIZE_Y - 8 == 248) every column is skipped
+    // regardless of biome/density, so no tree block may be written. With grass +
+    // forest set on every column, this proves the guard isn't wrapping and letting
+    // placement (or out-of-bounds canopy writes) slip through.
+    {
+        var chunk = Chunk.init(0, 0);
+        var z: u32 = 0;
+        while (z < CHUNK_SIZE_Z) : (z += 1) {
+            var x: u32 = 0;
+            while (x < CHUNK_SIZE_X) : (x += 1) {
+                chunk.setSurfaceHeight(x, z, 248);
+                chunk.setBlock(x, 248, z, .grass);
+                chunk.setBiome(x, z, .forest);
+            }
+        }
+        gen.placeTrees(&chunk, null);
+        var tree_blocks: u32 = 0;
+        for (chunk.blocks) |b| if (trees.isTreeBlock(b)) {
+            tree_blocks += 1;
+        };
+        try std.testing.expectEqual(@as(u32, 0), tree_blocks);
+    }
+
+    // Just below the threshold (247), forest columns remain eligible and oak/birch
+    // (height 6) still fit below CHUNK_SIZE_Y, so placement must occur.
+    var placed: u32 = 0;
+    const tree_positions = [_][2]i32{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ -3, 4 }, .{ 5, -2 } };
+    for (tree_positions) |pos| {
+        var chunk = Chunk.init(pos[0], pos[1]);
+        var z: u32 = 0;
+        while (z < CHUNK_SIZE_Z) : (z += 1) {
+            var x: u32 = 0;
+            while (x < CHUNK_SIZE_X) : (x += 1) {
+                chunk.setSurfaceHeight(x, z, 247);
+                chunk.setBlock(x, 247, z, .grass);
+                chunk.setBiome(x, z, .forest);
+            }
+        }
+        gen.placeTrees(&chunk, null);
+        for (chunk.blocks) |b| if (trees.isTreeBlock(b)) {
+            placed += 1;
+        };
+    }
+    try std.testing.expect(placed > 0);
+}
+
+test "overworld-v2 vegetation bounds check is signed at high altitude" {
+    var gen = OverworldV2Generator.init(12345, std.testing.allocator);
+
+    // At the skip threshold (CHUNK_SIZE_Y - 2 == 254) all columns are skipped.
+    {
+        var chunk = Chunk.init(0, 0);
+        var z: u32 = 0;
+        while (z < CHUNK_SIZE_Z) : (z += 1) {
+            var x: u32 = 0;
+            while (x < CHUNK_SIZE_X) : (x += 1) {
+                chunk.setSurfaceHeight(x, z, 254);
+                chunk.setBlock(x, 254, z, .grass);
+                chunk.setBiome(x, z, .plains);
+            }
+        }
+        gen.placeVegetation(&chunk, null);
+        var veg_blocks: u32 = 0;
+        for (chunk.blocks) |b| if (vegetation.isVegetationBlock(b)) {
+            veg_blocks += 1;
+        };
+        try std.testing.expectEqual(@as(u32, 0), veg_blocks);
+    }
+
+    // Just below the threshold (253), plains grass can still receive ground
+    // vegetation (tall_grass / flowers) one block above the surface.
+    var placed: u32 = 0;
+    const veg_positions = [_][2]i32{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 }, .{ -3, 4 }, .{ 5, -2 } };
+    for (veg_positions) |pos| {
+        var chunk = Chunk.init(pos[0], pos[1]);
+        var z: u32 = 0;
+        while (z < CHUNK_SIZE_Z) : (z += 1) {
+            var x: u32 = 0;
+            while (x < CHUNK_SIZE_X) : (x += 1) {
+                chunk.setSurfaceHeight(x, z, 253);
+                chunk.setBlock(x, 253, z, .grass);
+                chunk.setBiome(x, z, .plains);
+            }
+        }
+        gen.placeVegetation(&chunk, null);
+        for (chunk.blocks) |b| if (vegetation.isVegetationBlock(b)) {
+            placed += 1;
+        };
+    }
+    try std.testing.expect(placed > 0);
+}
+
 test "overworld-v2 generates representative LOD data" {
     var gen = OverworldV2Generator.init(12345, std.testing.allocator);
     var data = try LODSimplifiedData.init(std.testing.allocator, .lod3);
