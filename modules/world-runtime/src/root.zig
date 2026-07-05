@@ -1,7 +1,9 @@
 pub const chunk_queue_coordinator = @import("chunk_queue_coordinator.zig");
 pub const gpu_acceleration_coordinator = @import("gpu_acceleration_coordinator.zig");
 pub const gpu_mesher = @import("gpu_mesher.zig");
+pub const lighting_engine = @import("lighting_engine.zig");
 pub const world_mutation = @import("world_mutation.zig");
+pub const world_diagnostics = @import("world_diagnostics.zig");
 pub const world_renderer = @import("world_renderer.zig");
 pub const world_streamer = @import("world_streamer.zig");
 pub const world = @import("world.zig");
@@ -10,6 +12,7 @@ pub const ChunkQueueCoordinator = chunk_queue_coordinator.ChunkQueueCoordinator;
 pub const GpuAccelerationCoordinator = gpu_acceleration_coordinator.GpuAccelerationCoordinator;
 pub const GpuMesher = gpu_mesher.GpuMesher;
 pub const GpuMesherStats = gpu_mesher.GpuMesherStats;
+pub const LightingEngine = lighting_engine.LightingEngine;
 pub const PlayerMovement = world_streamer.PlayerMovement;
 pub const MAX_MDI_CHUNKS = world_renderer.MAX_MDI_CHUNKS;
 pub const RenderLayer = world_renderer.RenderLayer;
