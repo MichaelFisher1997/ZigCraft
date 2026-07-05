@@ -28,7 +28,7 @@ pub fn placeVegetation(self: anytype, chunk: *Chunk, stop_flag: ?*const bool) vo
         var local_x: u32 = 0;
         while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
             const surface_y = chunk.getSurfaceHeight(local_x, local_z);
-            if (surface_y <= 0 or surface_y >= CHUNK_SIZE_Y - 2) continue;
+            if (surface_y <= 0 or surface_y >= @as(i32, CHUNK_SIZE_Y) - 2) continue;
 
             const biome = chunk.biomes[local_x + local_z * CHUNK_SIZE_X];
             const surface = chunk.getBlock(local_x, @intCast(surface_y), local_z);
