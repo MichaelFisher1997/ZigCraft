@@ -14,9 +14,13 @@ const LODSimplifiedData = lod_chunk.LODSimplifiedData;
 
 const Chunk = @import("world-core").Chunk;
 const world_core = @import("world-core");
+const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const regionSizeBlocks = world_core.regionSizeBlocks;
-const Generator = @import("world-worldgen").Generator;
+const world_worldgen = @import("world-worldgen");
+const ColumnInfo = world_worldgen.ColumnInfo;
+const Generator = world_worldgen.Generator;
+const RegionInfo = world_worldgen.region.RegionInfo;
 const TextureAtlas = @import("engine-assets").TextureAtlas;
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
@@ -31,7 +35,6 @@ const RegionMap = lod_gpu.RegionMap;
 
 test "LODManager initialization" {
     const allocator = std.testing.allocator;
-    const MAX_BLOCK_TYPES = @import("world-core").MAX_BLOCK_TYPES;
 
     const MockState = struct {
         buffer_created: bool = false,
@@ -47,10 +50,10 @@ test "LODManager initialization" {
         fn getSeed(_: *anyopaque) u64 {
             return 0;
         }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").region.RegionInfo {
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) RegionInfo {
             return undefined;
         }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("world-worldgen").ColumnInfo {
+        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) ColumnInfo {
             return undefined;
         }
         fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
@@ -134,7 +137,6 @@ test "LODManager initialization" {
 
 test "LODManager end-to-end covered cleanup" {
     const allocator = std.testing.allocator;
-    const MAX_BLOCK_TYPES = @import("world-core").MAX_BLOCK_TYPES;
 
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
@@ -145,10 +147,10 @@ test "LODManager end-to-end covered cleanup" {
         fn getSeed(_: *anyopaque) u64 {
             return 0;
         }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").region.RegionInfo {
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) RegionInfo {
             return undefined;
         }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("world-worldgen").ColumnInfo {
+        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) ColumnInfo {
             return .{ .height = 0, .biome = .plains, .is_ocean = false, .temperature = 0, .humidity = 0, .continentalness = 0 };
         }
         fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}
@@ -285,8 +287,6 @@ test "LODManager constants" {
 /// Minimal manager + mock glue shared by the ingestion tests. The caller owns
 /// `config` (it must outlive the returned manager, since ILODConfig references it).
 fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LODManager {
-    const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
-
     const MockGenerator = struct {
         fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
         fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
@@ -296,10 +296,10 @@ fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LOD
         fn getSeed(_: *anyopaque) u64 {
             return 0;
         }
-        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").region.RegionInfo {
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) RegionInfo {
             return undefined;
         }
-        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) @import("world-worldgen").ColumnInfo {
+        fn getColumnInfo(_: *anyopaque, _: f32, _: f32) ColumnInfo {
             return .{ .height = 0, .biome = .plains, .is_ocean = false, .temperature = 0, .humidity = 0, .continentalness = 0 };
         }
         fn deinit(_: *anyopaque, _: std.mem.Allocator) void {}

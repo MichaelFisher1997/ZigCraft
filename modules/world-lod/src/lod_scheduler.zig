@@ -169,6 +169,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
             if (needs_queue) {
                 const chunk = if (existing) |c| c else blk: {
                     const c = try ctx.allocator.create(LODChunk);
+                    errdefer ctx.allocator.destroy(c);
                     c.* = LODChunk.init(rx, rz, lod);
                     try storage.put(key, c);
                     break :blk c;

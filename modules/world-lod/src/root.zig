@@ -1,3 +1,5 @@
+const builtin = @import("builtin");
+
 pub const biome_color_provider = @import("biome_color_provider.zig");
 pub const lod_chunk = @import("lod_chunk.zig");
 pub const lod_cache = @import("lod_cache.zig");
@@ -5,7 +7,7 @@ pub const lod_mesh = @import("lod_mesh.zig");
 pub const lod_generator = @import("lod_generator.zig");
 pub const lod_ingest = @import("lod_ingest.zig");
 pub const lod_manager = @import("lod_manager.zig");
-pub const lod_manager_tests = @import("lod_manager_tests.zig");
+pub const lod_manager_tests = if (builtin.is_test) @import("lod_manager_tests.zig") else struct {};
 pub const lod_renderer = @import("lod_renderer.zig");
 pub const lod_scheduler = @import("lod_scheduler.zig");
 pub const lod_seam = @import("lod_seam.zig");

@@ -115,21 +115,29 @@ pub fn WorldLOD(comptime RHI: type) type {
         }
 
         pub fn setLOD0Radius(self: *Self, radius: i32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setLOD0Radius(radius);
             log.log.info("LOD0 radius updated: {}", .{radius});
         }
 
         pub fn setChunkRenderRadius(self: *Self, radius: i32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setChunkRenderRadius(radius);
             log.log.info("Chunk render radius updated: {}", .{radius});
         }
 
         pub fn setRadii(self: *Self, radii: [LODLevel.count]i32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setRadii(radii);
             log.log.info("LOD radii updated: {any}", .{radii});
         }
 
         pub fn setActiveLODCount(self: *Self, count: u32) void {
+            self.manager.mutex.lock();
+            defer self.manager.mutex.unlock();
             self.manager.config.setActiveLODCount(count);
             log.log.info("Active LOD count updated: {}", .{self.manager.config.getActiveLODCount()});
         }
@@ -147,6 +155,8 @@ pub fn WorldLOD(comptime RHI: type) type {
         }
 
         pub fn getRadii(self: *const Self) [LODLevel.count]i32 {
+            self.manager.mutex.lockShared();
+            defer self.manager.mutex.unlockShared();
             return self.manager.config.getRadii();
         }
     };

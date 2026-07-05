@@ -49,7 +49,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 struct InstanceData {
     mat4 model;
     float mask_radius;
-    float _pad0;
+    float lod_fade;
     float _pad1;
     float _pad2;
 };
@@ -95,7 +95,7 @@ void main() {
         InstanceData inst = instance_buf.instances[gl_InstanceIndex];
         model = inst.model;
         mask_radius = inst.mask_radius;
-        lod_fade = inst._pad0;
+        lod_fade = inst.lod_fade;
         color_override = vec3(1.0);
     } else {
         model = model_data.model;

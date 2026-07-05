@@ -11,6 +11,7 @@ const rhi_types = @import("engine-rhi");
 const Vertex = rhi_types.Vertex;
 const BufferHandle = rhi_types.BufferHandle;
 const RhiError = rhi_types.RhiError;
+const log = @import("engine-core").log;
 
 const DEFAULT_INITIAL_CAPACITY_BYTES: usize = 8 * 1024 * 1024;
 const COMPACTION_FRAGMENTATION_THRESHOLD: f32 = 0.35;
@@ -74,6 +75,9 @@ pub const LODVertexPool = struct {
     }
 
     pub fn uploadMesh(self: *LODVertexPool, mesh: *LODMesh, resources: LODMeshResources) RhiError!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         mesh.mutex.lock();
         defer mesh.mutex.unlock();
 
@@ -83,9 +87,7 @@ pub const LODVertexPool = struct {
         };
 
         if (pending.len == 0) {
-            self.mutex.lock();
             self.freeMeshUnlocked(mesh);
-            self.mutex.unlock();
             mesh.vertex_count = 0;
             mesh.opaque_vertex_count = 0;
             mesh.water_vertex_offset = 0;
@@ -100,8 +102,6 @@ pub const LODVertexPool = struct {
         }
 
         const bytes = std.mem.sliceAsBytes(pending);
-        self.mutex.lock();
-        defer self.mutex.unlock();
 
         const old_record_index = self.findRecordIndexUnlocked(mesh);
         const old_record = if (old_record_index) |idx| self.allocations.items[idx] else null;
@@ -159,11 +159,12 @@ pub const LODVertexPool = struct {
     }
 
     pub fn destroyMesh(self: *LODVertexPool, mesh: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
         mesh.mutex.lock();
         defer mesh.mutex.unlock();
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
         self.freeMeshUnlocked(mesh);
 
         if (mesh.pending_vertices) |pending| {
@@ -303,7 +304,9 @@ pub const LODVertexPool = struct {
 
     fn freeRecordUnlocked(self: *LODVertexPool, idx: usize, reset_mesh: bool, locked_mesh: ?*LODMesh) void {
         const record = self.allocations.items[idx];
-        self.releaseOffsetUnlocked(record.offset, record.size) catch {};
+        self.releaseOffsetUnlocked(record.offset, record.size) catch |err| {
+            log.log.warn("LOD vertex pool failed to release {} bytes at {}: {}", .{ record.size, record.offset, err });
+        };
         if (reset_mesh) {
             setMeshDrawState(record.mesh, .empty, locked_mesh);
         }

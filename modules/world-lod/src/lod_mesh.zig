@@ -1,9 +1,7 @@
 //! LOD Mesh generation for distant terrain rendering.
 //!
-//! LOD meshes are simplified versions of chunk meshes:
-//! - LOD1: 4x4 chunks merged, 2-block resolution
-//! - LOD2: 8x8 chunks merged, 4-block resolution
-//! - LOD3: 16x16 chunks merged, 8-block resolution (heightmap only)
+//! LOD meshes are simplified versions of chunk meshes. Region size, grid
+//! detail, and span-vs-heightfield behavior are selected by runtime settings.
 //!
 //! Key simplifications:
 //! - No greedy meshing (simple quads per grid cell)
@@ -316,13 +314,13 @@ pub const LODMesh = struct {
         while (gz + 1 < data.width) : (gz += 1) {
             var gx: u32 = 0;
             while (gx + 1 < data.width) : (gx += 1) {
-                const cell_color = cellColorForLOD(data, gx, gz, self.lod_level);
-                const lit_cell_color = applyColorBrightness(cell_color, ambientOcclusionForLOD(data, gx, gz, self.lod_level));
+                const cell_color = cell_color_for_lod(data, gx, gz, self.lod_level);
+                const lit_cell_color = applyColorBrightness(cell_color, ambient_occlusion_for_lod(data, gx, gz, self.lod_level));
                 const wx = @as(f32, @floatFromInt(gx)) * cell_size;
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
                 const size = cell_size;
 
-                const is_water_cell = isLODWaterCellForLOD(data, gx, gz, self.lod_level);
+                const is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, self.lod_level);
                 const base_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, self.lod_level);
                 const base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, self.lod_level, is_water_cell);
                 const folded_canopy = foldedCanopyColumnForLOD(data, gx, gz, self.lod_level, base_height, base_block, is_water_cell);
@@ -331,7 +329,7 @@ pub const LODMesh = struct {
                 const top_tile = if (folded_canopy != null) Vertex.LOD_TILE_ID else getLodTopTile(top_block, atlas);
                 const side_tile = if (folded_canopy != null) Vertex.LOD_TILE_ID else getLodSideTile(top_block, atlas);
                 const base_top_color = if (folded_canopy) |folded|
-                    applyColorBrightness(folded.color, ambientOcclusionForLOD(data, gx, gz, self.lod_level))
+                    applyColorBrightness(folded.color, ambient_occlusion_for_lod(data, gx, gz, self.lod_level))
                 else
                     getLodTopColor(top_block, top_tile, lit_cell_color);
                 const top_color = applyTextureLuminance(tintColorForLodFace(data, gx, gz, self.lod_level, top_block, .top, base_top_color), top_block, .top, atlas);
@@ -458,7 +456,7 @@ pub const LODMesh = struct {
                         if (vegetation.leaves == .air) vegetation.leaves = span.block;
                         if (vegetation.tree_coverage < LOD_TREE_COVERAGE_THRESHOLD) vegetation.tree_coverage = LOD_TREE_COVERAGE_THRESHOLD;
                         if (vegetation.avg_tree_height < 2.0) vegetation.avg_tree_height = @max(2.0, span.max_height - span.min_height);
-                        const tree_is_water_cell = isLODWaterCellForLOD(data, gx, gz, self.lod_level);
+                        const tree_is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, self.lod_level);
                         const tree_base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, self.lod_level, tree_is_water_cell);
                         try addTreeCanopyColumn(self.allocator, &vertices, data, gx, gz, self.lod_level, wx, wz, cell_size, tree_base_height, span.min_height, span.max_height, vegetation, atlas, world_x, world_z);
                         continue;
@@ -708,10 +706,20 @@ pub const LODMesh = struct {
         };
 
         if (pending.len == 0) {
+            if (self.buffer_handle != 0 and !self.pooled) {
+                resources.waitIdle();
+                resources.destroyBuffer(self.buffer_handle);
+            }
+            self.buffer_handle = 0;
             self.vertex_count = 0;
             self.opaque_vertex_count = 0;
             self.water_vertex_offset = 0;
             self.water_vertex_count = 0;
+            self.capacity = 0;
+            self.vertex_offset = 0;
+            self.pooled = false;
+            self.allocator.free(pending);
+            self.pending_vertices = null;
             self.ready = true;
             return;
         }
@@ -719,19 +727,30 @@ pub const LODMesh = struct {
         const data_size = pending.len * @sizeOf(Vertex);
         const needed_capacity = @max(1024, std.math.ceilPowerOfTwo(usize, data_size) catch data_size);
 
-        // Create or resize buffer
+        var upload_handle = self.buffer_handle;
+        var new_handle: BufferHandle = 0;
+
+        // Create or resize buffer. Keep the old buffer renderable until the
+        // replacement upload succeeds, then destroy it after an idle wait.
         if (self.buffer_handle == 0 or needed_capacity > self.capacity * @sizeOf(Vertex)) {
-            if (self.buffer_handle != 0 and !self.pooled) {
-                resources.destroyBuffer(self.buffer_handle);
-            }
-            self.buffer_handle = try resources.createBuffer(needed_capacity, .vertex);
+            new_handle = try resources.createBuffer(needed_capacity, .vertex);
+            upload_handle = new_handle;
+        }
+        errdefer if (new_handle != 0) resources.destroyBuffer(new_handle);
+
+        // Upload data
+        try uploadBufferChunked(resources, upload_handle, std.mem.sliceAsBytes(pending));
+        if (new_handle != 0) {
+            const old_handle = self.buffer_handle;
+            self.buffer_handle = new_handle;
             self.capacity = @intCast(needed_capacity / @sizeOf(Vertex));
             self.vertex_offset = 0;
             self.pooled = false;
+            if (old_handle != 0 and !self.pooled) {
+                resources.waitIdle();
+                resources.destroyBuffer(old_handle);
+            }
         }
-
-        // Upload data
-        try uploadBufferChunked(resources, self.buffer_handle, std.mem.sliceAsBytes(pending));
         self.vertex_count = @intCast(pending.len);
         if (self.opaque_vertex_count == 0 and self.water_vertex_count == 0) {
             self.opaque_vertex_count = self.vertex_count;
@@ -938,41 +957,41 @@ const SEA_LEVEL_WATER_EPSILON: f32 = 2.0;
 const SYNTHETIC_SEAFLOOR_SKIRT: f32 = 8.0;
 const LOD_TREE_COVERAGE_THRESHOLD: f32 = 0.08;
 
-fn isLODWaterCell(data: *const LODSimplifiedData, gx: u32, gz: u32) bool {
-    const stats = waterCoverageStats(data, gx, gz);
+fn is_lod_water_cell(data: *const LODSimplifiedData, gx: u32, gz: u32) bool {
+    const stats = water_coverage_stats(data, gx, gz);
     const water_coverage = stats.average_coverage;
     if (water_coverage >= 0.35) return true;
     return stats.wet_samples >= 2 and water_coverage >= 0.25 and stats.representative_depth >= 1.5;
 }
 
-fn isFineSampleLOD(lod_level: LODLevel) bool {
+fn is_fine_sample_lod(lod_level: LODLevel) bool {
     return @intFromEnum(lod_level) <= @intFromEnum(LODLevel.lod1);
 }
 
-fn cellIndex(data: *const LODSimplifiedData, gx: u32, gz: u32) u32 {
+fn cell_index(data: *const LODSimplifiedData, gx: u32, gz: u32) u32 {
     return @min(gx, data.width - 1) + @min(gz, data.width - 1) * data.width;
 }
 
-fn cellColorForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) u32 {
-    if (isFineSampleLOD(lod_level)) return data.colors[cellIndex(data, gx, gz)];
-    const c00 = data.colors[cellIndex(data, gx, gz)];
-    const c10 = data.colors[cellIndex(data, gx + 1, gz)];
-    const c01 = data.colors[cellIndex(data, gx, gz + 1)];
-    const c11 = data.colors[cellIndex(data, gx + 1, gz + 1)];
+fn cell_color_for_lod(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) u32 {
+    if (is_fine_sample_lod(lod_level)) return data.colors[cell_index(data, gx, gz)];
+    const c00 = data.colors[cell_index(data, gx, gz)];
+    const c10 = data.colors[cell_index(data, gx + 1, gz)];
+    const c01 = data.colors[cell_index(data, gx, gz + 1)];
+    const c11 = data.colors[cell_index(data, gx + 1, gz + 1)];
     return averageColor(c00, c10, c01, c11);
 }
 
-fn ambientOcclusionForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
-    if (isFineSampleLOD(lod_level)) return data.lighting[cellIndex(data, gx, gz)].ambient_occlusion;
+fn ambient_occlusion_for_lod(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
+    if (is_fine_sample_lod(lod_level)) return data.lighting[cell_index(data, gx, gz)].ambient_occlusion;
     return averageAmbientOcclusion(data, gx, gz);
 }
 
-fn isLODWaterCellForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) bool {
-    if (isFineSampleLOD(lod_level)) {
-        const water = data.water[cellIndex(data, gx, gz)];
+fn is_lod_water_cell_for_lod(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) bool {
+    if (is_fine_sample_lod(lod_level)) {
+        const water = data.water[cell_index(data, gx, gz)];
         return water.is_surface and water.coverage > 0.0 and water.depth >= 0.25;
     }
-    return isLODWaterCell(data, gx, gz);
+    return is_lod_water_cell(data, gx, gz);
 }
 
 fn quantizedHeight(height: f32) f32 {
@@ -1013,13 +1032,13 @@ fn quantizedCellSurfaceHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) 
 }
 
 fn quantizedCellTerrainHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
-    if (isFineSampleLOD(lod_level)) return quantizedTerrainHeightForPoint(data, gx, gz);
+    if (is_fine_sample_lod(lod_level)) return quantizedTerrainHeightForPoint(data, gx, gz);
     return quantizedCellTerrainHeight(data, gx, gz);
 }
 
 fn quantizedCellVisualTerrainHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, is_water_cell: bool) f32 {
     if (is_water_cell) return quantizedCellTerrainHeightForLOD(data, gx, gz, lod_level);
-    if (isFineSampleLOD(lod_level)) return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
+    if (is_fine_sample_lod(lod_level)) return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
     return quantizedCellSurfaceHeight(data, gx, gz);
 }
 
@@ -1028,8 +1047,8 @@ fn maxWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32
 }
 
 fn representativeWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) ?f32 {
-    if (isFineSampleLOD(lod_level)) {
-        const idx = cellIndex(data, gx, gz);
+    if (is_fine_sample_lod(lod_level)) {
+        const idx = cell_index(data, gx, gz);
         const water = data.water[idx];
         if (!water.is_surface or water.coverage <= 0.0) return null;
         return normalizedWaterSurfaceHeight(data, idx, water);
@@ -1119,7 +1138,7 @@ fn foldedCanopyColumnForLOD(
 }
 
 fn quantizedVisualColumnHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
-    const is_water_cell = isLODWaterCellForLOD(data, gx, gz, lod_level);
+    const is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, lod_level);
     const terrain_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, lod_level);
     const base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, lod_level, is_water_cell);
     if (foldedCanopyColumnForLOD(data, gx, gz, lod_level, base_height, terrain_block, is_water_cell)) |folded| {
@@ -1142,10 +1161,10 @@ fn terrainBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, is_w
 }
 
 fn terrainBlockForLODQuadForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, is_water_cell: bool, lod_level: LODLevel) BlockType {
-    if (!isFineSampleLOD(lod_level)) return terrainBlockForLODQuad(data, gx, gz, is_water_cell);
+    if (!is_fine_sample_lod(lod_level)) return terrainBlockForLODQuad(data, gx, gz, is_water_cell);
     if (!is_water_cell) return blockForLODCell(data, gx, gz);
 
-    const idx = cellIndex(data, gx, gz);
+    const idx = cell_index(data, gx, gz);
     const subsurface = data.material_layers[idx].subsurface;
     if (subsurface != .air and subsurface != .water) return subsurface;
     const surface = data.material_layers[idx].surface;
@@ -1325,7 +1344,7 @@ fn syntheticSeafloorMinHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) 
 fn foldCanopyIntoSpansForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, spans: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan, count: *usize) void {
     if (!shouldFoldCanopyIntoTerrain(lod_level) or count.* == 0) return;
 
-    const is_water_cell = isLODWaterCellForLOD(data, gx, gz, lod_level);
+    const is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, lod_level);
     const terrain_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, lod_level);
     const base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, lod_level, is_water_cell);
     const folded = foldedCanopyColumnForLOD(data, gx, gz, lod_level, base_height, terrain_block, is_water_cell) orelse return;
@@ -1360,7 +1379,7 @@ fn foldCanopyIntoSpansForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, l
         .max_height = folded.height,
         .block = folded.block,
         .color = folded.color,
-        .ambient_occlusion = ambientOcclusionForLOD(data, gx, gz, lod_level),
+        .ambient_occlusion = ambient_occlusion_for_lod(data, gx, gz, lod_level),
     });
 }
 
@@ -1547,7 +1566,7 @@ fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
 }
 
 fn blockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
-    if (isLODWaterCell(data, gx, gz)) return .water;
+    if (is_lod_water_cell(data, gx, gz)) return .water;
     return representativeSurfaceBlock(data, gx, gz);
 }
 
@@ -1661,7 +1680,7 @@ fn isLeafBlock(block: BlockType) bool {
 }
 
 fn representativeVegetationForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) world_core.LODVegetationHint {
-    if (isFineSampleLOD(lod_level)) return data.vegetation[cellIndex(data, gx, gz)];
+    if (is_fine_sample_lod(lod_level)) return data.vegetation[cell_index(data, gx, gz)];
     return representativeVegetation(data, gx, gz);
 }
 
@@ -1694,7 +1713,7 @@ fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32) wo
 }
 
 fn averageWaterCoverage(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
-    return waterCoverageStats(data, gx, gz).average_coverage;
+    return water_coverage_stats(data, gx, gz).average_coverage;
 }
 
 const WaterCoverageStats = struct {
@@ -1703,7 +1722,7 @@ const WaterCoverageStats = struct {
     representative_depth: f32,
 };
 
-fn waterCoverageStats(data: *const LODSimplifiedData, gx: u32, gz: u32) WaterCoverageStats {
+fn water_coverage_stats(data: *const LODSimplifiedData, gx: u32, gz: u32) WaterCoverageStats {
     if (data.width == 0) return .{ .average_coverage = 0.0, .wet_samples = 0, .representative_depth = 0.0 };
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -1738,10 +1757,10 @@ fn waterCoverageStats(data: *const LODSimplifiedData, gx: u32, gz: u32) WaterCov
 
 fn shouldEmitWaterSpanForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, water: world_core.LODWaterState) bool {
     if (!water.is_surface or water.coverage <= 0.0 or water.depth <= 0.01) return false;
-    if (isFineSampleLOD(lod_level)) return true;
+    if (is_fine_sample_lod(lod_level)) return true;
     if (water.coverage >= 0.35) return true;
 
-    const stats = waterCoverageStats(data, gx, gz);
+    const stats = water_coverage_stats(data, gx, gz);
     return stats.wet_samples >= 2 and stats.average_coverage >= 0.25 and stats.representative_depth >= 1.5;
 }
 
@@ -1829,14 +1848,14 @@ fn tintColorForLodFace(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_lev
 }
 
 fn averageBiomeBlockTint(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, block: BlockType) u32 {
-    if (isFineSampleLOD(lod_level)) {
-        return biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz)], block);
+    if (is_fine_sample_lod(lod_level)) {
+        return biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx, gz)], block);
     }
 
-    const c00 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz)], block);
-    const c10 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx + 1, gz)], block);
-    const c01 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz + 1)], block);
-    const c11 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx + 1, gz + 1)], block);
+    const c00 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx, gz)], block);
+    const c10 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx + 1, gz)], block);
+    const c01 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx, gz + 1)], block);
+    const c11 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx + 1, gz + 1)], block);
     return averageColor(c00, c10, c01, c11);
 }
 
@@ -2176,7 +2195,7 @@ fn addTreeColumnSide(
         if (neighbor_gz) |nz| {
             const neighbor_veg = representativeVegetationForLOD(data, nx, nz, lod_level);
             if (neighbor_veg.tree_coverage >= LOD_TREE_COVERAGE_THRESHOLD) {
-                const neighbor_is_water_cell = isLODWaterCellForLOD(data, nx, nz, lod_level);
+                const neighbor_is_water_cell = is_lod_water_cell_for_lod(data, nx, nz, lod_level);
                 const neighbor_base = quantizedCellVisualTerrainHeightForLOD(data, nx, nz, lod_level, neighbor_is_water_cell);
                 const neighbor_canopy = treeCanopyInterval(neighbor_base, neighbor_veg);
                 subtractCoveredInterval(&exposed, &exposed_count, neighbor_canopy.min_height, neighbor_canopy.max_height);

@@ -368,7 +368,8 @@ pub const WorldRenderer = struct {
             self.instance_data.append(self.allocator, .{
                 .model = model,
                 .mask_radius = 0,
-                .padding = .{ 0, 0, 0 },
+                .lod_fade = 1.0,
+                .padding = .{ 0, 0 },
             }) catch |err| {
                 log.log.debug("MDI: instance append failed: {}", .{err});
                 continue;

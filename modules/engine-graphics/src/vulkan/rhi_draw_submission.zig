@@ -221,7 +221,10 @@ pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance
             }
         }
 
-        const descriptor_set = &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+        const descriptor_set = if (ctx.draw.lod_mode)
+            &ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame]
+        else
+            &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
         c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, descriptor_set, 0, null);
 
         if (use_shadow) {

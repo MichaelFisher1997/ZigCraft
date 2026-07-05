@@ -348,7 +348,7 @@ fn columnGeometry(chunk: *const Chunk, lx: u32, lz: u32) ColumnGeometry {
 }
 
 fn finishSolidRun(result: *ColumnGeometry, min_y: i32, max_y: i32, top_block: BlockType) void {
-    if (result.terrain_y < 0 and min_y == 0) {
+    if (result.terrain_y < 0) {
         result.terrain_y = max_y;
         return;
     }

@@ -1,10 +1,7 @@
 //! LOD Chunk data structures for Distant Horizons-style rendering.
 //!
-//! LOD levels:
-//! - LOD0: Full detail, 2x2 chunks merged
-//! - LOD1: 2x block resolution, 4x4 chunks merged
-//! - LOD2: 4x block resolution, 8x8 chunks merged
-//! - LOD3: 8x block resolution, 16x16 chunks merged, heightmap-only
+//! LOD levels merge progressively larger chunk regions. Runtime settings choose
+//! each level's grid detail and mesh path.
 
 const std = @import("std");
 const world_core = @import("world-core");

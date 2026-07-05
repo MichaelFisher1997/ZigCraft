@@ -109,10 +109,17 @@ pub fn LODRenderer(comptime RHI: type) type {
 
         pub fn init(allocator: std.mem.Allocator, rhi: RHI) !*Self {
             const renderer = try allocator.create(Self);
+            errdefer allocator.destroy(renderer);
 
-            var instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle = undefined;
-            var indirect_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle = undefined;
+            var instance_buffers = [_]rhi_types.BufferHandle{0} ** rhi_types.MAX_FRAMES_IN_FLIGHT;
+            var indirect_buffers = [_]rhi_types.BufferHandle{0} ** rhi_types.MAX_FRAMES_IN_FLIGHT;
             const resources = if (@hasDecl(RHI, "resourceManager")) rhi.resourceManager() else rhi;
+            errdefer {
+                for (0..rhi_types.MAX_FRAMES_IN_FLIGHT) |i| {
+                    if (instance_buffers[i] != 0) resources.destroyBuffer(instance_buffers[i]);
+                    if (indirect_buffers[i] != 0) resources.destroyBuffer(indirect_buffers[i]);
+                }
+            }
             for (0..rhi_types.MAX_FRAMES_IN_FLIGHT) |i| {
                 instance_buffers[i] = try resources.createBuffer(MAX_LOD_MDI_REGIONS * @sizeOf(rhi_types.InstanceData), .storage);
                 indirect_buffers[i] = try resources.createBuffer(MAX_LOD_MDI_REGIONS * @sizeOf(rhi_types.DrawIndirectCommand), .indirect);
@@ -149,13 +156,13 @@ pub fn LODRenderer(comptime RHI: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            self.rhi.waitIdle();
+            const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
             for (0..rhi_types.MAX_FRAMES_IN_FLIGHT) |i| {
                 if (self.instance_buffers[i] != 0) {
-                    const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
                     resources.destroyBuffer(self.instance_buffers[i]);
                 }
                 if (self.indirect_buffers[i] != 0) {
-                    const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
                     resources.destroyBuffer(self.indirect_buffers[i]);
                 }
             }
@@ -211,6 +218,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                 if (layer == .terrain) {
                     s.drawn = [_]u32{0} ** LODLevel.count;
                     s.instances = [_]u32{0} ** LODLevel.count;
+                    s.fluid_drawn = [_]u32{0} ** LODLevel.count;
+                    s.fluid_instances = [_]u32{0} ** LODLevel.count;
                 }
             }
 
@@ -231,7 +240,7 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             for (self.draw_list.items, 0..) |mesh, idx| {
                 const instance = self.instance_data.items[idx];
-                const range = meshDrawRange(mesh, layer) orelse continue;
+                const range = mesh_draw_range(mesh, layer) orelse continue;
                 render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
                 if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
                     render_ctx.drawOffset(mesh.buffer_handle, range.count, .triangles, mesh.vertex_offset + range.offset);
@@ -242,7 +251,7 @@ pub fn LODRenderer(comptime RHI: type) type {
         }
 
         fn renderIndirectBatches(self: *Self, render_ctx: anytype, query: anytype) bool {
-            if (!supportsLodIndirect(@TypeOf(render_ctx), @TypeOf(query), @TypeOf(self.rhi))) return false;
+            if (!supports_lod_indirect(@TypeOf(render_ctx), @TypeOf(query), @TypeOf(self.rhi))) return false;
             if (!query.supportsIndirectFirstInstance()) return false;
             if (self.instance_data.items.len == 0) return false;
 
@@ -339,7 +348,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             while (iter.next()) |entry| {
                 diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
-                const draw_range = meshDrawRange(mesh, layer) orelse {
+                const draw_range = mesh_draw_range(mesh, layer) orelse {
                     diag.not_ready += 1;
                     continue;
                 };
@@ -409,7 +418,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
-                        .padding = .{ fade, 0, 0 },
+                        .lod_fade = fade,
+                        .padding = .{ 0, 0 },
                     });
                     try self.draw_list.append(self.allocator, mesh);
                     if (mesh.pooled) {
@@ -423,8 +433,13 @@ pub fn LODRenderer(comptime RHI: type) type {
                     diag.drawn += 1;
                     if (stats) |s| {
                         const lod_idx = @intFromEnum(lod);
-                        s.drawn[lod_idx] += 1;
-                        s.instances[lod_idx] += 1;
+                        if (layer == .fluid) {
+                            s.fluid_drawn[lod_idx] += 1;
+                            s.fluid_instances[lod_idx] += 1;
+                        } else {
+                            s.drawn[lod_idx] += 1;
+                            s.instances[lod_idx] += 1;
+                        }
                     }
                 } else {
                     diag.missing_region += 1;
@@ -658,7 +673,7 @@ fn calculateTransitionFade(chunk: *const LODChunk) f32 {
     return 1.0 - t;
 }
 
-fn meshDrawRange(mesh: *const LODMesh, layer: LODRenderLayer) ?MeshDrawRange {
+fn mesh_draw_range(mesh: *const LODMesh, layer: LODRenderLayer) ?MeshDrawRange {
     if (!mesh.ready or mesh.buffer_handle == 0) return null;
     return switch (layer) {
         .terrain => if (mesh.opaque_vertex_count > 0)
@@ -674,7 +689,7 @@ fn meshDrawRange(mesh: *const LODMesh, layer: LODRenderLayer) ?MeshDrawRange {
     };
 }
 
-fn supportsLodIndirect(comptime RenderCtx: type, comptime Query: type, comptime RHI: type) bool {
+fn supports_lod_indirect(comptime RenderCtx: type, comptime Query: type, comptime RHI: type) bool {
     _ = RHI;
     return @hasDecl(RenderCtx, "drawIndirect") and
         @hasDecl(RenderCtx, "setLODInstanceBuffer") and
@@ -973,8 +988,10 @@ test "LODRenderer render draw path" {
     renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .fluid, &stats);
     try std.testing.expectEqual(@as(u32, 2), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 6), mock_state.last_vertex_count);
-    try std.testing.expectEqual(@as(u32, 2), stats.drawn[1]);
-    try std.testing.expectEqual(@as(u32, 2), stats.instances[1]);
+    try std.testing.expectEqual(@as(u32, 1), stats.drawn[1]);
+    try std.testing.expectEqual(@as(u32, 1), stats.instances[1]);
+    try std.testing.expectEqual(@as(u32, 1), stats.fluid_drawn[1]);
+    try std.testing.expectEqual(@as(u32, 1), stats.fluid_instances[1]);
 }
 
 test "LODRenderer keeps coarse LOD visible while finer bands stream" {
