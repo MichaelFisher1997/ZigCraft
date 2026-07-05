@@ -32,12 +32,8 @@ jobs:
 
       - name: Configure git identity
         run: |
-          PAT_USER_ID="$(gh api user --jq '.id')"
-          PAT_USER_LOGIN="$(gh api user --jq '.login')"
-          git config user.name "$PAT_USER_LOGIN"
-          git config user.email "${PAT_USER_ID}+${PAT_USER_LOGIN}@users.noreply.github.com"
-        env:
-          GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
