@@ -28,8 +28,8 @@ pub const SettingsManager = struct {
         settings_pkg.deinitPresets(self.allocator);
     }
 
-    pub fn save(self: *const SettingsManager) void {
-        settings_pkg.persistence.save(&self.settings, self.allocator);
+    pub fn save(self: *const SettingsManager) !void {
+        try settings_pkg.persistence.save(&self.settings, self.allocator);
     }
 
     pub fn applyToRHI(self: *const SettingsManager, rhi: *RHI) void {
