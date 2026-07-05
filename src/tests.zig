@@ -106,4 +106,5 @@ test {
     _ = @import("world-runtime").world_mutation;
     _ = @import("engine-audio").sdl_audio;
     _ = @import("input_tests.zig");
+    _ = @import("engine-ui").font;
 }
