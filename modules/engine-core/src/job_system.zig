@@ -40,6 +40,11 @@
 //! creating generic jobs with heap-allocated context pointers MUST provide a
 //! `cleanup_fn` to avoid memory leaks.
 //!
+//! `Job.cleanup()` is idempotent: after invoking `cleanup_fn` it nullifies the
+//! pointer, so subsequent calls are no-ops. This defends against double-free if
+//! a job is dropped on an error path (e.g. OOM in `doReprioritize`) and the
+//! same `Job` value is later re-added to a queue that is eventually drained.
+//!
 //! ## WorkerPool
 //!
 //! Worker threads pull jobs from a shared JobQueue and invoke the appropriate
@@ -97,11 +102,17 @@ pub const Job = struct {
         cleanup_fn: ?*const fn (*anyopaque) void = null,
     };
 
-    pub fn cleanup(self: Job) void {
+    /// Invoke this job's `cleanup_fn` (if any) and nullify it so subsequent
+    /// calls become no-ops. This defends against double-cleanup if a job is
+    /// dropped on an error path (e.g. OOM in `doReprioritize`) and the same
+    /// `Job` value is later re-added to a queue that is eventually drained by
+    /// `clear()`, `setPaused(true)`, or `stop()`.
+    pub fn cleanup(self: *Job) void {
         switch (self.type) {
             .generic => {
                 if (self.data.generic.cleanup_fn) |cleanup_fn| {
                     cleanup_fn(self.data.generic.context);
+                    self.data.generic.cleanup_fn = null;
                 }
             },
             .chunk_generation, .chunk_meshing => {},
@@ -247,8 +258,8 @@ pub const JobQueue = struct {
         }
 
         // Re-add with updated priorities
-        for (temp.items) |job| {
-            self.jobs.push(self.allocator, job) catch {
+        for (temp.items) |*job| {
+            self.jobs.push(self.allocator, job.*) catch {
                 log.log.warn("Job queue: failed to re-add job after priority update", .{});
                 job.cleanup();
                 continue;
@@ -283,7 +294,8 @@ pub const JobQueue = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         while (self.jobs.pop()) |job| {
-            job.cleanup();
+            var j = job;
+            j.cleanup();
         }
     }
 
@@ -294,7 +306,8 @@ pub const JobQueue = struct {
         self.abort_worker = paused or self.stopped;
         if (paused) {
             while (self.jobs.pop()) |job| {
-                job.cleanup();
+                var j = job;
+                j.cleanup();
             }
         } else {
             self.cond.broadcast();
@@ -306,7 +319,8 @@ pub const JobQueue = struct {
         self.stopped = true;
         self.abort_worker = true;
         while (self.jobs.pop()) |job| {
-            job.cleanup();
+            var j = job;
+            j.cleanup();
         }
         self.mutex.unlock();
         self.cond.broadcast();
@@ -443,13 +457,55 @@ test "Job.cleanup is no-op for generic jobs without cleanup_fn" {
 
 test "Job.cleanup is no-op for chunk jobs" {
     cleanup_count = 0;
-    const job = Job{
+    var job = Job{
         .type = .chunk_generation,
         .dist_sq = 0,
         .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 1 } },
     };
     job.cleanup();
     try testing.expectEqual(@as(usize, 0), cleanup_count);
+}
+
+test "Job.cleanup nullifies cleanup_fn to prevent double-cleanup" {
+    // Regression for the doReprioritize OOM double-cleanup issue: after
+    // cleanup() runs, cleanup_fn must be cleared so any subsequent call
+    // (e.g. if the same Job value is later re-added and the queue is
+    // drained) is a no-op rather than a double-free.
+    cleanup_count = 0;
+    var job = makeGenericJob();
+    job.cleanup();
+    try testing.expectEqual(@as(usize, 1), cleanup_count);
+    try testing.expect(job.data.generic.cleanup_fn == null);
+    // Subsequent cleanup must not re-invoke the cleanup function.
+    job.cleanup();
+    try testing.expectEqual(@as(usize, 1), cleanup_count);
+}
+
+test "Job.cleanup idempotency survives queue drain after OOM-style drop" {
+    // Simulates the doReprioritize OOM pattern at the Job level: a job is
+    // dropped via the OOM catch arm (cleanup invoked), then the same Job
+    // value is later re-added to a queue that is drained via stop(). With
+    // the fix, cleanup_fn is null after the first cleanup, so the queue
+    // drain must not trigger a second invocation.
+    cleanup_count = 0;
+    var job = makeGenericJob();
+
+    // Emulate the doReprioritize OOM drop: cleanup is invoked on the job
+    // that failed to be re-added.
+    job.cleanup();
+    try testing.expectEqual(@as(usize, 1), cleanup_count);
+
+    // The caller still holds the (now-cleaned) Job value and re-adds it.
+    // Without the fix, cleanup_fn would still be set here.
+    try testing.expect(job.data.generic.cleanup_fn == null);
+
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+    queue.push(job) catch unreachable;
+
+    // Draining the queue must not double-invoke cleanup.
+    queue.stop();
+    try testing.expectEqual(@as(usize, 1), cleanup_count);
 }
 
 test "JobQueue reprioritizes region-scaled chunk jobs" {
