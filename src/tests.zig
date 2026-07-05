@@ -24,6 +24,7 @@ test {
 
     // ECS and engine tests
     _ = @import("ecs_tests.zig");
+    _ = @import("job_system_tests.zig");
     _ = @import("engine-graphics").vulkan_device;
     _ = @import("engine-graphics").vulkan_device_tests;
     _ = @import("engine-graphics").vulkan_device_internal_tests;
