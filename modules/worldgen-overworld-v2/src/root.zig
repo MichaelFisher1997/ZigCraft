@@ -377,7 +377,7 @@ pub const OverworldV2Generator = struct {
             }
 
             if (layer_depth >= 0) {
-                const underwater = above == .water or y < self.params.sea_level - 1;
+                const underwater = above == .water;
                 chunk.blocks[idx] = if (layer_depth == 0)
                     surfaceBlock(sample.biome, sample.terrain_height, self.params.sea_level, underwater)
                 else if (layer_depth <= filler_depth)
