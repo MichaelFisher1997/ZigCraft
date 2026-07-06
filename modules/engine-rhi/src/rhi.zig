@@ -1155,24 +1155,24 @@ pub const RHI = struct {
         init: *const fn (ctx: *anyopaque, allocator: Allocator, device: ?*RenderDevice) anyerror!void,
         deinit: *const fn (ctx: *anyopaque) void,
 
-        resources: IResourceFactory.VTable,
-        render: IRenderContext.VTable,
-        passes: IPassOrchestrationContext.VTable,
-        post_process: IPostProcessContext.VTable,
-        effects: IRenderEffectsContext.VTable,
-        native: INativeHandlesContext.VTable,
-        ssao: ISSAOContext.VTable,
-        debug_overlay: IDebugOverlayContext.VTable,
-        shadow: IShadowContext.VTable,
-        water: IWaterContext.VTable,
-        compute: IComputeContext.VTable,
-        ui: IUIContext.VTable,
-        query: IDeviceQuery.VTable,
-        timing: IDeviceTiming.VTable,
-        quality: IRenderQualityOptions.VTable,
-        recovery: IDeviceRecovery.VTable,
-        culling_factory: ICullingSystemFactory.VTable,
-        screenshot: IScreenshotContext.VTable,
+        resources: ?*const IResourceFactory.VTable = null,
+        render: ?*const IRenderContext.VTable = null,
+        passes: ?*const IPassOrchestrationContext.VTable = null,
+        post_process: ?*const IPostProcessContext.VTable = null,
+        effects: ?*const IRenderEffectsContext.VTable = null,
+        native: ?*const INativeHandlesContext.VTable = null,
+        ssao: ?*const ISSAOContext.VTable = null,
+        debug_overlay: ?*const IDebugOverlayContext.VTable = null,
+        shadow: ?*const IShadowContext.VTable = null,
+        water: ?*const IWaterContext.VTable = null,
+        compute: ?*const IComputeContext.VTable = null,
+        ui: ?*const IUIContext.VTable = null,
+        query: ?*const IDeviceQuery.VTable = null,
+        timing: ?*const IDeviceTiming.VTable = null,
+        quality: ?*const IRenderQualityOptions.VTable = null,
+        recovery: ?*const IDeviceRecovery.VTable = null,
+        culling_factory: ?*const ICullingSystemFactory.VTable = null,
+        screenshot: ?*const IScreenshotContext.VTable = null,
     };
 
     pub const Lifecycle = struct {
@@ -1181,24 +1181,24 @@ pub const RHI = struct {
     };
 
     pub const Interfaces = struct {
-        resources: IResourceFactory.VTable,
-        render: IRenderContext.VTable,
-        passes: IPassOrchestrationContext.VTable,
-        post_process: IPostProcessContext.VTable,
-        effects: IRenderEffectsContext.VTable,
-        native: INativeHandlesContext.VTable,
-        ssao: ISSAOContext.VTable,
-        debug_overlay: IDebugOverlayContext.VTable,
-        shadow: IShadowContext.VTable,
-        water: IWaterContext.VTable,
-        compute: IComputeContext.VTable,
-        ui: IUIContext.VTable,
-        query: IDeviceQuery.VTable,
-        timing: IDeviceTiming.VTable,
-        quality: IRenderQualityOptions.VTable,
-        recovery: IDeviceRecovery.VTable,
-        culling_factory: ICullingSystemFactory.VTable,
-        screenshot: IScreenshotContext.VTable,
+        resources: ?*const IResourceFactory.VTable = null,
+        render: ?*const IRenderContext.VTable = null,
+        passes: ?*const IPassOrchestrationContext.VTable = null,
+        post_process: ?*const IPostProcessContext.VTable = null,
+        effects: ?*const IRenderEffectsContext.VTable = null,
+        native: ?*const INativeHandlesContext.VTable = null,
+        ssao: ?*const ISSAOContext.VTable = null,
+        debug_overlay: ?*const IDebugOverlayContext.VTable = null,
+        shadow: ?*const IShadowContext.VTable = null,
+        water: ?*const IWaterContext.VTable = null,
+        compute: ?*const IComputeContext.VTable = null,
+        ui: ?*const IUIContext.VTable = null,
+        query: ?*const IDeviceQuery.VTable = null,
+        timing: ?*const IDeviceTiming.VTable = null,
+        quality: ?*const IRenderQualityOptions.VTable = null,
+        recovery: ?*const IDeviceRecovery.VTable = null,
+        culling_factory: ?*const ICullingSystemFactory.VTable = null,
+        screenshot: ?*const IScreenshotContext.VTable = null,
     };
 
     pub fn composeVTable(lifecycle: Lifecycle, interfaces: Interfaces) VTable {
@@ -1227,13 +1227,13 @@ pub const RHI = struct {
     }
 
     pub fn factory(self: RHI) IResourceFactory {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.resources };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.resources orelse unreachable };
     }
     pub fn resourceManager(self: RHI) ResourceManager {
         return .{ .factory = self.factory() };
     }
     pub fn context(self: RHI) IRenderContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.render };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.render orelse unreachable };
     }
     pub fn renderContext(self: RHI) RenderContext {
         const rc = self.context();
@@ -1248,16 +1248,16 @@ pub const RHI = struct {
         };
     }
     pub fn passOrchestration(self: RHI) IPassOrchestrationContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.passes };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.passes orelse unreachable };
     }
     pub fn postProcess(self: RHI) IPostProcessContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.post_process };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.post_process orelse unreachable };
     }
     pub fn renderEffects(self: RHI) IRenderEffectsContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.effects };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.effects orelse unreachable };
     }
     pub fn nativeHandles(self: RHI) INativeHandlesContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.native };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.native orelse unreachable };
     }
     pub fn encoder(self: RHI) IGraphicsCommandEncoder {
         return self.context().getEncoder();
@@ -1266,13 +1266,13 @@ pub const RHI = struct {
         return self.context().getState();
     }
     pub fn ssao(self: RHI) ISSAOContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.ssao };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.ssao orelse unreachable };
     }
     pub fn debugOverlay(self: RHI) IDebugOverlayContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.debug_overlay };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.debug_overlay orelse unreachable };
     }
     pub fn shadow(self: RHI) IShadowContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.shadow };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.shadow orelse unreachable };
     }
     pub fn shadowSystem(self: RHI) ShadowSystemWrapper {
         return .{ .ctx = self.shadow() };
@@ -1281,37 +1281,37 @@ pub const RHI = struct {
         return .{ .ctx = self.water() };
     }
     pub fn water(self: RHI) IWaterContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.water };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.water orelse unreachable };
     }
     pub fn compute(self: RHI) IComputeContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.compute };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.compute orelse unreachable };
     }
     pub fn ui(self: RHI) IUIContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.ui };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.ui orelse unreachable };
     }
     pub fn uiRenderer(self: RHI) UIRenderer {
         return .{ .ctx = self.ui() };
     }
     pub fn query(self: RHI) IDeviceQuery {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.query };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.query orelse unreachable };
     }
     pub fn timing(self: RHI) IDeviceTiming {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.timing };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.timing orelse unreachable };
     }
     pub fn options(self: RHI) IRenderQualityOptions {
         return self.renderQualityOptions();
     }
     pub fn renderQualityOptions(self: RHI) IRenderQualityOptions {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.quality };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.quality orelse unreachable };
     }
     pub fn recovery(self: RHI) IDeviceRecovery {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.recovery };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.recovery orelse unreachable };
     }
     pub fn cullingFactory(self: RHI) ICullingSystemFactory {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.culling_factory };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.culling_factory orelse unreachable };
     }
     pub fn screenshot(self: RHI) IScreenshotContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.screenshot };
+        return .{ .ptr = self.ptr, .vtable = self.vtable.screenshot orelse unreachable };
     }
     pub fn createCullingSystem(self: RHI, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
         return self.cullingFactory().createCullingSystem(allocator, max_chunks);
@@ -1325,6 +1325,6 @@ pub const RHI = struct {
         self.vtable.deinit(self.ptr);
     }
     pub fn waitIdle(self: RHI) void {
-        self.vtable.query.waitIdle(self.ptr);
+        (self.vtable.query orelse unreachable).waitIdle(self.ptr);
     }
 };
