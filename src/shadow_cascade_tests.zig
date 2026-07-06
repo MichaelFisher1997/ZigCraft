@@ -2,7 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const Vec3 = @import("zig-math").Vec3;
 const Mat4 = @import("zig-math").Mat4;
-const CSM = @import("engine/graphics/csm.zig");
+const CSM = @import("engine-shadows").csm;
 
 pub const std_options: std.Options = .{ .log_level = .err };
 
