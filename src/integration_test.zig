@@ -13,8 +13,8 @@ const App = @import("game/app.zig").App;
 
 const WorldScreen = @import("game-ui").WorldScreen;
 const Screen = @import("game-ui").screen;
-const rhi = @import("engine/graphics/rhi.zig");
-const UISystem = @import("engine/ui/ui_system.zig").UISystem;
+const rhi = @import("engine-rhi");
+const UISystem = @import("engine-ui").UISystem;
 const c = @import("c").c;
 
 const EngineContext = Screen.EngineContext;

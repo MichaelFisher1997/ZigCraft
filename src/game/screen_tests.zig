@@ -3,7 +3,7 @@ const testing = std.testing;
 const screen_module = @import("game-ui").screen;
 const ScreenManager = screen_module.ScreenManager;
 const IScreen = screen_module.IScreen;
-const UISystem = @import("../engine/ui/ui_system.zig").UISystem;
+const UISystem = @import("engine-ui").UISystem;
 
 const MockState = struct {
     deinit_count: usize = 0,

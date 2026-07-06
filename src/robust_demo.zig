@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const c = @import("c").c;
-const VulkanDevice = @import("engine/graphics/vulkan_device.zig").VulkanDevice;
+const VulkanDevice = @import("engine-graphics").VulkanDevice;
 const log = @import("engine-core").log;
 
 pub fn main() !void {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const c = @import("c").c;
-const VulkanDevice = @import("engine/graphics/vulkan_device.zig").VulkanDevice;
+const VulkanDevice = @import("engine-graphics").VulkanDevice;
 
 test "VulkanDevice.submitGuarded error simulation" {
     // This test simulates the logic flow of submitGuarded by testing the error propagation
@@ -34,7 +34,7 @@ test "VulkanDevice.submitGuarded error simulation" {
 test "VulkanDevice.checkVk comprehensive mapping" {
     // This test ensures that ALL Vulkan error codes we care about are correctly mapped
     // to Zig errors, which is crucial for the robustness layer's decision making.
-    const checkVk = @import("engine/graphics/vulkan_device.zig").checkVk;
+    const checkVk = @import("engine-graphics").vulkan_device.checkVk;
 
     try testing.expectError(error.GpuLost, checkVk(c.VK_ERROR_DEVICE_LOST));
     try testing.expectError(error.OutOfMemory, checkVk(c.VK_ERROR_OUT_OF_HOST_MEMORY));
