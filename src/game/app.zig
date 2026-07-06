@@ -515,12 +515,9 @@ fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
 }
 
 fn applyNamedPreset(settings: *Settings, preset_name: []const u8, label: []const u8) bool {
-    for (json_presets.graphics_presets.items, 0..) |preset, i| {
-        if (std.ascii.eqlIgnoreCase(preset.name, preset_name) or std.ascii.eqlIgnoreCase(@tagName(preset.render_distance_preset), preset_name)) {
-            json_presets.apply(settings, i);
-            log.log.info("{s}: Applied graphics preset '{s}'", .{ label, preset.name });
-            return true;
-        }
+    if (json_presets.findAndApplyNamed(settings, preset_name)) |applied_name| {
+        log.log.info("{s}: Applied graphics preset '{s}'", .{ label, applied_name });
+        return true;
     }
 
     log.log.warn("{s}: Unknown preset '{s}', keeping loaded settings", .{ label, preset_name });

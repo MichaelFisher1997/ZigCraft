@@ -7,6 +7,7 @@ const Camera = @import("engine-camera").Camera;
 const Generator = @import("world-worldgen").Generator;
 const UISystem = @import("engine-ui").UISystem;
 const Color = @import("engine-ui").Color;
+const Texture = @import("engine-rhi").Texture;
 const Font = @import("engine-ui").font;
 const log = @import("engine-core").log;
 const Vec3 = @import("engine-math").Vec3;
@@ -68,18 +69,19 @@ pub const MapController = struct {
         self.smoothView(dt);
     }
 
-    pub fn draw(self: *MapController, u: *UISystem, screen_w: f32, screen_h: f32, world_map: *WorldMap, generator: Generator, camera_pos: Vec3, allocator: std.mem.Allocator) !void {
+    pub fn draw(self: *MapController, u: *UISystem, screen_w: f32, screen_h: f32, world_map: *WorldMap, world_map_texture: *const Texture, generator: Generator, camera_pos: Vec3) !void {
         if (!self.show_map) return;
 
         if (self.map_needs_update) {
-            try world_map.update(generator, self.map_pos_x, self.map_pos_z, self.map_zoom, allocator);
+            world_map.update(generator, self.map_pos_x, self.map_pos_z, self.map_zoom);
+            try world_map_texture.update(world_map.pixels);
             self.map_needs_update = false;
         }
 
         const rect = getMapRect(screen_w, screen_h);
         self.drawBackdrop(u, screen_w, screen_h);
         self.drawFrame(u, rect);
-        u.drawTexture(@intCast(world_map.texture.handle), .{ .x = rect.x, .y = rect.y, .width = rect.size, .height = rect.size });
+        u.drawTexture(@intCast(world_map_texture.handle), .{ .x = rect.x, .y = rect.y, .width = rect.size, .height = rect.size });
         self.drawGrid(u, rect);
         self.drawPlayerMarker(u, rect, world_map.width, world_map.height, camera_pos);
         self.drawHeader(u, rect);

@@ -1,47 +1,35 @@
 const std = @import("std");
-const c = @import("c").c;
 const gen_interface = @import("worldgen-api");
 const Generator = gen_interface.Generator;
 const ColumnInfo = gen_interface.ColumnInfo;
-const BiomeId = @import("world-core").BiomeId;
-const Texture = @import("engine-rhi").Texture;
-
-const rhi = @import("engine-rhi").rhi;
 
 pub const WorldMap = struct {
-    texture: Texture,
+    allocator: std.mem.Allocator,
+    pixels: []u8,
     width: u32,
     height: u32,
 
-    pub fn init(resources: rhi.ResourceManager, width: u32, height: u32) !WorldMap {
+    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !WorldMap {
         // Safety: ensure texture size is within typical hardware limits
         const safe_w = @min(width, 4096);
         const safe_h = @min(height, 4096);
-
-        const texture = try Texture.initEmpty(resources, safe_w, safe_h, .rgba, .{
-            .min_filter = .nearest,
-            .mag_filter = .nearest,
-            .generate_mipmaps = false,
-            .wrap_s = .clamp_to_edge,
-            .wrap_t = .clamp_to_edge,
-        });
+        const pixels = try allocator.alloc(u8, safe_w * safe_h * 4);
+        @memset(pixels, 0);
 
         return .{
-            .texture = texture,
+            .allocator = allocator,
+            .pixels = pixels,
             .width = safe_w,
             .height = safe_h,
         };
     }
 
     pub fn deinit(self: *WorldMap) void {
-        self.texture.deinit();
+        self.allocator.free(self.pixels);
+        self.pixels = &.{};
     }
 
-    pub fn update(self: *WorldMap, generator: Generator, center_x: f32, center_z: f32, scale: f32, allocator: std.mem.Allocator) !void {
-        const pixel_count = self.width * self.height;
-        var pixels = try allocator.alloc(u8, pixel_count * 4);
-        defer allocator.free(pixels);
-
+    pub fn update(self: *WorldMap, generator: Generator, center_x: f32, center_z: f32, scale: f32) void {
         const hw = @as(f32, @floatFromInt(self.width)) * 0.5;
         const hh = @as(f32, @floatFromInt(self.height)) * 0.5;
         const start_x = center_x - (hw * scale);
@@ -58,14 +46,12 @@ pub const WorldMap = struct {
                 const color = shadeColor(getBiomeColor(info), info.height);
 
                 const idx = (px + py * self.width) * 4;
-                pixels[idx + 0] = @intFromFloat(color[0] * 255.0);
-                pixels[idx + 1] = @intFromFloat(color[1] * 255.0);
-                pixels[idx + 2] = @intFromFloat(color[2] * 255.0);
-                pixels[idx + 3] = 255;
+                self.pixels[idx + 0] = @intFromFloat(color[0] * 255.0);
+                self.pixels[idx + 1] = @intFromFloat(color[1] * 255.0);
+                self.pixels[idx + 2] = @intFromFloat(color[2] * 255.0);
+                self.pixels[idx + 3] = 255;
             }
         }
-
-        try self.texture.update(pixels);
     }
 
     fn getBiomeColor(info: ColumnInfo) [3]f32 {

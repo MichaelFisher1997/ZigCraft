@@ -374,18 +374,19 @@ fn drawRenderSection(ui: *UISystem, x: f32, y: f32, label: []const u8, top: f32,
 
 fn drawPresetRow(ui: *UISystem, settings: *Settings, rs: anytype, row: Rect, top: f32, bottom: f32, label_scale: f32, value_scale: f32, button_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) f32 {
     if (!rowVisible(row.y, row.height, top, bottom)) return row.y + row.height;
-    const preset_idx = if (settings_pkg.json_presets.graphics_presets.items.len > 0) settings_pkg.json_presets.getIndex(settings) else 0;
-    const preset_count = settings_pkg.json_presets.graphics_presets.items.len + 1;
+    const loaded_preset_count = settings_pkg.json_presets.count();
+    const preset_idx = if (loaded_preset_count > 0) settings_pkg.json_presets.getIndex(settings) else 0;
+    const preset_count = loaded_preset_count + 1;
     if (drawStepperRow(ui, row, "OVERALL QUALITY", "Preset target for renderer cost and quality.", SettingsUi.getPresetLabel(preset_idx), label_scale, value_scale, button_scale, mx, my, clicked, scale)) |step| {
-        if (settings_pkg.json_presets.graphics_presets.items.len > 0 and step == .previous) {
+        if (loaded_preset_count > 0 and step == .previous) {
             const prev_idx = if (preset_idx == 0) preset_count - 1 else preset_idx - 1;
-            if (prev_idx < settings_pkg.json_presets.graphics_presets.items.len) {
+            if (prev_idx < loaded_preset_count) {
                 settings_pkg.json_presets.apply(settings, prev_idx);
                 SettingsUi.applyPresetSideEffects(settings, rs);
             }
-        } else if (settings_pkg.json_presets.graphics_presets.items.len > 0 and step == .next) {
+        } else if (loaded_preset_count > 0 and step == .next) {
             const next_idx = (preset_idx + 1) % preset_count;
-            if (next_idx < settings_pkg.json_presets.graphics_presets.items.len) {
+            if (next_idx < loaded_preset_count) {
                 settings_pkg.json_presets.apply(settings, next_idx);
                 SettingsUi.applyPresetSideEffects(settings, rs);
             }

@@ -116,19 +116,20 @@ pub const GraphicsScreen = struct {
         sy += 34.0 * ui_scale;
 
         if (rowFullyVisible(sy, row_height, content_top, content_bottom)) {
-            const preset_idx = if (settings_pkg.json_presets.graphics_presets.items.len > 0) settings_pkg.json_presets.getIndex(settings) else 0;
-            const preset_count = settings_pkg.json_presets.graphics_presets.items.len + 1;
+            const loaded_preset_count = settings_pkg.json_presets.count();
+            const preset_idx = if (loaded_preset_count > 0) settings_pkg.json_presets.getIndex(settings) else 0;
+            const preset_count = loaded_preset_count + 1;
             const step = drawStepperRow(ui, .{ .x = row_x, .y = sy, .width = row_w, .height = row_height }, "OVERALL QUALITY", "Preset target for renderer cost and quality.", SettingsUi.getPresetLabel(preset_idx), label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, ui_scale);
-            if (settings_pkg.json_presets.graphics_presets.items.len > 0) {
+            if (loaded_preset_count > 0) {
                 if (step == .previous) {
                     const prev_idx = if (preset_idx == 0) preset_count - 1 else preset_idx - 1;
-                    if (prev_idx < settings_pkg.json_presets.graphics_presets.items.len) {
+                    if (prev_idx < loaded_preset_count) {
                         settings_pkg.json_presets.apply(settings, prev_idx);
                         SettingsUi.applyPresetSideEffects(settings, rs);
                     }
                 } else if (step == .next) {
                     const next_idx = (preset_idx + 1) % preset_count;
-                    if (next_idx < settings_pkg.json_presets.graphics_presets.items.len) {
+                    if (next_idx < loaded_preset_count) {
                         settings_pkg.json_presets.apply(settings, next_idx);
                         SettingsUi.applyPresetSideEffects(settings, rs);
                     }

@@ -4,7 +4,6 @@
 const std = @import("std");
 const UISystem = @import("ui_system.zig").UISystem;
 const TimingOverlay = @import("timing_overlay.zig").TimingOverlay;
-const Font = @import("font.zig");
 const FontAtlas = @import("font_atlas.zig").FontAtlas;
 const PerformanceData = @import("timing_overlay.zig").PerformanceData;
 const WorldStats = @import("timing_overlay.zig").WorldStats;
@@ -38,7 +37,6 @@ pub const UISystemManager = struct {
 
     pub fn deinit(self: *UISystemManager, resources: rhi.ResourceManager) void {
         if (self.imgui) |*backend| backend.deinit();
-        Font.setActiveAtlas(null);
         if (self.font_atlas) |*atlas| atlas.deinit(resources);
         if (self.ui) |*u| u.deinit();
     }
@@ -62,7 +60,7 @@ pub const UISystemManager = struct {
         if (self.ui) |*u| {
             if (self.imgui) |*backend| backend.beginFrame();
 
-            if (self.font_atlas) |*atlas| Font.setActiveAtlas(atlas) else Font.setActiveAtlas(null);
+            if (self.font_atlas) |*atlas| u.setFontAtlas(atlas) else u.setFontAtlas(null);
             try screen_manager.draw(u);
 
             if (self.timing_overlay.enabled) {
