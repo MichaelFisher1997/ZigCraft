@@ -178,7 +178,7 @@ pub const ChunkMesh = struct {
         // Mesh horizontal slices (top/bottom faces). The loop iterates 17 boundaries
         // per subchunk (sy in [y0, y1] inclusive), mirroring the sx/sz loops below.
         // This is correct, NOT an off-by-one: greedy_mesher.meshSlice uses
-        // isEmittingSubchunk(.top, s - 1, ...) to assign each boundary face to the
+        // isEmittingSubchunk(.top, sy - 1, ...) to assign each boundary face to the
         // subchunk that owns the solid block, so no geometry is duplicated.
         //
         // The topmost iteration (sy = y1) is the boundary between the highest block
