@@ -554,7 +554,7 @@ const MockContext = struct {
             .isTimingEnabled = isTimingEnabled,
             .setTimingEnabled = setTimingEnabled,
         },
-        .options = .{
+        .quality = .{
             .setWireframe = undefined,
             .setTexturesEnabled = undefined,
             .setDebugShadowView = undefined,
@@ -563,7 +563,6 @@ const MockContext = struct {
             .setAnisotropicFiltering = undefined,
             .setVolumetricDensity = undefined,
             .setMSAA = undefined,
-            .recover = undefined,
             .setFXAA = undefined,
             .setBloom = undefined,
             .setBloomIntensity = undefined,
@@ -577,7 +576,14 @@ const MockContext = struct {
             .setTAAVelocityRejection = undefined,
             .setDynamicResolution = MockContext.setDynamicResolution,
             .getResolutionScale = MockContext.getResolutionScale,
+        },
+        .recovery = .{
+            .recover = undefined,
+        },
+        .culling_factory = .{
             .createCullingSystem = MockContext.createCullingSystem,
+        },
+        .screenshot = .{
             .captureFrame = undefined,
         },
     };

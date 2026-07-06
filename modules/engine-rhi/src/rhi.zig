@@ -1003,7 +1003,7 @@ pub const IDeviceTiming = struct {
     }
 };
 
-pub const IRenderOptionsContext = struct {
+pub const IRenderQualityOptions = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
@@ -1016,7 +1016,6 @@ pub const IRenderOptionsContext = struct {
         setAnisotropicFiltering: *const fn (ctx: *anyopaque, level: u8) void,
         setVolumetricDensity: *const fn (ctx: *anyopaque, density: f32) void,
         setMSAA: *const fn (ctx: *anyopaque, samples: u8) void,
-        recover: *const fn (ctx: *anyopaque) anyerror!void,
         setFXAA: *const fn (ctx: *anyopaque, enabled: bool) void,
         setBloom: *const fn (ctx: *anyopaque, enabled: bool) void,
         setBloomIntensity: *const fn (ctx: *anyopaque, intensity: f32) void,
@@ -1030,80 +1029,108 @@ pub const IRenderOptionsContext = struct {
         setTAAVelocityRejection: *const fn (ctx: *anyopaque, value: f32) void,
         setDynamicResolution: *const fn (ctx: *anyopaque, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void,
         getResolutionScale: *const fn (ctx: *anyopaque) f32,
+    };
+
+    pub fn setWireframe(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setWireframe(self.ptr, enabled);
+    }
+    pub fn setTexturesEnabled(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setTexturesEnabled(self.ptr, enabled);
+    }
+    pub fn setDebugShadowView(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setDebugShadowView(self.ptr, enabled);
+    }
+    pub fn setShadowDebugChannel(self: IRenderQualityOptions, channel: u32) void {
+        self.vtable.setShadowDebugChannel(self.ptr, channel);
+    }
+    pub fn setVSync(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setVSync(self.ptr, enabled);
+    }
+    pub fn setAnisotropicFiltering(self: IRenderQualityOptions, level: u8) void {
+        self.vtable.setAnisotropicFiltering(self.ptr, level);
+    }
+    pub fn setVolumetricDensity(self: IRenderQualityOptions, density: f32) void {
+        self.vtable.setVolumetricDensity(self.ptr, density);
+    }
+    pub fn setMSAA(self: IRenderQualityOptions, samples: u8) void {
+        self.vtable.setMSAA(self.ptr, samples);
+    }
+    pub fn setFXAA(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setFXAA(self.ptr, enabled);
+    }
+    pub fn setBloom(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setBloom(self.ptr, enabled);
+    }
+    pub fn setBloomIntensity(self: IRenderQualityOptions, intensity: f32) void {
+        self.vtable.setBloomIntensity(self.ptr, intensity);
+    }
+    pub fn setVignetteEnabled(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setVignetteEnabled(self.ptr, enabled);
+    }
+    pub fn setVignetteIntensity(self: IRenderQualityOptions, intensity: f32) void {
+        self.vtable.setVignetteIntensity(self.ptr, intensity);
+    }
+    pub fn setFilmGrainEnabled(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setFilmGrainEnabled(self.ptr, enabled);
+    }
+    pub fn setFilmGrainIntensity(self: IRenderQualityOptions, intensity: f32) void {
+        self.vtable.setFilmGrainIntensity(self.ptr, intensity);
+    }
+    pub fn setColorGradingEnabled(self: IRenderQualityOptions, enabled: bool) void {
+        self.vtable.setColorGradingEnabled(self.ptr, enabled);
+    }
+    pub fn setColorGradingIntensity(self: IRenderQualityOptions, intensity: f32) void {
+        self.vtable.setColorGradingIntensity(self.ptr, intensity);
+    }
+    pub fn setTAABlendFactor(self: IRenderQualityOptions, value: f32) void {
+        self.vtable.setTAABlendFactor(self.ptr, value);
+    }
+    pub fn setTAAVelocityRejection(self: IRenderQualityOptions, value: f32) void {
+        self.vtable.setTAAVelocityRejection(self.ptr, value);
+    }
+    pub fn setDynamicResolution(self: IRenderQualityOptions, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
+        self.vtable.setDynamicResolution(self.ptr, enabled, min_scale, max_scale, target_fps);
+    }
+    pub fn getResolutionScale(self: IRenderQualityOptions) f32 {
+        return self.vtable.getResolutionScale(self.ptr);
+    }
+};
+
+pub const IDeviceRecovery = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        recover: *const fn (ctx: *anyopaque) anyerror!void,
+    };
+
+    pub fn recover(self: IDeviceRecovery) !void {
+        return self.vtable.recover(self.ptr);
+    }
+};
+
+pub const ICullingSystemFactory = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
         createCullingSystem: *const fn (ctx: *anyopaque, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem,
+    };
+
+    pub fn createCullingSystem(self: ICullingSystemFactory, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
+        return self.vtable.createCullingSystem(self.ptr, allocator, max_chunks);
+    }
+};
+
+pub const IScreenshotContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
         captureFrame: *const fn (ctx: *anyopaque, path: []const u8) bool,
     };
 
-    pub fn setWireframe(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setWireframe(self.ptr, enabled);
-    }
-    pub fn setTexturesEnabled(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setTexturesEnabled(self.ptr, enabled);
-    }
-    pub fn setDebugShadowView(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setDebugShadowView(self.ptr, enabled);
-    }
-    pub fn setShadowDebugChannel(self: IRenderOptionsContext, channel: u32) void {
-        self.vtable.setShadowDebugChannel(self.ptr, channel);
-    }
-    pub fn setVSync(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setVSync(self.ptr, enabled);
-    }
-    pub fn setAnisotropicFiltering(self: IRenderOptionsContext, level: u8) void {
-        self.vtable.setAnisotropicFiltering(self.ptr, level);
-    }
-    pub fn setVolumetricDensity(self: IRenderOptionsContext, density: f32) void {
-        self.vtable.setVolumetricDensity(self.ptr, density);
-    }
-    pub fn setMSAA(self: IRenderOptionsContext, samples: u8) void {
-        self.vtable.setMSAA(self.ptr, samples);
-    }
-    pub fn recover(self: IRenderOptionsContext) !void {
-        return self.vtable.recover(self.ptr);
-    }
-    pub fn setFXAA(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setFXAA(self.ptr, enabled);
-    }
-    pub fn setBloom(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setBloom(self.ptr, enabled);
-    }
-    pub fn setBloomIntensity(self: IRenderOptionsContext, intensity: f32) void {
-        self.vtable.setBloomIntensity(self.ptr, intensity);
-    }
-    pub fn setVignetteEnabled(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setVignetteEnabled(self.ptr, enabled);
-    }
-    pub fn setVignetteIntensity(self: IRenderOptionsContext, intensity: f32) void {
-        self.vtable.setVignetteIntensity(self.ptr, intensity);
-    }
-    pub fn setFilmGrainEnabled(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setFilmGrainEnabled(self.ptr, enabled);
-    }
-    pub fn setFilmGrainIntensity(self: IRenderOptionsContext, intensity: f32) void {
-        self.vtable.setFilmGrainIntensity(self.ptr, intensity);
-    }
-    pub fn setColorGradingEnabled(self: IRenderOptionsContext, enabled: bool) void {
-        self.vtable.setColorGradingEnabled(self.ptr, enabled);
-    }
-    pub fn setColorGradingIntensity(self: IRenderOptionsContext, intensity: f32) void {
-        self.vtable.setColorGradingIntensity(self.ptr, intensity);
-    }
-    pub fn setTAABlendFactor(self: IRenderOptionsContext, value: f32) void {
-        self.vtable.setTAABlendFactor(self.ptr, value);
-    }
-    pub fn setTAAVelocityRejection(self: IRenderOptionsContext, value: f32) void {
-        self.vtable.setTAAVelocityRejection(self.ptr, value);
-    }
-    pub fn setDynamicResolution(self: IRenderOptionsContext, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
-        self.vtable.setDynamicResolution(self.ptr, enabled, min_scale, max_scale, target_fps);
-    }
-    pub fn getResolutionScale(self: IRenderOptionsContext) f32 {
-        return self.vtable.getResolutionScale(self.ptr);
-    }
-    pub fn createCullingSystem(self: IRenderOptionsContext, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
-        return self.vtable.createCullingSystem(self.ptr, allocator, max_chunks);
-    }
-    pub fn captureFrame(self: IRenderOptionsContext, path: []const u8) bool {
+    pub fn captureFrame(self: IScreenshotContext, path: []const u8) bool {
         return self.vtable.captureFrame(self.ptr, path);
     }
 };
@@ -1143,7 +1170,10 @@ pub const RHI = struct {
         ui: IUIContext.VTable,
         query: IDeviceQuery.VTable,
         timing: IDeviceTiming.VTable,
-        options: IRenderOptionsContext.VTable,
+        quality: IRenderQualityOptions.VTable,
+        recovery: IDeviceRecovery.VTable,
+        culling_factory: ICullingSystemFactory.VTable,
+        screenshot: IScreenshotContext.VTable,
     };
 
     pub fn factory(self: RHI) IResourceFactory {
@@ -1218,11 +1248,23 @@ pub const RHI = struct {
     pub fn timing(self: RHI) IDeviceTiming {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.timing };
     }
-    pub fn options(self: RHI) IRenderOptionsContext {
-        return .{ .ptr = self.ptr, .vtable = &self.vtable.options };
+    pub fn options(self: RHI) IRenderQualityOptions {
+        return self.renderQualityOptions();
+    }
+    pub fn renderQualityOptions(self: RHI) IRenderQualityOptions {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.quality };
+    }
+    pub fn recovery(self: RHI) IDeviceRecovery {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.recovery };
+    }
+    pub fn cullingFactory(self: RHI) ICullingSystemFactory {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.culling_factory };
+    }
+    pub fn screenshot(self: RHI) IScreenshotContext {
+        return .{ .ptr = self.ptr, .vtable = &self.vtable.screenshot };
     }
     pub fn createCullingSystem(self: RHI, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
-        return self.options().createCullingSystem(allocator, max_chunks);
+        return self.cullingFactory().createCullingSystem(allocator, max_chunks);
     }
 
     // Lifecycle

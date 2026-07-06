@@ -1328,7 +1328,7 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .isTimingEnabled = isTimingEnabled,
         .setTimingEnabled = setTimingEnabled,
     },
-    .options = .{
+    .quality = .{
         .setWireframe = setWireframe,
         .setTexturesEnabled = setTexturesEnabled,
         .setDebugShadowView = setDebugShadowView,
@@ -1337,7 +1337,6 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .setAnisotropicFiltering = setAnisotropicFiltering,
         .setVolumetricDensity = setVolumetricDensity,
         .setMSAA = setMSAA,
-        .recover = recover,
         .setFXAA = setFXAA,
         .setBloom = setBloom,
         .setBloomIntensity = setBloomIntensity,
@@ -1351,7 +1350,14 @@ const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
         .setTAAVelocityRejection = setTAAVelocityRejection,
         .setDynamicResolution = setDynamicResolution,
         .getResolutionScale = getResolutionScale,
+    },
+    .recovery = .{
+        .recover = recover,
+    },
+    .culling_factory = .{
         .createCullingSystem = createCullingSystem,
+    },
+    .screenshot = .{
         .captureFrame = captureFrame,
     },
 };

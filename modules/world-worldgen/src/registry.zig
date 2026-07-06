@@ -2,6 +2,7 @@ const std = @import("std");
 const log = @import("engine-core").log;
 const gen_interface = @import("generator_interface.zig");
 const Generator = gen_interface.Generator;
+const GeneratorDescriptor = gen_interface.GeneratorDescriptor;
 const overworld = @import("worldgen-overworld");
 const overworld_v2 = @import("worldgen-overworld-v2");
 const flat_world = @import("worldgen-flat");
@@ -14,55 +15,12 @@ pub const RegistryError = error{
     OutOfMemory,
 };
 
-pub const GeneratorType = struct {
-    id: []const u8,
-    aliases: []const []const u8 = &.{},
-    info: gen_interface.GeneratorInfo,
-    initFn: *const fn (seed: u64, allocator: std.mem.Allocator) RegistryError!Generator,
+pub const DESCRIPTORS = [_]*const GeneratorDescriptor{
+    &overworld.descriptor,
+    &flat_world.descriptor,
+    &shadow_test_world.descriptor,
+    &overworld_v2.descriptor,
 };
-
-pub const GENERATORS = [_]GeneratorType{
-    .{
-        .id = overworld.descriptor.id,
-        .aliases = overworld.descriptor.aliases,
-        .info = overworld.descriptor.info,
-        .initFn = initOverworld,
-    },
-    .{
-        .id = flat_world.descriptor.id,
-        .aliases = flat_world.descriptor.aliases,
-        .info = flat_world.descriptor.info,
-        .initFn = initFlatWorld,
-    },
-    .{
-        .id = shadow_test_world.descriptor.id,
-        .aliases = shadow_test_world.descriptor.aliases,
-        .info = shadow_test_world.descriptor.info,
-        .initFn = initShadowTestWorld,
-    },
-    .{
-        .id = overworld_v2.descriptor.id,
-        .aliases = overworld_v2.descriptor.aliases,
-        .info = overworld_v2.descriptor.info,
-        .initFn = initOverworldV2,
-    },
-};
-
-fn initOverworld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
-    return overworld.descriptor.create(.{ .seed = seed, .allocator = allocator }) catch |err| return mapApiError(err);
-}
-
-fn initFlatWorld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
-    return flat_world.descriptor.create(.{ .seed = seed, .allocator = allocator }) catch |err| return mapApiError(err);
-}
-
-fn initShadowTestWorld(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
-    return shadow_test_world.descriptor.create(.{ .seed = seed, .allocator = allocator }) catch |err| return mapApiError(err);
-}
-
-fn initOverworldV2(seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
-    return overworld_v2.descriptor.create(.{ .seed = seed, .allocator = allocator }) catch |err| return mapApiError(err);
-}
 
 fn mapApiError(err: worldgen_api.RegistryError) RegistryError {
     return switch (err) {
@@ -73,23 +31,23 @@ fn mapApiError(err: worldgen_api.RegistryError) RegistryError {
 }
 
 pub fn getGeneratorCount() usize {
-    return GENERATORS.len;
+    return DESCRIPTORS.len;
 }
 
 pub fn getGeneratorInfo(index: usize) gen_interface.GeneratorInfo {
-    std.debug.assert(index < GENERATORS.len);
-    return GENERATORS[index].info;
+    std.debug.assert(index < DESCRIPTORS.len);
+    return DESCRIPTORS[index].info;
 }
 
 pub fn getGeneratorId(index: usize) []const u8 {
-    std.debug.assert(index < GENERATORS.len);
-    return GENERATORS[index].id;
+    std.debug.assert(index < DESCRIPTORS.len);
+    return DESCRIPTORS[index].id;
 }
 
 pub fn findGeneratorIndex(id_or_alias: []const u8) ?usize {
-    for (GENERATORS, 0..) |generator_type, index| {
-        if (std.ascii.eqlIgnoreCase(id_or_alias, generator_type.id)) return index;
-        for (generator_type.aliases) |alias| {
+    for (DESCRIPTORS, 0..) |descriptor, index| {
+        if (std.ascii.eqlIgnoreCase(id_or_alias, descriptor.id)) return index;
+        for (descriptor.aliases) |alias| {
             if (std.ascii.eqlIgnoreCase(id_or_alias, alias)) return index;
         }
     }
@@ -97,8 +55,9 @@ pub fn findGeneratorIndex(id_or_alias: []const u8) ?usize {
 }
 
 pub fn createGenerator(index: usize, seed: u64, allocator: std.mem.Allocator) RegistryError!Generator {
-    if (index >= GENERATORS.len) return error.InvalidGeneratorIndex;
-    return GENERATORS[index].initFn(seed, allocator) catch |err| {
+    if (index >= DESCRIPTORS.len) return error.InvalidGeneratorIndex;
+    return DESCRIPTORS[index].create(.{ .seed = seed, .allocator = allocator }) catch |api_err| {
+        const err = mapApiError(api_err);
         log.log.err("Generator initialization failed for index {}: {}", .{ index, err });
         return err;
     };
