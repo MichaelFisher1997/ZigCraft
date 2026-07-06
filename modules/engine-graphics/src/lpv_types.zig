@@ -12,10 +12,7 @@ pub const DEFAULT_CENTER_RETENTION: f32 = 0.82;
 pub const INJECT_SHADER_PATH = "assets/shaders/vulkan/lpv_inject.comp.spv";
 pub const PROPAGATE_SHADER_PATH = "assets/shaders/vulkan/lpv_propagate.comp.spv";
 
-pub const GpuLight = extern struct {
-    pos_radius: [4]f32,
-    color: [4]f32,
-};
+pub const GpuLight = rhi_pkg.GpuLight;
 
 pub const InjectPush = extern struct {
     grid_origin: [4]f32,

@@ -68,6 +68,7 @@ pub const RHI = rhi.RHI;
 pub const IWorldRenderView = world_contracts.IWorldRenderView;
 pub const IShadowScene = world_contracts.IShadowScene;
 pub const ILPVWorld = world_contracts.ILPVWorld;
+pub const GpuLight = world_contracts.GpuLight;
 pub const Texture = texture.Texture;
 pub const Config = texture.Config;
 pub const RenderDistancePreset = render_settings.RenderDistancePreset;

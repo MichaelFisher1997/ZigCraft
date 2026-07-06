@@ -5,7 +5,7 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const block_registry = world_core.block_registry;
 const ChunkStorage = @import("world-meshing").ChunkStorage;
 const Vec3 = @import("engine-math").Vec3;
-const GpuLight = @import("engine-lighting").GpuLight;
+const GpuLight = @import("engine-rhi").GpuLight;
 const ILPVWorld = @import("engine-rhi").ILPVWorld;
 
 pub const LpvGridBuilder = struct {

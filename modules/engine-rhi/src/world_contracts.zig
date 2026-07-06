@@ -1,7 +1,11 @@
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 const ShadowConfig = @import("rhi_types.zig").ShadowConfig;
-const GpuLight = @import("engine-lighting").GpuLight;
+
+pub const GpuLight = extern struct {
+    pos_radius: [4]f32,
+    color: [4]f32,
+};
 
 pub const IShadowScene = struct {
     ptr: *anyopaque,
