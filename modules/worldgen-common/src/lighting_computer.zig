@@ -9,7 +9,7 @@ const packEntranceDir = world_core.packEntranceDir;
 const block_registry = world_core.block_registry;
 const ILightingSystem = @import("lighting_interface.zig").ILightingSystem;
 
-var interface_token: u8 = 0;
+const interface_token: u8 = 0;
 
 pub const LightingComputer = struct {
     const LightNode = struct {
@@ -50,6 +50,8 @@ pub const LightingComputer = struct {
     const ENTRANCE_PORTAL_PROBE_STEPS = 3;
 
     pub fn interface() ILightingSystem {
+        // LightingComputer is stateless; the interface pointer is a stable token
+        // used only to satisfy the shared interface shape.
         return .{ .ptr = &interface_token, .vtable = &INTERFACE_VTABLE };
     }
 

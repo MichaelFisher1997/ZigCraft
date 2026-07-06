@@ -410,20 +410,18 @@ fn nopProcess(ctx: *anyopaque) void {
     _ = ctx;
 }
 
-var cleanup_count: usize = 0;
-
 fn countingCleanup(ctx: *anyopaque) void {
-    _ = ctx;
-    cleanup_count += 1;
+    const count: *usize = @ptrCast(@alignCast(ctx));
+    count.* += 1;
 }
 
-fn makeGenericJob() Job {
+fn makeGenericJob(cleanup_count: *usize) Job {
     return Job{
         .type = .generic,
         .priority = 0,
         .data = .{
             .generic = .{
-                .context = undefined,
+                .context = cleanup_count,
                 .process_fn = nopProcess,
                 .cleanup_fn = countingCleanup,
             },
@@ -451,21 +449,21 @@ fn testWorkerProcess(ctx: *anyopaque, job: Job) void {
 }
 
 test "Job.cleanup calls cleanup_fn for generic jobs" {
-    cleanup_count = 0;
-    var job = makeGenericJob();
+    var cleanup_count: usize = 0;
+    var job = makeGenericJob(&cleanup_count);
     job.cleanup();
     try testing.expectEqual(@as(usize, 1), cleanup_count);
 }
 
 test "Job.cleanup is no-op for generic jobs without cleanup_fn" {
-    cleanup_count = 0;
+    const cleanup_count: usize = 0;
     var job = makeGenericJobNoCleanup();
     job.cleanup();
     try testing.expectEqual(@as(usize, 0), cleanup_count);
 }
 
 test "Job.cleanup is no-op for chunk jobs" {
-    cleanup_count = 0;
+    const cleanup_count: usize = 0;
     var job = Job{
         .type = .chunk_generation,
         .dist_sq = 0,
@@ -480,8 +478,8 @@ test "Job.cleanup nullifies cleanup_fn to prevent double-cleanup" {
     // cleanup() runs, cleanup_fn must be cleared so any subsequent call
     // (e.g. if the same Job value is later re-added and the queue is
     // drained) is a no-op rather than a double-free.
-    cleanup_count = 0;
-    var job = makeGenericJob();
+    var cleanup_count: usize = 0;
+    var job = makeGenericJob(&cleanup_count);
     job.cleanup();
     try testing.expectEqual(@as(usize, 1), cleanup_count);
     try testing.expect(job.data.generic.cleanup_fn == null);
@@ -496,8 +494,8 @@ test "Job.cleanup idempotency survives queue drain after OOM-style drop" {
     // value is later re-added to a queue that is drained via stop(). With
     // the fix, cleanup_fn is null after the first cleanup, so the queue
     // drain must not trigger a second invocation.
-    cleanup_count = 0;
-    var job = makeGenericJob();
+    var cleanup_count: usize = 0;
+    var job = makeGenericJob(&cleanup_count);
 
     // Emulate the doReprioritize OOM drop: cleanup is invoked on the job
     // that failed to be re-added.
@@ -540,55 +538,55 @@ test "JobQueue reprioritizes region-scaled chunk jobs" {
 }
 
 test "JobQueue.clear calls cleanup on generic jobs" {
-    cleanup_count = 0;
+    var cleanup_count: usize = 0;
     var queue = JobQueue.init(testing.allocator);
     defer queue.deinit();
 
-    queue.push(makeGenericJob()) catch unreachable;
-    queue.push(makeGenericJob()) catch unreachable;
-    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
 
     queue.clear();
     try testing.expectEqual(@as(usize, 3), cleanup_count);
 }
 
 test "JobQueue.stop calls cleanup on generic jobs" {
-    cleanup_count = 0;
+    var cleanup_count: usize = 0;
     var queue = JobQueue.init(testing.allocator);
     defer queue.deinit();
 
-    queue.push(makeGenericJob()) catch unreachable;
-    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
 
     queue.stop();
     try testing.expectEqual(@as(usize, 2), cleanup_count);
 }
 
 test "JobQueue.setPaused true calls cleanup on generic jobs" {
-    cleanup_count = 0;
+    var cleanup_count: usize = 0;
     var queue = JobQueue.init(testing.allocator);
     defer queue.deinit();
 
-    queue.push(makeGenericJob()) catch unreachable;
-    queue.push(makeGenericJob()) catch unreachable;
-    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
 
     queue.setPaused(true);
     try testing.expectEqual(@as(usize, 3), cleanup_count);
 }
 
 test "JobQueue.clear with mixed job types" {
-    cleanup_count = 0;
+    var cleanup_count: usize = 0;
     var queue = JobQueue.init(testing.allocator);
     defer queue.deinit();
 
-    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
     queue.push(Job{
         .type = .chunk_meshing,
         .dist_sq = 0,
         .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 1 } },
     }) catch unreachable;
-    queue.push(makeGenericJob()) catch unreachable;
+    queue.push(makeGenericJob(&cleanup_count)) catch unreachable;
 
     queue.clear();
     try testing.expectEqual(@as(usize, 2), cleanup_count);
