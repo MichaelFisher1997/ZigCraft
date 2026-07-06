@@ -3,6 +3,7 @@
 const std = @import("std");
 const Vec3 = @import("engine-math").Vec3;
 const World = @import("world-runtime").World;
+const IWorldSimulation = @import("world-runtime").IWorldSimulation;
 const WorldMap = @import("world-worldgen").WorldMap;
 const MapController = @import("map_controller.zig").MapController;
 const Player = @import("player.zig").Player;
@@ -183,8 +184,9 @@ pub const GameSession = struct {
         var ecs_render_system = try ECSRenderSystem.init(rhi.resourceManager());
         errdefer ecs_render_system.deinit();
 
-        const seed_spawn = findSpawnColumn(world, build_config, 8, 8);
-        const spawn = findActualSpawnColumn(world, seed_spawn.x, seed_spawn.z) orelse seed_spawn;
+        const world_sim = world.interface().simulation();
+        const seed_spawn = findSpawnColumn(world_sim, build_config, 8, 8);
+        const spawn = findActualSpawnColumn(world_sim, seed_spawn.x, seed_spawn.z) orelse seed_spawn;
         const spawn_y: f32 = @floatFromInt(spawn.info.height + 16);
         var player = Player.init(Vec3.init(@floatFromInt(spawn.x), spawn_y, @floatFromInt(spawn.z)), true);
         // Aim toward the terrain so the first frame shows the ground.
@@ -297,8 +299,8 @@ pub const GameSession = struct {
                 if (self.map_controller.show_map) {
                     // map open – skip player/world update
                 } else if (!skip_world) {
+                    const world_sim = self.world.interface().simulation();
                     if (!self.inventory_ui_state.visible) {
-                        const world_sim = self.world.interface().simulation();
                         self.player.update(input, mapper, world_sim, dt, total_time);
 
                         // Handle interaction
@@ -316,16 +318,18 @@ pub const GameSession = struct {
 
                     self.hand_renderer.update(dt);
                     try self.hand_renderer.updateMesh(self.inventory, atlas);
-                } else if (!self.world.interface().simulation().isPaused()) {
-                    self.world.interface().simulation().pauseGeneration();
+                } else {
+                    const world_sim = self.world.interface().simulation();
+                    if (!world_sim.isPaused()) world_sim.pauseGeneration();
                 }
             }
 
             if (!skip_world) {
-                try self.world.interface().simulation().update(self.player.camera.position, dt);
+                const world_sim = self.world.interface().simulation();
+                try world_sim.update(self.player.camera.position, dt);
 
                 // ECS Updates
-                ECSPhysicsSystem.update(&self.ecs_registry, self.world.collisionWorld(), dt);
+                ECSPhysicsSystem.update(&self.ecs_registry, world_sim.collisionWorld(), dt);
             }
         }
     }
@@ -350,7 +354,7 @@ fn chunkDebugRestoreEnabled(build_config: BuildConfig, name: []const u8) bool {
     return false;
 }
 
-fn findSpawnColumn(world: *World, build_config: BuildConfig, default_x: i32, default_z: i32) SpawnColumn {
+fn findSpawnColumn(world: IWorldSimulation, build_config: BuildConfig, default_x: i32, default_z: i32) SpawnColumn {
     const sea_level = 64;
     const default_info = world.getColumnInfo(default_x, default_z);
     const needs_dry_spawn = build_config.chunk_debug_mode and (chunkDebugRestoreEnabled(build_config, "water") or chunkDebugRestoreEnabled(build_config, "watergen") or chunkDebugRestoreEnabled(build_config, "waterrender"));
@@ -380,7 +384,7 @@ fn findSpawnColumn(world: *World, build_config: BuildConfig, default_x: i32, def
     return .{ .x = default_x, .z = default_z, .info = default_info };
 }
 
-fn findActualSpawnColumn(world: *World, default_x: i32, default_z: i32) ?SpawnColumn {
+fn findActualSpawnColumn(world: IWorldSimulation, default_x: i32, default_z: i32) ?SpawnColumn {
     var radius: i32 = 0;
     while (radius <= 64) : (radius += 1) {
         var dz: i32 = -radius;
@@ -405,7 +409,7 @@ fn findActualSpawnColumn(world: *World, default_x: i32, default_z: i32) ?SpawnCo
     return null;
 }
 
-fn isActualSpawnAreaStable(world: *World, spawn_x: i32, spawn_z: i32, center_y: i32) bool {
+fn isActualSpawnAreaStable(world: IWorldSimulation, spawn_x: i32, spawn_z: i32, center_y: i32) bool {
     const patch_radius = 4;
     const step = 2;
     const max_height_delta = 4;
@@ -421,7 +425,7 @@ fn isActualSpawnAreaStable(world: *World, spawn_x: i32, spawn_z: i32, center_y: 
     return true;
 }
 
-fn findActualSurfaceY(world: *World, x: i32, z: i32) ?i32 {
+fn findActualSurfaceY(world: IWorldSimulation, x: i32, z: i32) ?i32 {
     var y: i32 = 255;
     while (y >= 0) : (y -= 1) {
         const block = world.getBlock(x, y, z);
@@ -459,13 +463,13 @@ fn findActualSurfaceY(world: *World, x: i32, z: i32) ?i32 {
     return null;
 }
 
-fn isSpawnPatchStable(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("world-worldgen").ColumnInfo, sea_level: i32) bool {
+fn isSpawnPatchStable(world: IWorldSimulation, spawn_x: i32, spawn_z: i32, center_info: @import("world-worldgen").ColumnInfo, sea_level: i32) bool {
     if (!checkSpawnArea(world, spawn_x, spawn_z, center_info, sea_level, 1, 1, 2)) return false;
     if (!checkSpawnArea(world, spawn_x, spawn_z, center_info, sea_level, 8, 4, 8)) return false;
     return true;
 }
 
-fn checkSpawnArea(world: *World, spawn_x: i32, spawn_z: i32, center_info: @import("world-worldgen").ColumnInfo, sea_level: i32, radius: i32, step: i32, max_height_delta: i32) bool {
+fn checkSpawnArea(world: IWorldSimulation, spawn_x: i32, spawn_z: i32, center_info: @import("world-worldgen").ColumnInfo, sea_level: i32, radius: i32, step: i32, max_height_delta: i32) bool {
     var dz: i32 = -radius;
     while (dz <= radius) : (dz += step) {
         var dx: i32 = -radius;

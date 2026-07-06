@@ -26,7 +26,6 @@ const WorldStats = @import("engine-ui").WorldStats;
 const LODStatsDisplay = @import("engine-ui").LODStatsDisplay;
 const log = @import("engine-core").log;
 const CSM = @import("engine-graphics").csm;
-const WorldRenderer = @import("world-runtime").WorldRenderer;
 const settings_data = @import("game-core").settings.data;
 const world_debug = @import("world_debug.zig");
 const world_frame_params = @import("world_frame_params.zig");
@@ -243,10 +242,11 @@ pub const WorldScreen = struct {
         const delay_s: f32 = @floatFromInt(self.context.build_config.startup_diagnostic_seconds);
         if (now - self.startup_diagnostic_start < delay_s) return;
 
-        const stats = self.session.world.getStats();
-        const render_stats = self.session.world.getRenderStats();
-        const state_counts = self.session.world.getChunkStateCounts();
-        const lod_stats = self.session.world.getLODStats();
+        const world_telemetry = self.world.telemetry();
+        const stats = world_telemetry.getStats();
+        const render_stats = world_telemetry.getRenderStats();
+        const state_counts = world_telemetry.getChunkStateCounts();
+        const lod_stats = world_telemetry.getLODStats();
         const lod_radii = self.session.lod_config.radii;
         const elapsed = now - self.startup_diagnostic_start;
         const frames_elapsed = self.context.time.frame_count - self.startup_diagnostic_start_frame;
@@ -255,12 +255,12 @@ pub const WorldScreen = struct {
         log.log.warn(
             "STARTUP_DIAG: generator='{s}' elapsed={d:.2}s fps={d:.1} avg_fps={d:.1} frames={} rd={} lod0={} chunks_loaded={} chunks_total={} chunks_rendered={} chunks_culled={} gen_queue={} mesh_queue={} upload_queue={} lod_loaded={}",
             .{
-                self.session.world.generator.info.name,
+                world_telemetry.getGeneratorName(),
                 elapsed,
                 self.context.time.fps,
                 avg_fps,
                 frames_elapsed,
-                self.session.world.render_distance,
+                world_telemetry.getRenderDistance(),
                 lod_radii[0],
                 stats.chunks_loaded,
                 render_stats.chunks_total,
@@ -321,7 +321,9 @@ pub const WorldScreen = struct {
         const screen_w: f32 = @floatFromInt(ctx.input.getWindowWidth());
         const screen_h: f32 = @floatFromInt(ctx.input.getWindowHeight());
         const safe_mode = render_system.getSafeMode();
-        const startup_busy = self.session.world.isStartupBusy();
+        const world_telemetry = self.world.telemetry();
+        const world_render_view = self.world.renderView();
+        const startup_busy = world_telemetry.isStartupBusy();
         const startup_loading = ctx.build_config.auto_world.len > 0 and startup_busy;
         const startup_light_render = startup_loading and !safe_mode;
         const shadow_sandbox_active = ctx.settings.shadow_sandbox_enabled and !render_system.getDisableShadowDraw() and !startup_light_render;
@@ -347,7 +349,7 @@ pub const WorldScreen = struct {
         );
         if (!safe_mode and !startup_light_render) {
             rhi.timing().beginPassTiming("LPVPass");
-            try lpv_system.update(self.session.world.lpvWorld(), camera.position, ctx.settings.debug_lpv_overlay_active);
+            try lpv_system.update(world_render_view.lpvWorld(), camera.position, ctx.settings.debug_lpv_overlay_active);
             rhi.timing().endPassTiming("LPVPass");
         }
 
@@ -403,13 +405,14 @@ pub const WorldScreen = struct {
             const render_w = screen_w * resolution_scale;
             const render_h = screen_h * resolution_scale;
 
+            const gpu_mesh_dispatch = world_render_view.getGpuMeshDispatch();
             const render_ctx = render_graph_pkg.SceneContext{
                 .render_ctx = rhi.renderContext(),
                 .shadow_ctx = rhi.shadowSystem(),
                 .water_ctx = rhi.waterSystem(),
                 .ssao_ctx = rhi.ssao(),
                 .timing = rhi.timing(),
-                .world = self.session.world.renderView(),
+                .world = world_render_view.graphicsRenderView(),
                 .shadow_scene = self.world.shadowScene(),
                 .camera = camera,
                 .atmosphere_system = render_system.getAtmosphereSystem(),
@@ -431,8 +434,8 @@ pub const WorldScreen = struct {
                 .overlay_ctx = if (clean_capture) null else self,
                 .cached_cascades = &frame_cascades,
                 .lpv_textures = render_graph_pkg.LPVTextureHandles.fromSystem(lpv_system),
-                .gpu_mesh_dispatch_fn = if (self.session.world.renderer.getGpuMesher() != null) WorldRenderer.processGpuMeshing else null,
-                .gpu_mesh_dispatch_ctx = @ptrCast(self.session.world.renderer),
+                .gpu_mesh_dispatch_fn = gpu_mesh_dispatch.dispatch_fn,
+                .gpu_mesh_dispatch_ctx = gpu_mesh_dispatch.dispatch_ctx,
                 .cloud_system = render_system.getCloudSystem(),
             };
             try render_system.getRenderGraph().execute(render_ctx);
@@ -549,8 +552,8 @@ pub const WorldScreen = struct {
         }
 
         if (self.chunk_inspector_overlay.enabled) {
-            const world_state = self.session.world.getWorldStateData();
-            const render_stats = self.session.world.getRenderStats();
+            const world_state = world_telemetry.getWorldStateData();
+            const render_stats = world_telemetry.getRenderStats();
             self.chunk_inspector_overlay.draw(
                 ui,
                 .{
@@ -559,7 +562,7 @@ pub const WorldScreen = struct {
                     .chunks_culled = render_stats.chunks_culled,
                     .vertices_rendered = render_stats.vertices_rendered,
                 },
-                self.session.world.getChunkStateCounts(),
+                world_telemetry.getChunkStateCounts(),
                 world_state,
             );
         }
@@ -567,6 +570,7 @@ pub const WorldScreen = struct {
         if (self.debug_ui.menuEnabled()) {
             const debug_state = world_debug.ScreenDebugState{
                 .session = self.session,
+                .world_telemetry = world_telemetry,
                 .last_debug_toggle_time = &self.last_debug_toggle_time,
                 .chunk_inspector_overlay = &self.chunk_inspector_overlay,
             };
@@ -593,7 +597,7 @@ pub const WorldScreen = struct {
     }
 
     pub fn getWorldStats(self: *WorldScreen) ?WorldStats {
-        const ws = self.world;
+        const ws = self.world.telemetry();
         const rs = ws.getRenderStats();
         const stats = ws.getStats();
         var lod_display: ?LODStatsDisplay = null;
@@ -761,7 +765,7 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.block_light_debug)] = ctx.settings.debug_block_light_active;
         states[@intFromEnum(DebugFeature.outdoor_factor_debug)] = ctx.settings.debug_outdoor_factor_active;
         states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
-        states[@intFromEnum(DebugFeature.lod_render)] = self.session.world.lod_enabled;
+        states[@intFromEnum(DebugFeature.lod_render)] = self.world.telemetry().isLODRenderingEnabled();
         states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
         states[@intFromEnum(DebugFeature.ssao)] = !render_system.getDisableSSAO();
         states[@intFromEnum(DebugFeature.fog)] = self.session.atmosphere.fog_enabled;
@@ -898,10 +902,11 @@ pub const WorldScreen = struct {
                 rhi.timing().setTimingEnabled(ctx.ui_manager.timing_overlay.enabled);
             },
             .lod_render => {
-                if (self.session.world.lod == null) {
+                const telemetry = self.world.telemetry();
+                if (!telemetry.isLODEnabled()) {
                     log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
                 } else {
-                    self.session.world.lod_enabled = !self.session.world.lod_enabled;
+                    _ = telemetry.toggleLODRendering();
                 }
             },
             .gpass_render => {

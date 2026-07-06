@@ -7,9 +7,14 @@ const IChunkStorage = @import("world-meshing").IChunkStorage;
 const ChunkStorage = @import("world-meshing").ChunkStorage;
 const ChunkData = @import("world-meshing").ChunkData;
 const IWorld = @import("world-runtime").IWorld;
+const GpuMeshDispatch = @import("world-runtime").GpuMeshDispatch;
 const WorldStatsData = @import("world-runtime").WorldStatsData;
 const RenderStats = @import("world-runtime").RenderStats;
+const BlockType = @import("world-core").BlockType;
+const VoxelCollisionWorld = @import("engine-physics").VoxelCollisionWorld;
 const shadow_scene = @import("engine-shadows").shadow_scene;
+const ILPVWorld = @import("engine-rhi").ILPVWorld;
+const GraphicsWorldRenderView = @import("engine-rhi").IWorldRenderView;
 const ShadowConfig = @import("engine-rhi").ShadowConfig;
 const Settings = @import("game-core").settings.data.Settings;
 const settings_apply = @import("game-core").settings.apply_logic;
@@ -234,6 +239,29 @@ const MockWorld = struct {
         .getLODStats = getLODStats,
         .isLODEnabled = isLODEnabled,
         .shadowScene = shadowScene,
+        .enableSaveManager = enableSaveManager,
+        .pauseGeneration = pauseGeneration,
+        .isPaused = isPaused,
+        .collisionWorld = collisionWorld,
+        .getBlock = getBlock,
+        .setBlock = setBlock,
+        .getColumnInfo = getColumnInfo,
+        .getDebugLightInfo = getDebugLightInfo,
+        .getRegionInfo = getRegionInfo,
+        .getGenerator = getGenerator,
+        .getGeneratorName = getGeneratorName,
+        .getRenderDistance = getRenderDistance,
+        .setRenderDistance = setRenderDistance,
+        .getHorizonDistance = getHorizonDistance,
+        .setHorizonDistance = setHorizonDistance,
+        .isLODRenderingEnabled = isLODRenderingEnabled,
+        .toggleLODRendering = toggleLODRendering,
+        .getChunkStateCounts = getChunkStateCounts,
+        .isStartupBusy = isStartupBusy,
+        .getWorldStateData = getWorldStateData,
+        .lpvWorld = lpvWorld,
+        .graphicsRenderView = graphicsRenderView,
+        .getGpuMeshDispatch = getGpuMeshDispatch,
     };
 
     const SHADOW_VTABLE = shadow_scene.IShadowScene.VTable{
@@ -304,6 +332,134 @@ const MockWorld = struct {
         _ = shadow_config;
         const self: *MockWorld = @ptrCast(@alignCast(ptr));
         self.shadow_pass_calls += 1;
+    }
+
+    fn enableSaveManager(ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void {
+        _ = ptr;
+        _ = save_dir_path;
+        _ = world_name;
+    }
+
+    fn pauseGeneration(ptr: *anyopaque) void {
+        _ = ptr;
+    }
+
+    fn isPaused(ptr: *anyopaque) bool {
+        _ = ptr;
+        return false;
+    }
+
+    fn collisionWorld(ptr: *anyopaque) VoxelCollisionWorld {
+        _ = ptr;
+        return undefined;
+    }
+
+    fn getBlock(ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32) BlockType {
+        _ = ptr;
+        _ = world_x;
+        _ = world_y;
+        _ = world_z;
+        return .air;
+    }
+
+    fn setBlock(ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32, block: BlockType) anyerror!void {
+        _ = ptr;
+        _ = world_x;
+        _ = world_y;
+        _ = world_z;
+        _ = block;
+    }
+
+    fn getColumnInfo(ptr: *anyopaque, world_x: i32, world_z: i32) @import("world-worldgen").ColumnInfo {
+        _ = ptr;
+        _ = world_x;
+        _ = world_z;
+        return undefined;
+    }
+
+    fn getDebugLightInfo(ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32) ?@import("world-runtime").DebugLightInfo {
+        _ = ptr;
+        _ = world_x;
+        _ = world_y;
+        _ = world_z;
+        return null;
+    }
+
+    fn getRegionInfo(ptr: *anyopaque, world_x: i32, world_z: i32) @import("world-worldgen").RegionInfo {
+        _ = ptr;
+        _ = world_x;
+        _ = world_z;
+        return undefined;
+    }
+
+    fn getGenerator(ptr: *anyopaque) @import("world-worldgen").Generator {
+        _ = ptr;
+        return undefined;
+    }
+
+    fn getGeneratorName(ptr: *anyopaque) []const u8 {
+        _ = ptr;
+        return "mock";
+    }
+
+    fn getRenderDistance(ptr: *anyopaque) i32 {
+        _ = ptr;
+        return 0;
+    }
+
+    fn setRenderDistance(ptr: *anyopaque, distance: i32) void {
+        _ = ptr;
+        _ = distance;
+    }
+
+    fn getHorizonDistance(ptr: *anyopaque) i32 {
+        _ = ptr;
+        return 0;
+    }
+
+    fn setHorizonDistance(ptr: *anyopaque, distance: i32) void {
+        _ = ptr;
+        _ = distance;
+    }
+
+    fn isLODRenderingEnabled(ptr: *anyopaque) bool {
+        const self: *MockWorld = @ptrCast(@alignCast(ptr));
+        return self.lod_enabled;
+    }
+
+    fn toggleLODRendering(ptr: *anyopaque) bool {
+        const self: *MockWorld = @ptrCast(@alignCast(ptr));
+        self.lod_enabled = !self.lod_enabled;
+        return self.lod_enabled;
+    }
+
+    fn getChunkStateCounts(ptr: *anyopaque) @import("engine-ui").chunk_inspector_overlay.ChunkStateCounts {
+        _ = ptr;
+        return .{};
+    }
+
+    fn isStartupBusy(ptr: *anyopaque) bool {
+        _ = ptr;
+        return false;
+    }
+
+    fn getWorldStateData(ptr: *anyopaque) @import("engine-ui").chunk_inspector_overlay.WorldStateData {
+        _ = ptr;
+        return .{ .generator_name = "mock", .seed = 0, .gen_queue = 0, .mesh_queue = 0, .upload_queue = 0 };
+    }
+
+    fn lpvWorld(ptr: *anyopaque) ILPVWorld {
+        _ = ptr;
+        return undefined;
+    }
+
+    fn graphicsRenderView(ptr: *anyopaque) GraphicsWorldRenderView {
+        return .{ .ptr = ptr, .vtable = &.{ .render = render, .renderOpaque = renderOpaque, .renderFluid = renderFluid } };
+    }
+
+    fn getGpuMeshDispatch(ptr: *anyopaque) GpuMeshDispatch {
+        _ = ptr;
+        return .{ .dispatch_fn = null, .dispatch_ctx = null };
     }
 };
 

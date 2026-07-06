@@ -52,6 +52,10 @@ pub const DebugLightInfo = struct {
     entrance_bounce: u4,
 };
 const WorldStateData = @import("engine-ui").chunk_inspector_overlay.WorldStateData;
+pub const GpuMeshDispatch = struct {
+    dispatch_fn: ?*const fn (ctx: *anyopaque) void,
+    dispatch_ctx: ?*anyopaque,
+};
 const engine_core = @import("engine-core");
 const JobQueue = engine_core.JobQueue;
 const WorkerPool = engine_core.WorkerPool;
@@ -108,6 +112,29 @@ pub const IWorld = struct {
         getLODStats: *const fn (ptr: *anyopaque) ?@import("world-lod").LODStats,
         isLODEnabled: *const fn (ptr: *anyopaque) bool,
         shadowScene: *const fn (ptr: *anyopaque) IShadowScene,
+        enableSaveManager: *const fn (ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void,
+        pauseGeneration: *const fn (ptr: *anyopaque) void,
+        isPaused: *const fn (ptr: *anyopaque) bool,
+        collisionWorld: *const fn (ptr: *anyopaque) VoxelCollisionWorld,
+        getBlock: *const fn (ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32) BlockType,
+        setBlock: *const fn (ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32, block: BlockType) anyerror!void,
+        getColumnInfo: *const fn (ptr: *anyopaque, world_x: i32, world_z: i32) gen_interface.ColumnInfo,
+        getDebugLightInfo: *const fn (ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo,
+        getRegionInfo: *const fn (ptr: *anyopaque, world_x: i32, world_z: i32) gen_interface.RegionInfo,
+        getGenerator: *const fn (ptr: *anyopaque) Generator,
+        getGeneratorName: *const fn (ptr: *anyopaque) []const u8,
+        getRenderDistance: *const fn (ptr: *anyopaque) i32,
+        setRenderDistance: *const fn (ptr: *anyopaque, distance: i32) void,
+        getHorizonDistance: *const fn (ptr: *anyopaque) i32,
+        setHorizonDistance: *const fn (ptr: *anyopaque, distance: i32) void,
+        isLODRenderingEnabled: *const fn (ptr: *anyopaque) bool,
+        toggleLODRendering: *const fn (ptr: *anyopaque) bool,
+        getChunkStateCounts: *const fn (ptr: *anyopaque) ChunkStateCounts,
+        isStartupBusy: *const fn (ptr: *anyopaque) bool,
+        getWorldStateData: *const fn (ptr: *anyopaque) WorldStateData,
+        lpvWorld: *const fn (ptr: *anyopaque) ILPVWorld,
+        graphicsRenderView: *const fn (ptr: *anyopaque) GraphicsWorldRenderView,
+        getGpuMeshDispatch: *const fn (ptr: *anyopaque) GpuMeshDispatch,
     };
 
     pub fn update(self: IWorld, player_pos: Vec3, dt: f32) !void {
@@ -150,6 +177,98 @@ pub const IWorld = struct {
         return self.vtable.shadowScene(self.ptr);
     }
 
+    pub fn enableSaveManager(self: IWorld, save_dir_path: []const u8, world_name: []const u8) !void {
+        try self.vtable.enableSaveManager(self.ptr, save_dir_path, world_name);
+    }
+
+    pub fn pauseGeneration(self: IWorld) void {
+        self.vtable.pauseGeneration(self.ptr);
+    }
+
+    pub fn isPaused(self: IWorld) bool {
+        return self.vtable.isPaused(self.ptr);
+    }
+
+    pub fn collisionWorld(self: IWorld) VoxelCollisionWorld {
+        return self.vtable.collisionWorld(self.ptr);
+    }
+
+    pub fn getBlock(self: IWorld, world_x: i32, world_y: i32, world_z: i32) BlockType {
+        return self.vtable.getBlock(self.ptr, world_x, world_y, world_z);
+    }
+
+    pub fn setBlock(self: IWorld, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
+        try self.vtable.setBlock(self.ptr, world_x, world_y, world_z, block);
+    }
+
+    pub fn getColumnInfo(self: IWorld, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
+        return self.vtable.getColumnInfo(self.ptr, world_x, world_z);
+    }
+
+    pub fn getDebugLightInfo(self: IWorld, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
+        return self.vtable.getDebugLightInfo(self.ptr, world_x, world_y, world_z);
+    }
+
+    pub fn getRegionInfo(self: IWorld, world_x: i32, world_z: i32) gen_interface.RegionInfo {
+        return self.vtable.getRegionInfo(self.ptr, world_x, world_z);
+    }
+
+    pub fn getGenerator(self: IWorld) Generator {
+        return self.vtable.getGenerator(self.ptr);
+    }
+
+    pub fn getGeneratorName(self: IWorld) []const u8 {
+        return self.vtable.getGeneratorName(self.ptr);
+    }
+
+    pub fn getRenderDistance(self: IWorld) i32 {
+        return self.vtable.getRenderDistance(self.ptr);
+    }
+
+    pub fn setRenderDistance(self: IWorld, distance: i32) void {
+        self.vtable.setRenderDistance(self.ptr, distance);
+    }
+
+    pub fn getHorizonDistance(self: IWorld) i32 {
+        return self.vtable.getHorizonDistance(self.ptr);
+    }
+
+    pub fn setHorizonDistance(self: IWorld, distance: i32) void {
+        self.vtable.setHorizonDistance(self.ptr, distance);
+    }
+
+    pub fn isLODRenderingEnabled(self: IWorld) bool {
+        return self.vtable.isLODRenderingEnabled(self.ptr);
+    }
+
+    pub fn toggleLODRendering(self: IWorld) bool {
+        return self.vtable.toggleLODRendering(self.ptr);
+    }
+
+    pub fn getChunkStateCounts(self: IWorld) ChunkStateCounts {
+        return self.vtable.getChunkStateCounts(self.ptr);
+    }
+
+    pub fn isStartupBusy(self: IWorld) bool {
+        return self.vtable.isStartupBusy(self.ptr);
+    }
+
+    pub fn getWorldStateData(self: IWorld) WorldStateData {
+        return self.vtable.getWorldStateData(self.ptr);
+    }
+
+    pub fn lpvWorld(self: IWorld) ILPVWorld {
+        return self.vtable.lpvWorld(self.ptr);
+    }
+
+    pub fn graphicsRenderView(self: IWorld) GraphicsWorldRenderView {
+        return self.vtable.graphicsRenderView(self.ptr);
+    }
+
+    pub fn getGpuMeshDispatch(self: IWorld) GpuMeshDispatch {
+        return self.vtable.getGpuMeshDispatch(self.ptr);
+    }
+
     pub fn simulation(self: IWorld) IWorldSimulation {
         return .{ .world = self };
     }
@@ -175,33 +294,31 @@ pub const IWorldSimulation = struct {
     }
 
     pub fn enableSaveManager(self: IWorldSimulation, save_dir_path: []const u8, world_name: []const u8) !void {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        try world.enableSaveManager(save_dir_path, world_name);
+        try self.world.enableSaveManager(save_dir_path, world_name);
     }
 
     pub fn pauseGeneration(self: IWorldSimulation) void {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        world.pauseGeneration();
+        self.world.pauseGeneration();
     }
 
     pub fn isPaused(self: IWorldSimulation) bool {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        return world.paused;
+        return self.world.isPaused();
     }
 
     pub fn collisionWorld(self: IWorldSimulation) VoxelCollisionWorld {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        return world.collisionWorld();
+        return self.world.collisionWorld();
     }
 
     pub fn getBlock(self: IWorldSimulation, world_x: i32, world_y: i32, world_z: i32) BlockType {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        return world.getBlock(world_x, world_y, world_z);
+        return self.world.getBlock(world_x, world_y, world_z);
     }
 
     pub fn setBlock(self: IWorldSimulation, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        try world.setBlock(world_x, world_y, world_z, block);
+        try self.world.setBlock(world_x, world_y, world_z, block);
+    }
+
+    pub fn getColumnInfo(self: IWorldSimulation, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
+        return self.world.getColumnInfo(world_x, world_z);
     }
 };
 
@@ -222,6 +339,18 @@ pub const IWorldRenderView = struct {
 
     pub fn shadowScene(self: IWorldRenderView) IShadowScene {
         return self.world.shadowScene();
+    }
+
+    pub fn lpvWorld(self: IWorldRenderView) ILPVWorld {
+        return self.world.lpvWorld();
+    }
+
+    pub fn graphicsRenderView(self: IWorldRenderView) GraphicsWorldRenderView {
+        return self.world.graphicsRenderView();
+    }
+
+    pub fn getGpuMeshDispatch(self: IWorldRenderView) GpuMeshDispatch {
+        return self.world.getGpuMeshDispatch();
     }
 };
 
@@ -245,34 +374,59 @@ pub const IWorldTelemetry = struct {
     }
 
     pub fn getRenderDistance(self: IWorldTelemetry) i32 {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        return world.render_distance;
+        return self.world.getRenderDistance();
     }
 
     pub fn setRenderDistance(self: IWorldTelemetry, distance: i32) void {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        world.setRenderDistance(distance);
+        self.world.setRenderDistance(distance);
     }
 
     pub fn getHorizonDistance(self: IWorldTelemetry) i32 {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        return world.horizon_distance;
+        return self.world.getHorizonDistance();
     }
 
     pub fn setHorizonDistance(self: IWorldTelemetry, distance: i32) void {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        world.setHorizonDistance(distance);
+        self.world.setHorizonDistance(distance);
     }
 
     pub fn isLODRenderingEnabled(self: IWorldTelemetry) bool {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        return world.lod_enabled;
+        return self.world.isLODRenderingEnabled();
     }
 
     pub fn toggleLODRendering(self: IWorldTelemetry) bool {
-        const world: *World = @ptrCast(@alignCast(self.world.ptr));
-        world.lod_enabled = !world.lod_enabled;
-        return world.lod_enabled;
+        return self.world.toggleLODRendering();
+    }
+
+    pub fn getChunkStateCounts(self: IWorldTelemetry) ChunkStateCounts {
+        return self.world.getChunkStateCounts();
+    }
+
+    pub fn isStartupBusy(self: IWorldTelemetry) bool {
+        return self.world.isStartupBusy();
+    }
+
+    pub fn getWorldStateData(self: IWorldTelemetry) WorldStateData {
+        return self.world.getWorldStateData();
+    }
+
+    pub fn getGeneratorName(self: IWorldTelemetry) []const u8 {
+        return self.world.getGeneratorName();
+    }
+
+    pub fn getBlock(self: IWorldTelemetry, world_x: i32, world_y: i32, world_z: i32) BlockType {
+        return self.world.getBlock(world_x, world_y, world_z);
+    }
+
+    pub fn getDebugLightInfo(self: IWorldTelemetry, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
+        return self.world.getDebugLightInfo(world_x, world_y, world_z);
+    }
+
+    pub fn getRegionInfo(self: IWorldTelemetry, world_x: i32, world_z: i32) gen_interface.RegionInfo {
+        return self.world.getRegionInfo(world_x, world_z);
+    }
+
+    pub fn getGenerator(self: IWorldTelemetry) Generator {
+        return self.world.getGenerator();
     }
 };
 
@@ -573,6 +727,10 @@ pub const World = struct {
         return self.generator.getColumnInfo(@floatFromInt(world_x), @floatFromInt(world_z));
     }
 
+    pub fn getRegionInfo(self: *const World, world_x: i32, world_z: i32) gen_interface.RegionInfo {
+        return self.generator.getRegionInfo(world_x, world_z);
+    }
+
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         _ = try self.mutation.applyBlockMutation(world_x, world_y, world_z, block);
         // Notify the LOD system so distant terrain reflects player edits after
@@ -729,6 +887,29 @@ pub const World = struct {
         .getLODStats = igetLODStats,
         .isLODEnabled = iisLODEnabled,
         .shadowScene = ishadowScene,
+        .enableSaveManager = ienableSaveManager,
+        .pauseGeneration = ipauseGeneration,
+        .isPaused = iisPaused,
+        .collisionWorld = icollisionWorld,
+        .getBlock = igetBlock,
+        .setBlock = isetBlock,
+        .getColumnInfo = igetColumnInfo,
+        .getDebugLightInfo = igetDebugLightInfo,
+        .getRegionInfo = igetRegionInfo,
+        .getGenerator = igetGenerator,
+        .getGeneratorName = igetGeneratorName,
+        .getRenderDistance = igetRenderDistance,
+        .setRenderDistance = isetRenderDistance,
+        .getHorizonDistance = igetHorizonDistance,
+        .setHorizonDistance = isetHorizonDistance,
+        .isLODRenderingEnabled = iisLODRenderingEnabled,
+        .toggleLODRendering = itoggleLODRendering,
+        .getChunkStateCounts = igetChunkStateCounts,
+        .isStartupBusy = iisStartupBusy,
+        .getWorldStateData = igetWorldStateData,
+        .lpvWorld = ilpvWorld,
+        .graphicsRenderView = igraphicsRenderView,
+        .getGpuMeshDispatch = igetGpuMeshDispatch,
     };
 
     const WORLD_RENDER_VIEW_VTABLE = GraphicsWorldRenderView.VTable{
@@ -785,6 +966,125 @@ pub const World = struct {
     fn ishadowScene(ptr: *anyopaque) IShadowScene {
         const self: *World = @ptrCast(@alignCast(ptr));
         return self.shadowScene();
+    }
+
+    fn ienableSaveManager(ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        try self.enableSaveManager(save_dir_path, world_name);
+    }
+
+    fn ipauseGeneration(ptr: *anyopaque) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.pauseGeneration();
+    }
+
+    fn iisPaused(ptr: *anyopaque) bool {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.paused;
+    }
+
+    fn icollisionWorld(ptr: *anyopaque) VoxelCollisionWorld {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.collisionWorld();
+    }
+
+    fn igetBlock(ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32) BlockType {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getBlock(world_x, world_y, world_z);
+    }
+
+    fn isetBlock(ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32, block: BlockType) anyerror!void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        try self.setBlock(world_x, world_y, world_z, block);
+    }
+
+    fn igetColumnInfo(ptr: *anyopaque, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getColumnInfo(world_x, world_z);
+    }
+
+    fn igetDebugLightInfo(ptr: *anyopaque, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getDebugLightInfo(world_x, world_y, world_z);
+    }
+
+    fn igetRegionInfo(ptr: *anyopaque, world_x: i32, world_z: i32) gen_interface.RegionInfo {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getRegionInfo(world_x, world_z);
+    }
+
+    fn igetGenerator(ptr: *anyopaque) Generator {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.generator;
+    }
+
+    fn igetGeneratorName(ptr: *anyopaque) []const u8 {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.generator.info.name;
+    }
+
+    fn igetRenderDistance(ptr: *anyopaque) i32 {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.render_distance;
+    }
+
+    fn isetRenderDistance(ptr: *anyopaque, distance: i32) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.setRenderDistance(distance);
+    }
+
+    fn igetHorizonDistance(ptr: *anyopaque) i32 {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.horizon_distance;
+    }
+
+    fn isetHorizonDistance(ptr: *anyopaque, distance: i32) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.setHorizonDistance(distance);
+    }
+
+    fn iisLODRenderingEnabled(ptr: *anyopaque) bool {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.lod_enabled;
+    }
+
+    fn itoggleLODRendering(ptr: *anyopaque) bool {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.lod_enabled = !self.lod_enabled;
+        return self.lod_enabled;
+    }
+
+    fn igetChunkStateCounts(ptr: *anyopaque) ChunkStateCounts {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getChunkStateCounts();
+    }
+
+    fn iisStartupBusy(ptr: *anyopaque) bool {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.isStartupBusy();
+    }
+
+    fn igetWorldStateData(ptr: *anyopaque) WorldStateData {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.getWorldStateData();
+    }
+
+    fn ilpvWorld(ptr: *anyopaque) ILPVWorld {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.lpvWorld();
+    }
+
+    fn igraphicsRenderView(ptr: *anyopaque) GraphicsWorldRenderView {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.renderView();
+    }
+
+    fn igetGpuMeshDispatch(ptr: *anyopaque) GpuMeshDispatch {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return if (self.renderer.getGpuMesher() != null)
+            .{ .dispatch_fn = WorldRenderer.processGpuMeshing, .dispatch_ctx = @ptrCast(self.renderer) }
+        else
+            .{ .dispatch_fn = null, .dispatch_ctx = null };
     }
 
     const COLLISION_VTABLE = VoxelCollisionWorld.VTable{
