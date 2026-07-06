@@ -240,7 +240,7 @@ pub const GameSession = struct {
     pub fn deinit(self: *GameSession) void {
         self.ecs_render_system.deinit();
         self.ecs_registry.deinit();
-        self.world.deinit();
+        self.world.interface().deinit();
         self.world_map.deinit();
         self.block_outline.deinit();
         self.hand_renderer.deinit();
