@@ -60,13 +60,21 @@ pub const AudioSystem = struct {
     }
 
     /// Shutdown the audio system and free resources.
+    ///
+    /// Ordering is critical: the backend (and its Mixer) holds pointers into
+    /// `SoundData` owned by `manager`. We must stop voices, tear down the
+    /// backend/Mixer (the consumer of those buffers), and only then free the
+    /// `SoundData` via `manager.deinit()`. Reversing this order leaves the
+    /// Mixer with dangling pointers to freed `SoundData` — a use-after-free
+    /// (CWE-416). See issue #683.
     pub fn deinit(self: *AudioSystem) void {
         self.stopAll();
-        self.manager.deinit();
         if (self.backend_ptr) |ptr| {
             const backend_inst: *sdl_backend.SDLAudioBackend = @ptrCast(@alignCast(ptr));
             backend_inst.destroy();
+            self.backend_ptr = null;
         }
+        self.manager.deinit();
         self.allocator.destroy(self);
     }
 
