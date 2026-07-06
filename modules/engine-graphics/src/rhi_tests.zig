@@ -6,7 +6,6 @@ const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 
 const MockContext = struct {
-    bind_shader_called: bool = false,
     bind_texture_called: bool = false,
     draw_called: bool = false,
     draw_depth_texture_called: bool = false,
@@ -19,11 +18,6 @@ const MockContext = struct {
     dynamic_resolution_target_fps: u32 = 0,
     resolution_scale: f32 = 1.0,
 
-    fn bindShader(ptr: *anyopaque, handle: rhi.ShaderHandle) void {
-        const self: *MockContext = @ptrCast(@alignCast(ptr));
-        _ = handle;
-        self.bind_shader_called = true;
-    }
     fn bindTexture(ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         const self: *MockContext = @ptrCast(@alignCast(ptr));
         _ = handle;
@@ -589,7 +583,6 @@ const MockContext = struct {
     };
 
     const MOCK_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{
-        .bindShader = bindShader,
         .bindTexture = bindTexture,
         .bindBuffer = bindBuffer,
         .pushConstants = pushConstants,
@@ -615,9 +608,6 @@ const MockContext = struct {
 test "IGraphicsCommandEncoder delegation" {
     var mock = MockContext{};
     const encoder = MockContext.getEncoder(&mock);
-
-    encoder.bindShader(1);
-    try testing.expect(mock.bind_shader_called);
 
     encoder.bindTexture(2, 0);
     try testing.expect(mock.bind_texture_called);

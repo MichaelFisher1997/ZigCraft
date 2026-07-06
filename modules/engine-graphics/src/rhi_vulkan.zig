@@ -765,13 +765,6 @@ fn unmapBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     ctx.resources.unmapBuffer(handle);
 }
 
-fn bindShader(ctx_ptr: *anyopaque, handle: rhi.ShaderHandle) void {
-    _ = ctx_ptr;
-    if (handle != rhi.InvalidShaderHandle) {
-        log.log.warn("Vulkan RHI bindShader({}) ignored: fixed pipelines are bound by draw submission", .{handle});
-    }
-}
-
 fn beginShadowPass(ctx_ptr: *anyopaque, cascade_index: u32, light_space_matrix: Mat4) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
@@ -993,7 +986,6 @@ fn getEncoder(ctx_ptr: *anyopaque) rhi.IGraphicsCommandEncoder {
 }
 
 const VULKAN_COMMAND_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{
-    .bindShader = bindShader,
     .bindTexture = bindTexture,
     .bindBuffer = bindBuffer,
     .pushConstants = pushConstants,

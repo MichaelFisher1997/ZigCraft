@@ -50,7 +50,7 @@ test "Preset Matching" {
 
     // Modify a value to make it Custom
     settings.shadow_quality = 3;
-    try std.testing.expectEqual(presets.graphics_presets.items.len, presets.getIndex(&settings));
+    try std.testing.expectEqual(presets.count(), presets.getIndex(&settings));
 }
 
 test "TAA and LOD conflict sanitization" {

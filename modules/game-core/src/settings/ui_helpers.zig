@@ -95,6 +95,5 @@ pub fn prevUIScale(current: f32) f32 {
 }
 
 pub fn getPresetLabel(idx: usize) []const u8 {
-    if (idx >= json_presets.graphics_presets.items.len) return "CUSTOM";
-    return json_presets.graphics_presets.items[idx].name;
+    return json_presets.getPresetName(idx);
 }

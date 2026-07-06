@@ -226,7 +226,6 @@ pub const ResourceManager = struct {
 /// ```zig
 /// const rc = rhi.renderContext();
 /// rc.beginMainPass();
-/// rc.bindShader(shader);
 /// rc.draw(buffer, count, .triangles);
 /// rc.endMainPass();
 /// ```
@@ -307,9 +306,6 @@ pub const RenderContext = struct {
 
     // --- IGraphicsCommandEncoder delegates ---
 
-    pub fn bindShader(self: RenderContext, handle: ShaderHandle) void {
-        self.encoder.bindShader(handle);
-    }
     pub fn bindTexture(self: RenderContext, handle: TextureHandle, slot: u32) void {
         self.encoder.bindTexture(handle, slot);
     }
@@ -547,7 +543,6 @@ pub const IGraphicsCommandEncoder = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        bindShader: *const fn (ptr: *anyopaque, handle: ShaderHandle) void,
         bindTexture: *const fn (ptr: *anyopaque, handle: TextureHandle, slot: u32) void,
         bindBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle, usage: BufferUsage) void,
         pushConstants: *const fn (ptr: *anyopaque, stages: ShaderStageFlags, offset: u32, size: u32, data: *const anyopaque) void,
@@ -559,9 +554,6 @@ pub const IGraphicsCommandEncoder = struct {
         setViewport: *const fn (ptr: *anyopaque, width: u32, height: u32) void,
     };
 
-    pub fn bindShader(self: IGraphicsCommandEncoder, handle: ShaderHandle) void {
-        self.vtable.bindShader(self.ptr, handle);
-    }
     pub fn bindTexture(self: IGraphicsCommandEncoder, handle: TextureHandle, slot: u32) void {
         self.vtable.bindTexture(self.ptr, handle, slot);
     }

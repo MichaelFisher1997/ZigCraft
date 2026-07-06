@@ -49,9 +49,13 @@ pub const PresetConfig = struct {
     bloom_intensity: f32,
 };
 
-pub var graphics_presets: std.ArrayListUnmanaged(PresetConfig) = .empty;
+var graphics_presets: std.ArrayListUnmanaged(PresetConfig) = .empty;
+var graphics_presets_mutex: std.Thread.Mutex = .{};
 
 pub fn initPresets(allocator: std.mem.Allocator) !void {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
     graphics_presets = std.ArrayListUnmanaged(PresetConfig).empty;
 
     // Load from assets/config/presets.json
@@ -65,7 +69,7 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
     defer parsed.deinit();
 
     // Ensure we clean up on error
-    errdefer deinitPresets(allocator);
+    errdefer deinitPresetsLocked(allocator);
 
     for (parsed.value) |preset| {
         var p = preset;
@@ -133,15 +137,30 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
 }
 
 pub fn deinitPresets(allocator: std.mem.Allocator) void {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
+    deinitPresetsLocked(allocator);
+}
+
+fn deinitPresetsLocked(allocator: std.mem.Allocator) void {
     for (graphics_presets.items) |preset| {
         allocator.free(preset.name);
     }
     graphics_presets.deinit(allocator);
+    graphics_presets = .empty;
 }
 
 pub fn apply(settings: *Settings, preset_idx: usize) void {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
     if (preset_idx >= graphics_presets.items.len) return;
     const config = graphics_presets.items[preset_idx];
+    applyConfig(settings, config);
+}
+
+fn applyConfig(settings: *Settings, config: PresetConfig) void {
     settings.shadow_quality = config.shadow_quality;
     settings.shadow_distance = config.shadow_distance;
     settings.shadow_pcf_samples = config.shadow_pcf_samples;
@@ -186,6 +205,9 @@ pub fn apply(settings: *Settings, preset_idx: usize) void {
 }
 
 pub fn getIndex(settings: *const Settings) usize {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
     for (graphics_presets.items, 0..) |preset, i| {
         if (matches(settings, preset)) return i;
     }
@@ -236,6 +258,30 @@ fn matches(settings: *const Settings, preset: PresetConfig) bool {
 }
 
 pub fn getPresetName(idx: usize) []const u8 {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
     if (idx >= graphics_presets.items.len) return "CUSTOM";
     return graphics_presets.items[idx].name;
+}
+
+pub fn count() usize {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
+    return graphics_presets.items.len;
+}
+
+pub fn findAndApplyNamed(settings: *Settings, preset_name: []const u8) ?[]const u8 {
+    graphics_presets_mutex.lock();
+    defer graphics_presets_mutex.unlock();
+
+    for (graphics_presets.items) |preset| {
+        if (std.ascii.eqlIgnoreCase(preset.name, preset_name) or std.ascii.eqlIgnoreCase(@tagName(preset.render_distance_preset), preset_name)) {
+            applyConfig(settings, preset);
+            return preset.name;
+        }
+    }
+
+    return null;
 }

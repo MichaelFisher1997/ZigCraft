@@ -93,8 +93,7 @@ pub fn applyPresetSideEffects(settings: *Settings, rs: anytype) void {
 }
 
 pub fn getPresetLabel(idx: usize) []const u8 {
-    if (idx >= settings_pkg.json_presets.graphics_presets.items.len) return "CUSTOM";
-    return settings_pkg.json_presets.graphics_presets.items[idx].name;
+    return settings_pkg.json_presets.getPresetName(idx);
 }
 
 pub fn getLPVQualityLegend(preset: u32) []const u8 {

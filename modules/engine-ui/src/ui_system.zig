@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const rhi = @import("engine-rhi");
+const FontAtlas = @import("font_atlas.zig").FontAtlas;
 
 pub const Color = rhi.Color;
 pub const Rect = rhi.Rect;
@@ -13,6 +14,7 @@ pub const UISystem = struct {
     renderer: rhi.UIRenderer,
     screen_width: f32,
     screen_height: f32,
+    font_atlas: ?*const FontAtlas = null,
 
     pub fn init(renderer: rhi.UIRenderer, width: u32, height: u32) !UISystem {
         return .{
@@ -29,6 +31,10 @@ pub const UISystem = struct {
     pub fn resize(self: *UISystem, width: u32, height: u32) void {
         self.screen_width = @floatFromInt(width);
         self.screen_height = @floatFromInt(height);
+    }
+
+    pub fn setFontAtlas(self: *UISystem, atlas: ?*const FontAtlas) void {
+        self.font_atlas = atlas;
     }
 
     pub fn begin(self: *UISystem) void {

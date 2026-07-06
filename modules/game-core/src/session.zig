@@ -14,6 +14,7 @@ const HandRenderer = @import("hand_renderer.zig").HandRenderer;
 const Camera = @import("engine-camera").Camera;
 const RHI = @import("engine-rhi").RHI;
 const RenderContext = @import("engine-rhi").RenderContext;
+const Texture = @import("engine-rhi").Texture;
 const TextureAtlas = @import("engine-graphics").TextureAtlas;
 const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("engine-input").IRawInputProvider;
@@ -66,6 +67,7 @@ pub const GameSession = struct {
     allocator: std.mem.Allocator,
     world: *World,
     world_map: WorldMap,
+    world_map_texture: Texture,
     map_controller: MapController,
 
     player: Player,
@@ -172,8 +174,17 @@ pub const GameSession = struct {
         });
         errdefer world.deinit();
 
-        var world_map = try WorldMap.init(rhi.resourceManager(), 256, 256);
+        var world_map = try WorldMap.init(allocator, 256, 256);
         errdefer world_map.deinit();
+
+        var world_map_texture = try Texture.initEmpty(rhi.resourceManager(), world_map.width, world_map.height, .rgba, .{
+            .min_filter = .nearest,
+            .mag_filter = .nearest,
+            .generate_mipmaps = false,
+            .wrap_s = .clamp_to_edge,
+            .wrap_t = .clamp_to_edge,
+        });
+        errdefer world_map_texture.deinit();
 
         var block_outline = try BlockOutline.init(rhi.resourceManager());
         errdefer block_outline.deinit();
@@ -208,6 +219,7 @@ pub const GameSession = struct {
             .allocator = allocator,
             .world = world,
             .world_map = world_map,
+            .world_map_texture = world_map_texture,
             .map_controller = .{},
             .player = player,
             .inventory = Inventory.init(),
@@ -241,6 +253,7 @@ pub const GameSession = struct {
         self.ecs_render_system.deinit();
         self.ecs_registry.deinit();
         self.world.interface().deinit();
+        self.world_map_texture.deinit();
         self.world_map.deinit();
         self.block_outline.deinit();
         self.hand_renderer.deinit();
