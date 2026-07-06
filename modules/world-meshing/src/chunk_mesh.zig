@@ -158,7 +158,14 @@ pub const ChunkMesh = struct {
         const y0: i32 = @intCast(si * SUBCHUNK_SIZE);
         const y1: i32 = y0 + SUBCHUNK_SIZE;
 
-        // Mesh horizontal slices (top/bottom faces)
+        // Mesh horizontal slices (top/bottom faces).
+        // The loop iterates over boundary SLICES, not blocks: a subchunk of 16
+        // blocks has 17 horizontal boundaries (y0..y0+16). The top face of the
+        // topmost block (y=y1-1) lives at slice s=y1, so the bound is inclusive
+        // (`<=`). This mirrors the sx/sz loops below. boundary.isEmittingSubchunk
+        // assigns each face to exactly one subchunk, so there is no duplication.
+        // (Block-iterating meshers like flat_quad_mesher use `< y1` instead
+        // because they loop over 16 blocks, not 17 boundaries.)
         var sy: i32 = y0;
         while (sy <= y1) : (sy += 1) {
             try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .top, sy, si, solid_verts, cutout_verts, fluid_verts, atlas, mask);

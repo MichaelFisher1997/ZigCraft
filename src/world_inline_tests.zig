@@ -276,6 +276,55 @@ test "single block generates 6 faces" {
     try testing.expectEqual(@as(u32, 36), total_verts);
 }
 
+test "block at subchunk top boundary keeps its top face" {
+    // A stone cube at y=15 sits on the top layer of subchunk 0. Its top face
+    // lives at boundary slice s=16. buildSubchunk must iterate the horizontal
+    // slice loop inclusively (sy <= y1) to reach s=16; an off-by-one (`< y1`)
+    // would drop the top face and yield only 30 verts instead of 36.
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(8, 15, 8, .stone);
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+    try mesh.buildWithNeighbors(&chunk, .empty, &atlas);
+
+    var total_verts: u32 = 0;
+    if (mesh.pending_solid) |v| total_verts += @intCast(v.len);
+    if (mesh.pending_fluid) |v| total_verts += @intCast(v.len);
+    try testing.expectEqual(@as(u32, 36), total_verts);
+
+    // The top face vertices sit at y=16 (slice above y=15).
+    if (mesh.pending_solid) |verts| {
+        var found_top = false;
+        for (verts) |v| {
+            if (v.pos[1] == 16.0) found_top = true;
+        }
+        try testing.expect(found_top);
+    }
+}
+
+test "block at world ceiling (y=255) keeps its top face" {
+    // Topmost subchunk (si=15): the top face of y=255 is at slice s=256, which
+    // queries above the world (air / full sky). This must still be emitted.
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(8, 255, 8, .stone);
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+    try mesh.buildWithNeighbors(&chunk, .empty, &atlas);
+
+    var total_verts: u32 = 0;
+    if (mesh.pending_solid) |v| total_verts += @intCast(v.len);
+    if (mesh.pending_fluid) |v| total_verts += @intCast(v.len);
+    try testing.expectEqual(@as(u32, 36), total_verts);
+}
+
 test "adjacent blocks share face (no internal faces)" {
     var atlas: TextureAtlas = undefined;
     @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
