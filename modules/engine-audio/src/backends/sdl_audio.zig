@@ -215,6 +215,9 @@ const Mixer = struct {
 
         if (voice.active and voice.generation == handle.generation) {
             voice.active = false;
+            // Drop the reference to externally-owned SoundData so a subsequent
+            // free by SoundManager cannot leave us with a dangling pointer.
+            voice.sound_data = null;
         } else if (voice.active) {
             log.log.debug("stopVoice: generation mismatch (req: {}, act: {}), ignoring.", .{ handle.generation, voice.generation });
         }
@@ -377,6 +380,9 @@ const Mixer = struct {
 
         for (&self.voices) |*voice| {
             voice.active = false;
+            // Drop the reference to externally-owned SoundData so a subsequent
+            // free by SoundManager cannot leave us with a dangling pointer.
+            voice.sound_data = null;
         }
     }
 };
@@ -716,4 +722,81 @@ test "readSourceFrame handles large frame index without overflow overrun" {
         .length_samples = 1,
     };
     try testing.expect(readSourceFrame(&data, std.math.maxInt(usize)) == null);
+}
+
+// ---------------------------------------------------------------------------
+// Tests for dangling-pointer mitigation in Mixer voice lifecycle (Issue #683).
+//
+// Voices hold raw pointers to SoundData owned by SoundManager. stopAll() and
+// stopVoice() must clear those references so that a subsequent free by the
+// SoundManager cannot leave the mixer with dangling pointers. These tests do
+// not touch SDL: Mixer.init/stopAll/stopVoice only use the mutex.
+// ---------------------------------------------------------------------------
+
+fn dummySoundData() *const types.SoundData {
+    const S = struct {
+        var data: types.SoundData = .{
+            .buffer = &[_]u8{},
+            .frequency = 44100,
+            .channels = 1,
+            .format = .signed16,
+            .length_samples = 0,
+        };
+    };
+    return &S.data;
+}
+
+test "Mixer.stopAll clears sound_data pointers to avoid dangling refs" {
+    var mixer = Mixer.init();
+    defer mixer.stopAll();
+
+    // Set up two active voices referencing externally-owned SoundData.
+    const sd = dummySoundData();
+    mixer.voices[0] = .{ .active = true, .sound_data = sd, .generation = 10 };
+    mixer.voices[1] = .{ .active = true, .sound_data = sd, .generation = 11 };
+
+    mixer.stopAll();
+
+    // All voices must be inactive and must NOT retain any SoundData pointer.
+    for (mixer.voices) |v| {
+        try testing.expect(!v.active);
+        try testing.expect(v.sound_data == null);
+    }
+}
+
+test "Mixer.stopVoice clears sound_data pointer on matching generation" {
+    var mixer = Mixer.init();
+    defer mixer.stopAll();
+
+    const sd = dummySoundData();
+    const gen: u64 = 42;
+    mixer.voices[3] = .{ .active = true, .sound_data = sd, .generation = gen };
+
+    mixer.stopVoice(.{ .id = 3, .generation = gen });
+
+    try testing.expect(!mixer.voices[3].active);
+    try testing.expect(mixer.voices[3].sound_data == null);
+}
+
+test "Mixer.stopVoice does not clear a voice on generation mismatch" {
+    var mixer = Mixer.init();
+    defer mixer.stopAll();
+
+    const sd = dummySoundData();
+    mixer.voices[5] = .{ .active = true, .sound_data = sd, .generation = 7 };
+
+    // Wrong generation -> voice must remain untouched (still owned by caller).
+    mixer.stopVoice(.{ .id = 5, .generation = 999 });
+
+    try testing.expect(mixer.voices[5].active);
+    try testing.expect(mixer.voices[5].sound_data == sd);
+}
+
+test "Mixer.stopVoice ignores out-of-range voice id" {
+    var mixer = Mixer.init();
+    defer mixer.stopAll();
+
+    // Must not crash or panic on an id beyond the voice array.
+    mixer.stopVoice(.{ .id = MAX_VOICES + 1, .generation = 1 });
+    try testing.expect(true);
 }
