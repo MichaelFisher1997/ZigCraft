@@ -3,7 +3,7 @@
 
 engine:
   - changed-files:
-      - any-glob-to-any-file: 'src/engine/**/*'
+      - any-glob-to-any-file: 'modules/engine-*/**/*'
 
 world:
   - changed-files:

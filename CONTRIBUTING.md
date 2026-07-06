@@ -233,9 +233,9 @@ const Allocator = std.mem.Allocator;
 // 2. C imports (always via c.zig)
 const c = @import("../c.zig").c;
 
-// 3. Local modules (relative paths)
-const Vec3 = @import("../math/vec3.zig").Vec3;
-const log = @import("../engine/core/log.zig");
+// 3. Project modules by package name
+const Vec3 = @import("engine-math").Vec3;
+const log = @import("engine-core").log;
 ```
 
 ### Memory Management
