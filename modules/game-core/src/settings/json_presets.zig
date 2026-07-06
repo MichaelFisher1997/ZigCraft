@@ -4,6 +4,7 @@ const data = @import("data.zig");
 const Settings = data.Settings;
 const RenderDistancePreset = @import("engine-rhi").RenderDistancePreset;
 const log = @import("engine-core").log;
+const sync = @import("engine-core").sync;
 
 // Preset config compatible with static presets but with dynamic string name
 pub const PresetConfig = struct {
@@ -50,7 +51,7 @@ pub const PresetConfig = struct {
 };
 
 var graphics_presets: std.ArrayListUnmanaged(PresetConfig) = .empty;
-var graphics_presets_mutex: std.Thread.Mutex = .{};
+var graphics_presets_mutex: sync.Mutex = .{};
 
 pub fn initPresets(allocator: std.mem.Allocator) !void {
     graphics_presets_mutex.lock();
