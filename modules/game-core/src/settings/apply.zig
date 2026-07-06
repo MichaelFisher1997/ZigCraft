@@ -37,17 +37,18 @@ const IRenderSettings = @import("engine-core").interfaces.IRenderSettings;
 /// This separation exists because RHI exposes setters only for GPU pipeline state,
 /// while other settings are architectural concerns handled by their respective systems.
 pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
-    rhi.setVSync(settings.vsync);
-    rhi.setWireframe(settings.wireframe_enabled);
-    rhi.setTexturesEnabled(settings.textures_enabled);
-    rhi.setDebugShadowView(anyTerrainDebugActive(settings));
-    rhi.setShadowDebugChannel(@intFromEnum(resolveShadowDebugChannel(settings)));
-    rhi.setAnisotropicFiltering(settings.anisotropic_filtering);
-    rhi.setMSAA(settings.msaa_samples);
-    rhi.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
-    rhi.setTAABlendFactor(settings.taa_blend_factor);
-    rhi.setTAAVelocityRejection(settings.taa_velocity_rejection);
-    rhi.setDynamicResolution(settings.dynamic_resolution_enabled, settings.dynamic_resolution_min_scale, settings.dynamic_resolution_max_scale, settings.target_fps);
+    const options = rhi.options();
+    options.setVSync(settings.vsync);
+    options.setWireframe(settings.wireframe_enabled);
+    options.setTexturesEnabled(settings.textures_enabled);
+    options.setDebugShadowView(anyTerrainDebugActive(settings));
+    options.setShadowDebugChannel(@intFromEnum(resolveShadowDebugChannel(settings)));
+    options.setAnisotropicFiltering(settings.anisotropic_filtering);
+    options.setMSAA(settings.msaa_samples);
+    options.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
+    options.setTAABlendFactor(settings.taa_blend_factor);
+    options.setTAAVelocityRejection(settings.taa_velocity_rejection);
+    options.setDynamicResolution(settings.dynamic_resolution_enabled, settings.dynamic_resolution_min_scale, settings.dynamic_resolution_max_scale, settings.target_fps);
 }
 
 pub fn applyToRenderSettings(settings: *const Settings, rs: IRenderSettings) void {

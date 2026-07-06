@@ -49,18 +49,19 @@ pub fn collectStates(screen: ScreenDebugState, ctx: WorldContext, render_system:
 
 pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI, now: f32) void {
     screen.last_debug_toggle_time.* = now;
+    const options = rhi.options();
     switch (feature) {
         .wireframe => {
             ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
-            rhi.setWireframe(ctx.settings.wireframe_enabled);
+            options.setWireframe(ctx.settings.wireframe_enabled);
         },
         .textures => {
             ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
-            rhi.setTexturesEnabled(ctx.settings.textures_enabled);
+            options.setTexturesEnabled(ctx.settings.textures_enabled);
         },
         .vsync => {
             ctx.settings.vsync = !ctx.settings.vsync;
-            rhi.setVSync(ctx.settings.vsync);
+            options.setVSync(ctx.settings.vsync);
         },
         .fps_counter => screen.session.debug_show_fps = !screen.session.debug_show_fps,
         .block_info => screen.session.debug_show_block_info = !screen.session.debug_show_block_info,
@@ -70,8 +71,8 @@ pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldCo
                 ctx.settings.shadow_beauty_enabled = false;
                 ctx.settings.shadow_probe_enabled = false;
                 settings_data.clearTerrainDebugViews(ctx.settings);
-                rhi.setDebugShadowView(false);
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(false);
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             }
         },
         .shadow_beauty => {
@@ -111,6 +112,7 @@ pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldCo
 }
 
 fn applyShadowDebugToggle(feature: DebugFeature, ctx: WorldContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI) void {
+    const options = rhi.options();
     const enable = switch (feature) {
         .shadow_debug => !ctx.settings.debug_shadows_active,
         .shadow_cascade_index => !ctx.settings.debug_shadow_cascade_index,
@@ -127,11 +129,12 @@ fn applyShadowDebugToggle(feature: DebugFeature, ctx: WorldContext, render_syste
         .shadow_seam_diag => ctx.settings.debug_shadow_seam_diag = enable,
         else => unreachable,
     }
-    rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-    rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+    options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+    options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
 }
 
 fn applyTerrainDebugToggle(feature: DebugFeature, ctx: WorldContext, rhi: *rhi_pkg.RHI) void {
+    const options = rhi.options();
     const enable = switch (feature) {
         .direct_key_debug => !ctx.settings.debug_direct_key_active,
         .sky_fill_debug => !ctx.settings.debug_sky_fill_active,
@@ -149,8 +152,8 @@ fn applyTerrainDebugToggle(feature: DebugFeature, ctx: WorldContext, rhi: *rhi_p
         .outdoor_factor_debug => ctx.settings.debug_outdoor_factor_active = enable,
         else => unreachable,
     }
-    rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-    rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+    options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+    options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
 }
 
 fn resolveShadowDebugChannel(settings: *const settings_data.Settings) u32 {

@@ -168,81 +168,81 @@ pub const RenderSettingsAdapter = struct {
 
     fn setWireframe(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setWireframe(enabled);
+        self.rhi.options().setWireframe(enabled);
     }
 
     fn setVSync(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setVSync(enabled);
+        self.rhi.options().setVSync(enabled);
     }
 
     fn setTexturesEnabled(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setTexturesEnabled(enabled);
+        self.rhi.options().setTexturesEnabled(enabled);
     }
 
     fn setAnisotropicFiltering(ptr: *anyopaque, level: u8) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setAnisotropicFiltering(level);
+        self.rhi.options().setAnisotropicFiltering(level);
     }
 
     fn setFXAA(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setFXAA(enabled);
+        self.rhi.options().setFXAA(enabled);
     }
 
     fn setBloom(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setBloom(enabled);
+        self.rhi.options().setBloom(enabled);
     }
 
     fn setBloomIntensity(ptr: *anyopaque, intensity: f32) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setBloomIntensity(intensity);
+        self.rhi.options().setBloomIntensity(intensity);
     }
 
     fn setTAABlendFactor(ptr: *anyopaque, value: f32) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setTAABlendFactor(value);
+        self.rhi.options().setTAABlendFactor(value);
     }
 
     fn setTAAVelocityRejection(ptr: *anyopaque, value: f32) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setTAAVelocityRejection(value);
+        self.rhi.options().setTAAVelocityRejection(value);
     }
 
     fn setVignetteEnabled(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setVignetteEnabled(enabled);
+        self.rhi.options().setVignetteEnabled(enabled);
     }
 
     fn setVignetteIntensity(ptr: *anyopaque, intensity: f32) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setVignetteIntensity(intensity);
+        self.rhi.options().setVignetteIntensity(intensity);
     }
 
     fn setFilmGrainEnabled(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setFilmGrainEnabled(enabled);
+        self.rhi.options().setFilmGrainEnabled(enabled);
     }
 
     fn setFilmGrainIntensity(ptr: *anyopaque, intensity: f32) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setFilmGrainIntensity(intensity);
+        self.rhi.options().setFilmGrainIntensity(intensity);
     }
 
     fn setVolumetricDensity(ptr: *anyopaque, density: f32) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setVolumetricDensity(density);
+        self.rhi.options().setVolumetricDensity(density);
     }
 
     fn setDebugShadowView(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setDebugShadowView(enabled);
+        self.rhi.options().setDebugShadowView(enabled);
     }
 
     fn setMSAA(ptr: *anyopaque, samples: u8) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
-        self.rhi.setMSAA(samples);
+        self.rhi.options().setMSAA(samples);
     }
 };

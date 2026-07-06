@@ -239,9 +239,9 @@ pub const RenderSystem = struct {
         self.water_reflection_pass = render_graph_pkg.WaterReflectionPass.init(material_system);
         self.water_reflection_pass.enabled = !disable_water;
 
-        self.rhi.setFXAA((config.fxaa_enabled and !config.taa_enabled) and !disable_fxaa);
-        self.rhi.setBloom(config.bloom_enabled and !disable_bloom);
-        self.rhi.setBloomIntensity(config.bloom_intensity);
+        self.rhi.options().setFXAA((config.fxaa_enabled and !config.taa_enabled) and !disable_fxaa);
+        self.rhi.options().setBloom(config.bloom_enabled and !disable_bloom);
+        self.rhi.options().setBloomIntensity(config.bloom_intensity);
 
         if (config.apply_to_rhi) |apply_to_rhi| {
             apply_to_rhi(config.apply_context, &self.rhi);
@@ -333,9 +333,9 @@ pub const RenderSystem = struct {
     }
 
     pub fn applyConfig(self: *RenderSystem, config: Config) void {
-        self.rhi.setFXAA(config.fxaa_enabled and !config.taa_enabled and self.fxaa_pass.enabled);
-        self.rhi.setBloom(config.bloom_enabled and self.bloom_pass.enabled);
-        self.rhi.setBloomIntensity(config.bloom_intensity);
+        self.rhi.options().setFXAA(config.fxaa_enabled and !config.taa_enabled and self.fxaa_pass.enabled);
+        self.rhi.options().setBloom(config.bloom_enabled and self.bloom_pass.enabled);
+        self.rhi.options().setBloomIntensity(config.bloom_intensity);
         self.cloud_system.setConfig(.{
             .enabled = config.clouds_enabled,
             .enable_3d = config.clouds_3d_enabled,

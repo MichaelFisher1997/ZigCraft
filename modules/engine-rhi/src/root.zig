@@ -1,4 +1,6 @@
 pub const rhi = @import("rhi.zig");
+pub const interfaces = @import("interfaces.zig");
+pub const wrappers = @import("wrappers.zig");
 pub const rhi_types = @import("rhi_types.zig");
 pub const culling = @import("culling.zig");
 pub const render_device = @import("render_device.zig");

@@ -649,7 +649,7 @@ pub const LPVSystem = struct {
 
     fn uploadDebugOverlay(self: *LPVSystem) !void {
         if (self.debug_overlay_texture == 0 or self.debug_overlay_pixels.len == 0) return;
-        try self.rhi.updateTexture(self.debug_overlay_texture, std.mem.sliceAsBytes(self.debug_overlay_pixels));
+        try self.rhi.resourceManager().updateTexture(self.debug_overlay_texture, std.mem.sliceAsBytes(self.debug_overlay_pixels));
     }
 
     fn destroyLightBuffer(self: *LPVSystem) void {

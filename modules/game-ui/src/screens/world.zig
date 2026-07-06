@@ -93,8 +93,8 @@ pub const WorldScreen = struct {
             .startup_diagnostic_logged = false,
         };
         settings_data.clearTerrainDebugViews(context.settings);
-        render_system.getRHI().setShadowDebugChannel(@intFromEnum(settings_data.resolveShadowDebugChannel(context.settings)));
-        render_system.getRHI().setDebugShadowView(false);
+        render_system.getRHI().options().setShadowDebugChannel(@intFromEnum(settings_data.resolveShadowDebugChannel(context.settings)));
+        render_system.getRHI().options().setDebugShadowView(false);
         return self;
     }
 
@@ -145,6 +145,7 @@ pub const WorldScreen = struct {
         const ctx = self.context;
         const render_system = ctx.render_system;
         const rhi = render_system.getRHI();
+        const options = rhi.options();
         const can_toggle_debug = now - self.last_debug_toggle_time > 0.2;
 
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_debug_menu)) {
@@ -165,17 +166,17 @@ pub const WorldScreen = struct {
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_wireframe)) {
             ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
-            rhi.setWireframe(ctx.settings.wireframe_enabled);
+            options.setWireframe(ctx.settings.wireframe_enabled);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_textures)) {
             ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
-            rhi.setTexturesEnabled(ctx.settings.textures_enabled);
+            options.setTexturesEnabled(ctx.settings.textures_enabled);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_vsync)) {
             ctx.settings.vsync = !ctx.settings.vsync;
-            rhi.setVSync(ctx.settings.vsync);
+            options.setVSync(ctx.settings.vsync);
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_shadow_debug_vis)) {
@@ -186,8 +187,8 @@ pub const WorldScreen = struct {
             }
             settings_data.clearTerrainDebugViews(ctx.settings);
             ctx.settings.debug_shadows_active = enable;
-            rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-            rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+            options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+            options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             self.last_debug_toggle_time = now;
         }
         if (can_toggle_debug and ctx.input_mapper.isActionPressed(ctx.input, .toggle_lod_render)) {
@@ -390,14 +391,14 @@ pub const WorldScreen = struct {
                 std.math.clamp(boosted_horizon.z, 0.0, 1.0),
             );
             rhi.renderContext().setClearColor(clear_color);
-            try rhi.updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
+            try rhi.renderContext().updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;
 
             var frame_cascades: ?@import("engine-graphics").ShadowCascades = null;
 
-            const resolution_scale = rhi.getResolutionScale();
+            const resolution_scale = rhi.options().getResolutionScale();
             const render_w = screen_w * resolution_scale;
             const render_h = screen_h * resolution_scale;
 
@@ -774,18 +775,19 @@ pub const WorldScreen = struct {
 
     fn applyDebugFeatureToggle(self: *WorldScreen, feature: DebugFeature, ctx: EngineContext, render_system: *RenderSystem, rhi: *rhi_pkg.RHI, now: f32) void {
         self.last_debug_toggle_time = now;
+        const options = rhi.options();
         switch (feature) {
             .wireframe => {
                 ctx.settings.wireframe_enabled = !ctx.settings.wireframe_enabled;
-                rhi.setWireframe(ctx.settings.wireframe_enabled);
+                options.setWireframe(ctx.settings.wireframe_enabled);
             },
             .textures => {
                 ctx.settings.textures_enabled = !ctx.settings.textures_enabled;
-                rhi.setTexturesEnabled(ctx.settings.textures_enabled);
+                options.setTexturesEnabled(ctx.settings.textures_enabled);
             },
             .vsync => {
                 ctx.settings.vsync = !ctx.settings.vsync;
-                rhi.setVSync(ctx.settings.vsync);
+                options.setVSync(ctx.settings.vsync);
             },
             .fps_counter => {
                 self.session.debug_show_fps = !self.session.debug_show_fps;
@@ -799,8 +801,8 @@ pub const WorldScreen = struct {
                     ctx.settings.shadow_beauty_enabled = false;
                     ctx.settings.shadow_probe_enabled = false;
                     settings_data.clearTerrainDebugViews(ctx.settings);
-                    rhi.setDebugShadowView(false);
-                    rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                    options.setDebugShadowView(false);
+                    options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
                 }
             },
             .shadow_beauty => {
@@ -822,8 +824,8 @@ pub const WorldScreen = struct {
                 }
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_shadows_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .shadow_cascade_index => {
                 const enable = !ctx.settings.debug_shadow_cascade_index;
@@ -832,8 +834,8 @@ pub const WorldScreen = struct {
                 }
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_shadow_cascade_index = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .shadow_caster_coverage => {
                 const enable = !ctx.settings.debug_shadow_caster_coverage;
@@ -842,8 +844,8 @@ pub const WorldScreen = struct {
                 }
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_shadow_caster_coverage = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .shadow_seam_diag => {
                 const enable = !ctx.settings.debug_shadow_seam_diag;
@@ -852,43 +854,43 @@ pub const WorldScreen = struct {
                 }
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_shadow_seam_diag = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .direct_key_debug => {
                 const enable = !ctx.settings.debug_direct_key_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_direct_key_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .sky_fill_debug => {
                 const enable = !ctx.settings.debug_sky_fill_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_sky_fill_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .entrance_bounce_debug => {
                 const enable = !ctx.settings.debug_entrance_bounce_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_entrance_bounce_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .block_light_debug => {
                 const enable = !ctx.settings.debug_block_light_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_block_light_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .outdoor_factor_debug => {
                 const enable = !ctx.settings.debug_outdoor_factor_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_outdoor_factor_active = enable;
-                rhi.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                rhi.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
+                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
+                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },
             .timing_overlay => {
                 ctx.ui_manager.timing_overlay.toggle();

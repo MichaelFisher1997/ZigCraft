@@ -716,16 +716,16 @@ test "ResourceManager.registerExternalTexture validation" {
     try testing.expectError(error.InvalidImageView, manager.registerExternalTexture(128, 128, .rgba, dummy_view, null));
 }
 
-test "RHI dynamic resolution passthrough" {
+test "RHI render options dynamic resolution" {
     var mock = MockContext{};
     mock.resolution_scale = 0.75;
     const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };
 
-    rhi_instance.setDynamicResolution(true, 0.5, 0.9, 120);
+    rhi_instance.options().setDynamicResolution(true, 0.5, 0.9, 120);
     try testing.expect(mock.dynamic_resolution_called);
     try testing.expect(mock.dynamic_resolution_enabled);
     try testing.expectEqual(@as(f32, 0.5), mock.dynamic_resolution_min_scale);
     try testing.expectEqual(@as(f32, 0.9), mock.dynamic_resolution_max_scale);
     try testing.expectEqual(@as(u32, 120), mock.dynamic_resolution_target_fps);
-    try testing.expectEqual(@as(f32, 0.75), rhi_instance.getResolutionScale());
+    try testing.expectEqual(@as(f32, 0.75), rhi_instance.options().getResolutionScale());
 }
