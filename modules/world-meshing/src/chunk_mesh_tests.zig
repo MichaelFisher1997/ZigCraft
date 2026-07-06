@@ -165,3 +165,51 @@ test "ChunkMesh tall_cross renders full height at subchunk top boundary" {
     try testing.expect(found_y15);
     try testing.expect(found_y17);
 }
+
+test "ChunkMesh emits top face for cube at subchunk boundary (regression for #705)" {
+    // Place a stone cube at y=15 — the LAST layer of subchunk 0. Its top face
+    // lives at the sy=16 boundary (between subchunk 0 and subchunk 1).
+    //
+    // The horizontal slice loop MUST iterate `sy <= y1` so subchunk 0 can emit
+    // this top face: greedy_mesher.meshSlice uses isEmittingSubchunk(.top, s - 1, ...)
+    // to assign the face to the subchunk that OWNS the solid block (y=15 → subchunk 0).
+    // Switching to `sy < y1` dropped the sy=16 iteration, so the top face was never
+    // emitted — and this happened at EVERY subchunk boundary (y=15, 31, ..., 255),
+    // not just the world ceiling.
+    //
+    // A standalone cube surrounded by air emits all 6 faces (6 verts each = 36).
+    // With the `sy < y1` regression only 5 faces (30 verts) were emitted.
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 15, 1, .stone);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    try testing.expect(mesh.pending_solid != null);
+    try testing.expectEqual(@as(usize, 36), mesh.pending_solid.?.len);
+}
+
+test "ChunkMesh emits top face for cube at world ceiling (regression for #705)" {
+    // Same regression at the world ceiling: a cube at y=CHUNK_SIZE_Y-1 needs its
+    // top face meshed at the sy=CHUNK_SIZE_Y boundary. This is the exact case
+    // the PR review flagged (mountain peaks at y=255 would show a hole).
+    const top_y = world_core.CHUNK_SIZE_Y - 1;
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, top_y, 1, .stone);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    try testing.expect(mesh.pending_solid != null);
+    try testing.expectEqual(@as(usize, 36), mesh.pending_solid.?.len);
+}

@@ -175,13 +175,21 @@ pub const ChunkMesh = struct {
         const y0: i32 = @intCast(si * SUBCHUNK_SIZE);
         const y1: i32 = y0 + SUBCHUNK_SIZE;
 
-        // Mesh horizontal slices (top/bottom faces). Iterate over the 16 Y layers of this subchunk
-        // (sy in [y0, y1)). The previous `sy <= y1` form iterated 17 times per subchunk and produced a
-        // duplicate slice at every subchunk boundary (e.g. sy=16 was visited by both subchunk 0 and 1).
-        // For the topmost subchunk it also queried getLightSafe at y=CHUNK_SIZE_Y, triggering the
-        // chunk-top light leak fixed alongside this in #702. See issue #705.
+        // Mesh horizontal slices (top/bottom faces). The loop iterates 17 boundaries
+        // per subchunk (sy in [y0, y1] inclusive), mirroring the sx/sz loops below.
+        // This is correct, NOT an off-by-one: greedy_mesher.meshSlice uses
+        // isEmittingSubchunk(.top, s - 1, ...) to assign each boundary face to the
+        // subchunk that owns the solid block, so no geometry is duplicated.
+        //
+        // The topmost iteration (sy = y1) is the boundary between the highest block
+        // of this subchunk (y = y1 - 1) and the block above. For interior subchunks
+        // that block belongs to the next subchunk; for the topmost subchunk
+        // (si = NUM_SUBCHUNKS - 1) it is the world-ceiling boundary at y = CHUNK_SIZE_Y.
+        // Dropping this iteration (e.g. `sy < y1`) loses the top face of the highest
+        // cube in every subchunk — see chunk_mesh_tests "emits top face for cube at
+        // subchunk boundary".
         var sy: i32 = y0;
-        while (sy < y1) : (sy += 1) {
+        while (sy <= y1) : (sy += 1) {
             try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .top, sy, si, solid_verts, cutout_verts, fluid_verts, atlas, mask);
         }
         // Mesh east/west face slices

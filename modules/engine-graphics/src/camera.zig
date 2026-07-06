@@ -5,8 +5,6 @@ const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
 
 pub const Camera = struct {
-    pub const MovementVector = struct { x: f32, z: f32 };
-
     // 4-tap Halton(2,3) sequence centered to [-0.5, 0.5] pixel offsets.
     // We keep this to 4 samples to keep temporal convergence fast while matching
     // the current low-latency TAA target (minimal history lag and ghosting).
