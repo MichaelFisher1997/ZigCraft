@@ -3,34 +3,9 @@
 const std = @import("std");
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
-const Input = @import("engine-input").Input;
-const Key = @import("engine-core").interfaces.Key;
 
 pub const Camera = struct {
     pub const MovementVector = struct { x: f32, z: f32 };
-
-    pub const InputMapperView = struct {
-        ptr: *const anyopaque,
-        vtable: *const VTable,
-
-        pub const VTable = struct {
-            getMovementVector: *const fn (ptr: *const anyopaque, input: *const Input) MovementVector,
-            isJumpActive: *const fn (ptr: *const anyopaque, input: *const Input) bool,
-            isCrouchActive: *const fn (ptr: *const anyopaque, input: *const Input) bool,
-        };
-
-        pub fn getMovementVector(self: InputMapperView, input: *const Input) MovementVector {
-            return self.vtable.getMovementVector(self.ptr, input);
-        }
-
-        pub fn isJumpActive(self: InputMapperView, input: *const Input) bool {
-            return self.vtable.isJumpActive(self.ptr, input);
-        }
-
-        pub fn isCrouchActive(self: InputMapperView, input: *const Input) bool {
-            return self.vtable.isCrouchActive(self.ptr, input);
-        }
-    };
 
     // 4-tap Halton(2,3) sequence centered to [-0.5, 0.5] pixel offsets.
     // We keep this to 4 samples to keep temporal convergence fast while matching
@@ -114,37 +89,11 @@ pub const Camera = struct {
         return JITTER_SEQUENCE[self.jitter_index];
     }
 
-    /// Update camera from input (call once per frame)
-    pub fn update(self: *Camera, input: *const Input, mapper: InputMapperView, delta_time: f32) void {
-        // Mouse look
-        const mouse_delta = input.getMouseDelta();
-        if (input.mouse_captured) {
-            self.yaw += @as(f32, @floatFromInt(mouse_delta.x)) * self.sensitivity;
-            self.pitch -= @as(f32, @floatFromInt(mouse_delta.y)) * self.sensitivity;
-
-            // Clamp pitch to prevent flipping
-            const max_pitch = std.math.degreesToRadians(89.0);
-            self.pitch = std.math.clamp(self.pitch, -max_pitch, max_pitch);
-
-            self.updateVectors();
-        }
-
-        // Keyboard movement
-        var move_dir = Vec3.zero;
-
-        const move_vec = mapper.getMovementVector(input);
-        if (move_vec.z > 0) move_dir = move_dir.add(self.forward);
-        if (move_vec.z < 0) move_dir = move_dir.sub(self.forward);
-        if (move_vec.x < 0) move_dir = move_dir.sub(self.right);
-        if (move_vec.x > 0) move_dir = move_dir.add(self.right);
-        if (mapper.isJumpActive(input)) move_dir = move_dir.add(Vec3.up);
-        if (mapper.isCrouchActive(input)) move_dir = move_dir.sub(Vec3.up);
-
-        // Normalize and apply speed
-        if (move_dir.lengthSquared() > 0) {
-            move_dir = move_dir.normalize();
-            self.position = self.position.add(move_dir.scale(self.move_speed * delta_time));
-        }
+    /// Set camera orientation directly and refresh cached axes.
+    pub fn setYawPitch(self: *Camera, yaw: f32, pitch: f32) void {
+        self.yaw = yaw;
+        self.pitch = pitch;
+        self.updateVectors();
     }
 
     fn updateVectors(self: *Camera) void {
@@ -160,13 +109,6 @@ pub const Camera = struct {
 
         // Up = right cross forward
         self.up = self.right.cross(self.forward).normalize();
-    }
-
-    /// Set camera orientation directly and refresh cached axes.
-    pub fn setYawPitch(self: *Camera, yaw: f32, pitch: f32) void {
-        self.yaw = yaw;
-        self.pitch = pitch;
-        self.updateVectors();
     }
 
     /// Get view matrix

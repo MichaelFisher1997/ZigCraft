@@ -71,3 +71,23 @@ test "recordKeyUp clears down and marks released on success" {
     try testing.expect(!input.isKeyDown(.w));
     try testing.expect(input.isKeyReleased(.w));
 }
+
+test "recordMouseWheel accumulates per frame (regression for #711)" {
+    // Multiple SDL wheel events can fire between beginFrame() calls (high-resolution mice,
+    // trackpads, rapid gestures). Previously the second event overwrote the first via `=`,
+    // dropping deltas and causing inventory/UI scroll to skip slots and zoom to feel erratic.
+    var input = Input.init(testing.allocator);
+    defer input.deinit();
+
+    input.recordMouseWheel(1.0, 2.0);
+    input.recordMouseWheel(1.0, 3.0);
+    input.recordMouseWheel(-1.0, 1.0);
+
+    try testing.expectEqual(@as(f32, 1.0), input.scroll_x);
+    try testing.expectEqual(@as(f32, 6.0), input.scroll_y);
+
+    // beginFrame must still zero out the totals for the next frame.
+    input.beginFrame();
+    try testing.expectEqual(@as(f32, 0.0), input.scroll_x);
+    try testing.expectEqual(@as(f32, 0.0), input.scroll_y);
+}

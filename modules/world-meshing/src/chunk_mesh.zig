@@ -175,9 +175,13 @@ pub const ChunkMesh = struct {
         const y0: i32 = @intCast(si * SUBCHUNK_SIZE);
         const y1: i32 = y0 + SUBCHUNK_SIZE;
 
-        // Mesh horizontal slices (top/bottom faces)
+        // Mesh horizontal slices (top/bottom faces). Iterate over the 16 Y layers of this subchunk
+        // (sy in [y0, y1)). The previous `sy <= y1` form iterated 17 times per subchunk and produced a
+        // duplicate slice at every subchunk boundary (e.g. sy=16 was visited by both subchunk 0 and 1).
+        // For the topmost subchunk it also queried getLightSafe at y=CHUNK_SIZE_Y, triggering the
+        // chunk-top light leak fixed alongside this in #702. See issue #705.
         var sy: i32 = y0;
-        while (sy <= y1) : (sy += 1) {
+        while (sy < y1) : (sy += 1) {
             try greedy_mesher.meshSlice(self.allocator, chunk, neighbors, .top, sy, si, solid_verts, cutout_verts, fluid_verts, atlas, mask);
         }
         // Mesh east/west face slices

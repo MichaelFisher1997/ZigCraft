@@ -134,10 +134,23 @@ test "Chunk.setBlock marks dirty and modified" {
     try testing.expect(chunk.modified);
 }
 
-test "Chunk.getLightSafe returns max light above world" {
+test "Chunk.getLightSafe returns zero for y above world (regression for #702)" {
+    // Previously this returned MAX_LIGHT for y >= CHUNK_SIZE_Y, leaking sky light through chunk tops during meshing.
+    // Out-of-bounds Y should be dark like the other OOB cases (matches getBlockSafe semantics).
     var chunk = Chunk.init(0, 0);
-    const light = chunk.getLightSafe(8, 300, 8);
-    try testing.expectEqual(@as(u4, MAX_LIGHT), light.sky_light);
+    const light_above = chunk.getLightSafe(8, 300, 8);
+    try testing.expectEqual(@as(u4, 0), light_above.sky_light);
+    try testing.expectEqual(@as(u4, 0), light_above.getBlockLight());
+
+    // The Y = CHUNK_SIZE_Y boundary itself (the most common sampling site at the topmost subchunk) must also be dark.
+    const light_at_boundary = chunk.getLightSafe(8, CHUNK_SIZE_Y, 8);
+    try testing.expectEqual(@as(u4, 0), light_at_boundary.sky_light);
+    try testing.expectEqual(@as(u4, 0), light_at_boundary.getBlockLight());
+
+    // In-bounds Y at the very top of the world still returns whatever was stored there.
+    chunk.setSkyLight(8, CHUNK_SIZE_Y - 1, 8, MAX_LIGHT);
+    const light_top_in_world = chunk.getLightSafe(8, CHUNK_SIZE_Y - 1, 8);
+    try testing.expectEqual(@as(u4, MAX_LIGHT), light_top_in_world.sky_light);
 }
 
 test "Chunk.getLightSafe returns zero for negative y" {

@@ -148,9 +148,12 @@ pub const Chunk = struct {
     }
 
     pub fn getLightSafe(self: *const Chunk, x: i32, y: i32, z: i32) PackedLight {
+        // Out-of-bounds in any direction returns zero light. Previously this returned MAX_LIGHT sky light for
+        // y >= CHUNK_SIZE_Y (a "light leak at chunk tops" — see issue #702). The meshing system samples across the Y=CHUNK_SIZE_Y
+        // boundary during subchunk meshing, and returning full daylight there caused bright visual artifacts at
+        // chunk tops. Returning 0 light is consistent with getBlockSafe and the X/Z bounds below.
         if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z) return PackedLight.init(0, 0);
-        if (y >= CHUNK_SIZE_Y) return PackedLight.init(MAX_LIGHT, 0);
-        if (y < 0) return PackedLight.init(0, 0);
+        if (y < 0 or y >= CHUNK_SIZE_Y) return PackedLight.init(0, 0);
         return self.getLight(@intCast(x), @intCast(y), @intCast(z));
     }
 
