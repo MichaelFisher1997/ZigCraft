@@ -13,7 +13,7 @@ const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("engine-input").IRawInputProvider;
 const Key = @import("engine-core").interfaces.Key;
 const MouseButton = @import("engine-core").interfaces.MouseButton;
-const World = @import("world-runtime").World;
+const IWorldSimulation = @import("world-runtime").IWorldSimulation;
 const collision = @import("engine-physics").collision;
 const ray = @import("engine-math");
 const block = @import("world-core").block;
@@ -155,7 +155,7 @@ pub const Player = struct {
         self: *Player,
         input: IRawInputProvider,
         mapper: IInputMapper,
-        world: *World,
+        world: IWorldSimulation,
         delta_time: f32,
         current_time: f32,
     ) void {
@@ -257,7 +257,7 @@ pub const Player = struct {
     }
 
     /// Update player when flying (creative mode)
-    fn updateFlying(self: *Player, input: IRawInputProvider, mapper: IInputMapper, move_dir: Vec3, world: *World, delta_time: f32) void {
+    fn updateFlying(self: *Player, input: IRawInputProvider, mapper: IInputMapper, move_dir: Vec3, world: IWorldSimulation, delta_time: f32) void {
         var vel = move_dir.scale(FLY_SPEED);
 
         // Vertical movement
@@ -293,7 +293,7 @@ pub const Player = struct {
         input: IRawInputProvider,
         mapper: IInputMapper,
         move_dir: Vec3,
-        world: *World,
+        world: IWorldSimulation,
         delta_time: f32,
     ) void {
         // Apply gravity
@@ -339,13 +339,13 @@ pub const Player = struct {
     }
 
     /// Update the currently targeted block via raycast
-    fn updateTargetBlock(self: *Player, world: *World) void {
+    fn updateTargetBlock(self: *Player, world: IWorldSimulation) void {
         const eye_pos = self.getEyePosition();
         const direction = self.camera.forward;
 
         // Context for the raycast callback
         const Context = struct {
-            world: *World,
+            world: IWorldSimulation,
 
             pub fn isTargetable(ctx: @This(), x: i32, y: i32, z: i32) bool {
                 const blk = ctx.world.getBlock(x, y, z);
@@ -381,14 +381,14 @@ pub const Player = struct {
     // ========================================================================
 
     /// Break the currently targeted block (set to air)
-    pub fn breakTargetBlock(self: *Player, world: *World) void {
+    pub fn breakTargetBlock(self: *Player, world: IWorldSimulation) void {
         if (self.target_block) |target| {
             world.setBlock(target.x, target.y, target.z, .air) catch {};
         }
     }
 
     /// Place a block at the face of the targeted block
-    pub fn placeBlock(self: *Player, world: *World, block_type: BlockType) void {
+    pub fn placeBlock(self: *Player, world: IWorldSimulation, block_type: BlockType) void {
         if (self.target_block) |target| {
             const offset = target.face.getOffset();
             const px = target.x + offset.x;

@@ -22,6 +22,7 @@ pub const WorldMutationCoordinator = world_mutation.WorldMutationCoordinator;
 pub const WorldRenderer = world_renderer.WorldRenderer;
 pub const World = world.World;
 pub const DebugLightInfo = world.DebugLightInfo;
+pub const GpuMeshDispatch = world.GpuMeshDispatch;
 pub const IWorld = world.IWorld;
 pub const IWorldRenderView = world.IWorldRenderView;
 pub const IWorldSimulation = world.IWorldSimulation;

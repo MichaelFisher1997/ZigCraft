@@ -8,7 +8,7 @@ const Chunk = world_core.Chunk;
 const BlockType = world_core.BlockType;
 const block_registry = world_core.block_registry;
 const BiomeId = world_core.BiomeId;
-const OverworldGenerator = world_worldgen.OverworldGenerator;
+const OverworldGenerator = world_worldgen.test_generators.OverworldGenerator;
 const deco_registry = world_worldgen.decoration_registry;
 const NoiseSampler = world_worldgen.NoiseSampler;
 const HeightSampler = world_worldgen.HeightSampler;
@@ -16,7 +16,7 @@ const SurfaceBuilder = world_worldgen.SurfaceBuilder;
 const CoastalSurfaceType = world_worldgen.surface_builder.CoastalSurfaceType;
 const BiomeSource = world_worldgen.biome.BiomeSource;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
-const OverworldV2Generator = world_worldgen.OverworldV2Generator;
+const OverworldV2Generator = world_worldgen.test_generators.OverworldV2Generator;
 
 pub const std_options: std.Options = .{ .log_level = .err };
 

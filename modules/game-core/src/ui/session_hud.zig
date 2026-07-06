@@ -9,8 +9,11 @@ const region_pkg = @import("world-worldgen").region;
 const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
 
 pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_pack: ?[]const u8, fps: f32, screen_w: f32, screen_h: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) !void {
+    const world = session.world.interface();
+    const telemetry = world.telemetry();
+
     if (session.map_controller.show_map) {
-        try session.map_controller.draw(ui, screen_w, screen_h, &session.world_map, session.world.generator, session.camera.position, session.allocator);
+        try session.map_controller.draw(ui, screen_w, screen_h, &session.world_map, telemetry.getGenerator(), session.camera.position, session.allocator);
         return;
     }
 
@@ -19,8 +22,8 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
         Font.drawNumber(ui, @intFromFloat(fps), 15, 15, Color.white);
     }
 
-    const stats = session.world.getStats();
-    const rs = session.world.getRenderStats();
+    const stats = telemetry.getStats();
+    const rs = telemetry.getRenderStats();
     const pc = worldToChunkFromFloat(session.camera.position.x, session.camera.position.z);
     const hy: f32 = 50.0;
     const fault_count = session.rhi.query().getFaultCount();
@@ -34,7 +37,7 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
     Font.drawText(ui, "VISIBLE:", 15, hy + 45, 1.5, Color.white);
     Font.drawNumber(ui, @intCast(rs.chunks_rendered), 140, hy + 45, Color.white);
 
-    if (session.world.getLODStats()) |ls| {
+    if (telemetry.getLODStats()) |ls| {
         Font.drawText(ui, "LODS:", 15, hy + 65, 1.5, Color.rgba(0.5, 0.8, 1.0, 1.0));
         Font.drawNumber(ui, @intCast(ls.totalLoaded()), 140, hy + 65, Color.rgba(0.5, 0.8, 1.0, 1.0));
     }
@@ -57,7 +60,7 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
 
     const px_i: i32 = @intFromFloat(session.camera.position.x);
     const pz_i: i32 = @intFromFloat(session.camera.position.z);
-    const region = session.world.generator.getRegionInfo(px_i, pz_i);
+    const region = telemetry.getRegionInfo(px_i, pz_i);
     const c3 = region_pkg.getRoleColor(region.role);
     Font.drawText(ui, "ROLE:", 15, hy + 185, 1.5, Color.rgba(c3[0], c3[1], c3[2], 1.0));
     var buf: [32]u8 = undefined;
@@ -72,7 +75,7 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
 
     if (session.debug_show_block_info) {
         if (session.player.target_block) |target| {
-            const block_type = session.world.getBlock(target.x, target.y, target.z);
+            const block_type = telemetry.getBlock(target.x, target.y, target.z);
             const tiles = atlas.getTilesForBlock(@intFromEnum(block_type));
             const ux = screen_w - 390;
             var uy: f32 = 10;
@@ -86,8 +89,8 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
             const face_x = target.x + face_offset.x;
             const face_y = target.y + face_offset.y;
             const face_z = target.z + face_offset.z;
-            const target_light = session.world.getDebugLightInfo(target.x, target.y, target.z);
-            const face_light = session.world.getDebugLightInfo(face_x, face_y, face_z);
+            const target_light = telemetry.getDebugLightInfo(target.x, target.y, target.z);
+            const face_light = telemetry.getDebugLightInfo(face_x, face_y, face_z);
             const target_light_text = if (target_light) |l| std.fmt.bufPrint(&buf2, "TARGET S:{} B:{} E:{}", .{ l.sky, l.block, l.entrance_bounce }) catch "TARGET: ???" else "TARGET: missing";
             Font.drawText(ui, target_light_text, ux, uy + 5, 1.5, Color.white);
             uy += 25;

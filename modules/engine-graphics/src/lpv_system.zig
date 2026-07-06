@@ -19,23 +19,7 @@ const InjectPush = lpv_types.InjectPush;
 const PropagatePush = lpv_types.PropagatePush;
 const GridResources = lpv_types.GridResources;
 
-pub const ILPVWorld = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        collectLights: *const fn (ptr: *anyopaque, origin: Vec3, grid_size: u32, cell_size: f32, out: []GpuLight) usize,
-        buildOcclusionGrid: *const fn (ptr: *anyopaque, origin: Vec3, grid_size: u32, cell_size: f32, out: []u32) void,
-    };
-
-    pub fn collectLights(self: ILPVWorld, origin: Vec3, grid_size: u32, cell_size: f32, out: []GpuLight) usize {
-        return self.vtable.collectLights(self.ptr, origin, grid_size, cell_size, out);
-    }
-
-    pub fn buildOcclusionGrid(self: ILPVWorld, origin: Vec3, grid_size: u32, cell_size: f32, out: []u32) void {
-        self.vtable.buildOcclusionGrid(self.ptr, origin, grid_size, cell_size, out);
-    }
-};
+pub const ILPVWorld = @import("engine-rhi").ILPVWorld;
 
 pub const LPVSystem = struct {
     pub const Stats = lpv_types.Stats;

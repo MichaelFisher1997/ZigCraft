@@ -6,9 +6,11 @@ const log = @import("engine-core").log;
 const GameSession = @import("game-core").GameSession;
 const ChunkInspectorOverlay = @import("engine-ui").ChunkInspectorOverlay;
 const WorldContext = @import("../screen.zig").WorldContext;
+const IWorldTelemetry = @import("world-runtime").IWorldTelemetry;
 
 pub const ScreenDebugState = struct {
     session: *GameSession,
+    world_telemetry: IWorldTelemetry,
     last_debug_toggle_time: *f32,
     chunk_inspector_overlay: *ChunkInspectorOverlay,
 };
@@ -33,7 +35,7 @@ pub fn collectStates(screen: ScreenDebugState, ctx: WorldContext, render_system:
     states[@intFromEnum(DebugFeature.block_light_debug)] = ctx.settings.debug_block_light_active;
     states[@intFromEnum(DebugFeature.outdoor_factor_debug)] = ctx.settings.debug_outdoor_factor_active;
     states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
-    states[@intFromEnum(DebugFeature.lod_render)] = screen.session.world.lod_enabled;
+    states[@intFromEnum(DebugFeature.lod_render)] = screen.world_telemetry.isLODRenderingEnabled();
     states[@intFromEnum(DebugFeature.gpass_render)] = !render_system.getDisableGPassDraw();
     states[@intFromEnum(DebugFeature.ssao)] = !render_system.getDisableSSAO();
     states[@intFromEnum(DebugFeature.fog)] = screen.session.atmosphere.fog_enabled;
@@ -90,7 +92,7 @@ pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldCo
             rhi.timing().setTimingEnabled(ctx.ui_manager.timing_overlay.enabled);
         },
         .lod_render => {
-            if (screen.session.world.lod == null) log.log.warn("LOD toggle requested but LOD system is not initialized", .{}) else screen.session.world.lod_enabled = !screen.session.world.lod_enabled;
+            if (!screen.world_telemetry.isLODEnabled()) log.log.warn("LOD toggle requested but LOD system is not initialized", .{}) else _ = screen.world_telemetry.toggleLODRendering();
         },
         .gpass_render => render_system.setDisableGPassDraw(!render_system.getDisableGPassDraw()),
         .ssao => render_system.setDisableSSAO(!render_system.getDisableSSAO()),

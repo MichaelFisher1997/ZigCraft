@@ -1,6 +1,6 @@
 const std = @import("std");
 const c = @import("c").c;
-const gen_interface = @import("generator_interface.zig");
+const gen_interface = @import("worldgen-api");
 const Generator = gen_interface.Generator;
 const ColumnInfo = gen_interface.ColumnInfo;
 const BiomeId = @import("world-core").BiomeId;
