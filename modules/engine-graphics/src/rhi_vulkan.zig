@@ -743,6 +743,8 @@ fn drawTextureRegion2D(ctx_ptr: *anyopaque, texture: rhi.TextureHandle, rect: rh
 
 fn createShader(ctx_ptr: *anyopaque, vertex_src: [*c]const u8, fragment_src: [*c]const u8) rhi.RhiError!rhi.ShaderHandle {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
     return ctx.resources.createShader(vertex_src, fragment_src);
 }
 

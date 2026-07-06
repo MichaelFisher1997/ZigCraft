@@ -14,6 +14,7 @@ const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const MAX_BLOCK_TYPES = world_core.MAX_BLOCK_TYPES;
 const BlockType = world_core.BlockType;
+const RenderShape = world_core.RenderShape;
 const TextureAtlas = @import("engine-assets").TextureAtlas;
 const rhi_mod = @import("engine-rhi");
 const RenderContext = rhi_mod.RenderContext;
@@ -30,6 +31,22 @@ const tall_cross_mesher = @import("meshing/tall_cross_mesher.zig");
 const wall_attached_mesher = @import("meshing/wall_attached_mesher.zig");
 const custom_mesh_mesher = @import("meshing/custom_mesh_mesher.zig");
 const boundary = @import("meshing/boundary.zig");
+
+const MesherPass = enum { solid, cutout };
+const MesherFn = *const fn (std.mem.Allocator, *const Chunk, NeighborChunks, u32, *std.ArrayListUnmanaged(Vertex), *const TextureAtlas) anyerror!void;
+const ShapeMesher = struct {
+    shape: RenderShape,
+    pass: MesherPass,
+    mesh: MesherFn,
+};
+
+const SHAPE_MESHERS = [_]ShapeMesher{
+    .{ .shape = .cross, .pass = .cutout, .mesh = cross_mesher.meshCrossBlocks },
+    .{ .shape = .flat_quad, .pass = .cutout, .mesh = flat_quad_mesher.meshFlatQuadBlocks },
+    .{ .shape = .tall_cross, .pass = .cutout, .mesh = tall_cross_mesher.meshTallCrossBlocks },
+    .{ .shape = .wall_attached, .pass = .cutout, .mesh = wall_attached_mesher.meshWallAttachedBlocks },
+    .{ .shape = .custom_mesh, .pass = .solid, .mesh = custom_mesh_mesher.meshCustomMeshBlocks },
+};
 
 // Re-export public types for external consumers
 pub const NeighborChunks = boundary.NeighborChunks;
@@ -175,11 +192,14 @@ pub const ChunkMesh = struct {
         }
 
         // Mesh non-cube shapes (plants, attached quads, and custom solid geometry)
-        try cross_mesher.meshCrossBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
-        try flat_quad_mesher.meshFlatQuadBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
-        try tall_cross_mesher.meshTallCrossBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
-        try wall_attached_mesher.meshWallAttachedBlocks(self.allocator, chunk, neighbors, si, cutout_verts, atlas);
-        try custom_mesh_mesher.meshCustomMeshBlocks(self.allocator, chunk, neighbors, si, solid_verts, atlas);
+        for (SHAPE_MESHERS) |entry| {
+            _ = entry.shape;
+            const verts = switch (entry.pass) {
+                .solid => solid_verts,
+                .cutout => cutout_verts,
+            };
+            try entry.mesh(self.allocator, chunk, neighbors, si, verts, atlas);
+        }
 
         // Store subchunk data temporarily (will be merged later)
         self.mutex.lock();
