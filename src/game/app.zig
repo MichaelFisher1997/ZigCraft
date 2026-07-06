@@ -3,16 +3,16 @@ const build_options = @import("build_options");
 const c = @import("c").c;
 
 const log = @import("engine-core").log;
-const WindowManager = @import("../engine/core/window.zig").WindowManager;
+const WindowManager = @import("engine-core").WindowManager;
 const Input = @import("engine-input").Input;
-const Time = @import("../engine/core/time.zig").Time;
+const Time = @import("engine-core").Time;
 const UISystemManager = @import("engine-ui").UISystemManager;
 const imgui_backend = @import("engine-ui").imgui_backend;
 const WorldStats = @import("engine-ui").WorldStats;
-const Vec3 = @import("../engine/math/vec3.zig").Vec3;
-const Mat4 = @import("../engine/math/mat4.zig").Mat4;
+const Vec3 = @import("engine-math").Vec3;
+const Mat4 = @import("engine-math").Mat4;
 const InputMapper = @import("game-core").InputMapper;
-const RenderSystem = @import("../engine/graphics/render_system.zig").RenderSystem;
+const RenderSystem = @import("engine-graphics").RenderSystem;
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 const BenchmarkRunner = @import("game-core").BenchmarkRunner;
 const json_presets = @import("game-core").settings.json_presets;
@@ -28,9 +28,9 @@ const ScreenManager = screen_pkg.ScreenManager;
 const EngineContext = screen_pkg.EngineContext;
 const HomeScreen = @import("game-ui").HomeScreen;
 const WorldScreen = @import("game-ui").WorldScreen;
-const RenderSettingsAdapter = @import("../engine/graphics/render_settings.zig").RenderSettingsAdapter;
+const RenderSettingsAdapter = @import("engine-rhi").RenderSettingsAdapter;
 const runtime_env = @import("engine-core").runtime_env;
-const RHI = @import("../engine/graphics/rhi.zig").RHI;
+const RHI = @import("engine-rhi").RHI;
 pub const BLOCK_TEXTURE_DEFINITIONS = @import("game-core").BLOCK_TEXTURE_DEFINITIONS;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {

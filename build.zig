@@ -262,7 +262,6 @@ pub fn build(b: *std.Build) void {
     addSharedImports(world_meshing, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_meshing.addImport("engine-core", engine_core);
     world_meshing.addImport("engine-assets", engine_assets);
-    world_meshing.addImport("engine-graphics", engine_graphics);
     world_meshing.addImport("engine-rhi", engine_rhi);
     world_meshing.addImport("world-core", world_core);
     addSharedImports(world_lod, zig_math, zig_noise, fs_module, sync_module, c_module, options);
@@ -279,7 +278,6 @@ pub fn build(b: *std.Build) void {
     world_persistence.addImport("engine-core", engine_core);
     world_persistence.addImport("world-core", world_core);
     world_worldgen.addImport("engine-core", engine_core);
-    world_worldgen.addImport("engine-rhi", engine_rhi);
     world_worldgen.addImport("world-core", world_core);
     world_worldgen.addImport("worldgen-api", worldgen_api);
     world_worldgen.addImport("worldgen-common", worldgen_common);

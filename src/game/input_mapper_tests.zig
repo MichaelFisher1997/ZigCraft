@@ -5,8 +5,8 @@ const InputBinding = input_mapper_pkg.InputBinding;
 const ActionBinding = input_mapper_pkg.ActionBinding;
 const InputMapper = input_mapper_pkg.InputMapper;
 const GameAction = input_mapper_pkg.GameAction;
-const Key = @import("../engine/core/interfaces.zig").Key;
-const MouseButton = @import("../engine/core/interfaces.zig").MouseButton;
+const Key = @import("engine-core").interfaces.Key;
+const MouseButton = @import("engine-core").interfaces.MouseButton;
 
 test "InputBinding.getName for key" {
     const binding = InputBinding{ .key = .w };
