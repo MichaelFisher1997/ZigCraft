@@ -1,1 +1,1 @@
-pub const IWorldRenderView = @import("engine-graphics").IWorldRenderView;
+pub const IWorldRenderView = @import("engine-rhi").IWorldRenderView;

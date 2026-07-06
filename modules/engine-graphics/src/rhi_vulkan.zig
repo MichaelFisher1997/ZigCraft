@@ -1250,119 +1250,144 @@ const VULKAN_COMPUTE_CONTEXT_VTABLE = rhi.IComputeContext.VTable{
     .hasCommandBuffer = hasComputeCommandBuffer,
 };
 
-const VULKAN_RHI_VTABLE = rhi.RHI.VTable{
-    .init = initContext,
-    .deinit = deinit,
-    .resources = .{
-        .createBuffer = createBuffer,
-        .uploadBuffer = uploadBuffer,
-        .updateBuffer = updateBuffer,
-        .destroyBuffer = destroyBuffer,
-        .createTexture = createTexture,
-        .createTexture3D = createTexture3D,
-        .destroyTexture = destroyTexture,
-        .updateTexture = updateTexture,
-        .createShader = createShader,
-        .destroyShader = destroyShader,
-        .mapBuffer = mapBuffer,
-        .unmapBuffer = unmapBuffer,
-    },
-    .render = .{
-        .beginFrame = beginFrame,
-        .endFrame = endFrame,
-        .abortFrame = abortFrame,
-        .requestSwapchainRecreate = requestSwapchainRecreate,
-        .getEncoder = getEncoder,
-        .getStateContext = getStateContext,
-        .setClearColor = setClearColor,
-    },
-    .passes = .{
-        .beginMainPass = beginMainPass,
-        .endMainPass = endMainPass,
-        .beginPostProcessPass = beginPostProcessPass,
-        .endPostProcessPass = endPostProcessPass,
-        .beginGPass = beginGPass,
-        .endGPass = endGPass,
-        .beginFXAAPass = beginFXAAPass,
-        .endFXAAPass = endFXAAPass,
-    },
-    .post_process = .{
-        .computeBloom = computeBloom,
-        .computeTAA = computeTAA,
-        .computeDepthPyramid = computeDepthPyramid,
-    },
+const VULKAN_RESOURCE_FACTORY_VTABLE = rhi.IResourceFactory.VTable{
+    .createBuffer = createBuffer,
+    .uploadBuffer = uploadBuffer,
+    .updateBuffer = updateBuffer,
+    .destroyBuffer = destroyBuffer,
+    .createTexture = createTexture,
+    .createTexture3D = createTexture3D,
+    .destroyTexture = destroyTexture,
+    .updateTexture = updateTexture,
+    .createShader = createShader,
+    .destroyShader = destroyShader,
+    .mapBuffer = mapBuffer,
+    .unmapBuffer = unmapBuffer,
+};
+
+const VULKAN_RENDER_CONTEXT_VTABLE = rhi.IRenderContext.VTable{
+    .beginFrame = beginFrame,
+    .endFrame = endFrame,
+    .abortFrame = abortFrame,
+    .requestSwapchainRecreate = requestSwapchainRecreate,
+    .getEncoder = getEncoder,
+    .getStateContext = getStateContext,
+    .setClearColor = setClearColor,
+};
+
+const VULKAN_PASS_ORCHESTRATION_VTABLE = rhi.IPassOrchestrationContext.VTable{
+    .beginMainPass = beginMainPass,
+    .endMainPass = endMainPass,
+    .beginPostProcessPass = beginPostProcessPass,
+    .endPostProcessPass = endPostProcessPass,
+    .beginGPass = beginGPass,
+    .endGPass = endGPass,
+    .beginFXAAPass = beginFXAAPass,
+    .endFXAAPass = endFXAAPass,
+};
+
+const VULKAN_POST_PROCESS_VTABLE = rhi.IPostProcessContext.VTable{
+    .computeBloom = computeBloom,
+    .computeTAA = computeTAA,
+    .computeDepthPyramid = computeDepthPyramid,
+};
+
+const VULKAN_NATIVE_HANDLES_VTABLE = rhi.INativeHandlesContext.VTable{
+    .getCommandBuffer = getNativeCommandBuffer,
+    .getSwapchainExtent = getNativeSwapchainExtent,
+    .getDevice = getNativeDevice,
+    .getInstance = getNativeInstance,
+    .getPhysicalDevice = getNativePhysicalDevice,
+    .getQueue = getNativeQueue,
+    .getQueueFamily = getNativeQueueFamily,
+    .getDescriptorPool = getNativeDescriptorPool,
+    .getUiRenderPass = getNativeUiRenderPass,
+    .getSwapchainImageCount = getNativeSwapchainImageCount,
+    .getBackendContext = getNativeBackendContext,
+};
+
+const VULKAN_DEVICE_QUERY_VTABLE = rhi.IDeviceQuery.VTable{
+    .getFrameIndex = getFrameIndex,
+    .supportsIndirectFirstInstance = supportsIndirectFirstInstance,
+    .getMaxAnisotropy = getMaxAnisotropy,
+    .getMaxMSAASamples = getMaxMSAASamples,
+    .getFaultCount = getFaultCount,
+    .getValidationErrorCount = getValidationErrorCount,
+    .getDrawCallCount = getDrawCallCount,
+    .getDeviceLocalVramBytes = getDeviceLocalVramBytes,
+    .getRenderResolution = getRenderResolution,
+    .waitIdle = waitIdle,
+};
+
+const VULKAN_DEVICE_TIMING_VTABLE = rhi.IDeviceTiming.VTable{
+    .beginPassTiming = beginPassTiming,
+    .endPassTiming = endPassTiming,
+    .getTimingResults = getTimingResults,
+    .isTimingEnabled = isTimingEnabled,
+    .setTimingEnabled = setTimingEnabled,
+};
+
+const VULKAN_RENDER_QUALITY_OPTIONS_VTABLE = rhi.IRenderQualityOptions.VTable{
+    .setWireframe = setWireframe,
+    .setTexturesEnabled = setTexturesEnabled,
+    .setDebugShadowView = setDebugShadowView,
+    .setShadowDebugChannel = setShadowDebugChannel,
+    .setVSync = setVSync,
+    .setAnisotropicFiltering = setAnisotropicFiltering,
+    .setVolumetricDensity = setVolumetricDensity,
+    .setMSAA = setMSAA,
+    .setFXAA = setFXAA,
+    .setBloom = setBloom,
+    .setBloomIntensity = setBloomIntensity,
+    .setVignetteEnabled = setVignetteEnabled,
+    .setVignetteIntensity = setVignetteIntensity,
+    .setFilmGrainEnabled = setFilmGrainEnabled,
+    .setFilmGrainIntensity = setFilmGrainIntensity,
+    .setColorGradingEnabled = setColorGradingEnabled,
+    .setColorGradingIntensity = setColorGradingIntensity,
+    .setTAABlendFactor = setTAABlendFactor,
+    .setTAAVelocityRejection = setTAAVelocityRejection,
+    .setDynamicResolution = setDynamicResolution,
+    .getResolutionScale = getResolutionScale,
+};
+
+const VULKAN_DEVICE_RECOVERY_VTABLE = rhi.IDeviceRecovery.VTable{
+    .recover = recover,
+};
+
+const VULKAN_CULLING_FACTORY_VTABLE = rhi.ICullingSystemFactory.VTable{
+    .createCullingSystem = createCullingSystem,
+};
+
+const VULKAN_SCREENSHOT_CONTEXT_VTABLE = rhi.IScreenshotContext.VTable{
+    .captureFrame = captureFrame,
+};
+
+const VULKAN_RHI_INTERFACES = rhi.RHI.Interfaces{
+    .resources = VULKAN_RESOURCE_FACTORY_VTABLE,
+    .render = VULKAN_RENDER_CONTEXT_VTABLE,
+    .passes = VULKAN_PASS_ORCHESTRATION_VTABLE,
+    .post_process = VULKAN_POST_PROCESS_VTABLE,
     .effects = VULKAN_RENDER_EFFECTS_VTABLE,
-    .native = .{
-        .getCommandBuffer = getNativeCommandBuffer,
-        .getSwapchainExtent = getNativeSwapchainExtent,
-        .getDevice = getNativeDevice,
-        .getInstance = getNativeInstance,
-        .getPhysicalDevice = getNativePhysicalDevice,
-        .getQueue = getNativeQueue,
-        .getQueueFamily = getNativeQueueFamily,
-        .getDescriptorPool = getNativeDescriptorPool,
-        .getUiRenderPass = getNativeUiRenderPass,
-        .getSwapchainImageCount = getNativeSwapchainImageCount,
-        .getBackendContext = getNativeBackendContext,
-    },
+    .native = VULKAN_NATIVE_HANDLES_VTABLE,
     .ssao = VULKAN_SSAO_VTABLE,
     .debug_overlay = VULKAN_DEBUG_OVERLAY_VTABLE,
     .shadow = VULKAN_SHADOW_CONTEXT_VTABLE,
     .water = VULKAN_WATER_CONTEXT_VTABLE,
     .compute = VULKAN_COMPUTE_CONTEXT_VTABLE,
     .ui = VULKAN_UI_CONTEXT_VTABLE,
-    .query = .{
-        .getFrameIndex = getFrameIndex,
-        .supportsIndirectFirstInstance = supportsIndirectFirstInstance,
-        .getMaxAnisotropy = getMaxAnisotropy,
-        .getMaxMSAASamples = getMaxMSAASamples,
-        .getFaultCount = getFaultCount,
-        .getValidationErrorCount = getValidationErrorCount,
-        .getDrawCallCount = getDrawCallCount,
-        .getDeviceLocalVramBytes = getDeviceLocalVramBytes,
-        .getRenderResolution = getRenderResolution,
-        .waitIdle = waitIdle,
-    },
-    .timing = .{
-        .beginPassTiming = beginPassTiming,
-        .endPassTiming = endPassTiming,
-        .getTimingResults = getTimingResults,
-        .isTimingEnabled = isTimingEnabled,
-        .setTimingEnabled = setTimingEnabled,
-    },
-    .quality = .{
-        .setWireframe = setWireframe,
-        .setTexturesEnabled = setTexturesEnabled,
-        .setDebugShadowView = setDebugShadowView,
-        .setShadowDebugChannel = setShadowDebugChannel,
-        .setVSync = setVSync,
-        .setAnisotropicFiltering = setAnisotropicFiltering,
-        .setVolumetricDensity = setVolumetricDensity,
-        .setMSAA = setMSAA,
-        .setFXAA = setFXAA,
-        .setBloom = setBloom,
-        .setBloomIntensity = setBloomIntensity,
-        .setVignetteEnabled = setVignetteEnabled,
-        .setVignetteIntensity = setVignetteIntensity,
-        .setFilmGrainEnabled = setFilmGrainEnabled,
-        .setFilmGrainIntensity = setFilmGrainIntensity,
-        .setColorGradingEnabled = setColorGradingEnabled,
-        .setColorGradingIntensity = setColorGradingIntensity,
-        .setTAABlendFactor = setTAABlendFactor,
-        .setTAAVelocityRejection = setTAAVelocityRejection,
-        .setDynamicResolution = setDynamicResolution,
-        .getResolutionScale = getResolutionScale,
-    },
-    .recovery = .{
-        .recover = recover,
-    },
-    .culling_factory = .{
-        .createCullingSystem = createCullingSystem,
-    },
-    .screenshot = .{
-        .captureFrame = captureFrame,
-    },
+    .query = VULKAN_DEVICE_QUERY_VTABLE,
+    .timing = VULKAN_DEVICE_TIMING_VTABLE,
+    .quality = VULKAN_RENDER_QUALITY_OPTIONS_VTABLE,
+    .recovery = VULKAN_DEVICE_RECOVERY_VTABLE,
+    .culling_factory = VULKAN_CULLING_FACTORY_VTABLE,
+    .screenshot = VULKAN_SCREENSHOT_CONTEXT_VTABLE,
 };
+
+const VULKAN_RHI_VTABLE = rhi.RHI.composeVTable(.{
+    .init = initContext,
+    .deinit = deinit,
+}, VULKAN_RHI_INTERFACES);
 
 fn beginPassTiming(ctx_ptr: *anyopaque, pass_name: []const u8) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));

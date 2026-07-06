@@ -6,6 +6,7 @@ pub const culling = @import("culling.zig");
 pub const render_device = @import("render_device.zig");
 pub const render_settings = @import("render_settings.zig");
 pub const texture = @import("texture.zig");
+pub const world_contracts = @import("world_contracts.zig");
 
 pub const RhiError = rhi_types.RhiError;
 pub const BufferHandle = rhi_types.BufferHandle;
@@ -64,6 +65,9 @@ pub const IDeviceRecovery = rhi.IDeviceRecovery;
 pub const ICullingSystemFactory = rhi.ICullingSystemFactory;
 pub const IScreenshotContext = rhi.IScreenshotContext;
 pub const RHI = rhi.RHI;
+pub const IWorldRenderView = world_contracts.IWorldRenderView;
+pub const IShadowScene = world_contracts.IShadowScene;
+pub const ILPVWorld = world_contracts.ILPVWorld;
 pub const Texture = texture.Texture;
 pub const Config = texture.Config;
 pub const RenderDistancePreset = render_settings.RenderDistancePreset;

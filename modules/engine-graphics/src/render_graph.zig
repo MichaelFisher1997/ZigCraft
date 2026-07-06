@@ -38,8 +38,8 @@
 const std = @import("std");
 const build_options = @import("engine_graphics_options");
 const Camera = @import("engine-camera").Camera;
-const IWorldRenderView = @import("world_render_view.zig").IWorldRenderView;
-const shadow_scene = @import("engine-shadows").shadow_scene;
+const IWorldRenderView = @import("engine-rhi").IWorldRenderView;
+const IShadowScene = @import("engine-rhi").IShadowScene;
 const rhi_pkg = @import("engine-rhi").rhi;
 const RenderContext = rhi_pkg.RenderContext;
 const ShadowSystemWrapper = rhi_pkg.ShadowSystemWrapper;
@@ -86,7 +86,7 @@ pub const SceneContext = struct {
     ssao_ctx: ISSAOContext,
     timing: IDeviceTiming,
     world: IWorldRenderView,
-    shadow_scene: shadow_scene.IShadowScene,
+    shadow_scene: IShadowScene,
     camera: *Camera,
     atmosphere_system: *AtmosphereSystem,
     aspect: f32,

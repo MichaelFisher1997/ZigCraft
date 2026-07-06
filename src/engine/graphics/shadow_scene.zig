@@ -1,1 +1,1 @@
-pub const IShadowScene = @import("engine-shadows").IShadowScene;
+pub const IShadowScene = @import("engine-rhi").IShadowScene;

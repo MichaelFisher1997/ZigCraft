@@ -1155,7 +1155,6 @@ pub const RHI = struct {
         init: *const fn (ctx: *anyopaque, allocator: Allocator, device: ?*RenderDevice) anyerror!void,
         deinit: *const fn (ctx: *anyopaque) void,
 
-        // Composition of all vtables (temp)
         resources: IResourceFactory.VTable,
         render: IRenderContext.VTable,
         passes: IPassOrchestrationContext.VTable,
@@ -1175,6 +1174,57 @@ pub const RHI = struct {
         culling_factory: ICullingSystemFactory.VTable,
         screenshot: IScreenshotContext.VTable,
     };
+
+    pub const Lifecycle = struct {
+        init: *const fn (ctx: *anyopaque, allocator: Allocator, device: ?*RenderDevice) anyerror!void,
+        deinit: *const fn (ctx: *anyopaque) void,
+    };
+
+    pub const Interfaces = struct {
+        resources: IResourceFactory.VTable,
+        render: IRenderContext.VTable,
+        passes: IPassOrchestrationContext.VTable,
+        post_process: IPostProcessContext.VTable,
+        effects: IRenderEffectsContext.VTable,
+        native: INativeHandlesContext.VTable,
+        ssao: ISSAOContext.VTable,
+        debug_overlay: IDebugOverlayContext.VTable,
+        shadow: IShadowContext.VTable,
+        water: IWaterContext.VTable,
+        compute: IComputeContext.VTable,
+        ui: IUIContext.VTable,
+        query: IDeviceQuery.VTable,
+        timing: IDeviceTiming.VTable,
+        quality: IRenderQualityOptions.VTable,
+        recovery: IDeviceRecovery.VTable,
+        culling_factory: ICullingSystemFactory.VTable,
+        screenshot: IScreenshotContext.VTable,
+    };
+
+    pub fn composeVTable(lifecycle: Lifecycle, interfaces: Interfaces) VTable {
+        return .{
+            .init = lifecycle.init,
+            .deinit = lifecycle.deinit,
+            .resources = interfaces.resources,
+            .render = interfaces.render,
+            .passes = interfaces.passes,
+            .post_process = interfaces.post_process,
+            .effects = interfaces.effects,
+            .native = interfaces.native,
+            .ssao = interfaces.ssao,
+            .debug_overlay = interfaces.debug_overlay,
+            .shadow = interfaces.shadow,
+            .water = interfaces.water,
+            .compute = interfaces.compute,
+            .ui = interfaces.ui,
+            .query = interfaces.query,
+            .timing = interfaces.timing,
+            .quality = interfaces.quality,
+            .recovery = interfaces.recovery,
+            .culling_factory = interfaces.culling_factory,
+            .screenshot = interfaces.screenshot,
+        };
+    }
 
     pub fn factory(self: RHI) IResourceFactory {
         return .{ .ptr = self.ptr, .vtable = &self.vtable.resources };

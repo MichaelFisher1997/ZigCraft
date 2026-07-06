@@ -131,11 +131,12 @@ pub const WorldScreen = struct {
         try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture);
         render_system.getCloudSystem().step(dt);
 
-        if (self.session.world.render_distance != ctx.settings.render_distance) {
-            self.session.world.setRenderDistance(ctx.settings.render_distance);
+        const world_telemetry = self.world.telemetry();
+        if (world_telemetry.getRenderDistance() != ctx.settings.render_distance) {
+            world_telemetry.setRenderDistance(ctx.settings.render_distance);
         }
-        if (self.session.world.horizon_distance != ctx.settings.horizon_distance) {
-            self.session.world.setHorizonDistance(ctx.settings.horizon_distance);
+        if (world_telemetry.getHorizonDistance() != ctx.settings.horizon_distance) {
+            world_telemetry.setHorizonDistance(ctx.settings.horizon_distance);
         }
 
         self.maybeLogStartupDiagnostic(now);
@@ -195,8 +196,8 @@ pub const WorldScreen = struct {
             if (!self.world.isLODEnabled()) {
                 log.log.warn("LOD toggle requested but LOD system is not initialized", .{});
             } else {
-                self.session.world.lod_enabled = !self.session.world.lod_enabled;
-                log.log.info("LOD rendering {s}", .{if (self.session.world.lod_enabled) "enabled" else "disabled"});
+                const enabled = self.world.telemetry().toggleLODRendering();
+                log.log.info("LOD rendering {s}", .{if (enabled) "enabled" else "disabled"});
             }
             self.last_debug_toggle_time = now;
         }

@@ -1,6 +1,6 @@
 const std = @import("std");
 const log = @import("engine-core").log;
-const gen_interface = @import("generator_interface.zig");
+const gen_interface = @import("worldgen-api");
 const Generator = gen_interface.Generator;
 const GeneratorDescriptor = gen_interface.GeneratorDescriptor;
 const overworld = @import("worldgen-overworld");

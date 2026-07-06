@@ -30,7 +30,7 @@ const math = @import("engine-math");
 const Vec3 = math.Vec3;
 const Mat4 = math.Mat4;
 const Frustum = math.Frustum;
-const shadow_scene = @import("engine-shadows").shadow_scene;
+const IShadowScene = @import("engine-rhi").IShadowScene;
 const ShadowConfig = @import("engine-rhi").ShadowConfig;
 const WorldStreamer = @import("world_streamer.zig").WorldStreamer;
 const TextureAtlas = @import("engine-assets").TextureAtlas;
@@ -41,8 +41,8 @@ const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
 const ChunkStateCounts = @import("engine-ui").chunk_inspector_overlay.ChunkStateCounts;
 const VoxelCollisionWorld = @import("engine-physics").VoxelCollisionWorld;
-const GraphicsWorldRenderView = @import("engine-graphics").IWorldRenderView;
-const ILPVWorld = @import("engine-graphics").ILPVWorld;
+const GraphicsWorldRenderView = @import("engine-rhi").IWorldRenderView;
+const ILPVWorld = @import("engine-rhi").ILPVWorld;
 const block_registry = @import("world-core").block_registry;
 const LpvGridBuilder = @import("lpv_grid_builder.zig").LpvGridBuilder;
 
@@ -107,7 +107,7 @@ pub const IWorld = struct {
         getStats: *const fn (ptr: *anyopaque) WorldStatsData,
         getLODStats: *const fn (ptr: *anyopaque) ?@import("world-lod").LODStats,
         isLODEnabled: *const fn (ptr: *anyopaque) bool,
-        shadowScene: *const fn (ptr: *anyopaque) shadow_scene.IShadowScene,
+        shadowScene: *const fn (ptr: *anyopaque) IShadowScene,
     };
 
     pub fn update(self: IWorld, player_pos: Vec3, dt: f32) !void {
@@ -146,7 +146,7 @@ pub const IWorld = struct {
         return self.vtable.isLODEnabled(self.ptr);
     }
 
-    pub fn shadowScene(self: IWorld) shadow_scene.IShadowScene {
+    pub fn shadowScene(self: IWorld) IShadowScene {
         return self.vtable.shadowScene(self.ptr);
     }
 
@@ -173,6 +173,36 @@ pub const IWorldSimulation = struct {
     pub fn deinit(self: IWorldSimulation) void {
         self.world.deinit();
     }
+
+    pub fn enableSaveManager(self: IWorldSimulation, save_dir_path: []const u8, world_name: []const u8) !void {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        try world.enableSaveManager(save_dir_path, world_name);
+    }
+
+    pub fn pauseGeneration(self: IWorldSimulation) void {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        world.pauseGeneration();
+    }
+
+    pub fn isPaused(self: IWorldSimulation) bool {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        return world.paused;
+    }
+
+    pub fn collisionWorld(self: IWorldSimulation) VoxelCollisionWorld {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        return world.collisionWorld();
+    }
+
+    pub fn getBlock(self: IWorldSimulation, world_x: i32, world_y: i32, world_z: i32) BlockType {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        return world.getBlock(world_x, world_y, world_z);
+    }
+
+    pub fn setBlock(self: IWorldSimulation, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        try world.setBlock(world_x, world_y, world_z, block);
+    }
 };
 
 pub const IWorldRenderView = struct {
@@ -190,7 +220,7 @@ pub const IWorldRenderView = struct {
         self.world.renderFluid(view_proj, camera_pos, render_lod);
     }
 
-    pub fn shadowScene(self: IWorldRenderView) shadow_scene.IShadowScene {
+    pub fn shadowScene(self: IWorldRenderView) IShadowScene {
         return self.world.shadowScene();
     }
 };
@@ -212,6 +242,37 @@ pub const IWorldTelemetry = struct {
 
     pub fn isLODEnabled(self: IWorldTelemetry) bool {
         return self.world.isLODEnabled();
+    }
+
+    pub fn getRenderDistance(self: IWorldTelemetry) i32 {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        return world.render_distance;
+    }
+
+    pub fn setRenderDistance(self: IWorldTelemetry, distance: i32) void {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        world.setRenderDistance(distance);
+    }
+
+    pub fn getHorizonDistance(self: IWorldTelemetry) i32 {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        return world.horizon_distance;
+    }
+
+    pub fn setHorizonDistance(self: IWorldTelemetry, distance: i32) void {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        world.setHorizonDistance(distance);
+    }
+
+    pub fn isLODRenderingEnabled(self: IWorldTelemetry) bool {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        return world.lod_enabled;
+    }
+
+    pub fn toggleLODRendering(self: IWorldTelemetry) bool {
+        const world: *World = @ptrCast(@alignCast(self.world.ptr));
+        world.lod_enabled = !world.lod_enabled;
+        return world.lod_enabled;
     }
 };
 
@@ -558,7 +619,7 @@ pub const World = struct {
         self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance);
     }
 
-    pub fn shadowScene(self: *World) shadow_scene.IShadowScene {
+    pub fn shadowScene(self: *World) IShadowScene {
         return .{
             .ptr = self,
             .vtable = &.{
@@ -721,7 +782,7 @@ pub const World = struct {
         return self.isLODEnabled();
     }
 
-    fn ishadowScene(ptr: *anyopaque) shadow_scene.IShadowScene {
+    fn ishadowScene(ptr: *anyopaque) IShadowScene {
         const self: *World = @ptrCast(@alignCast(ptr));
         return self.shadowScene();
     }

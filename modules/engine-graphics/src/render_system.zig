@@ -5,7 +5,7 @@ const c = @import("c").c;
 const log = @import("engine-core").log;
 const rhi_pkg = @import("engine-rhi").rhi;
 const RHI = rhi_pkg.RHI;
-const rhi_vulkan = @import("rhi_vulkan.zig");
+const backend_dispatcher = @import("backend_dispatcher.zig");
 const texture_atlas = @import("engine-assets").texture_atlas;
 const TextureAtlas = texture_atlas.TextureAtlas;
 const Texture = @import("engine-rhi").Texture;
@@ -124,8 +124,12 @@ pub const RenderSystem = struct {
             log.log.warn("ZIGCRAFT_DISABLE_BLOOM enabled", .{});
         }
 
-        log.log.info("Initializing Vulkan backend...", .{});
-        const rhi = try rhi_vulkan.createRHI(allocator, window, null, config.shadow_resolution, config.msaa_samples, config.anisotropic_filtering);
+        log.log.info("Initializing {s} backend...", .{@tagName(backend_dispatcher.BackendChoice.vulkan)});
+        const rhi = try backend_dispatcher.createRHI(allocator, window, .vulkan, .{
+            .shadow_resolution = config.shadow_resolution,
+            .msaa_samples = config.msaa_samples,
+            .anisotropic_filtering = config.anisotropic_filtering,
+        });
         errdefer rhi.deinit();
 
         log.log.info("RenderSystem.init: initializing RHI device", .{});

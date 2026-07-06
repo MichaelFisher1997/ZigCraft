@@ -224,7 +224,7 @@ pub const GameSession = struct {
 
         const save_env = getenv("ZIGCRAFT_SAVE_DIR");
         if (save_env) |save_path| {
-            world.enableSaveManager(save_path, "world") catch |err| {
+            world.interface().simulation().enableSaveManager(save_path, "world") catch |err| {
                 log.log.warn("Failed to initialize save manager: {}", .{err});
             };
         }
@@ -298,16 +298,17 @@ pub const GameSession = struct {
                     // map open – skip player/world update
                 } else if (!skip_world) {
                     if (!self.inventory_ui_state.visible) {
-                        self.player.update(input, mapper, self.world, dt, total_time);
+                        const world_sim = self.world.interface().simulation();
+                        self.player.update(input, mapper, world_sim, dt, total_time);
 
                         // Handle interaction
                         if (mapper.isActionPressed(input, .interact_primary)) {
-                            self.player.breakTargetBlock(self.world);
+                            self.player.breakTargetBlock(world_sim);
                             self.hand_renderer.swing();
                         }
                         if (mapper.isActionPressed(input, .interact_secondary)) {
                             if (self.inventory.getSelectedBlock()) |block_type| {
-                                self.player.placeBlock(self.world, block_type);
+                                self.player.placeBlock(world_sim, block_type);
                                 self.hand_renderer.swing();
                             }
                         }
@@ -315,13 +316,13 @@ pub const GameSession = struct {
 
                     self.hand_renderer.update(dt);
                     try self.hand_renderer.updateMesh(self.inventory, atlas);
-                } else if (!self.world.paused) {
-                    self.world.pauseGeneration();
+                } else if (!self.world.interface().simulation().isPaused()) {
+                    self.world.interface().simulation().pauseGeneration();
                 }
             }
 
             if (!skip_world) {
-                try self.world.update(self.player.camera.position, dt);
+                try self.world.interface().simulation().update(self.player.camera.position, dt);
 
                 // ECS Updates
                 ECSPhysicsSystem.update(&self.ecs_registry, self.world.collisionWorld(), dt);
