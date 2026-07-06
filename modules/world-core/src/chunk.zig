@@ -148,6 +148,13 @@ pub const Chunk = struct {
     }
 
     pub fn getLightSafe(self: *const Chunk, x: i32, y: i32, z: i32) PackedLight {
+        // Out-of-bounds X/Z returns zero light. Out-of-bounds Y returns:
+        //   - MAX_LIGHT sky light for y >= CHUNK_SIZE_Y: the meshing system samples this
+        //     position to light the TOP FACE of the highest block in each column (e.g. a
+        //     mountain peak at y=255 queries y=256). The space above the world is open
+        //     sky, so the face should be full daylight. Returning 0 here makes mountain
+        //     tops render incorrectly dark.
+        //   - 0 light for y < 0: nothing emits light from below the world.
         if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z) return PackedLight.init(0, 0);
         if (y >= CHUNK_SIZE_Y) return PackedLight.init(MAX_LIGHT, 0);
         if (y < 0) return PackedLight.init(0, 0);

@@ -32,7 +32,9 @@ pub fn placeTrees(self: anytype, chunk: *Chunk, stop_flag: ?*const bool) void {
         var local_x: u32 = 0;
         while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
             const surface_y = chunk.getSurfaceHeight(local_x, local_z);
-            if (surface_y <= self.params.sea_level or surface_y >= CHUNK_SIZE_Y - 8) continue;
+            // Explicit i32 cast: CHUNK_SIZE_Y is u32; mixed-sign comparison currently compiles via comptime peer resolution,
+            // but make it explicit so future type changes can't silently produce wrong results. See issue #707.
+            if (@as(i32, surface_y) <= self.params.sea_level or @as(i32, surface_y) >= @as(i32, CHUNK_SIZE_Y) - 8) continue;
 
             const surface = chunk.getBlock(local_x, @intCast(surface_y), local_z);
             if (surface != .grass and surface != .dirt and surface != .snow_block and surface != .sand) continue;

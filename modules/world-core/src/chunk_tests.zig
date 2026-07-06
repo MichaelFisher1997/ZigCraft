@@ -134,10 +134,21 @@ test "Chunk.setBlock marks dirty and modified" {
     try testing.expect(chunk.modified);
 }
 
-test "Chunk.getLightSafe returns max light above world" {
+test "Chunk.getLightSafe returns max sky light above world (top-face meshing contract)" {
+    // y >= CHUNK_SIZE_Y represents the open sky above the world. The greedy mesher
+    // samples this position to light the TOP FACE of the highest block in each column
+    // (e.g. a mountain peak at y=255 queries y=256 via lighting_sampler.sampleLightAtBoundary).
+    // Returning MAX_LIGHT here is what makes mountain tops correctly sky-lit. Returning 0
+    // would render them dark. See also: boundary.getLightCross (consistent with this).
     var chunk = Chunk.init(0, 0);
     const light = chunk.getLightSafe(8, 300, 8);
     try testing.expectEqual(@as(u4, MAX_LIGHT), light.sky_light);
+    try testing.expectEqual(@as(u4, 0), light.getBlockLight());
+
+    // The Y = CHUNK_SIZE_Y boundary itself is the canonical sampling site for the
+    // topmost subchunk's top faces and must also return full sky light.
+    const light_at_boundary = chunk.getLightSafe(8, CHUNK_SIZE_Y, 8);
+    try testing.expectEqual(@as(u4, MAX_LIGHT), light_at_boundary.sky_light);
 }
 
 test "Chunk.getLightSafe returns zero for negative y" {

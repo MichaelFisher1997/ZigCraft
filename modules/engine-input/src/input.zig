@@ -125,8 +125,7 @@ pub const Input = struct {
                 }
             },
             c.SDL_EVENT_MOUSE_WHEEL => {
-                self.scroll_x = event.wheel.x;
-                self.scroll_y = event.wheel.y;
+                self.recordMouseWheel(event.wheel.x, event.wheel.y);
             },
             c.SDL_EVENT_WINDOW_RESIZED, c.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED => {
                 // Use pixel size, not logical size, for proper HiDPI/Wayland support
@@ -163,6 +162,13 @@ pub const Input = struct {
     pub fn recordKeyUp(self: *Input, key: Key) void {
         self.keys_released.put(key, {}) catch return;
         _ = self.keys_down.remove(key);
+    }
+
+    /// Record a mouse wheel event. Multiple events within the same frame accumulate; `beginFrame` resets the totals.
+    /// Previously each event overwrote the previous delta, dropping rapid-scroll input. See issue #711.
+    pub fn recordMouseWheel(self: *Input, dx: f32, dy: f32) void {
+        self.scroll_x += dx;
+        self.scroll_y += dy;
     }
 
     // ========================================================================
