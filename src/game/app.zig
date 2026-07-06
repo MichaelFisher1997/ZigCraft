@@ -469,7 +469,7 @@ pub const App = struct {
             if (should_finish) {
                 if (build_options.screenshot_path.len > 0) {
                     log.log.info("SCREENSHOT: Capturing frame to '{s}'", .{build_options.screenshot_path});
-                    if (!self.render_system.getRHI().options().captureFrame(build_options.screenshot_path)) {
+                    if (!self.render_system.getRHI().screenshot().captureFrame(build_options.screenshot_path)) {
                         log.log.err("SCREENSHOT: Failed to capture screenshot", .{});
                     }
                 }
@@ -498,7 +498,7 @@ pub const App = struct {
                     return error.GpuLost;
                 }
                 log.log.warn("GPU fault detected (total faults: {d}), attempting recovery ({d}/3)...", .{ current_faults, gpu_recovery_attempts });
-                self.render_system.getRHI().options().recover() catch {
+                self.render_system.getRHI().recovery().recover() catch {
                     log.log.err("GPU recovery failed. Exiting.", .{});
                     return error.GpuLost;
                 };
