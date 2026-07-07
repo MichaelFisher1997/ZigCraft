@@ -240,6 +240,7 @@ const MockWorld = struct {
         .isLODEnabled = isLODEnabled,
         .shadowScene = shadowScene,
         .enableSaveManager = enableSaveManager,
+        .takeSaveFailureWarningCount = takeSaveFailureWarningCount,
         .pauseGeneration = pauseGeneration,
         .isPaused = isPaused,
         .collisionWorld = collisionWorld,
@@ -338,6 +339,11 @@ const MockWorld = struct {
         _ = ptr;
         _ = save_dir_path;
         _ = world_name;
+    }
+
+    fn takeSaveFailureWarningCount(ptr: *anyopaque) usize {
+        _ = ptr;
+        return 0;
     }
 
     fn pauseGeneration(ptr: *anyopaque) void {

@@ -268,6 +268,15 @@ pub fn create(context: worldgen_api.CreateContext) worldgen_api.RegistryError!Ge
     return gen.generator();
 }
 
+test "ShadowTestWorldGenerator propagates lighting allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var gen = ShadowTestWorldGenerator.init(0, failing.allocator());
+    var chunk = Chunk.init(0, 0);
+
+    try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
+    try std.testing.expect(!chunk.generated);
+}
+
 pub const descriptor = worldgen_api.GeneratorDescriptor{
     .id = "zigcraft:shadow-test",
     .aliases = &.{ "test", "shadow-test", "lighting-test" },

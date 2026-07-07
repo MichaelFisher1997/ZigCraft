@@ -113,6 +113,7 @@ pub const IWorld = struct {
         isLODEnabled: *const fn (ptr: *anyopaque) bool,
         shadowScene: *const fn (ptr: *anyopaque) IShadowScene,
         enableSaveManager: *const fn (ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void,
+        takeSaveFailureWarningCount: *const fn (ptr: *anyopaque) usize,
         pauseGeneration: *const fn (ptr: *anyopaque) void,
         isPaused: *const fn (ptr: *anyopaque) bool,
         collisionWorld: *const fn (ptr: *anyopaque) VoxelCollisionWorld,
@@ -179,6 +180,10 @@ pub const IWorld = struct {
 
     pub fn enableSaveManager(self: IWorld, save_dir_path: []const u8, world_name: []const u8) !void {
         try self.vtable.enableSaveManager(self.ptr, save_dir_path, world_name);
+    }
+
+    pub fn takeSaveFailureWarningCount(self: IWorld) usize {
+        return self.vtable.takeSaveFailureWarningCount(self.ptr);
     }
 
     pub fn pauseGeneration(self: IWorld) void {
@@ -605,6 +610,11 @@ pub const World = struct {
         }
     }
 
+    pub fn takeSaveFailureWarningCount(self: *World) usize {
+        const sm = self.save_manager orelse return 0;
+        return sm.takePersistedFailedSaveCount();
+    }
+
     fn enqueueModifiedChunks(self: *World, sm: *SaveManager) std.ArrayListUnmanaged(ChunkKey) {
         var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
 
@@ -896,6 +906,7 @@ pub const World = struct {
         .isLODEnabled = iisLODEnabled,
         .shadowScene = ishadowScene,
         .enableSaveManager = ienableSaveManager,
+        .takeSaveFailureWarningCount = itakeSaveFailureWarningCount,
         .pauseGeneration = ipauseGeneration,
         .isPaused = iisPaused,
         .collisionWorld = icollisionWorld,
@@ -979,6 +990,11 @@ pub const World = struct {
     fn ienableSaveManager(ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void {
         const self: *World = @ptrCast(@alignCast(ptr));
         try self.enableSaveManager(save_dir_path, world_name);
+    }
+
+    fn itakeSaveFailureWarningCount(ptr: *anyopaque) usize {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.takeSaveFailureWarningCount();
     }
 
     fn ipauseGeneration(ptr: *anyopaque) void {
