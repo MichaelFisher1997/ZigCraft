@@ -327,6 +327,7 @@ pub fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimp
 }
 
 pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) Self {
+    _ = cache_dir_path;
     return .{
         .allocator = allocator,
         .config = undefined,
@@ -360,7 +361,7 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .deletion_queue = .empty,
         .deletion_timer = 0,
         .renderer = undefined,
-        .cache_dir_path = cache_dir_path,
+        .cache_dir_path = null,
         .logged_legacy_cache_notice = false,
         .store_mutex = .{},
         .cleanup_covered_regions = true,

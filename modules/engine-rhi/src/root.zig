@@ -1,3 +1,5 @@
+const builtin = @import("builtin");
+
 pub const rhi = @import("rhi.zig");
 pub const interfaces = @import("interfaces.zig");
 pub const wrappers = @import("wrappers.zig");
@@ -7,7 +9,7 @@ pub const render_device = @import("render_device.zig");
 pub const render_settings = @import("render_settings.zig");
 pub const texture = @import("texture.zig");
 pub const world_contracts = @import("world_contracts.zig");
-pub const rhi_contract_tests = @import("rhi_contract_tests.zig");
+pub const rhi_contract_tests = if (builtin.is_test) @import("rhi_contract_tests.zig") else struct {};
 
 pub const RhiError = rhi_types.RhiError;
 pub const BufferHandle = rhi_types.BufferHandle;

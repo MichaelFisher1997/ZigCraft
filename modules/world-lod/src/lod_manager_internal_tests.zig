@@ -36,6 +36,8 @@ test "LODManager cache helpers save and reload source data" {
     const save_dir_path = try dir.realpath(".", &path_buf);
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 2, .rz = -3, .lod = .lod1 };
 
     var data = try LODSimplifiedData.init(testing.allocator, .lod1);
@@ -70,6 +72,8 @@ test "LODManager cache helpers delete corrupt cache files" {
     const save_dir_path = try dir.realpath(".", &path_buf);
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
     const legacy_dir = try fs.path.join(testing.allocator, &.{ save_dir_path, "lod_cache" });
     defer testing.allocator.free(legacy_dir);
