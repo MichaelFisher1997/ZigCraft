@@ -12,6 +12,7 @@ const Camera = @import("engine-camera").Camera;
 const Input = @import("engine-input").Input;
 const IRawInputProvider = @import("engine-input").IRawInputProvider;
 const Key = @import("engine-core").interfaces.Key;
+const log = @import("engine-core").log;
 const MouseButton = @import("engine-core").interfaces.MouseButton;
 const IWorldSimulation = @import("world-runtime").IWorldSimulation;
 const collision = @import("engine-physics").collision;
@@ -383,7 +384,9 @@ pub const Player = struct {
     /// Break the currently targeted block (set to air)
     pub fn breakTargetBlock(self: *Player, world: IWorldSimulation) void {
         if (self.target_block) |target| {
-            world.setBlock(target.x, target.y, target.z, .air) catch {};
+            world.setBlock(target.x, target.y, target.z, .air) catch |err| {
+                log.log.warn("Block break failed at ({}, {}, {}): {}", .{ target.x, target.y, target.z, err });
+            };
         }
     }
 
@@ -402,7 +405,9 @@ pub const Player = struct {
             );
 
             if (!self.getAABB().intersects(place_aabb)) {
-                world.setBlock(px, py, pz, block_type) catch {};
+                world.setBlock(px, py, pz, block_type) catch |err| {
+                    log.log.warn("Block place failed at ({}, {}, {}): {}", .{ px, py, pz, err });
+                };
             }
         }
     }

@@ -323,6 +323,20 @@ pub const FrameRenderParams = struct {
     lpv_origin: Vec3 = Vec3.init(0.0, 0.0, 0.0),
 };
 
+pub const GlobalUniforms = struct {
+    view_proj: Mat4,
+    cam_pos: Vec3,
+    sun_dir: Vec3,
+    sun_color: Vec3,
+    time: f32,
+    fog_color: Vec3,
+    fog_density: f32,
+    fog_enabled: bool,
+    sun_intensity: f32,
+    ambient: f32,
+    use_texture: bool,
+};
+
 pub const Color = struct {
     r: f32,
     g: f32,

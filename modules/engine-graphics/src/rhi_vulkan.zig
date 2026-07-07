@@ -455,9 +455,9 @@ fn waitIdle(ctx_ptr: *anyopaque) void {
     state_control.waitIdle(ctx);
 }
 
-fn updateGlobalUniforms(ctx_ptr: *anyopaque, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time_val: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: rhi.FrameRenderParams) anyerror!void {
+fn updateGlobalUniforms(ctx_ptr: *anyopaque, uniforms: rhi.GlobalUniforms, frame_params: rhi.FrameRenderParams) anyerror!void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    try render_state.updateGlobalUniforms(ctx, view_proj, cam_pos, sun_dir, sun_color, time_val, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
+    try render_state.updateGlobalUniforms(ctx, uniforms, frame_params);
 }
 
 fn setModelMatrix(ctx_ptr: *anyopaque, model: Mat4, color: Vec3, mask_radius: f32) void {

@@ -320,20 +320,10 @@ pub const RenderSystem = struct {
 
     pub fn updateGlobalUniforms(
         self: *RenderSystem,
-        view_proj: Mat4,
-        cam_pos: Vec3,
-        sun_dir: Vec3,
-        sun_color: Vec3,
-        time: f32,
-        fog_color: Vec3,
-        fog_density: f32,
-        fog_enabled: bool,
-        sun_intensity: f32,
-        ambient: f32,
-        use_texture: bool,
+        uniforms: rhi_pkg.GlobalUniforms,
         frame_params: rhi_pkg.FrameRenderParams,
     ) !void {
-        try self.rhi.renderContext().updateGlobalUniforms(view_proj, cam_pos, sun_dir, sun_color, time, fog_color, fog_density, fog_enabled, sun_intensity, ambient, use_texture, frame_params);
+        try self.rhi.renderContext().updateGlobalUniforms(uniforms, frame_params);
     }
 
     pub fn applyConfig(self: *RenderSystem, config: Config) void {

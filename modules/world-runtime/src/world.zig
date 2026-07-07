@@ -39,7 +39,7 @@ const MAX_MDI_CHUNKS = @import("world_renderer.zig").MAX_MDI_CHUNKS;
 const RenderStats = @import("world_renderer.zig").RenderStats;
 const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
-const ChunkStateCounts = @import("engine-ui").chunk_inspector_overlay.ChunkStateCounts;
+const ChunkStateCounts = world_core.ChunkStateCounts;
 const VoxelCollisionWorld = @import("engine-physics").VoxelCollisionWorld;
 const GraphicsWorldRenderView = @import("engine-rhi").IWorldRenderView;
 const ILPVWorld = @import("engine-rhi").ILPVWorld;
@@ -51,7 +51,7 @@ pub const DebugLightInfo = struct {
     block: u4,
     entrance_bounce: u4,
 };
-const WorldStateData = @import("engine-ui").chunk_inspector_overlay.WorldStateData;
+const WorldStateData = world_core.WorldStateData;
 pub const GpuMeshDispatch = struct {
     dispatch_fn: ?*const fn (ctx: *anyopaque) void,
     dispatch_ctx: ?*anyopaque,
@@ -646,6 +646,10 @@ pub const World = struct {
         defer dirty_keys.deinit(self.allocator);
 
         const failed = sm.flush();
+        const failure_count = sm.takeFailedSaveCount();
+        if (failure_count > 0) {
+            log.log.warn("{} save failure(s) occurred while saving modified chunks", .{failure_count});
+        }
         self.remarkFailedSaves(failed);
     }
 
@@ -658,6 +662,10 @@ pub const World = struct {
 
         const failed = sm.flush();
         sm.markAutoSaved();
+        const failure_count = sm.takeFailedSaveCount();
+        if (failure_count > 0) {
+            log.log.warn("{} save failure(s) occurred during auto-save", .{failure_count});
+        }
         self.remarkFailedSaves(failed);
     }
 

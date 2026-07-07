@@ -159,20 +159,13 @@ fn compareWorldsByLastPlayed(_: void, a: WorldEntry, b: WorldEntry) bool {
     return a.last_played > b.last_played;
 }
 
-/// Deletes a world directory and frees dir_path.
-/// Logs errors but does not return them. Caller must not use dir_path after call.
-pub fn deleteWorld(allocator: std.mem.Allocator, dir_path: []const u8) void {
-    const parent_path = fs.path.dirname(dir_path) orelse return;
+/// Deletes a world directory. Caller owns and frees dir_path.
+pub fn deleteWorld(dir_path: []const u8) !void {
+    const parent_path = fs.path.dirname(dir_path) orelse return error.InvalidSavePath;
     const base = fs.path.basename(dir_path);
-    var parent = fs.openDirAbsolute(parent_path, .{ .iterate = true }) catch |err| {
-        log.log.err("Failed to open parent dir for deletion: {}", .{err});
-        return;
-    };
+    var parent = try fs.openDirAbsolute(parent_path, .{ .iterate = true });
     defer parent.close();
-    parent.deleteTree(base) catch |err| {
-        log.log.warn("Failed to remove world directory: {}", .{err});
-    };
-    allocator.free(dir_path);
+    try parent.deleteTree(base);
 }
 
 pub const WorldListScreen = struct {
@@ -185,6 +178,7 @@ pub const WorldListScreen = struct {
     confirm_rename: bool,
     rename_buffer: std.ArrayListUnmanaged(u8),
     rename_focused: bool,
+    error_message: ?[]const u8,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -207,6 +201,7 @@ pub const WorldListScreen = struct {
             .confirm_rename = false,
             .rename_buffer = std.ArrayListUnmanaged(u8).empty,
             .rename_focused = false,
+            .error_message = null,
         };
         return self;
     }
@@ -234,6 +229,7 @@ pub const WorldListScreen = struct {
             } else if (self.confirm_clear_all) {
                 self.confirm_clear_all = false;
             } else {
+                self.error_message = null;
                 self.context.screen_manager.popScreen();
             }
         }
@@ -265,6 +261,13 @@ pub const WorldListScreen = struct {
         const px: f32 = (screen_w - pw) * 0.5;
         const py: f32 = (screen_h - ph) * 0.5;
         const shell = Theme.drawShell(ui, .{ .x = px, .y = py, .width = pw, .height = ph }, ui_scale, "SAVES", "WORLDS", "Load, rename, or remove saved worlds.");
+
+        if (self.error_message) |message| {
+            const banner = Rect{ .x = shell.content.x + 12.0 * ui_scale, .y = shell.content.y + 8.0 * ui_scale, .width = shell.content.width - 24.0 * ui_scale, .height = 34.0 * ui_scale };
+            ui.drawRect(banner, Theme.Color.rgba(0.18, 0.04, 0.05, 0.92));
+            ui.drawRectOutline(banner, Theme.danger, 1.0 * ui_scale);
+            Font.drawText(ui, message, banner.x + 12.0 * ui_scale, banner.y + 9.0 * ui_scale, 0.72 * ui_scale, Theme.text);
+        }
 
         var count_buf: [64]u8 = undefined;
         const count_text = std.fmt.bufPrint(&count_buf, "{} WORLDS", .{self.worlds.len}) catch "?";
@@ -361,7 +364,10 @@ pub const WorldListScreen = struct {
                     self.confirm_delete = false;
                 }
                 if (Theme.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CONFIRM", btn_scale, mx, my, mc, .danger, ui_scale)) {
-                    self.confirmDelete(idx) catch {};
+                    self.confirmDelete(idx) catch |err| {
+                        log.log.err("Failed to delete world '{s}': {}", .{ self.worlds[idx].name, err });
+                        self.error_message = "Failed to delete world. Check logs.";
+                    };
                 }
             }
         }
@@ -381,7 +387,10 @@ pub const WorldListScreen = struct {
                 self.confirm_clear_all = false;
             }
             if (Theme.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CONFIRM", btn_scale, mx, my, mc, .danger, ui_scale)) {
-                self.clearAllWorlds() catch {};
+                self.clearAllWorlds() catch |err| {
+                    log.log.err("Failed to clear all worlds: {}", .{err});
+                    self.error_message = "Failed to clear worlds. Check logs.";
+                };
             }
         }
 
@@ -410,7 +419,10 @@ pub const WorldListScreen = struct {
                     self.rename_buffer.clearRetainingCapacity();
                 }
                 if (Theme.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 38.0 * ui_scale }, "OK", btn_scale, mx, my, mc, .primary, ui_scale)) {
-                    self.renameWorld(idx) catch {};
+                    self.renameWorld(idx) catch |err| {
+                        log.log.err("Failed to rename world '{s}': {}", .{ self.worlds[idx].name, err });
+                        self.error_message = "Failed to rename world. Check logs.";
+                    };
                 }
             }
         }
@@ -435,13 +447,13 @@ pub const WorldListScreen = struct {
     fn confirmDelete(self: *@This(), idx: usize) !void {
         const allocator = self.context.allocator;
         const dir_path = self.worlds[idx].dir_path;
-        deleteWorld(allocator, dir_path);
+        try deleteWorld(dir_path);
         const old_worlds = self.worlds;
         const empty_worlds = try allocator.alloc(WorldEntry, 0);
         self.worlds = empty_worlds;
-        for (old_worlds, 0..) |e, i| {
+        for (old_worlds) |e| {
             allocator.free(e.name);
-            if (i != idx and e.dir_path.len > 0) allocator.free(e.dir_path);
+            if (e.dir_path.len > 0) allocator.free(e.dir_path);
         }
         allocator.free(old_worlds);
         if (scanWorlds(allocator)) |new_worlds| {
@@ -451,6 +463,7 @@ pub const WorldListScreen = struct {
         self.selected = null;
         self.confirm_delete = false;
         self.scroll_offset = 0.0;
+        self.error_message = null;
     }
 
     fn renameWorld(self: *@This(), idx: usize) !void {
@@ -460,16 +473,14 @@ pub const WorldListScreen = struct {
         const new_name = try allocator.dupe(u8, trimmed);
         errdefer allocator.free(new_name);
         const world = self.worlds[idx];
-        var save_dir = fs.openDirAbsolute(world.dir_path, .{}) catch return;
+        var save_dir = try fs.openDirAbsolute(world.dir_path, .{});
         defer save_dir.close();
-        writeLevelDat(allocator, save_dir, trimmed, world.seed, world.generator_index, world.last_played) catch |err| {
-            log.log.warn("Failed to write level.dat for rename: {}", .{err});
-            return;
-        };
+        try writeLevelDat(allocator, save_dir, trimmed, world.seed, world.generator_index, world.last_played);
         allocator.free(self.worlds[idx].name);
         self.worlds[idx].name = new_name;
         self.confirm_rename = false;
         self.rename_buffer.clearRetainingCapacity();
+        self.error_message = null;
     }
 
     fn clearAllWorlds(self: *@This()) !void {
@@ -477,14 +488,18 @@ pub const WorldListScreen = struct {
         const new_worlds = try allocator.alloc(WorldEntry, 0);
         errdefer allocator.free(new_worlds);
         for (self.worlds) |e| {
-            deleteWorld(allocator, e.dir_path);
+            try deleteWorld(e.dir_path);
+        }
+        for (self.worlds) |e| {
             allocator.free(e.name);
+            if (e.dir_path.len > 0) allocator.free(e.dir_path);
         }
         allocator.free(self.worlds);
         self.worlds = new_worlds;
         self.selected = null;
         self.confirm_clear_all = false;
         self.scroll_offset = 0.0;
+        self.error_message = null;
     }
 };
 

@@ -394,7 +394,19 @@ pub const WorldScreen = struct {
                 std.math.clamp(boosted_horizon.z, 0.0, 1.0),
             );
             rhi.renderContext().setClearColor(clear_color);
-            try rhi.renderContext().updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
+            try rhi.renderContext().updateGlobalUniforms(.{
+                .view_proj = view_proj_render,
+                .cam_pos = camera.position,
+                .sun_dir = render_sun_dir,
+                .sun_color = self.session.atmosphere.sun_color,
+                .time = self.session.atmosphere.time.time_of_day,
+                .fog_color = self.session.atmosphere.fog_color,
+                .fog_density = self.session.atmosphere.fog_density,
+                .fog_enabled = self.session.atmosphere.fog_enabled and !safe_mode,
+                .sun_intensity = self.session.atmosphere.sun_intensity,
+                .ambient = self.session.atmosphere.ambient_intensity,
+                .use_texture = ctx.settings.textures_enabled,
+            }, frame_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;

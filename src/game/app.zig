@@ -390,7 +390,19 @@ pub const App = struct {
         self.render_system.beginFrame();
         errdefer self.render_system.endFrame();
 
-        try self.render_system.updateGlobalUniforms(Mat4.identity, Vec3.zero, Vec3.init(0, -1, 0), Vec3.one, 0, Vec3.zero, 0, false, 1.0, 0.1, false, .{
+        try self.render_system.updateGlobalUniforms(.{
+            .view_proj = Mat4.identity,
+            .cam_pos = Vec3.zero,
+            .sun_dir = Vec3.init(0, -1, 0),
+            .sun_color = Vec3.one,
+            .time = 0,
+            .fog_color = Vec3.zero,
+            .fog_density = 0,
+            .fog_enabled = false,
+            .sun_intensity = 1.0,
+            .ambient = 0.1,
+            .use_texture = false,
+        }, .{
             .cam_pos = Vec3.zero,
             .view_proj = Mat4.identity,
             .sun_dir = Vec3.init(0, -1, 0),

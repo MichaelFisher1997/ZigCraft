@@ -64,6 +64,7 @@ pub const SaveManager = struct {
 
     failed_mutex: sync.Mutex,
     failed_chunks: std.ArrayListUnmanaged(ChunkKey),
+    failed_save_count: std.atomic.Value(usize),
 
     thread: std.Thread,
 
@@ -100,6 +101,7 @@ pub const SaveManager = struct {
             .region_cache = .empty,
             .failed_mutex = .{},
             .failed_chunks = .empty,
+            .failed_save_count = std.atomic.Value(usize).init(0),
             .level_data = blk: {
                 const generator_copy = try allocator.dupe(u8, generator_name);
                 errdefer allocator.free(generator_copy);
@@ -129,6 +131,7 @@ pub const SaveManager = struct {
         self.level_data.touchLastPlayed();
         self.level_data.saveToFile(self.allocator, self.save_dir) catch |err| {
             log.log.err("Failed to save level.dat: {}", .{err});
+            self.recordSaveFailure();
         };
 
         self.queue.deinit(self.allocator);
@@ -166,6 +169,7 @@ pub const SaveManager = struct {
 
         self.queue.append(self.allocator, snapshot) catch |err| {
             log.log.err("Failed to enqueue chunk ({}, {}) for save: {}", .{ snapshot.chunk_x, snapshot.chunk_z, err });
+            self.recordSaveFailure();
         };
     }
 
@@ -232,6 +236,14 @@ pub const SaveManager = struct {
         return failed;
     }
 
+    pub fn takeFailedSaveCount(self: *SaveManager) usize {
+        return self.failed_save_count.swap(0, .acq_rel);
+    }
+
+    fn recordSaveFailure(self: *SaveManager) void {
+        _ = self.failed_save_count.fetchAdd(1, .monotonic);
+    }
+
     fn saveThreadFn(self: *SaveManager) void {
         log.log.debug("Save thread started", .{});
 
@@ -284,8 +296,12 @@ pub const SaveManager = struct {
         for (batch[0..count]) |entry| {
             self.saveOneChunk(&entry) catch |err| {
                 log.log.err("Failed to save chunk ({}, {}): {}", .{ entry.chunk_x, entry.chunk_z, err });
+                self.recordSaveFailure();
                 self.failed_mutex.lock();
-                self.failed_chunks.append(self.allocator, .{ .x = entry.chunk_x, .z = entry.chunk_z }) catch {};
+                self.failed_chunks.append(self.allocator, .{ .x = entry.chunk_x, .z = entry.chunk_z }) catch |append_err| {
+                    log.log.err("Failed to track failed chunk save ({}, {}): {}", .{ entry.chunk_x, entry.chunk_z, append_err });
+                    self.recordSaveFailure();
+                };
                 self.failed_mutex.unlock();
             };
         }

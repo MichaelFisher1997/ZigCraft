@@ -26,6 +26,7 @@ const ClassificationCache = gen_region.ClassificationCache;
 const gen_interface = @import("worldgen-api");
 const Generator = gen_interface.Generator;
 const GeneratorInfo = gen_interface.GeneratorInfo;
+const WorldgenError = gen_interface.WorldgenError;
 const ColumnInfo = gen_interface.ColumnInfo;
 const log = @import("engine-core").log;
 
@@ -168,7 +169,7 @@ pub const OverworldGenerator = struct {
         return false;
     }
 
-    pub fn generate(self: *OverworldGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
+    pub fn generate(self: *OverworldGenerator, chunk: *Chunk, stop_flag: ?*const bool) WorldgenError!void {
         chunk.generated = false;
         const world_x = chunk.getWorldX();
         const world_z = chunk.getWorldZ();
@@ -779,9 +780,9 @@ pub const OverworldGenerator = struct {
         .deinit = deinitWrapper,
     };
 
-    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) void {
+    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) WorldgenError!void {
         const self: *OverworldGenerator = @ptrCast(@alignCast(ptr));
-        self.generate(chunk, stop_flag);
+        try self.generate(chunk, stop_flag);
     }
 
     fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {

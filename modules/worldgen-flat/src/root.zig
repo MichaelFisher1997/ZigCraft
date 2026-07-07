@@ -31,7 +31,7 @@ pub const FlatWorldGenerator = struct {
         return .{ .seed = seed, .allocator = allocator };
     }
 
-    pub fn generate(self: *FlatWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
+    pub fn generate(self: *FlatWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) worldgen_api.WorldgenError!void {
         chunk.generated = false;
 
         var local_z: u32 = 0;
@@ -59,7 +59,7 @@ pub const FlatWorldGenerator = struct {
             }
         }
 
-        LightingComputer.computeSkylight(chunk, self.allocator) catch unreachable;
+        try LightingComputer.computeSkylight(chunk, self.allocator);
 
         chunk.generated = true;
         chunk.dirty = true;
@@ -129,9 +129,9 @@ pub const FlatWorldGenerator = struct {
         .deinit = deinitWrapper,
     };
 
-    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) void {
+    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) worldgen_api.WorldgenError!void {
         const self: *FlatWorldGenerator = @ptrCast(@alignCast(ptr));
-        self.generate(chunk, stop_flag);
+        try self.generate(chunk, stop_flag);
     }
 
     fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
