@@ -56,6 +56,19 @@ pub const GpuMeshDispatch = struct {
     dispatch_fn: ?*const fn (ctx: *anyopaque) void,
     dispatch_ctx: ?*anyopaque,
 };
+
+pub const WorldOrchestration = struct {
+    pub fn update(renderer: anytype, streamer: anytype, world: anytype, player_pos: Vec3, dt: f32) !void {
+        renderer.beginFrame();
+        try streamer.updateFrame(player_pos, dt);
+        world.checkAutoSave();
+    }
+
+    pub fn render(renderer: anytype, streamer: anytype, lod_manager: anytype, lod_enabled: bool, view_proj: Mat4, camera_pos: Vec3, render_lod: bool, layer: anytype) void {
+        const allow_lod = lod_enabled and render_lod;
+        renderer.render(view_proj, camera_pos, streamer.getActiveRenderDistance(), lod_manager, allow_lod, layer);
+    }
+};
 const engine_core = @import("engine-core");
 const JobQueue = engine_core.JobQueue;
 const WorkerPool = engine_core.WorkerPool;
@@ -768,27 +781,22 @@ pub const World = struct {
     }
 
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
-        self.renderer.beginFrame();
-        try self.streamer.updateFrame(player_pos, dt);
-        self.checkAutoSave();
+        try WorldOrchestration.update(self.renderer, self.streamer, self, player_pos, dt);
     }
 
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        const allow_lod = self.lod_enabled and render_lod;
-        self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .all);
+        WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .all);
     }
 
     pub fn renderOpaque(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        const allow_lod = self.lod_enabled and render_lod;
-        self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .terrain);
+        WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .terrain);
     }
 
     pub fn renderFluid(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
-        const allow_lod = self.lod_enabled and render_lod;
-        self.renderer.render(view_proj, camera_pos, self.streamer.getActiveRenderDistance(), lod_mgr, allow_lod, .fluid);
+        WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .fluid);
     }
 
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {

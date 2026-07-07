@@ -1,6 +1,9 @@
 pub const screen = @import("screen.zig");
 pub const menu_theme = @import("menu_theme.zig");
+pub const menu_theme_tests = @import("menu_theme_tests.zig");
+pub const screen_tests = @import("screen_tests.zig");
 pub const settings_ui = @import("settings_ui.zig");
+pub const settings_ui_tests = @import("settings_ui_tests.zig");
 
 pub const environment = @import("screens/environment.zig");
 pub const graphics = @import("screens/graphics.zig");
@@ -13,6 +16,7 @@ pub const world = @import("screens/world.zig");
 pub const world_debug = @import("screens/world_debug.zig");
 pub const world_frame_params = @import("screens/world_frame_params.zig");
 pub const world_list = @import("screens/world_list.zig");
+pub const world_list_tests = @import("screens/world_list_tests.zig");
 
 pub const EngineContext = screen.EngineContext;
 pub const EnvironmentContext = screen.EnvironmentContext;
