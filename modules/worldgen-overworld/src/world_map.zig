@@ -13,7 +13,8 @@ pub const WorldMap = struct {
         // Safety: ensure texture size is within typical hardware limits
         const safe_w = @min(width, 4096);
         const safe_h = @min(height, 4096);
-        const pixels = try allocator.alloc(u8, safe_w * safe_h * 4);
+        const pixel_bytes = @as(usize, safe_w) * @as(usize, safe_h) * 4;
+        const pixels = try allocator.alloc(u8, pixel_bytes);
         @memset(pixels, 0);
 
         return .{
