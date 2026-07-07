@@ -206,6 +206,14 @@ pub const LODManager = struct {
     /// Wire a chunk resolver so deferred ingestions can fetch chunk data when
     /// their containing LOD region later becomes ready.
     /// Queue LOD regions that need generation
+    pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPUBridge, render_iface: LODRenderInterface, generator: LODGenerator, atlas: *const TextureAtlas) !*Self {
+        return lod_manager_core.init(allocator, config, gpu_bridge, render_iface, generator, atlas);
+    }
+
+    pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) Self {
+        return lod_manager_cache_ops.initCacheTestManager(allocator, cache_dir_path);
+    }
+
     pub fn storePlayerChunkPos(self: *Self, cx: i32, cz: i32) void {
         return lod_manager_core.storePlayerChunkPos(self, cx, cz);
     }
