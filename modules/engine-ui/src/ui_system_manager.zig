@@ -85,7 +85,7 @@ pub const UISystemManager = struct {
             if (self.imgui) |*backend| {
                 if (backend.hasDrawCommands()) {
                     u.begin();
-                    backend.endFrame(rhi_ptr.nativeHandles().getCommandBuffer());
+                    backend.endFrame(rhi_ptr.vulkanHandles().getCommandBuffer());
                     u.end();
                 } else {
                     backend.endFrame(0);

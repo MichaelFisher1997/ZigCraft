@@ -360,7 +360,7 @@ const MockContext = struct {
         .endWaterDraw = endWaterDraw,
     };
 
-    const MOCK_NATIVE_VTABLE = rhi.INativeHandlesContext.VTable{
+    const MOCK_NATIVE_VTABLE = rhi.VulkanNativeHandles.VTable{
         .getCommandBuffer = getNativeCommandBuffer,
         .getSwapchainExtent = getNativeSwapchainExtent,
         .getDevice = getNativeDevice,
@@ -511,7 +511,7 @@ const MockContext = struct {
         .passes = MOCK_PASSES_VTABLE,
         .post_process = MOCK_POST_PROCESS_VTABLE,
         .effects = MOCK_EFFECTS_VTABLE,
-        .native = MOCK_NATIVE_VTABLE,
+        .vulkan = MOCK_NATIVE_VTABLE,
         .ssao = MOCK_SSAO_VTABLE,
         .debug_overlay = MOCK_DEBUG_OVERLAY_VTABLE,
         .shadow = MOCK_SHADOW_VTABLE,

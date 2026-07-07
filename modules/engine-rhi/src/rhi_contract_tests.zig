@@ -27,15 +27,15 @@ const Mock = struct {
         const self: *Mock = @ptrCast(@alignCast(ptr));
         self.destroyed_handle = handle;
     }
-    fn createTexture(_: *anyopaque, _: types.TextureConfig) types.RhiError!types.TextureHandle {
+    fn createTexture(_: *anyopaque, _: u32, _: u32, _: types.TextureFormat, _: types.TextureConfig, _: ?[]const u8) types.RhiError!types.TextureHandle {
         return 11;
     }
-    fn createTexture3D(_: *anyopaque, _: u32, _: u32, _: u32, _: types.TextureFormat, _: []const u8) types.RhiError!types.TextureHandle {
+    fn createTexture3D(_: *anyopaque, _: u32, _: u32, _: u32, _: types.TextureFormat, _: types.TextureConfig, _: ?[]const u8) types.RhiError!types.TextureHandle {
         return 12;
     }
     fn destroyTexture(_: *anyopaque, _: types.TextureHandle) void {}
     fn updateTexture(_: *anyopaque, _: types.TextureHandle, _: []const u8) types.RhiError!void {}
-    fn createShader(_: *anyopaque, _: []const u8) types.RhiError!types.ShaderHandle {
+    fn createShader(_: *anyopaque, _: [*c]const u8, _: [*c]const u8) types.RhiError!types.ShaderHandle {
         return 13;
     }
     fn destroyShader(_: *anyopaque, _: types.ShaderHandle) void {}
@@ -120,7 +120,7 @@ const render_vtable = rhi.IRenderContext.VTable{
     .setClearColor = Mock.setClearColor,
 };
 
-const native_vtable = rhi.INativeHandlesContext.VTable{
+const native_vtable = rhi.VulkanNativeHandles.VTable{
     .getCommandBuffer = Mock.getCommandBuffer,
     .getSwapchainExtent = Mock.getSwapchainExtent,
     .getDevice = Mock.getDevice,
@@ -161,11 +161,11 @@ test "IRenderContext forwards lifecycle and state calls" {
 
 test "native handles expose explicit handles only" {
     var mock = Mock{};
-    const native = rhi.INativeHandlesContext{ .ptr = &mock, .vtable = &native_vtable };
+    const native = rhi.VulkanNativeHandles{ .ptr = &mock, .vtable = &native_vtable };
 
     try std.testing.expectEqual(@as(u64, 0x1234), native.getCommandBuffer());
     try std.testing.expectEqual([2]u32{ 1920, 1080 }, native.getSwapchainExtent());
-    try std.testing.expect(!@hasDecl(rhi.INativeHandlesContext, "getBackendContext"));
+    try std.testing.expect(!@hasDecl(rhi.VulkanNativeHandles, "getBackendContext"));
 }
 
 // Broad documentation-as-contract coverage for public RHI methods.
@@ -612,35 +612,35 @@ test "RHI contract declares IRenderEffectsContext.beginWaterDraw" {
 test "RHI contract declares IRenderEffectsContext.endWaterDraw" {
     try std.testing.expect(@hasDecl(rhi.IRenderEffectsContext, "endWaterDraw"));
 }
-test "RHI contract declares INativeHandlesContext.getCommandBuffer" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getCommandBuffer"));
+test "RHI contract declares VulkanNativeHandles.getCommandBuffer" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getCommandBuffer"));
 }
-test "RHI contract declares INativeHandlesContext.getSwapchainExtent" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getSwapchainExtent"));
+test "RHI contract declares VulkanNativeHandles.getSwapchainExtent" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getSwapchainExtent"));
 }
-test "RHI contract declares INativeHandlesContext.getDevice" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getDevice"));
+test "RHI contract declares VulkanNativeHandles.getDevice" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getDevice"));
 }
-test "RHI contract declares INativeHandlesContext.getInstance" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getInstance"));
+test "RHI contract declares VulkanNativeHandles.getInstance" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getInstance"));
 }
-test "RHI contract declares INativeHandlesContext.getPhysicalDevice" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getPhysicalDevice"));
+test "RHI contract declares VulkanNativeHandles.getPhysicalDevice" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getPhysicalDevice"));
 }
-test "RHI contract declares INativeHandlesContext.getQueue" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getQueue"));
+test "RHI contract declares VulkanNativeHandles.getQueue" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getQueue"));
 }
-test "RHI contract declares INativeHandlesContext.getQueueFamily" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getQueueFamily"));
+test "RHI contract declares VulkanNativeHandles.getQueueFamily" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getQueueFamily"));
 }
-test "RHI contract declares INativeHandlesContext.getDescriptorPool" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getDescriptorPool"));
+test "RHI contract declares VulkanNativeHandles.getDescriptorPool" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getDescriptorPool"));
 }
-test "RHI contract declares INativeHandlesContext.getUiRenderPass" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getUiRenderPass"));
+test "RHI contract declares VulkanNativeHandles.getUiRenderPass" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getUiRenderPass"));
 }
-test "RHI contract declares INativeHandlesContext.getSwapchainImageCount" {
-    try std.testing.expect(@hasDecl(rhi.INativeHandlesContext, "getSwapchainImageCount"));
+test "RHI contract declares VulkanNativeHandles.getSwapchainImageCount" {
+    try std.testing.expect(@hasDecl(rhi.VulkanNativeHandles, "getSwapchainImageCount"));
 }
 test "RHI contract declares IDeviceQuery.getFrameIndex" {
     try std.testing.expect(@hasDecl(rhi.IDeviceQuery, "getFrameIndex"));
@@ -777,8 +777,8 @@ test "RHI contract declares RHI.postProcess" {
 test "RHI contract declares RHI.renderEffects" {
     try std.testing.expect(@hasDecl(rhi.RHI, "renderEffects"));
 }
-test "RHI contract declares RHI.nativeHandles" {
-    try std.testing.expect(@hasDecl(rhi.RHI, "nativeHandles"));
+test "RHI contract declares RHI.vulkanHandles" {
+    try std.testing.expect(@hasDecl(rhi.RHI, "vulkanHandles"));
 }
 test "RHI contract declares RHI.encoder" {
     try std.testing.expect(@hasDecl(rhi.RHI, "encoder"));

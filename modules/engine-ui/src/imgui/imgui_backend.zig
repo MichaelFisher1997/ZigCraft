@@ -28,7 +28,7 @@ pub const Backend = struct {
         }
         errdefer c.ZigCraft_ImGui_ImplSDL3_Shutdown();
 
-        const native = rhi_ptr.nativeHandles();
+        const native = rhi_ptr.vulkanHandles();
         const image_count = native.getSwapchainImageCount();
         const min_image_count: u32 = if (image_count > 1) image_count else 2;
         var init_info = c.ZigCraftImGuiVulkanInitInfo{

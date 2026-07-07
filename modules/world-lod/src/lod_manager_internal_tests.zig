@@ -37,7 +37,7 @@ test "LODManager cache helpers save and reload source data" {
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     try manager.enableCache(save_dir_path);
-    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 2, .rz = -3, .lod = .lod1 };
 
     var data = try LODSimplifiedData.init(testing.allocator, .lod1);
@@ -73,7 +73,7 @@ test "LODManager cache helpers delete corrupt cache files" {
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     try manager.enableCache(save_dir_path);
-    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
     const legacy_dir = try fs.path.join(testing.allocator, &.{ save_dir_path, "lod_cache" });
     defer testing.allocator.free(legacy_dir);
@@ -106,9 +106,9 @@ test "LODManager enableCache deletes stale generator-keyed store and writes live
     try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
-    manager.cache_dir_path = null;
+    manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
-    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
 
     try testing.expect((try lod_store.readPayload(testing.allocator, save_dir_path, stale_key)) == null);
     const header = (try lod_store.readHeader(testing.allocator, save_dir_path)).?;
@@ -135,9 +135,9 @@ test "LODManager enableCache deletes stale data-version store" {
     try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
-    manager.cache_dir_path = null;
+    manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
-    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
 
     try testing.expect((try lod_store.readPayload(testing.allocator, save_dir_path, stale_key)) == null);
     const header = (try lod_store.readHeader(testing.allocator, save_dir_path)).?;
@@ -165,26 +165,26 @@ test "LODManager queued generation reloads source store on main thread" {
 
     var writer = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     writer.config = config.interface();
-    writer.cache_dir_path = null;
+    writer.cache_store.cache_dir_path = null;
     try writer.enableCache(save_dir_path);
     writer.saveCachedSourceData(key, &source);
-    if (writer.cache_dir_path) |path| testing.allocator.free(path);
-    writer.edit_dirty.deinit();
+    if (writer.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+    writer.ingestion_queue.edit_dirty.deinit();
 
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     manager.config = config.interface();
-    manager.cache_dir_path = null;
+    manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
-    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
-    defer manager.edit_dirty.deinit();
-    defer manager.deletion_queue.deinit(testing.allocator);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+    defer manager.ingestion_queue.edit_dirty.deinit();
+    defer manager.mesh_disposal.queue.deinit(testing.allocator);
 
     for (0..LODLevel.count) |i| {
         manager.regions[i] = RegionMap.init(testing.allocator);
         manager.meshes[i] = MeshMap.init(testing.allocator);
         manager.upload_queues[i] = try RingBuffer(*LODChunk).init(testing.allocator, 4);
-        manager.gen_queues[i] = try testing.allocator.create(JobQueue);
-        manager.gen_queues[i].* = JobQueue.init(testing.allocator);
+        manager.job_dispatcher.queues[i] = try testing.allocator.create(JobQueue);
+        manager.job_dispatcher.queues[i].* = JobQueue.init(testing.allocator);
     }
     defer {
         for (0..LODLevel.count) |i| {
@@ -196,8 +196,8 @@ test "LODManager queued generation reloads source store on main thread" {
             manager.regions[i].deinit();
             manager.meshes[i].deinit();
             manager.upload_queues[i].deinit();
-            manager.gen_queues[i].deinit();
-            testing.allocator.destroy(manager.gen_queues[i]);
+            manager.job_dispatcher.queues[i].deinit();
+            testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
     }
 
@@ -210,7 +210,7 @@ test "LODManager queued generation reloads source store on main thread" {
     try manager.processQueuedGenerations(Vec3.zero);
 
     try testing.expectEqual(@as(u32, 1), manager.cache_hits);
-    try testing.expectEqual(@as(usize, 0), manager.gen_queues[LODLevel.count - 1].count());
+    try testing.expectEqual(@as(usize, 0), manager.job_dispatcher.queues[LODLevel.count - 1].count());
     try testing.expectEqual(LODState.generated, chunk.state);
     switch (chunk.data) {
         .simplified => |*loaded| {
@@ -233,18 +233,18 @@ test "LODManager queued generation dispatches beyond cache read budget" {
     var config = LODConfig{};
     var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
     manager.config = config.interface();
-    manager.cache_dir_path = null;
+    manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
-    defer if (manager.cache_dir_path) |path| testing.allocator.free(path);
-    defer manager.edit_dirty.deinit();
-    defer manager.deletion_queue.deinit(testing.allocator);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+    defer manager.ingestion_queue.edit_dirty.deinit();
+    defer manager.mesh_disposal.queue.deinit(testing.allocator);
 
     for (0..LODLevel.count) |i| {
         manager.regions[i] = RegionMap.init(testing.allocator);
         manager.meshes[i] = MeshMap.init(testing.allocator);
         manager.upload_queues[i] = try RingBuffer(*LODChunk).init(testing.allocator, 4);
-        manager.gen_queues[i] = try testing.allocator.create(JobQueue);
-        manager.gen_queues[i].* = JobQueue.init(testing.allocator);
+        manager.job_dispatcher.queues[i] = try testing.allocator.create(JobQueue);
+        manager.job_dispatcher.queues[i].* = JobQueue.init(testing.allocator);
     }
     defer {
         for (0..LODLevel.count) |i| {
@@ -256,8 +256,8 @@ test "LODManager queued generation dispatches beyond cache read budget" {
             manager.regions[i].deinit();
             manager.meshes[i].deinit();
             manager.upload_queues[i].deinit();
-            manager.gen_queues[i].deinit();
-            testing.allocator.destroy(manager.gen_queues[i]);
+            manager.job_dispatcher.queues[i].deinit();
+            testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
     }
 
@@ -274,7 +274,7 @@ test "LODManager queued generation dispatches beyond cache read budget" {
     try manager.processQueuedGenerations(Vec3.zero);
 
     try testing.expectEqual(@as(u32, @intCast(MAX_CACHE_LOADS_PER_UPDATE)), manager.cache_misses);
-    try testing.expectEqual(candidate_count, manager.gen_queues[LODLevel.count - 1].count());
+    try testing.expectEqual(candidate_count, manager.job_dispatcher.queues[LODLevel.count - 1].count());
 }
 
 fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {
@@ -320,11 +320,11 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
         manager.meshes[i].deinit();
         manager.upload_queues[i].deinit();
     }
-    for (manager.deletion_queue.items) |mesh| {
+    for (manager.mesh_disposal.queue.items) |mesh| {
         manager.allocator.destroy(mesh);
     }
-    manager.deletion_queue.deinit(manager.allocator);
-    manager.edit_dirty.deinit();
+    manager.mesh_disposal.queue.deinit(manager.allocator);
+    manager.ingestion_queue.edit_dirty.deinit();
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
@@ -526,7 +526,7 @@ test "LODManager memory budget eviction skips unsafe regions and evicts farthest
     _ = try putTestMesh(&manager, no_parent_key, mesh_capacity);
     _ = try putTestMesh(&manager, in_flight_key, mesh_capacity);
 
-    manager.memory_used_bytes = budget_bytes + mesh_bytes;
+    manager.memory_governor.used_bytes = budget_bytes + mesh_bytes;
     try manager.enforceMemoryBudget();
 
     try testing.expect(!manager.regions[1].contains(far_key));
@@ -535,7 +535,7 @@ test "LODManager memory budget eviction skips unsafe regions and evicts farthest
     try testing.expect(manager.regions[1].contains(pinned_key));
     try testing.expect(manager.regions[1].contains(no_parent_key));
     try testing.expect(manager.regions[1].contains(in_flight_key));
-    try testing.expect(manager.memory_used_bytes <= budget_bytes);
+    try testing.expect(manager.memory_governor.used_bytes <= budget_bytes);
     try testing.expectEqual(@as(u32, 1), manager.stats.evictions);
-    try testing.expectEqual(@as(u32, 1), manager.deletion_queue.items.len);
+    try testing.expectEqual(@as(u32, 1), manager.mesh_disposal.queue.items.len);
 }

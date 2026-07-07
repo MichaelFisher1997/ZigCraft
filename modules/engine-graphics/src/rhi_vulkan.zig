@@ -1280,7 +1280,7 @@ const VULKAN_POST_PROCESS_VTABLE = rhi.IPostProcessContext.VTable{
     .computeDepthPyramid = computeDepthPyramid,
 };
 
-const VULKAN_NATIVE_HANDLES_VTABLE = rhi.INativeHandlesContext.VTable{
+const VULKAN_NATIVE_HANDLES_VTABLE = rhi.VulkanNativeHandles.VTable{
     .getCommandBuffer = getNativeCommandBuffer,
     .getSwapchainExtent = getNativeSwapchainExtent,
     .getDevice = getNativeDevice,
@@ -1356,7 +1356,7 @@ const VULKAN_RHI_INTERFACES = rhi.RHI.Interfaces{
     .passes = &VULKAN_PASS_ORCHESTRATION_VTABLE,
     .post_process = &VULKAN_POST_PROCESS_VTABLE,
     .effects = &VULKAN_RENDER_EFFECTS_VTABLE,
-    .native = &VULKAN_NATIVE_HANDLES_VTABLE,
+    .vulkan = &VULKAN_NATIVE_HANDLES_VTABLE,
     .ssao = &VULKAN_SSAO_VTABLE,
     .debug_overlay = &VULKAN_DEBUG_OVERLAY_VTABLE,
     .shadow = &VULKAN_SHADOW_CONTEXT_VTABLE,

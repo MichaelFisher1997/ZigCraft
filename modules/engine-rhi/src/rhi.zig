@@ -48,9 +48,9 @@
 //!
 //! ## Backend Implementation
 //!
-//! The Vulkan backend (`rhi_vulkan.zig`) implements all interfaces and is currently
-//! the only supported backend. Future backends (WebGPU, Metal) would implement
-//! the same interface contracts.
+//! The Vulkan backend (`rhi_vulkan.zig`) is the only supported backend. Vulkan
+//! native handles and compute objects are intentionally exposed where engine
+//! subsystems integrate directly with Vulkan-shaped APIs.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -234,7 +234,7 @@ pub const RenderContext = struct {
     passes: IPassOrchestrationContext,
     post_process: IPostProcessContext,
     effects: IRenderEffectsContext,
-    native: INativeHandlesContext,
+    vulkan: VulkanNativeHandles,
     encoder: IGraphicsCommandEncoder,
     state: IRenderStateContext,
 
@@ -298,10 +298,10 @@ pub const RenderContext = struct {
         self.render.vtable.setClearColor(self.render.ptr, color);
     }
     pub fn getNativeSwapchainExtent(self: RenderContext) [2]u32 {
-        return self.native.getSwapchainExtent();
+        return self.vulkan.getSwapchainExtent();
     }
     pub fn getNativeDevice(self: RenderContext) u64 {
-        return self.native.getDevice();
+        return self.vulkan.getDevice();
     }
 
     // --- IGraphicsCommandEncoder delegates ---
@@ -873,7 +873,10 @@ pub const IRenderEffectsContext = struct {
     }
 };
 
-pub const INativeHandlesContext = struct {
+/// Vulkan-only native handles used by ImGui, LPV, and other integrations that
+/// need concrete Vulkan objects. This intentionally is not an abstract native
+/// handle interface for portable render backends.
+pub const VulkanNativeHandles = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
@@ -890,34 +893,34 @@ pub const INativeHandlesContext = struct {
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
     };
 
-    pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
+    pub fn getCommandBuffer(self: VulkanNativeHandles) u64 {
         return self.vtable.getCommandBuffer(self.ptr);
     }
-    pub fn getSwapchainExtent(self: INativeHandlesContext) [2]u32 {
+    pub fn getSwapchainExtent(self: VulkanNativeHandles) [2]u32 {
         return self.vtable.getSwapchainExtent(self.ptr);
     }
-    pub fn getDevice(self: INativeHandlesContext) u64 {
+    pub fn getDevice(self: VulkanNativeHandles) u64 {
         return self.vtable.getDevice(self.ptr);
     }
-    pub fn getInstance(self: INativeHandlesContext) u64 {
+    pub fn getInstance(self: VulkanNativeHandles) u64 {
         return self.vtable.getInstance(self.ptr);
     }
-    pub fn getPhysicalDevice(self: INativeHandlesContext) u64 {
+    pub fn getPhysicalDevice(self: VulkanNativeHandles) u64 {
         return self.vtable.getPhysicalDevice(self.ptr);
     }
-    pub fn getQueue(self: INativeHandlesContext) u64 {
+    pub fn getQueue(self: VulkanNativeHandles) u64 {
         return self.vtable.getQueue(self.ptr);
     }
-    pub fn getQueueFamily(self: INativeHandlesContext) u32 {
+    pub fn getQueueFamily(self: VulkanNativeHandles) u32 {
         return self.vtable.getQueueFamily(self.ptr);
     }
-    pub fn getDescriptorPool(self: INativeHandlesContext) u64 {
+    pub fn getDescriptorPool(self: VulkanNativeHandles) u64 {
         return self.vtable.getDescriptorPool(self.ptr);
     }
-    pub fn getUiRenderPass(self: INativeHandlesContext) u64 {
+    pub fn getUiRenderPass(self: VulkanNativeHandles) u64 {
         return self.vtable.getUiRenderPass(self.ptr);
     }
-    pub fn getSwapchainImageCount(self: INativeHandlesContext) u32 {
+    pub fn getSwapchainImageCount(self: VulkanNativeHandles) u32 {
         return self.vtable.getSwapchainImageCount(self.ptr);
     }
 };
@@ -1154,7 +1157,7 @@ pub const RHI = struct {
         passes: ?*const IPassOrchestrationContext.VTable = null,
         post_process: ?*const IPostProcessContext.VTable = null,
         effects: ?*const IRenderEffectsContext.VTable = null,
-        native: ?*const INativeHandlesContext.VTable = null,
+        vulkan: ?*const VulkanNativeHandles.VTable = null,
         ssao: ?*const ISSAOContext.VTable = null,
         debug_overlay: ?*const IDebugOverlayContext.VTable = null,
         shadow: ?*const IShadowContext.VTable = null,
@@ -1180,7 +1183,7 @@ pub const RHI = struct {
         passes: ?*const IPassOrchestrationContext.VTable = null,
         post_process: ?*const IPostProcessContext.VTable = null,
         effects: ?*const IRenderEffectsContext.VTable = null,
-        native: ?*const INativeHandlesContext.VTable = null,
+        vulkan: ?*const VulkanNativeHandles.VTable = null,
         ssao: ?*const ISSAOContext.VTable = null,
         debug_overlay: ?*const IDebugOverlayContext.VTable = null,
         shadow: ?*const IShadowContext.VTable = null,
@@ -1204,7 +1207,7 @@ pub const RHI = struct {
             .passes = interfaces.passes,
             .post_process = interfaces.post_process,
             .effects = interfaces.effects,
-            .native = interfaces.native,
+            .vulkan = interfaces.vulkan,
             .ssao = interfaces.ssao,
             .debug_overlay = interfaces.debug_overlay,
             .shadow = interfaces.shadow,
@@ -1236,7 +1239,7 @@ pub const RHI = struct {
             .passes = self.passOrchestration(),
             .post_process = self.postProcess(),
             .effects = self.renderEffects(),
-            .native = self.nativeHandles(),
+            .vulkan = self.vulkanHandles(),
             .encoder = rc.getEncoder(),
             .state = rc.getState(),
         };
@@ -1253,8 +1256,8 @@ pub const RHI = struct {
     /// Returns the Vulkan native-handle facet used by ImGui, LPV, and other
     /// Vulkan-shaped integrations. This is a documented backend seam, not a
     /// portability guarantee for non-Vulkan renderers.
-    pub fn nativeHandles(self: RHI) INativeHandlesContext {
-        return .{ .ptr = self.ptr, .vtable = self.vtable.native orelse unreachable };
+    pub fn vulkanHandles(self: RHI) VulkanNativeHandles {
+        return .{ .ptr = self.ptr, .vtable = self.vtable.vulkan orelse unreachable };
     }
     pub fn encoder(self: RHI) IGraphicsCommandEncoder {
         return self.context().getEncoder();
