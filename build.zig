@@ -216,6 +216,8 @@ pub fn build(b: *std.Build) void {
     engine_graphics.addImport("engine-rhi", engine_rhi);
     engine_graphics.addImport("engine-shadows", engine_shadows);
     engine_graphics.addOptions("engine_graphics_options", engine_graphics_options);
+    engine_graphics.linkSystemLibrary("sdl3", .{});
+    engine_graphics.linkSystemLibrary("vulkan", .{});
     addSharedImports(engine_ui, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     engine_ui.addImport("engine-math", engine_math);
     engine_ui.addImport("engine-core", engine_core);
