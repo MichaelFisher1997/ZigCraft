@@ -3,8 +3,11 @@ const testing = std.testing;
 
 const world_mod = @import("world.zig");
 const world_core = @import("world-core");
+const world_meshing = @import("world-meshing");
 const worldgen = @import("world-worldgen");
 const math = @import("engine-math");
+const LpvGridBuilder = @import("lpv_grid_builder.zig").LpvGridBuilder;
+const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
 
 const MockWorld = struct {
     update_count: u32 = 0,
@@ -253,6 +256,31 @@ const MockWorld = struct {
     }
 };
 
+fn makeStorageOnlyWorld(allocator: std.mem.Allocator) world_mod.World {
+    var world = world_mod.World{
+        .storage = world_meshing.ChunkStorage.init(allocator),
+        .streamer = undefined,
+        .renderer = undefined,
+        .allocator = allocator,
+        .generator = undefined,
+        .render_distance = 8,
+        .horizon_distance = 512,
+        .rhi = undefined,
+        .paused = false,
+        .safe_mode = false,
+        .safe_render_distance = 8,
+        .lod = null,
+        .lod_enabled = false,
+        .save_manager = null,
+        .gpu_block_buffer = null,
+        .mutation = undefined,
+        .lpv_grid_builder = undefined,
+    };
+    world.mutation = WorldMutationCoordinator.init(&world.storage, allocator, null, false);
+    world.lpv_grid_builder = LpvGridBuilder.init(&world.storage);
+    return world;
+}
+
 test "IWorld forwards simulation lifecycle calls" {
     var mock = MockWorld{};
     const world = mock.iface();
@@ -351,4 +379,52 @@ test "IWorld telemetry view forwards debug and state data" {
     try testing.expectEqual(@as(u32, 4), chunk_counts.renderable);
     try testing.expectEqual(@as(u64, 99), state.seed);
     try testing.expectEqual(@as(u4, 15), light.sky);
+}
+
+test "World storage facade returns air for unloaded and out-of-bounds blocks" {
+    var world = makeStorageOnlyWorld(testing.allocator);
+    defer world.storage.deinitWithoutRHI();
+
+    try testing.expectEqual(world_core.BlockType.air, world.getBlock(0, 64, 0));
+    try testing.expectEqual(world_core.BlockType.air, world.getBlock(0, -1, 0));
+    try testing.expectEqual(world_core.BlockType.air, world.getBlock(0, 256, 0));
+}
+
+test "World setBlock and getBlock round-trip through mutation coordinator" {
+    var world = makeStorageOnlyWorld(testing.allocator);
+    defer world.storage.deinitWithoutRHI();
+
+    try world.setBlock(17, 42, -1, .stone);
+
+    try testing.expectEqual(world_core.BlockType.stone, world.getBlock(17, 42, -1));
+    try testing.expectEqual(@as(usize, 1), world.storage.count());
+}
+
+test "World setBlock ignores out-of-bounds y without creating chunks" {
+    var world = makeStorageOnlyWorld(testing.allocator);
+    defer world.storage.deinitWithoutRHI();
+
+    try world.setBlock(0, -1, 0, .dirt);
+    try world.setBlock(0, 256, 0, .dirt);
+
+    try testing.expectEqual(@as(usize, 0), world.storage.count());
+}
+
+test "World getChunkStateCounts reports storage telemetry" {
+    var world = makeStorageOnlyWorld(testing.allocator);
+    defer world.storage.deinitWithoutRHI();
+
+    const missing = try world.storage.getOrCreate(0, 0);
+    missing.chunk.state = .missing;
+    missing.chunk.dirty = false;
+    const renderable = try world.storage.getOrCreate(1, 0);
+    renderable.chunk.state = .renderable;
+    renderable.chunk.dirty = true;
+
+    const counts = world.getChunkStateCounts();
+
+    try testing.expectEqual(@as(u32, 2), counts.total);
+    try testing.expectEqual(@as(u32, 1), counts.missing);
+    try testing.expectEqual(@as(u32, 1), counts.renderable);
+    try testing.expectEqual(@as(u32, 1), counts.dirty);
 }

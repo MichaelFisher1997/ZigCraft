@@ -15,6 +15,10 @@ fn makeChunkData(allocator: std.mem.Allocator, cx: i32, cz: i32) world_meshing.C
     };
 }
 
+fn deinitChunkData(data: *world_meshing.ChunkData) void {
+    data.render.mesh.deinitWithoutRHI();
+}
+
 test "CpuCullDiagnostics starts with zero counters" {
     const diagnostics = diagnostics_mod.CpuCullDiagnostics{};
 
@@ -105,6 +109,7 @@ test "recordNotInStorage tracks storage misses independently" {
 test "recordVisible records first visible chunk without mesh" {
     var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
     var data = makeChunkData(testing.allocator, 7, -3);
+    defer deinitChunkData(&data);
 
     diagnostics.recordVisible(7, -3, &data);
     diagnostics.recordVisible(8, -4, &data);
@@ -117,6 +122,7 @@ test "recordVisible records first visible chunk without mesh" {
 test "recordVisible records first allocated mesh with zero vertices" {
     var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
     var data = makeChunkData(testing.allocator, 0, 0);
+    defer deinitChunkData(&data);
     data.render.mesh.solid_allocation = .{ .offset = 0, .count = 0 };
 
     diagnostics.recordVisible(11, 12, &data);
@@ -130,10 +136,56 @@ test "recordVisible records first allocated mesh with zero vertices" {
 test "recordVisible does not flag chunks with vertices" {
     var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
     var data = makeChunkData(testing.allocator, 0, 0);
+    defer deinitChunkData(&data);
     data.render.mesh.solid_allocation = .{ .offset = 0, .count = 12 };
 
     diagnostics.recordVisible(1, 2, &data);
 
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_no_mesh);
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_zero_verts);
+}
+
+test "logFrame handles periodic summary with empty storage" {
+    var diagnostics = diagnostics_mod.CpuCullDiagnostics{
+        .visible_no_mesh = 1,
+        .visible_zero_verts = 1,
+        .frustum_culled = 2,
+        .not_renderable = 3,
+        .not_in_storage = 4,
+    };
+    var storage = world_meshing.ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    diagnostics.logFrame(&storage, 2, 0, 0, 1, 300, 0);
+}
+
+test "logFrame handles missing chunk detail with and without storage entry" {
+    var diagnostics = diagnostics_mod.CpuCullDiagnostics{
+        .missing_in_circle = 1,
+        .missing_cx = 1,
+        .missing_cz = 0,
+    };
+    var storage = world_meshing.ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    diagnostics.logFrame(&storage, 0, 0, 0, 1, 60, 0);
+
+    const stored = try storage.getOrCreate(1, 0);
+    stored.chunk.state = .renderable;
+    stored.render.mesh.solid_allocation = .{ .offset = 0, .count = 12 };
+
+    diagnostics.logFrame(&storage, 1, 0, 0, 1, 60, 0);
+}
+
+test "logFrame boundary traversal handles mixed stored and missing chunks" {
+    var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
+    var storage = world_meshing.ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const renderable = try storage.getOrCreate(1, 0);
+    renderable.render.mesh.solid_allocation = .{ .offset = 0, .count = 24 };
+    const no_mesh = try storage.getOrCreate(0, 1);
+    no_mesh.render.mesh.ready = false;
+
+    diagnostics.logFrame(&storage, 2, 0, 0, 1, 300, 0);
 }
