@@ -257,6 +257,9 @@ const MockWorld = struct {
 };
 
 fn makeStorageOnlyWorld(allocator: std.mem.Allocator) world_mod.World {
+    // Storage-only fixture for real World methods that do not touch renderer,
+    // streamer, RHI, generator, save manager, or LOD. Tests must tear it down
+    // with deinitStorageOnlyWorld(), not World.deinit().
     var world = world_mod.World{
         .storage = world_meshing.ChunkStorage.init(allocator),
         .streamer = undefined,
@@ -279,6 +282,10 @@ fn makeStorageOnlyWorld(allocator: std.mem.Allocator) world_mod.World {
     world.mutation = WorldMutationCoordinator.init(&world.storage, allocator, null, false);
     world.lpv_grid_builder = LpvGridBuilder.init(&world.storage);
     return world;
+}
+
+fn deinitStorageOnlyWorld(world: *world_mod.World) void {
+    world.storage.deinitWithoutRHI();
 }
 
 test "IWorld forwards simulation lifecycle calls" {
@@ -383,7 +390,7 @@ test "IWorld telemetry view forwards debug and state data" {
 
 test "World storage facade returns air for unloaded and out-of-bounds blocks" {
     var world = makeStorageOnlyWorld(testing.allocator);
-    defer world.storage.deinitWithoutRHI();
+    defer deinitStorageOnlyWorld(&world);
 
     try testing.expectEqual(world_core.BlockType.air, world.getBlock(0, 64, 0));
     try testing.expectEqual(world_core.BlockType.air, world.getBlock(0, -1, 0));
@@ -392,7 +399,7 @@ test "World storage facade returns air for unloaded and out-of-bounds blocks" {
 
 test "World setBlock and getBlock round-trip through mutation coordinator" {
     var world = makeStorageOnlyWorld(testing.allocator);
-    defer world.storage.deinitWithoutRHI();
+    defer deinitStorageOnlyWorld(&world);
 
     try world.setBlock(17, 42, -1, .stone);
 
@@ -402,7 +409,7 @@ test "World setBlock and getBlock round-trip through mutation coordinator" {
 
 test "World setBlock ignores out-of-bounds y without creating chunks" {
     var world = makeStorageOnlyWorld(testing.allocator);
-    defer world.storage.deinitWithoutRHI();
+    defer deinitStorageOnlyWorld(&world);
 
     try world.setBlock(0, -1, 0, .dirt);
     try world.setBlock(0, 256, 0, .dirt);
@@ -412,7 +419,7 @@ test "World setBlock ignores out-of-bounds y without creating chunks" {
 
 test "World getChunkStateCounts reports storage telemetry" {
     var world = makeStorageOnlyWorld(testing.allocator);
-    defer world.storage.deinitWithoutRHI();
+    defer deinitStorageOnlyWorld(&world);
 
     const missing = try world.storage.getOrCreate(0, 0);
     missing.chunk.state = .missing;
