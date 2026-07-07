@@ -23,6 +23,42 @@ test "CpuCullDiagnostics starts with zero counters" {
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_zero_verts);
 }
 
+test "CpuCullDiagnostics applyRegionString enables region diagnostics" {
+    var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
+
+    diagnostics.applyRegionString("-4,2,8,16");
+
+    try testing.expect(diagnostics.diag_region_enabled);
+    try testing.expectEqual(@as(i32, -4), diagnostics.diag_min_x);
+    try testing.expectEqual(@as(i32, 2), diagnostics.diag_min_z);
+    try testing.expectEqual(@as(i32, 8), diagnostics.diag_max_x);
+    try testing.expectEqual(@as(i32, 16), diagnostics.diag_max_z);
+}
+
+test "CpuCullDiagnostics applyRegionString defaults invalid coordinates to zero" {
+    var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
+
+    diagnostics.applyRegionString("bad,1,nope,3");
+
+    try testing.expect(diagnostics.diag_region_enabled);
+    try testing.expectEqual(@as(i32, 0), diagnostics.diag_min_x);
+    try testing.expectEqual(@as(i32, 1), diagnostics.diag_min_z);
+    try testing.expectEqual(@as(i32, 0), diagnostics.diag_max_x);
+    try testing.expectEqual(@as(i32, 3), diagnostics.diag_max_z);
+}
+
+test "CpuCullDiagnostics applyRegionString handles partial coordinates" {
+    var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
+
+    diagnostics.applyRegionString("5,6");
+
+    try testing.expect(diagnostics.diag_region_enabled);
+    try testing.expectEqual(@as(i32, 5), diagnostics.diag_min_x);
+    try testing.expectEqual(@as(i32, 6), diagnostics.diag_min_z);
+    try testing.expectEqual(@as(i32, 0), diagnostics.diag_max_x);
+    try testing.expectEqual(@as(i32, 0), diagnostics.diag_max_z);
+}
+
 test "recordFrustumCulled increments frustum counter" {
     var diagnostics = diagnostics_mod.CpuCullDiagnostics{};
 

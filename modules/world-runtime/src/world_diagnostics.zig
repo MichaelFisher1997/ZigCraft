@@ -28,14 +28,18 @@ pub const CpuCullDiagnostics = struct {
     pub fn init() CpuCullDiagnostics {
         var diagnostics = CpuCullDiagnostics{};
         if (runtime_env.getenv("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
-            var parts = std.mem.splitScalar(u8, region_str, ',');
-            if (parts.next()) |x1| diagnostics.diag_min_x = std.fmt.parseInt(i32, x1, 10) catch 0;
-            if (parts.next()) |z1| diagnostics.diag_min_z = std.fmt.parseInt(i32, z1, 10) catch 0;
-            if (parts.next()) |x2| diagnostics.diag_max_x = std.fmt.parseInt(i32, x2, 10) catch 0;
-            if (parts.next()) |z2| diagnostics.diag_max_z = std.fmt.parseInt(i32, z2, 10) catch 0;
-            diagnostics.diag_region_enabled = true;
+            diagnostics.applyRegionString(region_str);
         }
         return diagnostics;
+    }
+
+    pub fn applyRegionString(self: *CpuCullDiagnostics, region_str: []const u8) void {
+        var parts = std.mem.splitScalar(u8, region_str, ',');
+        if (parts.next()) |x1| self.diag_min_x = std.fmt.parseInt(i32, x1, 10) catch 0;
+        if (parts.next()) |z1| self.diag_min_z = std.fmt.parseInt(i32, z1, 10) catch 0;
+        if (parts.next()) |x2| self.diag_max_x = std.fmt.parseInt(i32, x2, 10) catch 0;
+        if (parts.next()) |z2| self.diag_max_z = std.fmt.parseInt(i32, z2, 10) catch 0;
+        self.diag_region_enabled = true;
     }
 
     pub fn recordVisible(self: *CpuCullDiagnostics, cx: i64, cz: i64, data: *ChunkData) void {
