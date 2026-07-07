@@ -116,10 +116,6 @@ const MockContext = struct {
         _ = ptr;
         return 2;
     }
-    fn getNativeBackendContext(ptr: *anyopaque) u64 {
-        return @intFromPtr(ptr);
-    }
-
     fn computeSsao(ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
         _ = ptr;
         _ = proj;
@@ -375,7 +371,6 @@ const MockContext = struct {
         .getDescriptorPool = getNativeDescriptorPool,
         .getUiRenderPass = getNativeUiRenderPass,
         .getSwapchainImageCount = getNativeSwapchainImageCount,
-        .getBackendContext = getNativeBackendContext,
     };
 
     const MOCK_SSAO_VTABLE = rhi.ISSAOContext.VTable{

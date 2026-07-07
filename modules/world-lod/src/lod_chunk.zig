@@ -215,6 +215,31 @@ pub const LODChunk = struct {
         return self.pin_count.load(.monotonic) > 0;
     }
 
+    pub fn key(self: *const LODChunk) LODRegionKey {
+        return .{ .rx = self.region_x, .rz = self.region_z, .lod = self.lod_level };
+    }
+
+    pub fn getState(self: *const LODChunk) LODState {
+        return self.state;
+    }
+
+    pub fn setState(self: *LODChunk, state: LODState) void {
+        self.state = state;
+    }
+
+    pub fn isInFlight(self: *const LODChunk) bool {
+        return self.state == .generating or self.state == .meshing or self.state == .uploading;
+    }
+
+    pub fn markSourceDirty(self: *LODChunk) void {
+        self.dirty = true;
+        self.store_dirty = true;
+    }
+
+    pub fn setReadyChildren(self: *LODChunk, ready_children: u8) void {
+        self.ready_children = @min(ready_children, 4);
+    }
+
     /// World-space bounds structure for LOD regions
     pub const WorldBounds = struct {
         min_x: i32,

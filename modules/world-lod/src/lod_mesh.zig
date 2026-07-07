@@ -121,6 +121,20 @@ pub const LODMesh = struct {
         };
     }
 
+    pub fn isRenderable(self: *const LODMesh) bool {
+        return self.ready and self.vertex_count > 0;
+    }
+
+    pub fn setUploaded(self: *LODMesh, vertex_count: u32, opaque_vertex_count: u32) void {
+        self.vertex_count = vertex_count;
+        self.opaque_vertex_count = opaque_vertex_count;
+        self.ready = true;
+    }
+
+    pub fn pendingVerticesForTest(self: *const LODMesh) ?[]Vertex {
+        return self.pending_vertices;
+    }
+
     pub fn deinit(self: *LODMesh, resources: LODMeshResources) void {
         self.mutex.lock();
         defer self.mutex.unlock();

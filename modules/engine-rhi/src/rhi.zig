@@ -882,7 +882,6 @@ pub const INativeHandlesContext = struct {
         getDescriptorPool: *const fn (ptr: *anyopaque) u64,
         getUiRenderPass: *const fn (ptr: *anyopaque) u64,
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
-        getBackendContext: *const fn (ptr: *anyopaque) u64,
     };
 
     pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
@@ -914,9 +913,6 @@ pub const INativeHandlesContext = struct {
     }
     pub fn getSwapchainImageCount(self: INativeHandlesContext) u32 {
         return self.vtable.getSwapchainImageCount(self.ptr);
-    }
-    pub fn getBackendContext(self: INativeHandlesContext) u64 {
-        return self.vtable.getBackendContext(self.ptr);
     }
 };
 

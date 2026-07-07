@@ -12,6 +12,7 @@ pub const lod_generator = @import("lod_generator.zig");
 pub const lod_ingest = @import("lod_ingest.zig");
 pub const lod_manager = @import("lod_manager.zig");
 pub const lod_manager_tests = if (builtin.is_test) @import("lod_manager_tests.zig") else struct {};
+pub const lod_manager_internal_tests = if (builtin.is_test) @import("lod_manager_internal_tests.zig") else struct {};
 pub const lod_renderer = @import("lod_renderer.zig");
 pub const lod_scheduler = @import("lod_scheduler.zig");
 pub const lod_seam = @import("lod_seam.zig");

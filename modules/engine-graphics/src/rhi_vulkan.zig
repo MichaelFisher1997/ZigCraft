@@ -866,10 +866,6 @@ fn getNativeSwapchainImageCount(ctx_ptr: *anyopaque) u32 {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return native_access.getNativeSwapchainImageCount(ctx);
 }
-fn getNativeBackendContext(ctx_ptr: *anyopaque) u64 {
-    return @intFromPtr(ctx_ptr);
-}
-
 fn computeSsao(ctx_ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.ssao_system.compute(
@@ -1295,7 +1291,6 @@ const VULKAN_NATIVE_HANDLES_VTABLE = rhi.INativeHandlesContext.VTable{
     .getDescriptorPool = getNativeDescriptorPool,
     .getUiRenderPass = getNativeUiRenderPass,
     .getSwapchainImageCount = getNativeSwapchainImageCount,
-    .getBackendContext = getNativeBackendContext,
 };
 
 const VULKAN_DEVICE_QUERY_VTABLE = rhi.IDeviceQuery.VTable{

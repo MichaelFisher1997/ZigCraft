@@ -190,7 +190,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
         const existing = storage.get(cand.key);
         if (existing != null) diag.existing += 1;
-        const needs_queue = if (existing) |chunk| chunk.state == .missing else true;
+        const needs_queue = if (existing) |chunk| chunk.getState() == .missing else true;
         if (!needs_queue) continue;
 
         const chunk = if (existing) |c| c else blk: {
@@ -204,9 +204,9 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         chunk.job_token = ctx.next_job_token.*;
         ctx.next_job_token.* += 1;
         if (ctx.defer_generation_dispatch) {
-            chunk.state = .queued_for_generation;
+            chunk.setState(.queued_for_generation);
         } else {
-            chunk.state = .generating;
+            chunk.setState(.generating);
             queue.push(.{
                 .type = .chunk_generation,
                 .dist_sq = cand.encoded_priority,
@@ -222,7 +222,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                     },
                 },
             }) catch |err| {
-                chunk.state = .missing;
+                chunk.setState(.missing);
                 return err;
             };
         }
