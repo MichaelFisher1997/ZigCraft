@@ -157,9 +157,8 @@ pub const GpuMesher = struct {
 
         if (!self.compute.hasCommandBuffer()) return;
 
-        const src = self.compute.getNativeBuffer(self.output_handles[prev_fi]);
-        const dst = self.compute.getNativeBuffer(vertex_allocator.buffer);
-        if (src == 0 or dst == 0) return;
+        const src = rhi_pkg.ComputeBufferBinding{ .buffer = self.output_handles[prev_fi] };
+        const dst = rhi_pkg.ComputeBufferBinding{ .buffer = vertex_allocator.buffer };
         const results = self.getMappedResults(prev_fi) orelse {
             log.log.warn("GPU_MESHER_FINALIZE: no mapped results for prev_fi={}", .{prev_fi});
             return;
@@ -242,13 +241,12 @@ pub const GpuMesher = struct {
 
         self.submitted[fi].appendSlice(self.allocator, self.mesh_queue.items) catch return;
 
-        const result_buf = self.result_buffers[fi].buffer;
         const result_size: u64 = MAX_GPU_MESH_BATCH * @sizeOf(MeshBuildResult);
-        self.compute.fillBuffer(result_buf, 0, result_size, 0);
-        self.compute.bufferBarrier(result_buf, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_SHADER_READ_BIT | rhi_pkg.ACCESS_SHADER_WRITE_BIT, 0, result_size);
+        self.compute.fillBuffer(self.result_buffers[fi], 0, result_size, 0);
+        self.compute.bufferBarrier(.{ .compute = self.result_buffers[fi] }, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_SHADER_READ_BIT | rhi_pkg.ACCESS_SHADER_WRITE_BIT, 0, result_size);
 
-        self.compute.bindComputePipeline(self.pipeline.pipeline);
-        self.compute.bindDescriptorSet(self.pipeline.layout, self.pipeline.descriptor_sets[fi]);
+        self.compute.bindComputePipeline(self.pipeline);
+        self.compute.bindDescriptorSet(self.pipeline, fi);
 
         for (self.mesh_queue.items, 0..) |req, idx| {
             const n_slot = gpu_block_buffer.getSlotForChunk(req.cx, req.cz - 1);
@@ -264,12 +262,12 @@ pub const GpuMesher = struct {
                 .neighbor_east_slot = slotOrMissing(e_slot),
                 .neighbor_west_slot = slotOrMissing(w_slot),
             };
-            self.compute.pushConstants(self.pipeline.layout, 0, @sizeOf(MeshPushConstants), &push);
+            self.compute.pushConstants(self.pipeline, 0, @sizeOf(MeshPushConstants), &push);
             self.compute.dispatch(CHUNK_Y, 1, 1);
         }
 
-        self.compute.bufferBarrier(self.result_buffers[fi].buffer, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_HOST_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_HOST_READ_BIT, 0, result_size);
-        self.compute.bufferBarrier(self.compute.getNativeBuffer(self.output_handles[fi]), rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_TRANSFER_READ_BIT, 0, outputBufferSize());
+        self.compute.bufferBarrier(.{ .compute = self.result_buffers[fi] }, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_HOST_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_HOST_READ_BIT, 0, result_size);
+        self.compute.bufferBarrier(.{ .buffer = self.output_handles[fi] }, rhi_pkg.PIPELINE_STAGE_COMPUTE_SHADER_BIT, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.ACCESS_SHADER_WRITE_BIT, rhi_pkg.ACCESS_TRANSFER_READ_BIT, 0, outputBufferSize());
 
         self.stats.chunks_dispatched = @intCast(self.mesh_queue.items.len);
         self.mesh_queue.clearRetainingCapacity();
@@ -352,12 +350,13 @@ pub const GpuMesher = struct {
     }
 
     fn updateDescriptorSets(self: *GpuMesher, gpu_block_buffer: *GpuBlockBuffer) void {
-        const block_buf_handle = gpu_block_buffer.getBufferHandle();
-        const native_block_buf = self.compute.getNativeBuffer(block_buf_handle);
-
         for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-            const output_buf = self.compute.getNativeBuffer(self.output_handles[i]);
-            const buffers = [_]u64{ native_block_buf, self.block_props_buffer.buffer, output_buf, self.result_buffers[i].buffer };
+            const buffers = [_]rhi_pkg.ComputeBufferBinding{
+                .{ .buffer = gpu_block_buffer.getBufferHandle() },
+                .{ .compute = self.block_props_buffer },
+                .{ .buffer = self.output_handles[i] },
+                .{ .compute = self.result_buffers[i] },
+            };
             self.compute.updateComputeDescriptors(self.pipeline, i, &buffers);
         }
     }
@@ -378,12 +377,12 @@ fn freeTempAllocations(vertex_allocator: *GlobalVertexAllocator, solid: ?VertexA
     if (fluid) |alloc| vertex_allocator.free(alloc);
 }
 
-fn copyVertexRange(self: *GpuMesher, src_buffer: u64, dst_buffer: u64, src_vertex_offset: u64, dst_byte_offset: usize, count: u32) void {
+fn copyVertexRange(self: *GpuMesher, src_buffer: rhi_pkg.ComputeBufferBinding, dst_buffer: rhi_pkg.ComputeBufferBinding, src_vertex_offset: u64, dst_byte_offset: usize, count: u32) void {
     if (count == 0) return;
     self.compute.copyBuffer(src_buffer, dst_buffer, src_vertex_offset * VERTEX_SIZE, dst_byte_offset, @as(u64, count) * VERTEX_SIZE);
 }
 
-fn vertexReadBarrier(self: *GpuMesher, buffer: u64, dst_byte_offset: usize, count: u32) void {
+fn vertexReadBarrier(self: *GpuMesher, buffer: rhi_pkg.ComputeBufferBinding, dst_byte_offset: usize, count: u32) void {
     if (count == 0) return;
     self.compute.bufferBarrier(buffer, rhi_pkg.PIPELINE_STAGE_TRANSFER_BIT, rhi_pkg.PIPELINE_STAGE_VERTEX_INPUT_BIT, rhi_pkg.ACCESS_TRANSFER_WRITE_BIT, rhi_pkg.ACCESS_VERTEX_ATTRIBUTE_READ_BIT, dst_byte_offset, @as(u64, count) * VERTEX_SIZE);
 }

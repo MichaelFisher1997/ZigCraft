@@ -189,6 +189,27 @@ const TimingState = struct {
     pass_written: [MAX_FRAMES_IN_FLIGHT][rhi_timing.PASS_COUNT]bool = .{.{false} ** rhi_timing.PASS_COUNT} ** MAX_FRAMES_IN_FLIGHT,
 };
 
+pub const ComputeBufferResource = struct {
+    buffer: c.VkBuffer = null,
+    memory: c.VkDeviceMemory = null,
+    mapped_ptr: ?*anyopaque = null,
+};
+
+pub const ComputePipelineResource = struct {
+    pipeline: c.VkPipeline = null,
+    layout: c.VkPipelineLayout = null,
+    descriptor_pool: c.VkDescriptorPool = null,
+    descriptor_set_layout: c.VkDescriptorSetLayout = null,
+    descriptor_sets: [MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet = .{null} ** MAX_FRAMES_IN_FLIGHT,
+};
+
+const ComputeResources = struct {
+    next_buffer_handle: u32 = 1,
+    next_pipeline_handle: u32 = 1,
+    buffers: std.AutoHashMapUnmanaged(u32, ComputeBufferResource) = .empty,
+    pipelines: std.AutoHashMapUnmanaged(u32, ComputePipelineResource) = .empty,
+};
+
 pub const VulkanContext = struct {
     allocator: std.mem.Allocator,
     window: *c.SDL_Window,
@@ -228,4 +249,5 @@ pub const VulkanContext = struct {
 
     timing: TimingState = .{},
     dynamic_resolution: DynamicResolutionState = .{},
+    compute_resources: ComputeResources = .{},
 };

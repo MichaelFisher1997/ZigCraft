@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
     engine_graphics_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
     engine_graphics_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
     engine_graphics_options.addOption(bool, "skip_present", skip_present);
+    engine_graphics_options.addOption(bool, "imgui", enable_imgui);
 
     const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
     options.addOption([]const u8, "screenshot_path", screenshot_path);
@@ -215,6 +216,8 @@ pub fn build(b: *std.Build) void {
     engine_graphics.addImport("engine-rhi", engine_rhi);
     engine_graphics.addImport("engine-shadows", engine_shadows);
     engine_graphics.addOptions("engine_graphics_options", engine_graphics_options);
+    engine_graphics.linkSystemLibrary("sdl3", .{});
+    engine_graphics.linkSystemLibrary("vulkan", .{});
     addSharedImports(engine_ui, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     engine_ui.addImport("engine-math", engine_math);
     engine_ui.addImport("engine-core", engine_core);
@@ -223,6 +226,8 @@ pub fn build(b: *std.Build) void {
     engine_ui.linkSystemLibrary("sdl3", .{});
     engine_ui.linkSystemLibrary("vulkan", .{});
     if (enable_imgui) {
+        engine_graphics.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
+        engine_graphics.link_libcpp = true;
         engine_ui.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
         engine_ui.link_libcpp = true;
     }

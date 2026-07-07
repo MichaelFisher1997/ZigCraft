@@ -85,10 +85,10 @@ pub const UISystemManager = struct {
             if (self.imgui) |*backend| {
                 if (backend.hasDrawCommands()) {
                     u.begin();
-                    backend.endFrame(rhi_ptr.nativeHandles().getCommandBuffer());
+                    backend.endFrame();
                     u.end();
                 } else {
-                    backend.endFrame(0);
+                    backend.endFrame();
                 }
             }
         }

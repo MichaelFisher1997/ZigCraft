@@ -48,9 +48,9 @@
 //!
 //! ## Backend Implementation
 //!
-//! The Vulkan backend (`rhi_vulkan.zig`) implements all interfaces and is currently
-//! the only supported backend. Future backends (WebGPU, Metal) would implement
-//! the same interface contracts.
+//! The Vulkan backend (`rhi_vulkan.zig`) is the only supported backend. Vulkan
+//! native handles and compute objects are intentionally exposed where engine
+//! subsystems integrate directly with Vulkan-shaped APIs.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -234,7 +234,7 @@ pub const RenderContext = struct {
     passes: IPassOrchestrationContext,
     post_process: IPostProcessContext,
     effects: IRenderEffectsContext,
-    native: INativeHandlesContext,
+    vulkan: VulkanNativeHandles,
     encoder: IGraphicsCommandEncoder,
     state: IRenderStateContext,
 
@@ -298,10 +298,10 @@ pub const RenderContext = struct {
         self.render.vtable.setClearColor(self.render.ptr, color);
     }
     pub fn getNativeSwapchainExtent(self: RenderContext) [2]u32 {
-        return self.native.getSwapchainExtent();
+        return self.vulkan.getSwapchainExtent();
     }
     pub fn getNativeDevice(self: RenderContext) u64 {
-        return self.native.getDevice();
+        return self.vulkan.getDevice();
     }
 
     // --- IGraphicsCommandEncoder delegates ---
@@ -500,6 +500,31 @@ pub const IUIContext = struct {
     }
 };
 
+pub const IImGuiContext = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        initBackend: *const fn (ptr: *anyopaque, window: *anyopaque) bool,
+        shutdownBackend: *const fn (ptr: *anyopaque) void,
+        newFrame: *const fn (ptr: *anyopaque) void,
+        renderDrawData: *const fn (ptr: *anyopaque, draw_data: *anyopaque) void,
+    };
+
+    pub fn initBackend(self: IImGuiContext, window: *anyopaque) bool {
+        return self.vtable.initBackend(self.ptr, window);
+    }
+    pub fn shutdownBackend(self: IImGuiContext) void {
+        self.vtable.shutdownBackend(self.ptr);
+    }
+    pub fn newFrame(self: IImGuiContext) void {
+        self.vtable.newFrame(self.ptr);
+    }
+    pub fn renderDrawData(self: IImGuiContext, draw_data: *anyopaque) void {
+        self.vtable.renderDrawData(self.ptr, draw_data);
+    }
+};
+
 /// Focused wrapper for immediate-mode UI rendering.
 ///
 /// Provides a clean interface for 2D drawing operations (rectangles,
@@ -664,17 +689,12 @@ pub const ACCESS_SHADER_WRITE_BIT: AccessFlags = 0x00000040;
 pub const ACCESS_VERTEX_ATTRIBUTE_READ_BIT: AccessFlags = 0x00000004;
 
 pub const ComputeBuffer = struct {
-    buffer: u64 = 0,
-    memory: u64 = 0,
+    handle: u32 = 0,
     mapped_ptr: ?*anyopaque = null,
 };
 
 pub const ComputePipeline = struct {
-    pipeline: u64 = 0,
-    layout: u64 = 0,
-    descriptor_pool: u64 = 0,
-    descriptor_set_layout: u64 = 0,
-    descriptor_sets: [MAX_FRAMES_IN_FLIGHT]u64 = .{0} ** MAX_FRAMES_IN_FLIGHT,
+    handle: u32 = 0,
 };
 
 pub const IComputeContext = struct {
@@ -682,29 +702,28 @@ pub const IComputeContext = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        bindComputePipeline: *const fn (ptr: *anyopaque, pipeline: u64) void,
-        bindDescriptorSet: *const fn (ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void,
+        bindComputePipeline: *const fn (ptr: *anyopaque, pipeline: ComputePipeline) void,
+        bindDescriptorSet: *const fn (ptr: *anyopaque, pipeline: ComputePipeline, frame_index: usize) void,
         createComputeBuffer: *const fn (ptr: *anyopaque, size: usize, host_visible: bool) RhiError!ComputeBuffer,
         destroyComputeBuffer: *const fn (ptr: *anyopaque, buffer: *ComputeBuffer) void,
         createComputePipeline: *const fn (ptr: *anyopaque, allocator: Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!ComputePipeline,
-        updateComputeDescriptors: *const fn (ptr: *anyopaque, pipeline: ComputePipeline, frame_index: usize, buffers: []const u64) void,
+        updateComputeDescriptors: *const fn (ptr: *anyopaque, pipeline: ComputePipeline, frame_index: usize, storage_buffers: []const ComputeBufferBinding) void,
         destroyComputePipeline: *const fn (ptr: *anyopaque, pipeline: *ComputePipeline) void,
         dispatch: *const fn (ptr: *anyopaque, group_count_x: u32, group_count_y: u32, group_count_z: u32) void,
-        pushConstants: *const fn (ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void,
-        fillBuffer: *const fn (ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void,
-        copyBuffer: *const fn (ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void,
+        pushConstants: *const fn (ptr: *anyopaque, pipeline: ComputePipeline, offset: u32, size: u32, data: *const anyopaque) void,
+        fillBuffer: *const fn (ptr: *anyopaque, buffer: ComputeBuffer, offset: u64, size: u64, data: u32) void,
+        copyBuffer: *const fn (ptr: *anyopaque, src_buffer: ComputeBufferBinding, dst_buffer: ComputeBufferBinding, src_offset: u64, dst_offset: u64, size: u64) void,
         pipelineBarrier: *const fn (ptr: *anyopaque, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void,
-        bufferBarrier: *const fn (ptr: *anyopaque, buffer: u64, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void,
+        bufferBarrier: *const fn (ptr: *anyopaque, buffer: ComputeBufferBinding, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void,
         waitForFrameFence: *const fn (ptr: *anyopaque, frame_index: usize) bool,
-        getNativeBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) u64,
         hasCommandBuffer: *const fn (ptr: *anyopaque) bool,
     };
 
-    pub fn bindComputePipeline(self: IComputeContext, pipeline: u64) void {
+    pub fn bindComputePipeline(self: IComputeContext, pipeline: ComputePipeline) void {
         self.vtable.bindComputePipeline(self.ptr, pipeline);
     }
-    pub fn bindDescriptorSet(self: IComputeContext, pipeline_layout: u64, descriptor_set: u64) void {
-        self.vtable.bindDescriptorSet(self.ptr, pipeline_layout, descriptor_set);
+    pub fn bindDescriptorSet(self: IComputeContext, pipeline: ComputePipeline, frame_index: usize) void {
+        self.vtable.bindDescriptorSet(self.ptr, pipeline, frame_index);
     }
     pub fn createComputeBuffer(self: IComputeContext, size: usize, host_visible: bool) RhiError!ComputeBuffer {
         return self.vtable.createComputeBuffer(self.ptr, size, host_visible);
@@ -715,8 +734,8 @@ pub const IComputeContext = struct {
     pub fn createComputePipeline(self: IComputeContext, allocator: Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!ComputePipeline {
         return self.vtable.createComputePipeline(self.ptr, allocator, shader_path, storage_binding_count, push_constant_size);
     }
-    pub fn updateComputeDescriptors(self: IComputeContext, pipeline: ComputePipeline, frame_index: usize, buffers: []const u64) void {
-        self.vtable.updateComputeDescriptors(self.ptr, pipeline, frame_index, buffers);
+    pub fn updateComputeDescriptors(self: IComputeContext, pipeline: ComputePipeline, frame_index: usize, storage_buffers: []const ComputeBufferBinding) void {
+        self.vtable.updateComputeDescriptors(self.ptr, pipeline, frame_index, storage_buffers);
     }
     pub fn destroyComputePipeline(self: IComputeContext, pipeline: *ComputePipeline) void {
         self.vtable.destroyComputePipeline(self.ptr, pipeline);
@@ -724,30 +743,32 @@ pub const IComputeContext = struct {
     pub fn dispatch(self: IComputeContext, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
         self.vtable.dispatch(self.ptr, group_count_x, group_count_y, group_count_z);
     }
-    pub fn pushConstants(self: IComputeContext, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
-        self.vtable.pushConstants(self.ptr, pipeline_layout, offset, size, data);
+    pub fn pushConstants(self: IComputeContext, pipeline: ComputePipeline, offset: u32, size: u32, data: *const anyopaque) void {
+        self.vtable.pushConstants(self.ptr, pipeline, offset, size, data);
     }
-    pub fn fillBuffer(self: IComputeContext, buffer: u64, offset: u64, size: u64, data: u32) void {
+    pub fn fillBuffer(self: IComputeContext, buffer: ComputeBuffer, offset: u64, size: u64, data: u32) void {
         self.vtable.fillBuffer(self.ptr, buffer, offset, size, data);
     }
-    pub fn copyBuffer(self: IComputeContext, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+    pub fn copyBuffer(self: IComputeContext, src_buffer: ComputeBufferBinding, dst_buffer: ComputeBufferBinding, src_offset: u64, dst_offset: u64, size: u64) void {
         self.vtable.copyBuffer(self.ptr, src_buffer, dst_buffer, src_offset, dst_offset, size);
     }
     pub fn pipelineBarrier(self: IComputeContext, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void {
         self.vtable.pipelineBarrier(self.ptr, src_stage, dst_stage, src_access, dst_access);
     }
-    pub fn bufferBarrier(self: IComputeContext, buffer: u64, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void {
+    pub fn bufferBarrier(self: IComputeContext, buffer: ComputeBufferBinding, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void {
         self.vtable.bufferBarrier(self.ptr, buffer, src_stage, dst_stage, src_access, dst_access, offset, size);
     }
     pub fn waitForFrameFence(self: IComputeContext, frame_index: usize) bool {
         return self.vtable.waitForFrameFence(self.ptr, frame_index);
     }
-    pub fn getNativeBuffer(self: IComputeContext, handle: BufferHandle) u64 {
-        return self.vtable.getNativeBuffer(self.ptr, handle);
-    }
     pub fn hasCommandBuffer(self: IComputeContext) bool {
         return self.vtable.hasCommandBuffer(self.ptr);
     }
+};
+
+pub const ComputeBufferBinding = union(enum) {
+    compute: ComputeBuffer,
+    buffer: BufferHandle,
 };
 
 pub const IRenderContext = struct {
@@ -867,7 +888,10 @@ pub const IRenderEffectsContext = struct {
     }
 };
 
-pub const INativeHandlesContext = struct {
+/// Vulkan-only native handles used by ImGui, LPV, and other integrations that
+/// need concrete Vulkan objects. This intentionally is not an abstract native
+/// handle interface for portable render backends.
+pub const VulkanNativeHandles = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
 
@@ -882,41 +906,37 @@ pub const INativeHandlesContext = struct {
         getDescriptorPool: *const fn (ptr: *anyopaque) u64,
         getUiRenderPass: *const fn (ptr: *anyopaque) u64,
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
-        getBackendContext: *const fn (ptr: *anyopaque) u64,
     };
 
-    pub fn getCommandBuffer(self: INativeHandlesContext) u64 {
+    pub fn getCommandBuffer(self: VulkanNativeHandles) u64 {
         return self.vtable.getCommandBuffer(self.ptr);
     }
-    pub fn getSwapchainExtent(self: INativeHandlesContext) [2]u32 {
+    pub fn getSwapchainExtent(self: VulkanNativeHandles) [2]u32 {
         return self.vtable.getSwapchainExtent(self.ptr);
     }
-    pub fn getDevice(self: INativeHandlesContext) u64 {
+    pub fn getDevice(self: VulkanNativeHandles) u64 {
         return self.vtable.getDevice(self.ptr);
     }
-    pub fn getInstance(self: INativeHandlesContext) u64 {
+    pub fn getInstance(self: VulkanNativeHandles) u64 {
         return self.vtable.getInstance(self.ptr);
     }
-    pub fn getPhysicalDevice(self: INativeHandlesContext) u64 {
+    pub fn getPhysicalDevice(self: VulkanNativeHandles) u64 {
         return self.vtable.getPhysicalDevice(self.ptr);
     }
-    pub fn getQueue(self: INativeHandlesContext) u64 {
+    pub fn getQueue(self: VulkanNativeHandles) u64 {
         return self.vtable.getQueue(self.ptr);
     }
-    pub fn getQueueFamily(self: INativeHandlesContext) u32 {
+    pub fn getQueueFamily(self: VulkanNativeHandles) u32 {
         return self.vtable.getQueueFamily(self.ptr);
     }
-    pub fn getDescriptorPool(self: INativeHandlesContext) u64 {
+    pub fn getDescriptorPool(self: VulkanNativeHandles) u64 {
         return self.vtable.getDescriptorPool(self.ptr);
     }
-    pub fn getUiRenderPass(self: INativeHandlesContext) u64 {
+    pub fn getUiRenderPass(self: VulkanNativeHandles) u64 {
         return self.vtable.getUiRenderPass(self.ptr);
     }
-    pub fn getSwapchainImageCount(self: INativeHandlesContext) u32 {
+    pub fn getSwapchainImageCount(self: VulkanNativeHandles) u32 {
         return self.vtable.getSwapchainImageCount(self.ptr);
-    }
-    pub fn getBackendContext(self: INativeHandlesContext) u64 {
-        return self.vtable.getBackendContext(self.ptr);
     }
 };
 
@@ -1152,13 +1172,14 @@ pub const RHI = struct {
         passes: ?*const IPassOrchestrationContext.VTable = null,
         post_process: ?*const IPostProcessContext.VTable = null,
         effects: ?*const IRenderEffectsContext.VTable = null,
-        native: ?*const INativeHandlesContext.VTable = null,
+        vulkan: ?*const VulkanNativeHandles.VTable = null,
         ssao: ?*const ISSAOContext.VTable = null,
         debug_overlay: ?*const IDebugOverlayContext.VTable = null,
         shadow: ?*const IShadowContext.VTable = null,
         water: ?*const IWaterContext.VTable = null,
         compute: ?*const IComputeContext.VTable = null,
         ui: ?*const IUIContext.VTable = null,
+        imgui: ?*const IImGuiContext.VTable = null,
         query: ?*const IDeviceQuery.VTable = null,
         timing: ?*const IDeviceTiming.VTable = null,
         quality: ?*const IRenderQualityOptions.VTable = null,
@@ -1178,13 +1199,14 @@ pub const RHI = struct {
         passes: ?*const IPassOrchestrationContext.VTable = null,
         post_process: ?*const IPostProcessContext.VTable = null,
         effects: ?*const IRenderEffectsContext.VTable = null,
-        native: ?*const INativeHandlesContext.VTable = null,
+        vulkan: ?*const VulkanNativeHandles.VTable = null,
         ssao: ?*const ISSAOContext.VTable = null,
         debug_overlay: ?*const IDebugOverlayContext.VTable = null,
         shadow: ?*const IShadowContext.VTable = null,
         water: ?*const IWaterContext.VTable = null,
         compute: ?*const IComputeContext.VTable = null,
         ui: ?*const IUIContext.VTable = null,
+        imgui: ?*const IImGuiContext.VTable = null,
         query: ?*const IDeviceQuery.VTable = null,
         timing: ?*const IDeviceTiming.VTable = null,
         quality: ?*const IRenderQualityOptions.VTable = null,
@@ -1202,13 +1224,14 @@ pub const RHI = struct {
             .passes = interfaces.passes,
             .post_process = interfaces.post_process,
             .effects = interfaces.effects,
-            .native = interfaces.native,
+            .vulkan = interfaces.vulkan,
             .ssao = interfaces.ssao,
             .debug_overlay = interfaces.debug_overlay,
             .shadow = interfaces.shadow,
             .water = interfaces.water,
             .compute = interfaces.compute,
             .ui = interfaces.ui,
+            .imgui = interfaces.imgui,
             .query = interfaces.query,
             .timing = interfaces.timing,
             .quality = interfaces.quality,
@@ -1234,7 +1257,7 @@ pub const RHI = struct {
             .passes = self.passOrchestration(),
             .post_process = self.postProcess(),
             .effects = self.renderEffects(),
-            .native = self.nativeHandles(),
+            .vulkan = self.vulkanHandles(),
             .encoder = rc.getEncoder(),
             .state = rc.getState(),
         };
@@ -1248,8 +1271,11 @@ pub const RHI = struct {
     pub fn renderEffects(self: RHI) IRenderEffectsContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.effects orelse unreachable };
     }
-    pub fn nativeHandles(self: RHI) INativeHandlesContext {
-        return .{ .ptr = self.ptr, .vtable = self.vtable.native orelse unreachable };
+    /// Returns the Vulkan native-handle facet used by ImGui, LPV, and other
+    /// Vulkan-shaped integrations. This is a documented backend seam, not a
+    /// portability guarantee for non-Vulkan renderers.
+    pub fn vulkanHandles(self: RHI) VulkanNativeHandles {
+        return .{ .ptr = self.ptr, .vtable = self.vtable.vulkan orelse unreachable };
     }
     pub fn encoder(self: RHI) IGraphicsCommandEncoder {
         return self.context().getEncoder();
@@ -1280,6 +1306,9 @@ pub const RHI = struct {
     }
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.ui orelse unreachable };
+    }
+    pub fn imgui(self: RHI) IImGuiContext {
+        return .{ .ptr = self.ptr, .vtable = self.vtable.imgui orelse unreachable };
     }
     pub fn uiRenderer(self: RHI) UIRenderer {
         return .{ .ctx = self.ui() };

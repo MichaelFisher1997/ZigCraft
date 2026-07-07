@@ -202,7 +202,7 @@ pub const VulkanSwapchain = struct {
 
         // Protect against zero-size extents (can happen during fullscreen transitions on Wayland)
         if (w <= 0 or h <= 0) {
-            return error.VulkanError;
+            return error.BackendError;
         }
 
         if (cap.currentExtent.width != 0xFFFFFFFF) {
@@ -215,7 +215,7 @@ pub const VulkanSwapchain = struct {
 
         // Final validation - extent must be non-zero
         if (self.extent.width == 0 or self.extent.height == 0) {
-            return error.VulkanError;
+            return error.BackendError;
         }
 
         var swapchain_info = std.mem.zeroes(c.VkSwapchainCreateInfoKHR);
@@ -486,7 +486,7 @@ pub const VulkanSwapchain = struct {
 };
 
 fn checkVk(result: c.VkResult) !void {
-    if (result != c.VK_SUCCESS) return error.VulkanError;
+    if (result != c.VK_SUCCESS) return error.BackendError;
 }
 
 fn getMSAASampleCountFlag(samples: u8) c.VkSampleCountFlagBits {

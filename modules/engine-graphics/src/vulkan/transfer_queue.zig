@@ -38,7 +38,7 @@ pub const StagingRing = struct {
             c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         );
-        if (buf.buffer == null or buf.mapped_ptr == null) return error.VulkanError;
+        if (buf.buffer == null or buf.mapped_ptr == null) return error.BackendError;
 
         var ring = StagingRing{
             .buffer = buf.buffer,
@@ -323,7 +323,7 @@ pub const TransferQueue = struct {
         if (end_result != c.VK_SUCCESS) {
             self.transfer_ready[self.current_frame] = false;
             if (end_result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
-            return error.VulkanError;
+            return error.BackendError;
         }
 
         var submit_info = std.mem.zeroes(c.VkSubmitInfo);
@@ -338,7 +338,7 @@ pub const TransferQueue = struct {
         queue_mutex.unlock();
 
         if (result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;
-        if (result != c.VK_SUCCESS) return error.VulkanError;
+        if (result != c.VK_SUCCESS) return error.BackendError;
 
         const wait_result = c.vkWaitForFences(vk_device, 1, &self.fence, c.VK_TRUE, std.math.maxInt(u64));
         if (wait_result == c.VK_ERROR_DEVICE_LOST) return error.GpuLost;

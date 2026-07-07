@@ -86,7 +86,7 @@ pub const SwapchainPresenter = struct {
             return error.ValidationFailed;
         } else if (result != c.VK_SUCCESS and result != c.VK_SUBOPTIMAL_KHR) {
             log.log.err("vkAcquireNextImageKHR failed with result: {d}", .{result});
-            return error.VulkanError;
+            return error.BackendError;
         }
 
         return image_index;
@@ -120,7 +120,7 @@ pub const SwapchainPresenter = struct {
             log.log.err("vkQueuePresentKHR reported validation failure", .{});
             return error.ValidationFailed;
         } else if (result != c.VK_SUCCESS) {
-            return error.VulkanError;
+            return error.BackendError;
         }
     }
 
