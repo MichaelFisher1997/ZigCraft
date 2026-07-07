@@ -19,6 +19,16 @@ fn deinitChunkData(data: *world_meshing.ChunkData) void {
     data.render.mesh.deinitWithoutRHI();
 }
 
+fn mockRegionGetenv(name: [:0]const u8) ?[]const u8 {
+    if (std.mem.eql(u8, name, "ZIGCRAFT_DIAGNOSE_REGION")) return "-3,-2,4,5";
+    return null;
+}
+
+fn mockEmptyGetenv(name: [:0]const u8) ?[]const u8 {
+    _ = name;
+    return null;
+}
+
 test "CpuCullDiagnostics starts with zero counters" {
     const diagnostics = diagnostics_mod.CpuCullDiagnostics{};
 
@@ -28,6 +38,22 @@ test "CpuCullDiagnostics starts with zero counters" {
     try testing.expectEqual(@as(u32, 0), diagnostics.frustum_culled);
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_no_mesh);
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_zero_verts);
+}
+
+test "CpuCullDiagnostics initFromEnv reads diagnose region" {
+    const diagnostics = diagnostics_mod.CpuCullDiagnostics.initFromEnv(mockRegionGetenv);
+
+    try testing.expect(diagnostics.diag_region_enabled);
+    try testing.expectEqual(@as(i32, -3), diagnostics.diag_min_x);
+    try testing.expectEqual(@as(i32, -2), diagnostics.diag_min_z);
+    try testing.expectEqual(@as(i32, 4), diagnostics.diag_max_x);
+    try testing.expectEqual(@as(i32, 5), diagnostics.diag_max_z);
+}
+
+test "CpuCullDiagnostics initFromEnv stays disabled without diagnose region" {
+    const diagnostics = diagnostics_mod.CpuCullDiagnostics.initFromEnv(mockEmptyGetenv);
+
+    try testing.expect(!diagnostics.diag_region_enabled);
 }
 
 test "CpuCullDiagnostics applyRegionString enables region diagnostics" {
@@ -143,6 +169,49 @@ test "recordVisible does not flag chunks with vertices" {
 
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_no_mesh);
     try testing.expectEqual(@as(u32, 0), diagnostics.visible_zero_verts);
+}
+
+test "frameSummary computes logged CPU cull totals" {
+    const diagnostics = diagnostics_mod.CpuCullDiagnostics{
+        .visible_no_mesh = 2,
+        .visible_zero_verts = 1,
+        .frustum_culled = 3,
+        .not_renderable = 4,
+        .not_in_storage = 5,
+        .missing_in_circle = 6,
+    };
+
+    const summary = diagnostics.frameSummary(9);
+
+    try testing.expectEqual(@as(usize, 9), summary.visible_count);
+    try testing.expectEqual(@as(usize, 7), summary.with_mesh);
+    try testing.expectEqual(@as(u32, 2), summary.no_mesh);
+    try testing.expectEqual(@as(u32, 1), summary.zero_verts);
+    try testing.expectEqual(@as(u32, 3), summary.frustum_culled);
+    try testing.expectEqual(@as(u32, 4), summary.not_renderable);
+    try testing.expectEqual(@as(u32, 5), summary.not_in_storage);
+    try testing.expectEqual(@as(u32, 6), summary.missing_in_circle);
+}
+
+test "collectBoundarySummary reports renderable stored and missing boundary chunks" {
+    const diagnostics = diagnostics_mod.CpuCullDiagnostics{};
+    var storage = world_meshing.ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+    var missing_text: [256]u8 = undefined;
+
+    const renderable = try storage.getOrCreate(1, 0);
+    renderable.render.mesh.solid_allocation = .{ .offset = 0, .count = 24 };
+    const no_mesh = try storage.getOrCreate(0, 1);
+    no_mesh.render.mesh.ready = false;
+
+    const summary = diagnostics.collectBoundarySummary(&storage, 0, 0, 1, &missing_text);
+
+    try testing.expectEqual(@as(u32, 1), summary.renderable);
+    try testing.expectEqual(@as(u32, 4), summary.missing);
+    try testing.expect(std.mem.indexOf(u8, summary.missing_text, "(0,-1)!") != null);
+    try testing.expect(std.mem.indexOf(u8, summary.missing_text, "(-1,0)!") != null);
+    try testing.expect(std.mem.indexOf(u8, summary.missing_text, "(0,0)!") != null);
+    try testing.expect(std.mem.indexOf(u8, summary.missing_text, "(0,1) ") != null);
 }
 
 test "logFrame handles periodic summary with empty storage" {

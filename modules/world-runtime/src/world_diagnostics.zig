@@ -7,6 +7,23 @@ const ChunkData = @import("world-meshing").ChunkData;
 const ChunkStorage = @import("world-meshing").ChunkStorage;
 
 pub const CpuCullDiagnostics = struct {
+    pub const FrameSummary = struct {
+        visible_count: usize,
+        with_mesh: usize,
+        no_mesh: u32,
+        zero_verts: u32,
+        frustum_culled: u32,
+        not_renderable: u32,
+        not_in_storage: u32,
+        missing_in_circle: u32,
+    };
+
+    pub const BoundarySummary = struct {
+        renderable: u32,
+        missing: u32,
+        missing_text: []const u8,
+    };
+
     diag_min_x: i32 = 0,
     diag_min_z: i32 = 0,
     diag_max_x: i32 = 0,
@@ -26,8 +43,12 @@ pub const CpuCullDiagnostics = struct {
     first_zero_verts_cz: i32 = 0,
 
     pub fn init() CpuCullDiagnostics {
+        return initFromEnv(runtime_env.getenv);
+    }
+
+    pub fn initFromEnv(getenv_fn: anytype) CpuCullDiagnostics {
         var diagnostics = CpuCullDiagnostics{};
-        if (runtime_env.getenv("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
+        if (getenv_fn("ZIGCRAFT_DIAGNOSE_REGION")) |region_str| {
             diagnostics.applyRegionString(region_str);
         }
         return diagnostics;
@@ -114,15 +135,16 @@ pub const CpuCullDiagnostics = struct {
         }
 
         if (startup_diagnostic_seconds == 0 and render_frame_count % 300 == 0) {
+            const summary = self.frameSummary(visible_count);
             log.log.info("CPU_CULL: visible={} with_mesh={} no_mesh={} zero_verts={} frustum_culled={} not_renderable={} not_in_storage={} missing_circle={}", .{
-                visible_count,
-                visible_count - @as(usize, self.visible_no_mesh),
-                self.visible_no_mesh,
-                self.visible_zero_verts,
-                self.frustum_culled,
-                self.not_renderable,
-                self.not_in_storage,
-                self.missing_in_circle,
+                summary.visible_count,
+                summary.with_mesh,
+                summary.no_mesh,
+                summary.zero_verts,
+                summary.frustum_culled,
+                summary.not_renderable,
+                summary.not_in_storage,
+                summary.missing_in_circle,
             });
             if (self.visible_no_mesh > 0) {
                 log.log.warn("  {} visible chunks have NO mesh data! first=({},{})", .{ self.visible_no_mesh, self.first_no_mesh_cx, self.first_no_mesh_cz });
@@ -135,19 +157,23 @@ pub const CpuCullDiagnostics = struct {
         }
     }
 
-    fn recordMissingIfInCircle(self: *CpuCullDiagnostics, cx: i64, cz: i64, dist_sq: i64, r_dist: i64) void {
-        if (dist_sq <= r_dist * r_dist) {
-            self.missing_in_circle += 1;
-            self.missing_cx = @intCast(cx);
-            self.missing_cz = @intCast(cz);
-        }
+    pub fn frameSummary(self: CpuCullDiagnostics, visible_count: usize) FrameSummary {
+        return .{
+            .visible_count = visible_count,
+            .with_mesh = visible_count - @as(usize, self.visible_no_mesh),
+            .no_mesh = self.visible_no_mesh,
+            .zero_verts = self.visible_zero_verts,
+            .frustum_culled = self.frustum_culled,
+            .not_renderable = self.not_renderable,
+            .not_in_storage = self.not_in_storage,
+            .missing_in_circle = self.missing_in_circle,
+        };
     }
 
-    fn logBoundaryChunks(self: CpuCullDiagnostics, storage: *ChunkStorage, pc_x: i64, pc_z: i64, r_dist: i64) void {
+    pub fn collectBoundarySummary(self: CpuCullDiagnostics, storage: *ChunkStorage, pc_x: i64, pc_z: i64, r_dist: i64, out: []u8) BoundarySummary {
         _ = self;
         var boundary_renderable: u32 = 0;
         var boundary_missing: u32 = 0;
-        var boundary_buf: [4096]u8 = undefined;
         var boundary_len: usize = 0;
         var bz: i64 = pc_z - r_dist;
         while (bz <= pc_z + r_dist) : (bz += 1) {
@@ -162,23 +188,37 @@ pub const CpuCullDiagnostics = struct {
                             boundary_renderable += 1;
                         } else {
                             boundary_missing += 1;
-                            if (boundary_len < boundary_buf.len - 20) {
-                                const written = std.fmt.bufPrint(boundary_buf[boundary_len..], "({},{}) ", .{ bx, bz }) catch unreachable;
+                            if (boundary_len < out.len - 20) {
+                                const written = std.fmt.bufPrint(out[boundary_len..], "({},{}) ", .{ bx, bz }) catch unreachable;
                                 boundary_len += written.len;
                             }
                         }
                     } else {
                         boundary_missing += 1;
-                        if (boundary_len < boundary_buf.len - 20) {
-                            const written = std.fmt.bufPrint(boundary_buf[boundary_len..], "({},{})! ", .{ bx, bz }) catch unreachable;
+                        if (boundary_len < out.len - 20) {
+                            const written = std.fmt.bufPrint(out[boundary_len..], "({},{})! ", .{ bx, bz }) catch unreachable;
                             boundary_len += written.len;
                         }
                     }
                 }
             }
         }
-        if (boundary_missing > 0) {
-            log.log.warn("  BOUNDARY: {}/{} boundary chunks have NO mesh. Missing: {s}", .{ boundary_missing, boundary_renderable + boundary_missing, boundary_buf[0..boundary_len] });
+        return .{ .renderable = boundary_renderable, .missing = boundary_missing, .missing_text = out[0..boundary_len] };
+    }
+
+    fn recordMissingIfInCircle(self: *CpuCullDiagnostics, cx: i64, cz: i64, dist_sq: i64, r_dist: i64) void {
+        if (dist_sq <= r_dist * r_dist) {
+            self.missing_in_circle += 1;
+            self.missing_cx = @intCast(cx);
+            self.missing_cz = @intCast(cz);
+        }
+    }
+
+    fn logBoundaryChunks(self: CpuCullDiagnostics, storage: *ChunkStorage, pc_x: i64, pc_z: i64, r_dist: i64) void {
+        var boundary_buf: [4096]u8 = undefined;
+        const summary = self.collectBoundarySummary(storage, pc_x, pc_z, r_dist, &boundary_buf);
+        if (summary.missing > 0) {
+            log.log.warn("  BOUNDARY: {}/{} boundary chunks have NO mesh. Missing: {s}", .{ summary.missing, summary.renderable + summary.missing, summary.missing_text });
         }
     }
 };

@@ -7,7 +7,9 @@ const world_meshing = @import("world-meshing");
 const worldgen = @import("world-worldgen");
 const math = @import("engine-math");
 const LpvGridBuilder = @import("lpv_grid_builder.zig").LpvGridBuilder;
+const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
+const SaveManager = @import("world-persistence").SaveManager;
 
 const MockWorld = struct {
     update_count: u32 = 0,
@@ -285,8 +287,81 @@ fn makeStorageOnlyWorld(allocator: std.mem.Allocator) world_mod.World {
 }
 
 fn deinitStorageOnlyWorld(world: *world_mod.World) void {
+    if (world.save_manager) |sm| {
+        sm.deinit();
+        world.save_manager = null;
+    }
+    // Mutation and LPV grid builder currently borrow storage/allocator only.
+    // If either starts owning resources, this fixture teardown should grow with it.
     world.storage.deinitWithoutRHI();
 }
+
+const OrchestrationRecorder = struct {
+    next_order: u32 = 0,
+    begin_order: u32 = 999,
+    update_order: u32 = 999,
+    autosave_order: u32 = 999,
+};
+
+const MockRendererSubsystem = struct {
+    recorder: ?*OrchestrationRecorder = null,
+    begin_count: u32 = 0,
+    render_count: u32 = 0,
+    last_render_distance: i32 = 0,
+    last_render_lod: bool = false,
+    last_layer: RenderLayer = .all,
+
+    pub fn beginFrame(self: *@This()) void {
+        self.begin_count += 1;
+        if (self.recorder) |recorder| {
+            recorder.begin_order = recorder.next_order;
+            recorder.next_order += 1;
+        }
+    }
+
+    pub fn render(self: *@This(), view_proj: math.Mat4, camera_pos: math.Vec3, render_distance: i32, lod_manager: ?*@import("world-lod").LODManager, render_lod: bool, layer: RenderLayer) void {
+        _ = view_proj;
+        _ = camera_pos;
+        _ = lod_manager;
+        self.render_count += 1;
+        self.last_render_distance = render_distance;
+        self.last_render_lod = render_lod;
+        self.last_layer = layer;
+    }
+};
+
+const MockStreamerSubsystem = struct {
+    recorder: ?*OrchestrationRecorder = null,
+    update_count: u32 = 0,
+    active_render_distance: i32 = 18,
+    last_dt: f32 = 0.0,
+    last_player_pos: math.Vec3 = math.Vec3.zero,
+
+    pub fn updateFrame(self: *@This(), player_pos: math.Vec3, dt: f32) !void {
+        self.update_count += 1;
+        self.last_player_pos = player_pos;
+        self.last_dt = dt;
+        if (self.recorder) |recorder| {
+            recorder.update_order = recorder.next_order;
+            recorder.next_order += 1;
+        }
+    }
+
+    pub fn getActiveRenderDistance(self: *@This()) i32 {
+        return self.active_render_distance;
+    }
+};
+
+const MockAutoSaveWorld = struct {
+    recorder: *OrchestrationRecorder,
+    autosave_count: u32 = 0,
+
+    pub fn checkAutoSave(self: *@This()) void {
+        self.autosave_count += 1;
+        self.recorder.autosave_order = self.recorder.next_order;
+        self.recorder.next_order += 1;
+    }
+};
 
 test "IWorld forwards simulation lifecycle calls" {
     var mock = MockWorld{};
@@ -388,6 +463,43 @@ test "IWorld telemetry view forwards debug and state data" {
     try testing.expectEqual(@as(u4, 15), light.sky);
 }
 
+test "WorldOrchestration update orders renderer streamer and autosave" {
+    var recorder = OrchestrationRecorder{};
+    var renderer = MockRendererSubsystem{ .recorder = &recorder };
+    var streamer = MockStreamerSubsystem{ .recorder = &recorder };
+    var save_owner = MockAutoSaveWorld{ .recorder = &recorder };
+    const player_pos = math.Vec3.init(1.0, 2.0, 3.0);
+
+    try world_mod.WorldOrchestration.update(&renderer, &streamer, &save_owner, player_pos, 0.25);
+
+    try testing.expectEqual(@as(u32, 1), renderer.begin_count);
+    try testing.expectEqual(@as(u32, 1), streamer.update_count);
+    try testing.expectEqual(@as(u32, 1), save_owner.autosave_count);
+    try testing.expectEqual(@as(u32, 0), recorder.begin_order);
+    try testing.expectEqual(@as(u32, 1), recorder.update_order);
+    try testing.expectEqual(@as(u32, 2), recorder.autosave_order);
+    try testing.expectEqual(@as(f32, 0.25), streamer.last_dt);
+    try testing.expectEqual(player_pos.x, streamer.last_player_pos.x);
+}
+
+test "WorldOrchestration render delegates active distance layer and LOD flag" {
+    var renderer = MockRendererSubsystem{};
+    var streamer = MockStreamerSubsystem{ .active_render_distance = 24 };
+
+    world_mod.WorldOrchestration.render(&renderer, &streamer, null, true, math.Mat4.identity(), math.Vec3.zero, true, .terrain);
+
+    try testing.expectEqual(@as(u32, 1), renderer.render_count);
+    try testing.expectEqual(@as(i32, 24), renderer.last_render_distance);
+    try testing.expect(renderer.last_render_lod);
+    try testing.expectEqual(RenderLayer.terrain, renderer.last_layer);
+
+    world_mod.WorldOrchestration.render(&renderer, &streamer, null, true, math.Mat4.identity(), math.Vec3.zero, false, .fluid);
+
+    try testing.expectEqual(@as(u32, 2), renderer.render_count);
+    try testing.expect(!renderer.last_render_lod);
+    try testing.expectEqual(RenderLayer.fluid, renderer.last_layer);
+}
+
 test "World storage facade returns air for unloaded and out-of-bounds blocks" {
     var world = makeStorageOnlyWorld(testing.allocator);
     defer deinitStorageOnlyWorld(&world);
@@ -434,4 +546,30 @@ test "World getChunkStateCounts reports storage telemetry" {
     try testing.expectEqual(@as(u32, 1), counts.missing);
     try testing.expectEqual(@as(u32, 1), counts.renderable);
     try testing.expectEqual(@as(u32, 1), counts.dirty);
+}
+
+test "World saveAllModifiedChunks and loadChunkFromSave round-trip chunk data" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const base_path = try tmp_dir.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(base_path);
+    const save_path = try std.fmt.allocPrint(testing.allocator, "{s}/world_save_roundtrip", .{base_path});
+    defer testing.allocator.free(save_path);
+
+    var world = makeStorageOnlyWorld(testing.allocator);
+    defer deinitStorageOnlyWorld(&world);
+    world.save_manager = try SaveManager.init(testing.allocator, save_path, "world_save_roundtrip", 1234, "test-generator");
+
+    const data = try world.storage.getOrCreate(2, -1);
+    data.chunk.generated = true;
+    data.chunk.setBlock(4, 64, 5, .stone);
+    data.chunk.setBiome(4, 5, .forest);
+
+    world.saveAllModifiedChunks();
+
+    try testing.expect(!data.chunk.modified);
+    var loaded = world_core.Chunk.init(2, -1);
+    try testing.expectEqual(@import("world-persistence").LoadResult.success, world.loadChunkFromSave(2, -1, &loaded));
+    try testing.expectEqual(world_core.BlockType.stone, loaded.getBlock(4, 64, 5));
+    try testing.expectEqual(world_core.BiomeId.forest, loaded.getBiome(4, 5));
 }
