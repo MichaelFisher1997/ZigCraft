@@ -107,7 +107,7 @@ test "smoke test: launch, generate, render, exit" {
     var actual_w: c_int = 0;
     var actual_h: c_int = 0;
     _ = c.SDL_GetWindowSizeInPixels(app.window_manager.window, &actual_w, &actual_h);
-    const extent = app.render_system.getRHI().nativeHandles().getSwapchainExtent();
+    const extent = app.render_system.getRHI().vulkanHandles().getSwapchainExtent();
     try testing.expectEqual(@as(u32, @intCast(actual_w)), extent[0]);
     try testing.expectEqual(@as(u32, @intCast(actual_h)), extent[1]);
 
