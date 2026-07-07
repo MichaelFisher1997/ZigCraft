@@ -1,5 +1,6 @@
 pub const input = @import("input.zig");
 pub const interfaces = @import("interfaces.zig");
+pub const input_tests = @import("input_tests.zig");
 
 pub const Input = input.Input;
 pub const ActionBinding = interfaces.ActionBinding;

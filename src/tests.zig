@@ -23,7 +23,7 @@ test {
     _ = @import("collision_tests.zig");
 
     // ECS and engine tests
-    _ = @import("ecs_tests.zig");
+    _ = @import("engine-ecs").ecs_tests;
     _ = @import("job_system_tests.zig");
     _ = @import("engine-graphics").vulkan_device;
     _ = @import("engine-graphics").vulkan_device_tests;
@@ -81,6 +81,10 @@ test {
     _ = @import("game/world_list_tests.zig");
     _ = @import("game/session_tests.zig");
     _ = @import("game/input_mapper_tests.zig");
+    _ = @import("game-ui").menu_theme_tests;
+    _ = @import("game-ui").screen_tests;
+    _ = @import("game-ui").settings_ui_tests;
+    _ = @import("game-ui").world_list_tests;
     _ = @import("game-core").settings_persistence_tests;
     _ = @import("world-persistence").region_file;
     _ = @import("world-persistence").chunk_serializer;
@@ -106,8 +110,10 @@ test {
     _ = @import("world-core").world_block_fill_tests;
     _ = @import("world-meshing").world_interface_vtable_tests;
     _ = @import("world-runtime").world_mutation;
+    _ = @import("world-runtime").world_diagnostics_tests;
+    _ = @import("world-runtime").world_facade_tests;
     _ = @import("engine-audio").sdl_audio;
-    _ = @import("input_tests.zig");
+    _ = @import("engine-input").input_tests;
     _ = @import("text_input_tests.zig");
     _ = @import("engine-ui").font;
 }

@@ -4,9 +4,11 @@ pub const gpu_mesher = @import("gpu_mesher.zig");
 pub const lighting_engine = @import("lighting_engine.zig");
 pub const world_mutation = @import("world_mutation.zig");
 pub const world_diagnostics = @import("world_diagnostics.zig");
+pub const world_diagnostics_tests = @import("world_diagnostics_tests.zig");
 pub const world_renderer = @import("world_renderer.zig");
 pub const world_streamer = @import("world_streamer.zig");
 pub const world = @import("world.zig");
+pub const world_facade_tests = @import("world_facade_tests.zig");
 
 pub const ChunkQueueCoordinator = chunk_queue_coordinator.ChunkQueueCoordinator;
 pub const GpuAccelerationCoordinator = gpu_acceleration_coordinator.GpuAccelerationCoordinator;
