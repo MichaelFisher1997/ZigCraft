@@ -6,6 +6,9 @@ const world_core = @import("world-core");
 const world_meshing = @import("world-meshing");
 
 fn makeChunkData(allocator: std.mem.Allocator, cx: i32, cz: i32) world_meshing.ChunkData {
+    // These diagnostics tests never allocate mesh-owned buffers. Some tests set
+    // fake allocation metadata only, so calling ChunkMesh.deinit would require a
+    // real GlobalVertexAllocator for buffers that do not exist.
     return .{
         .chunk = world_core.Chunk.init(cx, cz),
         .render = .{ .mesh = world_meshing.ChunkMesh.init(allocator) },
