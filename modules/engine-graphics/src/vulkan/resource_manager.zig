@@ -230,7 +230,7 @@ pub const ResourceManager = struct {
         const result = c.vkQueueSubmit(self.transfer.queue, 1, &submit_info, self.transfer.frame_fences[self.transfer.current_frame]);
         self.vulkan_device.mutex.unlock();
 
-        if (result != c.VK_SUCCESS) return error.VulkanError;
+        if (result != c.VK_SUCCESS) return error.BackendError;
 
         self.transfer.transfer_ready[self.transfer.current_frame] = false;
         self.transfer.transfer_submitted[self.transfer.current_frame] = true;

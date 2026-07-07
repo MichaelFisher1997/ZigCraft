@@ -1,3 +1,11 @@
+//! Render Hardware Interface for ZigCraft.
+//!
+//! This project currently ships a Vulkan-only renderer. The RHI keeps call sites
+//! decoupled from the concrete Vulkan context where practical, but native handle
+//! facets are explicitly Vulkan integration seams for systems that must talk to
+//! Vulkan-shaped third-party APIs (compute, ImGui, LPV). They are not a portable
+//! multi-backend contract.
+
 const builtin = @import("builtin");
 
 pub const rhi = @import("rhi.zig");

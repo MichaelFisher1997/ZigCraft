@@ -80,7 +80,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (ctx.resources.transfer.transfer_ready[ctx.resources.transfer.current_frame]) {
         ctx.resources.flushTransfer() catch |err| {
             log.log.errWithTrace("Failed to flush inter-frame transfers: {}", .{err});
-            if (err == error.VulkanError) {
+            if (err == error.BackendError) {
                 ctx.runtime.gpu_fault_detected = true;
                 return;
             }

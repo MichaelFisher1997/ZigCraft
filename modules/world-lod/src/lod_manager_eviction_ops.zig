@@ -94,9 +94,9 @@ pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void 
 
         if (!key.chunkBounds().intersectsRadius(player.cx, player.cz, lod_radius)) {
             if (!chunk.isPinned() and
-                chunk.state != .generating and
-                chunk.state != .meshing and
-                chunk.state != .uploading)
+                chunk.getState() != .generating and
+                chunk.getState() != .meshing and
+                chunk.getState() != .uploading)
             {
                 try to_remove.append(self.allocator, key);
             }
@@ -125,14 +125,14 @@ pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void 
 }
 
 pub fn queueMeshDeletion(self: *Self, mesh: *LODMesh) void {
-    self.deletion_queue.append(self.allocator, mesh) catch {
+    self.mesh_disposal.queue.append(self.allocator, mesh) catch {
         self.gpu_bridge.destroy(mesh);
         self.allocator.destroy(mesh);
     };
 }
 
 pub fn processMeshDeletions(self: *Self, max_count: usize) void {
-    const count = @min(max_count, self.deletion_queue.items.len);
+    const count = @min(max_count, self.mesh_disposal.queue.items.len);
     if (count == 0) return;
 
     // LODMesh does not carry a per-frame fence today, so destruction still
@@ -141,11 +141,11 @@ pub fn processMeshDeletions(self: *Self, max_count: usize) void {
     self.gpu_bridge.waitIdle();
     var processed: usize = 0;
     while (processed < count) : (processed += 1) {
-        const idx = self.deletion_queue.items.len - 1;
-        const mesh = self.deletion_queue.items[idx];
+        const idx = self.mesh_disposal.queue.items.len - 1;
+        const mesh = self.mesh_disposal.queue.items[idx];
         self.gpu_bridge.destroy(mesh);
         self.allocator.destroy(mesh);
-        self.deletion_queue.items.len = idx;
+        self.mesh_disposal.queue.items.len = idx;
     }
 }
 
@@ -166,10 +166,10 @@ pub fn enforceMemoryBudget(self: *Self) !void {
     const hysteresis_low = (budget_bytes * 4) / 5; // 80% re-expand threshold
 
     // Decay path: comfortably under budget -> gradually re-expand radii.
-    if (self.memory_used_bytes < hysteresis_low) {
+    if (self.memory_governor.used_bytes < hysteresis_low) {
         self.mutex.lock();
         var decayed = false;
-        for (&self.radius_shrink_chunks) |*s| {
+        for (&self.memory_governor.radius_shrink_chunks) |*s| {
             if (s.* > 0) {
                 s.* -= 1;
                 decayed = true;
@@ -182,7 +182,7 @@ pub fn enforceMemoryBudget(self: *Self) !void {
         return;
     }
 
-    if (self.memory_used_bytes <= budget_bytes) return; // 80-100% band: hold
+    if (self.memory_governor.used_bytes <= budget_bytes) return; // 80-100% band: hold
 
     const Candidate = struct { key: LODRegionKey, distance_sq: i64 };
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
@@ -198,13 +198,13 @@ pub fn enforceMemoryBudget(self: *Self) !void {
         while (iter.next()) |entry| {
             const key = entry.key_ptr.*;
             const chunk = entry.value_ptr.*;
-            if (chunk.state != .renderable or chunk.isPinned()) continue;
+            if (chunk.getState() != .renderable or chunk.isPinned()) continue;
             // Coarsest active LOD regions have no renderable parent fallback and are
             // intentionally excluded so eviction never opens horizon holes.
             const parent = key.parentKey() orelse continue;
             const parent_idx = @intFromEnum(parent.lod);
             const parent_chunk = self.regions[parent_idx].get(parent) orelse continue;
-            if (parent_chunk.state != .renderable) continue;
+            if (parent_chunk.getState() != .renderable) continue;
             const bounds = key.chunkBounds();
             try candidates.append(self.allocator, .{ .key = key, .distance_sq = bounds.distanceSquaredToPoint(player.cx, player.cz) });
         }
@@ -216,14 +216,14 @@ pub fn enforceMemoryBudget(self: *Self) !void {
         }
     }.lt);
 
-    var used = self.memory_used_bytes;
+    var used = self.memory_governor.used_bytes;
     var evicted_count: usize = 0;
     for (candidates.items) |candidate| {
         if (used <= budget_bytes) break;
         if (evicted_count >= MAX_MEMORY_EVICTIONS_PER_UPDATE) break;
         const idx = @intFromEnum(candidate.key.lod);
         const chunk = self.regions[idx].get(candidate.key) orelse continue;
-        if (chunk.state != .renderable or chunk.isPinned()) continue;
+        if (chunk.getState() != .renderable or chunk.isPinned()) continue;
         const mesh = self.meshes[idx].get(candidate.key);
         const bytes = regionMemoryBytes(chunk, mesh);
         self.noteRegionRemoved(candidate.key, chunk);
@@ -235,7 +235,7 @@ pub fn enforceMemoryBudget(self: *Self) !void {
         self.allocator.destroy(chunk);
         _ = self.regions[idx].remove(candidate.key);
         used = if (bytes >= used) 0 else used - bytes;
-        self.memory_used_bytes = used;
+        self.memory_governor.used_bytes = used;
         self.stats.evictions += 1;
         evicted_count += 1;
     }
@@ -244,18 +244,18 @@ pub fn enforceMemoryBudget(self: *Self) !void {
     // budget. Shrink finer bands immediately so evicted regions do not get
     // queued again next update. The coarsest horizon band is exempt so the
     // vista never develops holes.
-    if (evicted_count > 0 or self.memory_used_bytes > budget_bytes) {
+    if (evicted_count > 0 or self.memory_governor.used_bytes > budget_bytes) {
         const active = lod_chunk.activeLODCount(self.config);
         var grew = false;
         var i: usize = 1;
         while (i + 1 < active) : (i += 1) {
-            if (self.radius_shrink_chunks[i] < 64) {
-                self.radius_shrink_chunks[i] += 1;
+            if (self.memory_governor.radius_shrink_chunks[i] < 64) {
+                self.memory_governor.radius_shrink_chunks[i] += 1;
                 grew = true;
             }
         }
         if (grew) {
-            log.log.warn("LOD memory pressure; evicted {} regions this update and shrank finer radii (shrink={any})", .{ evicted_count, self.radius_shrink_chunks });
+            log.log.warn("LOD memory pressure; evicted {} regions this update and shrank finer radii (shrink={any})", .{ evicted_count, self.memory_governor.radius_shrink_chunks });
         }
     }
 }
@@ -272,7 +272,7 @@ pub fn updateStats(self: *Self) void {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
-            self.stats.recordState(i, chunk.state);
+            self.stats.recordState(i, chunk.getState());
 
             // Calculate actual memory usage for this chunk's data
             switch (chunk.data) {
@@ -288,11 +288,11 @@ pub fn updateStats(self: *Self) void {
         while (mesh_iter.next()) |entry| {
             const mesh = entry.value_ptr.*;
             self.stats.mesh_count[i] += 1;
-            self.stats.mesh_vertices[i] += mesh.vertex_count;
+            self.stats.mesh_vertices[i] += mesh.vertexCount();
             mem_usage += mesh.capacity * @sizeOf(Vertex);
         }
 
-        self.stats.gen_queue_depth[i] = @intCast(self.gen_queues[i].count());
+        self.stats.gen_queue_depth[i] = @intCast(self.job_dispatcher.queues[i].count());
         self.stats.upload_queue_depth[i] = @intCast(self.upload_queues[i].count());
     }
 
@@ -301,7 +301,7 @@ pub fn updateStats(self: *Self) void {
     self.stats.store_misses = self.cache_misses;
     self.stats.cache_hits = self.cache_hits;
     self.stats.cache_misses = self.cache_misses;
-    self.memory_used_bytes = mem_usage;
+    self.memory_governor.used_bytes = mem_usage;
 
     if (engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false)) {
         const S = struct {
@@ -348,7 +348,7 @@ pub fn unloadLODWhereChunksLoaded(self: *Self, checker: ChunkChecker, ctx: *anyo
         while (iter.next()) |entry| {
             if (storage.get(entry.key_ptr.*)) |chunk| {
                 // Don't unload if being processed (pinned) or not ready
-                if (chunk.isPinned() or chunk.state == .generating or chunk.state == .meshing or chunk.state == .uploading) continue;
+                if (chunk.isPinned() or chunk.getState() == .generating or chunk.getState() == .meshing or chunk.getState() == .uploading) continue;
 
                 const bounds = chunk.worldBounds();
                 if (self.areAllChunksLoaded(bounds, checker, ctx)) {

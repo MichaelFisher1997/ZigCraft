@@ -76,11 +76,6 @@ const RenderDiag = struct {
 
 const MAX_LOD_MDI_REGIONS: usize = 2048;
 
-const MeshDrawRange = struct {
-    offset: usize,
-    count: u32,
-};
-
 /// Expected RHI interface for LODRenderer:
 /// - createBuffer(size: usize, usage: BufferUsage) !BufferHandle
 /// - destroyBuffer(handle: BufferHandle) void
@@ -240,12 +235,12 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             for (self.draw_list.items, 0..) |mesh, idx| {
                 const instance = self.instance_data.items[idx];
-                const range = mesh_draw_range(mesh, layer) orelse continue;
+                const range = mesh.drawRange(layer) orelse continue;
                 render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
                 if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
-                    render_ctx.drawOffset(mesh.buffer_handle, range.count, .triangles, mesh.vertex_offset + range.offset);
+                    render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
                 } else {
-                    render_ctx.draw(mesh.buffer_handle, range.count, .triangles);
+                    render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
                 }
             }
         }
@@ -348,16 +343,16 @@ pub fn LODRenderer(comptime RHI: type) type {
             while (iter.next()) |entry| {
                 diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
-                const draw_range = mesh_draw_range(mesh, layer) orelse {
+                const draw_range = mesh.drawRange(layer) orelse {
                     diag.not_ready += 1;
                     continue;
                 };
-                if (!mesh.ready or draw_range.count == 0) {
+                if (!mesh.isReady() or draw_range.count == 0) {
                     diag.not_ready += 1;
                     continue;
                 }
                 if (regions.get(entry.key_ptr.*)) |chunk| {
-                    if (chunk.state != .renderable) {
+                    if (!chunk.isRenderable()) {
                         diag.bad_state += 1;
                         continue;
                     }
@@ -414,7 +409,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                     // Keep coarser LODs visible until full-detail chunks cover them.
                     // Culling against inner LOD bands creates visible holes while finer
                     // LOD regions are still streaming in.
-                    const fade = @min(calculateBandFade(config, lod, chunk_bounds, camera_pos), calculateTransitionFade(chunk));
+                    const fade = @min(calculateBandFade(config, lod, chunk_bounds, camera_pos), chunk.transitionFadeProgress());
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,
@@ -422,11 +417,11 @@ pub fn LODRenderer(comptime RHI: type) type {
                         .padding = .{ 0, 0 },
                     });
                     try self.draw_list.append(self.allocator, mesh);
-                    if (mesh.pooled) {
+                    if (mesh.isPooled()) {
                         try self.draw_commands[@intFromEnum(lod)].append(self.allocator, .{
                             .vertexCount = draw_range.count,
                             .instanceCount = 1,
-                            .firstVertex = @intCast((mesh.vertex_offset + draw_range.offset) / @sizeOf(rhi_types.Vertex)),
+                            .firstVertex = mesh.firstVertex(draw_range),
                             .firstInstance = @intCast(self.instance_data.items.len - 1),
                         });
                     }
@@ -500,13 +495,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             chunk: *const LODChunk,
             config: ILODConfig,
         ) bool {
-            if (chunk.lod_level == .lod0) return false;
-            const missing_children = 4 - @min(chunk.ready_children, 4);
-            const missing_fraction = @as(f32, @floatFromInt(missing_children)) / 4.0;
-            if (missing_fraction <= config.getFallbackMissingChildThreshold()) {
-                return chunk.transition_frames_remaining == 0;
-            }
-            return false;
+            return chunk.isCoveredByFinerLOD(config.getFallbackMissingChildThreshold());
         }
 
         const CoverageResult = struct {
@@ -584,13 +573,13 @@ pub fn LODRenderer(comptime RHI: type) type {
                     if (!renderer.enable_mdi) {
                         return mesh.upload(resources);
                     }
-                    return renderer.vertex_pools[@intFromEnum(mesh.lod_level)].uploadMesh(mesh, resources);
+                    return renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].uploadMesh(mesh, resources);
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
-                    if (mesh.pooled) {
-                        renderer.vertex_pools[@intFromEnum(mesh.lod_level)].destroyMesh(mesh);
+                    if (mesh.isPooled()) {
+                        renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].destroyMesh(mesh);
                     } else {
                         mesh.deinit(resources);
                     }
@@ -660,33 +649,6 @@ fn calculateBandFade(config: ILODConfig, lod: LODLevel, bounds: ChunkBounds, cam
     const configured_start = end * std.math.clamp(config.getFogStartPercent(lod), 0.0, 1.0);
     const start = @min(@max(inner, configured_start), end - 0.001);
     return std.math.clamp((dist_chunks - start) / @max(end - start, 0.001), 0.0, 1.0);
-}
-
-fn calculateTransitionFade(chunk: *const LODChunk) f32 {
-    if (chunk.transition_frames_remaining == 0) return 1.0;
-    const remaining = @as(f32, @floatFromInt(chunk.transition_frames_remaining));
-    const total = @as(f32, @floatFromInt(lod_chunk.TRANSITION_FADE_FRAMES));
-    const t = @min(remaining / total, 1.0);
-    if (chunk.lod_level != .lod1 and chunk.ready_children >= 4) {
-        return t;
-    }
-    return 1.0 - t;
-}
-
-fn mesh_draw_range(mesh: *const LODMesh, layer: LODRenderLayer) ?MeshDrawRange {
-    if (!mesh.ready or mesh.buffer_handle == 0) return null;
-    return switch (layer) {
-        .terrain => if (mesh.opaque_vertex_count > 0)
-            .{ .offset = 0, .count = mesh.opaque_vertex_count }
-        else if (mesh.water_vertex_count == 0 and mesh.vertex_count > 0)
-            .{ .offset = 0, .count = mesh.vertex_count }
-        else
-            null,
-        .fluid => if (mesh.water_vertex_count > 0)
-            .{ .offset = mesh.water_vertex_offset, .count = mesh.water_vertex_count }
-        else
-            null,
-    };
 }
 
 fn supports_lod_indirect(comptime RenderCtx: type, comptime Query: type, comptime RHI: type) bool {
@@ -881,18 +843,18 @@ test "LODRenderer band fade follows configured fog start percent" {
 test "LODRenderer transition fade distinguishes child fade-in and parent fade-out" {
     var child = LODChunk.init(0, 0, .lod1);
     child.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
-    try std.testing.expectEqual(@as(f32, 0.0), calculateTransitionFade(&child));
+    try std.testing.expectEqual(@as(f32, 0.0), child.transitionFadeProgress());
 
     child.transition_frames_remaining = 0;
-    try std.testing.expectEqual(@as(f32, 1.0), calculateTransitionFade(&child));
+    try std.testing.expectEqual(@as(f32, 1.0), child.transitionFadeProgress());
 
     var parent = LODChunk.init(0, 0, .lod2);
     parent.ready_children = 4;
     parent.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
-    try std.testing.expectEqual(@as(f32, 1.0), calculateTransitionFade(&parent));
+    try std.testing.expectEqual(@as(f32, 1.0), parent.transitionFadeProgress());
 
     parent.transition_frames_remaining = 0;
-    try std.testing.expectEqual(@as(f32, 1.0), calculateTransitionFade(&parent));
+    try std.testing.expectEqual(@as(f32, 1.0), parent.transitionFadeProgress());
 }
 
 test "LODRenderer render draw path" {

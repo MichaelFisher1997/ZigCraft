@@ -184,25 +184,12 @@ pub fn regionContributesGeometry(self: *Self, key: LODRegionKey, chunk: *const L
 pub fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void {
     const parent = key.parentKey() orelse return;
     const parent_chunk = self.regions[@intFromEnum(parent.lod)].get(parent) orelse return;
-    const before = parent_chunk.ready_children;
-    if (delta > 0) {
-        parent_chunk.ready_children = @min(parent_chunk.ready_children + @as(u8, @intCast(delta)), 4);
-    } else if (delta < 0) {
-        const amount: u8 = @intCast(-delta);
-        parent_chunk.ready_children = if (amount >= parent_chunk.ready_children) 0 else parent_chunk.ready_children - amount;
-    }
-    if (before < 4 and parent_chunk.ready_children >= 4) {
-        parent_chunk.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
-    } else if (parent_chunk.ready_children < 4) {
-        parent_chunk.transition_frames_remaining = 0;
-    }
+    parent_chunk.adjustReadyChildren(delta);
 }
 
 pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
-    if (chunk.state == .renderable) return;
-    chunk.setReadyChildren(self.countRenderableChildren(key));
-    chunk.transition_frames_remaining = lod_chunk.TRANSITION_FADE_FRAMES;
-    chunk.setState(.renderable);
+    if (chunk.isRenderable()) return;
+    chunk.markRenderable(self.countRenderableChildren(key));
     if (self.regionContributesGeometry(key, chunk)) {
         self.adjustParentReadyChildren(key, 1);
     }
@@ -217,9 +204,7 @@ pub fn decayTransitionFrames(self: *Self) void {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
-            if (chunk.transition_frames_remaining > 0) {
-                chunk.transition_frames_remaining -= 1;
-            }
+            chunk.tickTransition();
         }
     }
 }

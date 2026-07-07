@@ -65,9 +65,9 @@ const wouldExceedUploadBudget = manager_ctx.wouldExceedUploadBudget;
 const isUploadPressureError = manager_ctx.isUploadPressureError;
 
 pub fn setChunkResolver(self: *Self, resolver: ChunkResolver) void {
-    self.ingestion_mutex.lock();
-    defer self.ingestion_mutex.unlock();
-    self.chunk_resolver = resolver;
+    self.ingestion_queue.mutex.lock();
+    defer self.ingestion_queue.mutex.unlock();
+    self.ingestion_queue.chunk_resolver = resolver;
 }
 
 /// Ingest a real chunk into every LOD level whose region contains it. The
@@ -79,9 +79,9 @@ pub fn setChunkResolver(self: *Self, resolver: ChunkResolver) void {
 pub fn ingestChunk(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) void {
     const pending_mask = self.applyIngestionToRegions(cx, cz, chunk, provenance);
     if (pending_mask != 0) {
-        self.ingestion_mutex.lock();
+        self.ingestion_queue.mutex.lock();
         self.recordPendingLocked(cx, cz, provenance, pending_mask);
-        self.ingestion_mutex.unlock();
+        self.ingestion_queue.mutex.unlock();
     }
 }
 
@@ -89,8 +89,8 @@ pub fn ingestChunk(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenanc
 /// resolved later via `chunk_resolver` from `update()`. Used for chunk
 /// loads that happen before their LOD region exists.
 pub fn requestIngestion(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance) void {
-    self.ingestion_mutex.lock();
-    defer self.ingestion_mutex.unlock();
+    self.ingestion_queue.mutex.lock();
+    defer self.ingestion_queue.mutex.unlock();
     var mask: u8 = 0;
     const active = lod_chunk.activeLODCount(self.config);
     var i: usize = 1;
@@ -102,9 +102,9 @@ pub fn requestIngestion(self: *Self, cx: i32, cz: i32, provenance: LODColumnProv
 /// Coalesced on a short cooldown and re-ingested with the `edited`
 /// provenance so distant terrain reflects player changes after teleport.
 pub fn markChunkEdited(self: *Self, cx: i32, cz: i32) void {
-    self.ingestion_mutex.lock();
-    defer self.ingestion_mutex.unlock();
-    self.edit_dirty.put(.{ .cx = cx, .cz = cz }, {}) catch |err| {
+    self.ingestion_queue.mutex.lock();
+    defer self.ingestion_queue.mutex.unlock();
+    self.ingestion_queue.edit_dirty.put(.{ .cx = cx, .cz = cz }, {}) catch |err| {
         log.log.warn("Failed to track edited chunk for LOD ingestion ({}, {}): {}", .{ cx, cz, err });
     };
 }
@@ -133,9 +133,9 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
                 // Defer if a mesh/generation/upload job is mid-flight for
                 // this region: writing source data concurrently with a
                 // mesh job reading it (under the shared lock) would race.
-                if (lod_chunk_ptr.state == .generating or
-                    lod_chunk_ptr.state == .meshing or
-                    lod_chunk_ptr.state == .uploading)
+                if (lod_chunk_ptr.getState() == .generating or
+                    lod_chunk_ptr.getState() == .meshing or
+                    lod_chunk_ptr.getState() == .uploading)
                 {
                     pending_mask |= @as(u8, 1) << @intCast(i);
                     continue;
@@ -164,7 +164,7 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
 /// Assumes `ingestion_mutex` held. Coalesces by coordinate, keeping the
 /// most authoritative provenance and the union of pending level bits.
 pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) void {
-    for (self.pending_ingestions.items) |*entry| {
+    for (self.ingestion_queue.pending_ingestions.items) |*entry| {
         if (entry.cx == cx and entry.cz == cz) {
             entry.pending_levels |= mask;
             entry.ttl = PENDING_INGESTION_TTL;
@@ -172,10 +172,10 @@ pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnP
             return;
         }
     }
-    if (self.pending_ingestions.items.len >= MAX_PENDING_INGESTIONS) {
-        _ = self.pending_ingestions.orderedRemove(0);
+    if (self.ingestion_queue.pending_ingestions.items.len >= MAX_PENDING_INGESTIONS) {
+        _ = self.ingestion_queue.pending_ingestions.orderedRemove(0);
     }
-    self.pending_ingestions.append(self.allocator, .{
+    self.ingestion_queue.pending_ingestions.append(self.allocator, .{
         .cx = cx,
         .cz = cz,
         .provenance = provenance,
@@ -189,9 +189,9 @@ pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnP
 /// Re-record a pending entry from outside the lock (decay applied by
 /// caller). Coalesces with any existing entry for the coordinate.
 pub fn rerecordPending(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8, ttl: u16) void {
-    self.ingestion_mutex.lock();
-    defer self.ingestion_mutex.unlock();
-    for (self.pending_ingestions.items) |*entry| {
+    self.ingestion_queue.mutex.lock();
+    defer self.ingestion_queue.mutex.unlock();
+    for (self.ingestion_queue.pending_ingestions.items) |*entry| {
         if (entry.cx == cx and entry.cz == cz) {
             entry.pending_levels |= mask;
             entry.ttl = @max(entry.ttl, ttl);
@@ -199,10 +199,10 @@ pub fn rerecordPending(self: *Self, cx: i32, cz: i32, provenance: LODColumnProve
             return;
         }
     }
-    if (self.pending_ingestions.items.len >= MAX_PENDING_INGESTIONS) {
-        _ = self.pending_ingestions.orderedRemove(0);
+    if (self.ingestion_queue.pending_ingestions.items.len >= MAX_PENDING_INGESTIONS) {
+        _ = self.ingestion_queue.pending_ingestions.orderedRemove(0);
     }
-    self.pending_ingestions.append(self.allocator, .{
+    self.ingestion_queue.pending_ingestions.append(self.allocator, .{
         .cx = cx,
         .cz = cz,
         .provenance = provenance,
@@ -217,16 +217,16 @@ pub fn rerecordPending(self: *Self, cx: i32, cz: i32, provenance: LODColumnProve
 /// `ingestion_mutex` held.
 pub fn decayPendingLocked(self: *Self) void {
     var write: usize = 0;
-    for (self.pending_ingestions.items) |entry| {
+    for (self.ingestion_queue.pending_ingestions.items) |entry| {
         const ttl = if (entry.ttl > 0) entry.ttl - 1 else 0;
         if (ttl > 0 and entry.pending_levels != 0) {
             var e = entry;
             e.ttl = ttl;
-            self.pending_ingestions.items[write] = e;
+            self.ingestion_queue.pending_ingestions.items[write] = e;
             write += 1;
         }
     }
-    self.pending_ingestions.shrinkRetainingCapacity(write);
+    self.ingestion_queue.pending_ingestions.shrinkRetainingCapacity(write);
 }
 
 /// Replay deferred ingestions: snapshot all pending under the ingestion
@@ -235,19 +235,19 @@ pub fn decayPendingLocked(self: *Self) void {
 pub fn drainPendingIngestions(self: *Self) void {
     var snapshot = std.ArrayListUnmanaged(PendingIngestion).empty;
     {
-        self.ingestion_mutex.lock();
-        defer self.ingestion_mutex.unlock();
-        if (self.pending_ingestions.items.len == 0) return;
-        snapshot.appendSlice(self.allocator, self.pending_ingestions.items) catch {
+        self.ingestion_queue.mutex.lock();
+        defer self.ingestion_queue.mutex.unlock();
+        if (self.ingestion_queue.pending_ingestions.items.len == 0) return;
+        snapshot.appendSlice(self.allocator, self.ingestion_queue.pending_ingestions.items) catch {
             self.decayPendingLocked();
             return;
         };
-        self.pending_ingestions.clearRetainingCapacity();
+        self.ingestion_queue.pending_ingestions.clearRetainingCapacity();
     }
     defer snapshot.deinit(self.allocator);
 
-    const resolver = self.chunk_resolver;
-    const limit = @min(snapshot.items.len, self.ingestion_drain_per_frame);
+    const resolver = self.ingestion_queue.chunk_resolver;
+    const limit = @min(snapshot.items.len, self.ingestion_queue.drain_per_frame);
 
     // Process the head of the snapshot; defer the tail with a decayed TTL.
     var i: usize = 0;
@@ -276,23 +276,23 @@ pub fn drainPendingIngestions(self: *Self) void {
 /// Flush debounced player edits: re-ingest edited chunks with the `edited`
 /// provenance. Runs on a cooldown so rapid edits coalesce into one rebuild.
 pub fn flushEditedChunks(self: *Self) void {
-    self.edit_cooldown -= LOD_FRAME_DT_APPROX;
-    if (self.edit_cooldown > 0.0) return;
+    self.ingestion_queue.edit_cooldown -= LOD_FRAME_DT_APPROX;
+    if (self.ingestion_queue.edit_cooldown > 0.0) return;
 
     var snapshot = std.ArrayListUnmanaged(ChunkCoordKey).empty;
     {
-        self.ingestion_mutex.lock();
-        defer self.ingestion_mutex.unlock();
-        if (self.edit_dirty.count() == 0) return;
-        var it = self.edit_dirty.keyIterator();
+        self.ingestion_queue.mutex.lock();
+        defer self.ingestion_queue.mutex.unlock();
+        if (self.ingestion_queue.edit_dirty.count() == 0) return;
+        var it = self.ingestion_queue.edit_dirty.keyIterator();
         while (it.next()) |k| {
             snapshot.append(self.allocator, k.*) catch break;
         }
-        self.edit_dirty.clearRetainingCapacity();
+        self.ingestion_queue.edit_dirty.clearRetainingCapacity();
     }
     defer snapshot.deinit(self.allocator);
 
-    const resolver = self.chunk_resolver;
+    const resolver = self.ingestion_queue.chunk_resolver;
     for (snapshot.items) |k| {
         if (resolver) |r| {
             if (r.resolve(k.cx, k.cz)) |chunk| {
@@ -303,5 +303,5 @@ pub fn flushEditedChunks(self: *Self) void {
         // Chunk not resident now: defer until the resolver can fetch it.
         self.requestIngestion(k.cx, k.cz, .edited);
     }
-    self.edit_cooldown = EDIT_FLUSH_COOLDOWN;
+    self.ingestion_queue.edit_cooldown = EDIT_FLUSH_COOLDOWN;
 }

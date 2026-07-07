@@ -231,6 +231,59 @@ pub const LODChunk = struct {
         return self.state == .generating or self.state == .meshing or self.state == .uploading;
     }
 
+    pub fn isRenderable(self: *const LODChunk) bool {
+        return self.state == .renderable;
+    }
+
+    pub fn lodLevel(self: *const LODChunk) LODLevel {
+        return self.lod_level;
+    }
+
+    pub fn readyChildren(self: *const LODChunk) u8 {
+        return self.ready_children;
+    }
+
+    pub fn transitionFadeProgress(self: *const LODChunk) f32 {
+        if (self.transition_frames_remaining == 0) return 1.0;
+        const remaining = @as(f32, @floatFromInt(self.transition_frames_remaining));
+        const total = @as(f32, @floatFromInt(TRANSITION_FADE_FRAMES));
+        const t = @min(remaining / total, 1.0);
+        if (self.lod_level != .lod1 and self.ready_children >= 4) return t;
+        return 1.0 - t;
+    }
+
+    pub fn adjustReadyChildren(self: *LODChunk, delta: i8) void {
+        const before = self.ready_children;
+        if (delta > 0) {
+            self.ready_children = @min(self.ready_children + @as(u8, @intCast(delta)), 4);
+        } else if (delta < 0) {
+            const amount: u8 = @intCast(-delta);
+            self.ready_children = if (amount >= self.ready_children) 0 else self.ready_children - amount;
+        }
+        if (before < 4 and self.ready_children >= 4) {
+            self.transition_frames_remaining = TRANSITION_FADE_FRAMES;
+        } else if (self.ready_children < 4) {
+            self.transition_frames_remaining = 0;
+        }
+    }
+
+    pub fn markRenderable(self: *LODChunk, ready_children: u8) void {
+        self.ready_children = @min(ready_children, 4);
+        self.transition_frames_remaining = TRANSITION_FADE_FRAMES;
+        self.state = .renderable;
+    }
+
+    pub fn tickTransition(self: *LODChunk) void {
+        if (self.transition_frames_remaining > 0) self.transition_frames_remaining -= 1;
+    }
+
+    pub fn isCoveredByFinerLOD(self: *const LODChunk, fallback_missing_child_threshold: f32) bool {
+        if (self.lod_level == .lod0) return false;
+        const missing_children = 4 - @min(self.ready_children, 4);
+        const missing_fraction = @as(f32, @floatFromInt(missing_children)) / 4.0;
+        return missing_fraction <= fallback_missing_child_threshold and self.transition_frames_remaining == 0;
+    }
+
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;

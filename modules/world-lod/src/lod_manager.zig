@@ -88,6 +88,47 @@ const LODTransition = struct {
     priority: i32,
 };
 
+pub const LODCacheStore = struct {
+    cache_dir_path: ?[]const u8 = null,
+    logged_legacy_cache_notice: bool = false,
+    store_mutex: sync.Mutex = .{},
+};
+
+pub const LODIngestionQueue = struct {
+    pending_ingestions: std.ArrayListUnmanaged(PendingIngestion) = .empty,
+    edit_dirty: ChunkCoordSet,
+    mutex: sync.Mutex = .{},
+    chunk_resolver: ?ChunkResolver = null,
+    edit_cooldown: f32 = 0.0,
+    drain_per_frame: u32 = 4,
+
+    pub fn init(allocator: std.mem.Allocator) LODIngestionQueue {
+        return .{ .edit_dirty = ChunkCoordSet.init(allocator) };
+    }
+
+    pub fn deinit(self: *LODIngestionQueue, allocator: std.mem.Allocator) void {
+        self.pending_ingestions.deinit(allocator);
+        self.edit_dirty.deinit();
+    }
+};
+
+pub const LODMeshDisposalQueue = struct {
+    queue: std.ArrayListUnmanaged(*LODMesh) = .empty,
+    timer: f32 = 0,
+};
+
+pub const LODMemoryGovernor = struct {
+    used_bytes: usize = 0,
+    radius_shrink_chunks: [LODLevel.count]i32 = [_]i32{0} ** LODLevel.count,
+};
+
+pub const LODJobDispatcher = struct {
+    queues: [LODLevel.count]*JobQueue,
+    worker_pool: ?*WorkerPool = null,
+    next_token: u32 = 1,
+    stop_flag: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+};
+
 /// LOD Manager - coordinates all LOD levels.
 /// Uses callback interfaces (LODGPUBridge, LODRenderInterface) for GPU operations
 /// instead of a direct RHI dependency.
@@ -103,12 +144,8 @@ pub const LODManager = struct {
     // Mesh storage per LOD level
     meshes: [LODLevel.count]MeshMap,
 
-    // Separate job queues per LOD level
-    // LOD3 queue processes first (fast), LOD0 queue last (slow but priority)
-    gen_queues: [LODLevel.count]*JobQueue,
-
-    // Worker pool for LOD generation
-    lod_gen_pool: ?*WorkerPool,
+    // LOD job queues, worker pool, tokens, and teardown signaling.
+    job_dispatcher: LODJobDispatcher,
 
     // Upload queues per LOD level
     upload_queues: [LODLevel.count]RingBuffer(*LODChunk),
@@ -119,9 +156,6 @@ pub const LODManager = struct {
     // Current player position (chunk coords), read by worker threads for stale-job checks.
     player_cx: std.atomic.Value(i32),
     player_cz: std.atomic.Value(i32),
-
-    // Next job token
-    next_job_token: u32,
 
     // Stats
     stats: LODStats,
@@ -142,35 +176,20 @@ pub const LODManager = struct {
     // Paused state
     paused: bool,
 
-    // Teardown abort flag: set true ONLY in deinit() so in-flight LOD heightmap
-    // generation jobs abort early and the worker-pool join doesn't block for
-    // seconds on non-interruptible coarse-LOD jobs. Never set during normal
-    // play or map pause, so LOD generation runs uninterrupted.
-    //
-    // Atomic: written on the main thread (deinit) with .release, read from
-    // worker threads inside the heightmap loop with .acquire. This both
-    // establishes proper cross-thread ordering and prevents the compiler from
-    // hoisting the read out of the generation loop (which would silently break
-    // the abort in ReleaseFast).
-    stop_flag: std.atomic.Value(bool),
-
-    // Memory tracking
-    memory_used_bytes: usize,
+    // Memory tracking and pressure hysteresis.
+    memory_governor: LODMemoryGovernor,
 
     // Performance tracking for throttling
     update_tick: u32 = 0,
 
     // Deferred mesh deletion queue (Vulkan optimization)
-    deletion_queue: std.ArrayListUnmanaged(*LODMesh),
-    deletion_timer: f32 = 0,
+    mesh_disposal: LODMeshDisposalQueue,
 
     // Type-erased renderer interface (replaces direct LODRenderer(RHI) field)
     renderer: LODRenderInterface,
 
-    // Optional save directory for generated LOD source data.
-    cache_dir_path: ?[]const u8,
-    logged_legacy_cache_notice: bool,
-    store_mutex: sync.Mutex,
+    // Optional source-data persistence store.
+    cache_store: LODCacheStore,
 
     // Keep cleanup behavior testable, but allow the live world to opt out.
     cleanup_covered_regions: bool = true,
@@ -179,22 +198,7 @@ pub const LODManager = struct {
     // Pending chunk ingestions whose containing LOD region did not yet have
     // source data when the chunk finished generating/loading. Drained from
     // update() once the regions appear.
-    pending_ingestions: std.ArrayListUnmanaged(PendingIngestion),
-    // Debounced player-edit coordinates awaiting re-ingestion with the
-    // `edited` provenance. Drained from update() on a cooldown.
-    edit_dirty: ChunkCoordSet,
-    // Separate mutex guarding pending_ingestions / edit_dirty. Held briefly;
-    // never held while acquiring `mutex` (avoids cross-lock deadlocks).
-    ingestion_mutex: sync.Mutex,
-    chunk_resolver: ?ChunkResolver,
-    edit_cooldown: f32,
-    // Cap on deferred ingestion records to bound memory under rapid movement.
-    ingestion_drain_per_frame: u32,
-    // Memory-pressure hysteresis (issue #752 Phase 4.5): under sustained budget
-    // pressure, finer LOD radii are dynamically shrunk so evicted regions do
-    // not immediately re-queue. Re-expands gradually once memory drops below
-    // 80% of budget. The coarsest (horizon) level is never shrunk.
-    radius_shrink_chunks: [LODLevel.count]i32,
+    ingestion_queue: LODIngestionQueue,
 
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;

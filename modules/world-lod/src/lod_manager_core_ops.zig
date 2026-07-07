@@ -41,6 +41,7 @@ const TextureAtlas = @import("engine-assets").TextureAtlas;
 const LODGenerator = @import("lod_generator.zig").LODGenerator;
 const LODStats = @import("lod_stats.zig").LODStats;
 const manager_ctx = @import("lod_manager_context.zig");
+const LODIngestionQueue = @import("lod_manager.zig").LODIngestionQueue;
 const ChunkCoordKey = manager_ctx.ChunkCoordKey;
 const ChunkCoordKeyContext = manager_ctx.ChunkCoordKeyContext;
 const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std.hash_map.default_max_load_percentage);
@@ -125,13 +126,11 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .config = config,
         .regions = regions,
         .meshes = meshes,
-        .gen_queues = gen_queues,
-        .lod_gen_pool = null, // Will be initialized below
+        .job_dispatcher = .{ .queues = gen_queues },
         .upload_queues = upload_queues,
         .transition_queue = .empty,
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
-        .next_job_token = 1,
         .stats = .{},
         .cache_hits = 0,
         .cache_misses = 0,
@@ -140,23 +139,13 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .generator = generator,
         .atlas = atlas,
         .paused = false,
-        .stop_flag = std.atomic.Value(bool).init(false),
-        .memory_used_bytes = 0,
+        .memory_governor = .{},
         .update_tick = 0,
-        .deletion_queue = .empty,
-        .deletion_timer = 0,
+        .mesh_disposal = .{},
         .renderer = render_iface,
         .cleanup_covered_regions = true,
-        .cache_dir_path = null,
-        .logged_legacy_cache_notice = false,
-        .store_mutex = .{},
-        .pending_ingestions = .empty,
-        .edit_dirty = ChunkCoordSet.init(allocator),
-        .ingestion_mutex = .{},
-        .chunk_resolver = null,
-        .edit_cooldown = 0.0,
-        .ingestion_drain_per_frame = 4,
-        .radius_shrink_chunks = [_]i32{0} ** LODLevel.count,
+        .cache_store = .{},
+        .ingestion_queue = LODIngestionQueue.init(allocator),
     };
 
     const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
@@ -164,7 +153,7 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
 
     // All LOD jobs go through one shared queue. LOD-aware priority bits keep
     // fine near-detail jobs ahead of coarse fallback regions.
-    mgr.lod_gen_pool = try WorkerPool.init(allocator, lod_worker_count, mgr.gen_queues[LODLevel.count - 1], mgr, @import("lod_manager_generation_ops.zig").processLODJob);
+    mgr.job_dispatcher.worker_pool = try WorkerPool.init(allocator, lod_worker_count, mgr.job_dispatcher.queues[LODLevel.count - 1], mgr, @import("lod_manager_generation_ops.zig").processLODJob);
 
     const radii = config.getRadii();
     log.log.info("LODManager initialized with radii: {any} | workers={}", .{
@@ -181,22 +170,22 @@ pub fn deinit(self: *Self) void {
     // only interruptible via this flag (checked inside the generation loop).
     // This is the ONLY place stop_flag is set: normal pause()/unpause() and
     // map-open leave it false so LOD generation runs uninterrupted.
-    self.stop_flag.store(true, .release);
+    self.job_dispatcher.stop_flag.store(true, .release);
 
     // Stop and cleanup queues
     for (0..LODLevel.count) |i| {
-        self.gen_queues[i].stop();
+        self.job_dispatcher.queues[i].stop();
     }
 
     // Cleanup worker pool. In-flight heightmap jobs were aborted by
     // stop_flag above, so this join completes promptly.
-    if (self.lod_gen_pool) |pool| {
+    if (self.job_dispatcher.worker_pool) |pool| {
         pool.deinit();
     }
 
     for (0..LODLevel.count) |i| {
-        self.gen_queues[i].deinit();
-        self.allocator.destroy(self.gen_queues[i]);
+        self.job_dispatcher.queues[i].deinit();
+        self.allocator.destroy(self.job_dispatcher.queues[i]);
         self.upload_queues[i].deinit();
 
         // Cleanup meshes
@@ -220,14 +209,13 @@ pub fn deinit(self: *Self) void {
 
     // Process any pending deletions after all LOD users have stopped.
     self.processMeshDeletions(std.math.maxInt(usize));
-    self.deletion_queue.deinit(self.allocator);
+    self.mesh_disposal.queue.deinit(self.allocator);
 
-    if (self.cache_dir_path) |path| {
+    if (self.cache_store.cache_dir_path) |path| {
         self.allocator.free(path);
     }
 
-    self.pending_ingestions.deinit(self.allocator);
-    self.edit_dirty.deinit();
+    self.ingestion_queue.deinit(self.allocator);
 
     // NOTE: LODManager does NOT own the renderer lifetime.
     // The renderer is owned by World and deinit'd there.
@@ -242,10 +230,10 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     // Deferred deletion handling. LOD meshes do not carry frame fences yet,
     // so destruction still waits for idle, but the bounded sweep prevents
     // unreachable GPU/CPU resources from accumulating through long sessions.
-    self.deletion_timer += LOD_FRAME_DT_APPROX;
-    if (self.deletion_timer >= DELETION_SWEEP_SECONDS) {
+    self.mesh_disposal.timer += LOD_FRAME_DT_APPROX;
+    if (self.mesh_disposal.timer >= DELETION_SWEEP_SECONDS) {
         self.processMeshDeletions(MAX_MESH_DELETIONS_PER_SWEEP);
-        self.deletion_timer = 0;
+        self.mesh_disposal.timer = 0;
     }
 
     // Safety: Check for NaN/Inf player position
@@ -258,7 +246,7 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     // LOD-aware (scales region coords to chunk space, preserves LOD-bias
     // bits), so this safely re-orders stale jobs after chunk crossings.
     // The actual rebuild is lazy (only on pop when the queue is large).
-    self.gen_queues[LODLevel.count - 1].updatePlayerPos(pc.chunk_x, pc.chunk_z) catch {};
+    self.job_dispatcher.queues[LODLevel.count - 1].updatePlayerPos(pc.chunk_x, pc.chunk_z) catch {};
 
     // Throttle heavy LOD management logic (generation queuing, state processing, unloads).
     // LOD management involves iterating over thousands of potential regions and can
@@ -357,7 +345,7 @@ pub fn getStats(self: *Self) LODStats {
 pub fn pause(self: *Self) void {
     self.paused = true;
     for (0..LODLevel.count) |i| {
-        self.gen_queues[i].setPaused(true);
+        self.job_dispatcher.queues[i].setPaused(true);
     }
 }
 
@@ -365,7 +353,7 @@ pub fn pause(self: *Self) void {
 pub fn unpause(self: *Self) void {
     self.paused = false;
     for (0..LODLevel.count) |i| {
-        self.gen_queues[i].setPaused(false);
+        self.job_dispatcher.queues[i].setPaused(false);
     }
 }
 

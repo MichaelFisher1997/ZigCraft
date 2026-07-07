@@ -102,11 +102,11 @@ pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
 
     self.mutex.lock();
     defer self.mutex.unlock();
-    if (self.cache_dir_path) |old_path| {
+    if (self.cache_store.cache_dir_path) |old_path| {
         self.allocator.free(old_path);
     }
-    self.cache_dir_path = cache_dir_path;
-    self.logged_legacy_cache_notice = false;
+    self.cache_store.cache_dir_path = cache_dir_path;
+    self.cache_store.logged_legacy_cache_notice = false;
     log.log.info("LOD source store enabled at '{s}/lod'", .{cache_dir_path});
 }
 
@@ -130,7 +130,7 @@ pub fn flushDirtyStores(self: *Self) void {
                 if (!lcp.store_dirty) continue;
                 switch (lcp.data) {
                     .simplified => |*data| {
-                        const key = LODRegionKey{ .rx = lcp.region_x, .rz = lcp.region_z, .lod = lcp.lod_level };
+                        const key = LODRegionKey{ .rx = lcp.region_x, .rz = lcp.region_z, .lod = lcp.lodLevel() };
                         const cache_key = self.cacheKey(key);
                         const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
                             log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
@@ -187,8 +187,8 @@ pub fn legacyCacheFilePath(self: *Self, save_dir_path: []const u8, key: lod_cach
 pub fn logLegacyCacheNotice(self: *Self) void {
     self.mutex.lock();
     defer self.mutex.unlock();
-    if (self.logged_legacy_cache_notice) return;
-    self.logged_legacy_cache_notice = true;
+    if (self.cache_store.logged_legacy_cache_notice) return;
+    self.cache_store.logged_legacy_cache_notice = true;
     log.log.warn("Using read-only legacy LOD cache fallback; new writes go to lod/ region store", .{});
 }
 
@@ -196,7 +196,7 @@ pub fn cacheDirPathSnapshot(self: *Self) ?[]u8 {
     self.mutex.lockShared();
     defer self.mutex.unlockShared();
 
-    const cache_dir_path = self.cache_dir_path orelse return null;
+    const cache_dir_path = self.cache_store.cache_dir_path orelse return null;
     return self.allocator.dupe(u8, cache_dir_path) catch |err| {
         log.log.warn("LOD cache path snapshot allocation failed: {}", .{err});
         return null;
@@ -206,12 +206,12 @@ pub fn cacheDirPathSnapshot(self: *Self) ?[]u8 {
 pub fn cacheEnabled(self: *Self) bool {
     self.mutex.lockShared();
     defer self.mutex.unlockShared();
-    return self.cache_dir_path != null;
+    return self.cache_store.cache_dir_path != null;
 }
 
 pub fn readStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) !?[]u8 {
-    self.store_mutex.lock();
-    defer self.store_mutex.unlock();
+    self.cache_store.store_mutex.lock();
+    defer self.cache_store.store_mutex.unlock();
     return lod_store.readPayload(self.allocator, save_dir_path, cache_key);
 }
 
@@ -220,20 +220,20 @@ pub fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_
     const store_size_cap_mb = self.config.getLODStoreSizeCapMB();
     self.mutex.unlockShared();
 
-    self.store_mutex.lock();
-    defer self.store_mutex.unlock();
+    self.cache_store.store_mutex.lock();
+    defer self.cache_store.store_mutex.unlock();
     try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes, store_size_cap_mb);
 }
 
 pub fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) void {
-    self.store_mutex.lock();
-    defer self.store_mutex.unlock();
+    self.cache_store.store_mutex.lock();
+    defer self.cache_store.store_mutex.unlock();
     lod_store.deletePayload(self.allocator, save_dir_path, cache_key);
 }
 
 pub fn deleteStoreContainer(self: *Self, path: []const u8) void {
-    self.store_mutex.lock();
-    defer self.store_mutex.unlock();
+    self.cache_store.store_mutex.lock();
+    defer self.cache_store.store_mutex.unlock();
     fs.cwd().deleteFile(path) catch |delete_err| {
         if (delete_err != error.FileNotFound) {
             log.log.warn("Failed to delete corrupt LOD store container '{s}': {}", .{ path, delete_err });
@@ -333,13 +333,11 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .config = undefined,
         .regions = undefined,
         .meshes = undefined,
-        .gen_queues = undefined,
-        .lod_gen_pool = null,
+        .job_dispatcher = undefined,
         .upload_queues = undefined,
         .transition_queue = .empty,
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
-        .next_job_token = 1,
         .stats = .{},
         .cache_hits = 0,
         .cache_misses = 0,
@@ -355,22 +353,12 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         },
         .atlas = undefined,
         .paused = false,
-        .stop_flag = std.atomic.Value(bool).init(false),
-        .memory_used_bytes = 0,
+        .memory_governor = .{},
         .update_tick = 0,
-        .deletion_queue = .empty,
-        .deletion_timer = 0,
+        .mesh_disposal = .{},
         .renderer = undefined,
-        .cache_dir_path = null,
-        .logged_legacy_cache_notice = false,
-        .store_mutex = .{},
+        .cache_store = .{},
         .cleanup_covered_regions = true,
-        .pending_ingestions = .empty,
-        .edit_dirty = ChunkCoordSet.init(allocator),
-        .ingestion_mutex = .{},
-        .chunk_resolver = null,
-        .edit_cooldown = 0.0,
-        .ingestion_drain_per_frame = 4,
-        .radius_shrink_chunks = [_]i32{0} ** LODLevel.count,
+        .ingestion_queue = @import("lod_manager.zig").LODIngestionQueue.init(allocator),
     };
 }

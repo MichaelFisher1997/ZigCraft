@@ -38,6 +38,7 @@ pub const LODMeshRenderContext = resources_mod.LODMeshRenderContext;
 pub const MAX_STAGING_UPDATE_BYTES = resources_mod.MAX_STAGING_UPDATE_BYTES;
 pub const updateBufferChunked = resources_mod.updateBufferChunked;
 pub const uploadBufferChunked = resources_mod.uploadBufferChunked;
+const LODRenderLayer = @import("lod_upload_queue.zig").LODRenderLayer;
 
 const FullDetailMesh = geom.FullDetailMesh;
 const buildFullDetailHeightmapMesh = geom.buildFullDetailHeightmapMesh;
@@ -87,6 +88,22 @@ pub fn getCellSize(lod: LODLevel) u32 {
 
 /// LOD Mesh for a single LOD region
 pub const LODMesh = struct {
+    pub const DrawRange = struct {
+        offset: usize,
+        count: u32,
+    };
+
+    pub const DrawState = struct {
+        buffer_handle: BufferHandle = 0,
+        vertex_offset: usize = 0,
+        vertex_count: u32 = 0,
+        capacity: u32 = 0,
+        pooled: bool = false,
+        ready: bool = false,
+
+        pub const empty: DrawState = .{};
+    };
+
     /// GPU buffer handle
     buffer_handle: BufferHandle = 0,
     /// Number of vertices
@@ -123,6 +140,90 @@ pub const LODMesh = struct {
 
     pub fn isRenderable(self: *const LODMesh) bool {
         return self.ready and self.vertex_count > 0;
+    }
+
+    pub fn isReady(self: *const LODMesh) bool {
+        return self.ready;
+    }
+
+    pub fn isPooled(self: *const LODMesh) bool {
+        return self.pooled;
+    }
+
+    pub fn bufferHandle(self: *const LODMesh) BufferHandle {
+        return self.buffer_handle;
+    }
+
+    pub fn vertexOffset(self: *const LODMesh) usize {
+        return self.vertex_offset;
+    }
+
+    pub fn vertexCount(self: *const LODMesh) u32 {
+        return self.vertex_count;
+    }
+
+    pub fn lodLevel(self: *const LODMesh) LODLevel {
+        return self.lod_level;
+    }
+
+    pub fn byteSize(self: *const LODMesh) usize {
+        return @as(usize, self.capacity) * @sizeOf(Vertex);
+    }
+
+    pub fn drawRange(self: *const LODMesh, layer: LODRenderLayer) ?DrawRange {
+        if (!self.ready or self.buffer_handle == 0) return null;
+        return switch (layer) {
+            .terrain => if (self.opaque_vertex_count > 0)
+                .{ .offset = 0, .count = self.opaque_vertex_count }
+            else if (self.water_vertex_count == 0 and self.vertex_count > 0)
+                .{ .offset = 0, .count = self.vertex_count }
+            else
+                null,
+            .fluid => if (self.water_vertex_count > 0)
+                .{ .offset = self.water_vertex_offset, .count = self.water_vertex_count }
+            else
+                null,
+        };
+    }
+
+    pub fn firstVertex(self: *const LODMesh, range: DrawRange) u32 {
+        return @intCast((self.vertex_offset + range.offset) / @sizeOf(Vertex));
+    }
+
+    pub fn setDrawStateUnlocked(self: *LODMesh, state: DrawState) void {
+        self.buffer_handle = state.buffer_handle;
+        self.vertex_offset = state.vertex_offset;
+        self.vertex_count = state.vertex_count;
+        self.capacity = state.capacity;
+        self.pooled = state.pooled;
+        self.ready = state.ready;
+    }
+
+    pub fn setDrawState(self: *LODMesh, state: DrawState) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.setDrawStateUnlocked(state);
+    }
+
+    pub fn clearDrawStateUnlocked(self: *LODMesh) void {
+        self.setDrawStateUnlocked(.empty);
+        self.opaque_vertex_count = 0;
+        self.water_vertex_offset = 0;
+        self.water_vertex_count = 0;
+    }
+
+    pub fn markEmptyUploadedUnlocked(self: *LODMesh) void {
+        self.clearDrawStateUnlocked();
+        self.ready = true;
+    }
+
+    pub fn setBufferHandleUnlocked(self: *LODMesh, handle: BufferHandle) void {
+        self.buffer_handle = handle;
+    }
+
+    pub fn setPoolLocationUnlocked(self: *LODMesh, handle: BufferHandle, offset: usize) void {
+        self.buffer_handle = handle;
+        self.vertex_offset = offset;
     }
 
     pub fn setUploaded(self: *LODMesh, vertex_count: u32, opaque_vertex_count: u32) void {

@@ -663,12 +663,18 @@ pub const ACCESS_SHADER_READ_BIT: AccessFlags = 0x00000020;
 pub const ACCESS_SHADER_WRITE_BIT: AccessFlags = 0x00000040;
 pub const ACCESS_VERTEX_ATTRIBUTE_READ_BIT: AccessFlags = 0x00000004;
 
+/// Vulkan compute buffer handles exposed through the current Vulkan-only RHI.
+/// These fields intentionally carry raw Vulkan object values for GPU meshing;
+/// they are not a portable cross-backend representation.
 pub const ComputeBuffer = struct {
     buffer: u64 = 0,
     memory: u64 = 0,
     mapped_ptr: ?*anyopaque = null,
 };
 
+/// Vulkan compute pipeline state exposed through the current Vulkan-only RHI.
+/// The raw handles are consumed by Vulkan compute call sites and must not be
+/// treated as an abstract multi-backend contract.
 pub const ComputePipeline = struct {
     pipeline: u64 = 0,
     layout: u64 = 0,
@@ -1244,6 +1250,9 @@ pub const RHI = struct {
     pub fn renderEffects(self: RHI) IRenderEffectsContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.effects orelse unreachable };
     }
+    /// Returns the Vulkan native-handle facet used by ImGui, LPV, and other
+    /// Vulkan-shaped integrations. This is a documented backend seam, not a
+    /// portability guarantee for non-Vulkan renderers.
     pub fn nativeHandles(self: RHI) INativeHandlesContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.native orelse unreachable };
     }

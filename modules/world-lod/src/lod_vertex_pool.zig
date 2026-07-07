@@ -27,16 +27,7 @@ const AllocationRecord = struct {
     size: usize,
 };
 
-const MeshDrawState = struct {
-    buffer_handle: BufferHandle = 0,
-    vertex_offset: usize = 0,
-    vertex_count: u32 = 0,
-    capacity: u32 = 0,
-    pooled: bool = false,
-    ready: bool = false,
-
-    const empty = MeshDrawState{};
-};
+const MeshDrawState = LODMesh.DrawState;
 
 /// Owns one large vertex buffer for a single LOD level and sub-allocates mesh ranges.
 pub const LODVertexPool = struct {
@@ -82,20 +73,22 @@ pub const LODVertexPool = struct {
         defer mesh.mutex.unlock();
 
         const pending = mesh.pending_vertices orelse {
-            mesh.ready = mesh.buffer_handle != 0 and mesh.vertex_count > 0;
+            if (mesh.bufferHandle() != 0 and mesh.vertexCount() > 0) {
+                mesh.setDrawStateUnlocked(.{
+                    .buffer_handle = mesh.bufferHandle(),
+                    .vertex_offset = mesh.vertexOffset(),
+                    .vertex_count = mesh.vertexCount(),
+                    .capacity = @intCast(mesh.byteSize() / @sizeOf(Vertex)),
+                    .pooled = mesh.isPooled(),
+                    .ready = true,
+                });
+            }
             return;
         };
 
         if (pending.len == 0) {
             self.freeMeshUnlocked(mesh);
-            mesh.vertex_count = 0;
-            mesh.opaque_vertex_count = 0;
-            mesh.water_vertex_offset = 0;
-            mesh.water_vertex_count = 0;
-            mesh.capacity = 0;
-            mesh.vertex_offset = 0;
-            mesh.buffer_handle = 0;
-            mesh.ready = true;
+            mesh.markEmptyUploadedUnlocked();
             self.allocator.free(pending);
             mesh.pending_vertices = null;
             return;
@@ -126,7 +119,7 @@ pub const LODVertexPool = struct {
                 applyMeshDrawState(mesh, .{
                     .buffer_handle = self.buffer_handle,
                     .vertex_offset = old.offset,
-                    .vertex_count = mesh.vertex_count,
+                    .vertex_count = mesh.vertexCount(),
                     .capacity = @intCast(old.size / @sizeOf(Vertex)),
                     .pooled = true,
                     .ready = true,
@@ -171,15 +164,7 @@ pub const LODVertexPool = struct {
             self.allocator.free(pending);
             mesh.pending_vertices = null;
         }
-        mesh.buffer_handle = 0;
-        mesh.vertex_count = 0;
-        mesh.opaque_vertex_count = 0;
-        mesh.water_vertex_offset = 0;
-        mesh.water_vertex_count = 0;
-        mesh.capacity = 0;
-        mesh.vertex_offset = 0;
-        mesh.pooled = false;
-        mesh.ready = false;
+        mesh.clearDrawStateUnlocked();
     }
 
     pub fn allocatedBytes(self: *LODVertexPool) usize {
@@ -399,54 +384,47 @@ pub const LODVertexPool = struct {
 };
 
 fn clearMeshDrawState(mesh: *LODMesh) void {
-    applyMeshDrawState(mesh, .empty);
+    mesh.clearDrawStateUnlocked();
 }
 
 fn setMeshBufferHandle(mesh: *LODMesh, buffer_handle: BufferHandle, locked_mesh: ?*LODMesh) void {
     if (locked_mesh) |locked| {
         if (locked == mesh) {
-            mesh.buffer_handle = buffer_handle;
+            mesh.setBufferHandleUnlocked(buffer_handle);
             return;
         }
     }
     mesh.mutex.lock();
     defer mesh.mutex.unlock();
-    mesh.buffer_handle = buffer_handle;
+    mesh.setBufferHandleUnlocked(buffer_handle);
 }
 
 fn setMeshPoolLocation(mesh: *LODMesh, buffer_handle: BufferHandle, vertex_offset: usize, locked_mesh: ?*LODMesh) void {
     if (locked_mesh) |locked| {
         if (locked == mesh) {
-            mesh.buffer_handle = buffer_handle;
-            mesh.vertex_offset = vertex_offset;
+            mesh.setPoolLocationUnlocked(buffer_handle, vertex_offset);
             return;
         }
     }
     mesh.mutex.lock();
     defer mesh.mutex.unlock();
-    mesh.buffer_handle = buffer_handle;
-    mesh.vertex_offset = vertex_offset;
+    mesh.setPoolLocationUnlocked(buffer_handle, vertex_offset);
 }
 
 fn setMeshDrawState(mesh: *LODMesh, state: MeshDrawState, locked_mesh: ?*LODMesh) void {
     if (locked_mesh) |locked| {
         if (locked == mesh) {
-            applyMeshDrawState(mesh, state);
+            mesh.setDrawStateUnlocked(state);
             return;
         }
     }
     mesh.mutex.lock();
     defer mesh.mutex.unlock();
-    applyMeshDrawState(mesh, state);
+    mesh.setDrawStateUnlocked(state);
 }
 
 fn applyMeshDrawState(mesh: *LODMesh, state: MeshDrawState) void {
-    mesh.buffer_handle = state.buffer_handle;
-    mesh.vertex_offset = state.vertex_offset;
-    mesh.vertex_count = state.vertex_count;
-    mesh.capacity = state.capacity;
-    mesh.pooled = state.pooled;
-    mesh.ready = state.ready;
+    mesh.setDrawStateUnlocked(state);
 }
 
 fn shouldCompactAfterEviction(pool: *LODVertexPool) bool {

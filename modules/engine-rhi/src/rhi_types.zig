@@ -4,7 +4,7 @@ const Vec3 = @import("engine-math").Vec3;
 
 /// Common RHI errors that backends may return.
 pub const RhiError = error{
-    VulkanError,
+    BackendError,
     OutOfMemory,
     ResourceNotFound,
     InvalidState,
