@@ -14,6 +14,7 @@ pub const c = if (build_options.imgui) @cImport({
 pub const Backend = struct {
     initialized: bool = false,
     has_draw_commands: bool = false,
+    imgui: rhi.IImGuiContext = undefined,
 
     pub fn init(window: *sdl.SDL_Window, rhi_ptr: *rhi.RHI) !Backend {
         if (!build_options.imgui) return error.ImguiDisabled;
@@ -22,39 +23,19 @@ pub const Backend = struct {
         errdefer c.ZigCraft_ImGui_DestroyContext();
         c.ZigCraft_ImGui_StyleColorsDark();
 
-        if (!c.ZigCraft_ImGui_ImplSDL3_InitForVulkan(@ptrCast(window))) {
+        const imgui = rhi_ptr.imgui();
+        if (!imgui.initBackend(@ptrCast(window))) {
             log.log.err("Failed to initialize ImGui SDL3 backend", .{});
             return error.ImguiBackendInitFailed;
         }
-        errdefer c.ZigCraft_ImGui_ImplSDL3_Shutdown();
+        errdefer imgui.shutdownBackend();
 
-        const native = rhi_ptr.vulkanHandles();
-        const image_count = native.getSwapchainImageCount();
-        const min_image_count: u32 = if (image_count > 1) image_count else 2;
-        var init_info = c.ZigCraftImGuiVulkanInitInfo{
-            .instance = @ptrFromInt(native.getInstance()),
-            .physical_device = @ptrFromInt(native.getPhysicalDevice()),
-            .device = @ptrFromInt(native.getDevice()),
-            .queue = @ptrFromInt(native.getQueue()),
-            .queue_family = native.getQueueFamily(),
-            .descriptor_pool = @ptrFromInt(native.getDescriptorPool()),
-            .render_pass = @ptrFromInt(native.getUiRenderPass()),
-            .min_image_count = min_image_count,
-            .image_count = @max(image_count, min_image_count),
-            .msaa_samples = 1,
-        };
-        if (!c.ZigCraft_ImGui_ImplVulkan_Init(&init_info)) {
-            log.log.err("Failed to initialize ImGui Vulkan backend", .{});
-            return error.ImguiBackendInitFailed;
-        }
-
-        return .{ .initialized = true };
+        return .{ .initialized = true, .imgui = imgui };
     }
 
     pub fn deinit(self: *Backend) void {
         if (!build_options.imgui or !self.initialized) return;
-        c.ZigCraft_ImGui_ImplVulkan_Shutdown();
-        c.ZigCraft_ImGui_ImplSDL3_Shutdown();
+        self.imgui.shutdownBackend();
         c.ZigCraft_ImGui_DestroyContext();
         self.initialized = false;
     }
@@ -66,8 +47,7 @@ pub const Backend = struct {
 
     pub fn beginFrame(self: *Backend) void {
         if (!build_options.imgui or !self.initialized) return;
-        c.ZigCraft_ImGui_ImplVulkan_NewFrame();
-        c.ZigCraft_ImGui_ImplSDL3_NewFrame();
+        self.imgui.newFrame();
         c.ZigCraft_ImGui_NewFrame();
         self.has_draw_commands = false;
     }
@@ -81,11 +61,10 @@ pub const Backend = struct {
         return build_options.imgui and self.initialized and self.has_draw_commands;
     }
 
-    pub fn endFrame(self: *Backend, command_buffer: u64) void {
+    pub fn endFrame(self: *Backend) void {
         if (!build_options.imgui or !self.initialized) return;
         c.ZigCraft_ImGui_Render();
         if (!self.has_draw_commands) return;
-        if (command_buffer == 0) return;
-        c.ZigCraft_ImGui_ImplVulkan_RenderDrawData(c.ZigCraft_ImGui_GetDrawData(), @ptrFromInt(command_buffer));
+        self.imgui.renderDrawData(@ptrCast(c.ZigCraft_ImGui_GetDrawData()));
     }
 };

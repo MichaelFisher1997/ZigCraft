@@ -22,6 +22,11 @@ const rhi_timing = @import("vulkan/rhi_timing.zig");
 const screenshot = @import("vulkan/screenshot.zig");
 const Utils = @import("vulkan/utils.zig");
 const CullingSystem = @import("vulkan/culling_system.zig").CullingSystem;
+const build_options = @import("engine_graphics_options");
+
+const imgui_c = if (build_options.imgui) @cImport({
+    @cInclude("cimgui_backend.h");
+}) else struct {};
 
 const QUERY_COUNT_PER_FRAME = rhi_timing.QUERY_COUNT_PER_FRAME;
 
@@ -963,6 +968,61 @@ const VULKAN_UI_CONTEXT_VTABLE = rhi.IUIContext.VTable{
     .bindPipeline = bindUIPipeline,
 };
 
+fn initImGuiBackend(ctx_ptr: *anyopaque, window: *anyopaque) bool {
+    if (!build_options.imgui) return false;
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    if (!imgui_c.ZigCraft_ImGui_ImplSDL3_InitForVulkan(@ptrCast(window))) return false;
+    const image_count = getNativeSwapchainImageCount(ctx_ptr);
+    const min_image_count: u32 = if (image_count > 1) image_count else 2;
+    var init_info = imgui_c.ZigCraftImGuiVulkanInitInfo{
+        .instance = @ptrFromInt(getNativeInstance(ctx_ptr)),
+        .physical_device = @ptrFromInt(getNativePhysicalDevice(ctx_ptr)),
+        .device = @ptrFromInt(getNativeDevice(ctx_ptr)),
+        .queue = @ptrFromInt(getNativeQueue(ctx_ptr)),
+        .queue_family = getNativeQueueFamily(ctx_ptr),
+        .descriptor_pool = @ptrFromInt(getNativeDescriptorPool(ctx_ptr)),
+        .render_pass = @ptrFromInt(getNativeUiRenderPass(ctx_ptr)),
+        .min_image_count = min_image_count,
+        .image_count = @max(image_count, min_image_count),
+        .msaa_samples = 1,
+    };
+    _ = ctx;
+    if (!imgui_c.ZigCraft_ImGui_ImplVulkan_Init(&init_info)) {
+        imgui_c.ZigCraft_ImGui_ImplSDL3_Shutdown();
+        return false;
+    }
+    return true;
+}
+
+fn shutdownImGuiBackend(_: *anyopaque) void {
+    if (!build_options.imgui) return;
+    imgui_c.ZigCraft_ImGui_ImplVulkan_Shutdown();
+    imgui_c.ZigCraft_ImGui_ImplSDL3_Shutdown();
+}
+
+fn newImGuiFrame(_: *anyopaque) void {
+    if (!build_options.imgui) return;
+    imgui_c.ZigCraft_ImGui_ImplVulkan_NewFrame();
+    imgui_c.ZigCraft_ImGui_ImplSDL3_NewFrame();
+}
+
+fn renderImGuiDrawData(ctx_ptr: *anyopaque, draw_data: *anyopaque) void {
+    if (!build_options.imgui) return;
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const command_buffer = currentCommandBuffer(ctx) orelse return;
+    imgui_c.ZigCraft_ImGui_ImplVulkan_RenderDrawData(
+        @ptrCast(draw_data),
+        @ptrFromInt(@intFromPtr(command_buffer)),
+    );
+}
+
+const VULKAN_IMGUI_CONTEXT_VTABLE = rhi.IImGuiContext.VTable{
+    .initBackend = initImGuiBackend,
+    .shutdownBackend = shutdownImGuiBackend,
+    .newFrame = newImGuiFrame,
+    .renderDrawData = renderImGuiDrawData,
+};
+
 fn getStateContext(ctx_ptr: *anyopaque) rhi.IRenderStateContext {
     return .{ .ptr = ctx_ptr, .vtable = &VULKAN_STATE_CONTEXT_VTABLE };
 }
@@ -997,17 +1057,40 @@ fn currentCommandBuffer(ctx: *VulkanContext) ?c.VkCommandBuffer {
     return ctx.frames.command_buffers[ctx.frames.current_frame];
 }
 
-fn bindComputePipeline(ctx_ptr: *anyopaque, pipeline: u64) void {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    const cmd = currentCommandBuffer(ctx) orelse return;
-    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, @ptrFromInt(pipeline));
+fn computeBufferResource(ctx: *VulkanContext, buffer: rhi.ComputeBuffer) ?*@import("vulkan/rhi_context_types.zig").ComputeBufferResource {
+    if (buffer.handle == 0) return null;
+    return ctx.compute_resources.buffers.getPtr(buffer.handle);
 }
 
-fn bindComputeDescriptorSet(ctx_ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void {
+fn computePipelineResource(ctx: *VulkanContext, pipeline: rhi.ComputePipeline) ?*@import("vulkan/rhi_context_types.zig").ComputePipelineResource {
+    if (pipeline.handle == 0) return null;
+    return ctx.compute_resources.pipelines.getPtr(pipeline.handle);
+}
+
+fn bindingBuffer(ctx: *VulkanContext, binding: rhi.ComputeBufferBinding) c.VkBuffer {
+    return switch (binding) {
+        .compute => |buffer| if (computeBufferResource(ctx, buffer)) |resource| resource.buffer else null,
+        .buffer => |handle| blk: {
+            const buffer = ctx.resources.buffers.get(handle) orelse break :blk null;
+            break :blk buffer.buffer;
+        },
+    };
+}
+
+fn bindComputePipeline(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const cmd = currentCommandBuffer(ctx) orelse return;
-    const set: c.VkDescriptorSet = @ptrFromInt(descriptor_set);
-    c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, @ptrFromInt(pipeline_layout), 0, 1, &set, 0, null);
+    const resource = computePipelineResource(ctx, pipeline) orelse return;
+    c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, resource.pipeline);
+}
+
+fn bindComputeDescriptorSet(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    const cmd = currentCommandBuffer(ctx) orelse return;
+    if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT) return;
+    const resource = computePipelineResource(ctx, pipeline) orelse return;
+    const set = resource.descriptor_sets[frame_index];
+    c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, resource.layout, 0, 1, &set, 0, null);
 }
 
 fn createComputeBuffer(ctx_ptr: *anyopaque, size: usize, host_visible: bool) rhi.RhiError!rhi.ComputeBuffer {
@@ -1016,24 +1099,30 @@ fn createComputeBuffer(ctx_ptr: *anyopaque, size: usize, host_visible: bool) rhi
         c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     else
         c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    const buffer = try Utils.createVulkanBuffer(&ctx.vulkan_device, size, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, properties);
-    return .{ .buffer = @intFromPtr(buffer.buffer), .memory = @intFromPtr(buffer.memory), .mapped_ptr = buffer.mapped_ptr };
+    const buffer = try Utils.createVulkanBuffer(&ctx.vulkan_device, size, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, properties);
+    const handle = ctx.compute_resources.next_buffer_handle;
+    ctx.compute_resources.next_buffer_handle +%= 1;
+    try ctx.compute_resources.buffers.put(ctx.allocator, handle, .{ .buffer = buffer.buffer, .memory = buffer.memory, .mapped_ptr = buffer.mapped_ptr });
+    return .{ .handle = handle, .mapped_ptr = buffer.mapped_ptr };
 }
 
 fn destroyComputeBuffer(ctx_ptr: *anyopaque, buffer: *rhi.ComputeBuffer) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const vk = ctx.vulkan_device.vk_device;
-    const vk_buffer: c.VkBuffer = @ptrFromInt(buffer.buffer);
-    const vk_memory: c.VkDeviceMemory = @ptrFromInt(buffer.memory);
-    if (buffer.mapped_ptr != null) c.vkUnmapMemory(vk, vk_memory);
-    if (vk_buffer != null) c.vkDestroyBuffer(vk, vk_buffer, null);
-    if (vk_memory != null) c.vkFreeMemory(vk, vk_memory, null);
+    const resource = ctx.compute_resources.buffers.fetchRemove(buffer.handle) orelse {
+        buffer.* = .{};
+        return;
+    };
+    if (resource.value.mapped_ptr != null) c.vkUnmapMemory(vk, resource.value.memory);
+    if (resource.value.buffer != null) c.vkDestroyBuffer(vk, resource.value.buffer, null);
+    if (resource.value.memory != null) c.vkFreeMemory(vk, resource.value.memory, null);
     buffer.* = .{};
 }
 
 fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!rhi.ComputePipeline {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const vk = ctx.vulkan_device.vk_device;
+    var resource = @import("vulkan/rhi_context_types.zig").ComputePipelineResource{};
     var result = rhi.ComputePipeline{};
     errdefer destroyComputePipeline(ctx_ptr, &result);
 
@@ -1045,7 +1134,7 @@ fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shad
     pool_info.pPoolSizes = &pool_size;
     var descriptor_pool: c.VkDescriptorPool = null;
     try Utils.checkVk(c.vkCreateDescriptorPool(vk, &pool_info, null, &descriptor_pool));
-    result.descriptor_pool = @intFromPtr(descriptor_pool);
+    resource.descriptor_pool = descriptor_pool;
 
     const bindings = try allocator.alloc(c.VkDescriptorSetLayoutBinding, storage_binding_count);
     defer allocator.free(bindings);
@@ -1059,7 +1148,7 @@ fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shad
     layout_info.pBindings = bindings.ptr;
     var descriptor_set_layout: c.VkDescriptorSetLayout = null;
     try Utils.checkVk(c.vkCreateDescriptorSetLayout(vk, &layout_info, null, &descriptor_set_layout));
-    result.descriptor_set_layout = @intFromPtr(descriptor_set_layout);
+    resource.descriptor_set_layout = descriptor_set_layout;
 
     var layouts = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSetLayout);
     for (&layouts) |*layout| layout.* = descriptor_set_layout;
@@ -1070,7 +1159,7 @@ fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shad
     alloc_info.pSetLayouts = &layouts;
     var descriptor_sets = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet);
     try Utils.checkVk(c.vkAllocateDescriptorSets(vk, &alloc_info, &descriptor_sets));
-    for (descriptor_sets, 0..) |set, i| result.descriptor_sets[i] = @intFromPtr(set);
+    for (descriptor_sets, 0..) |set, i| resource.descriptor_sets[i] = set;
 
     var pc_range = std.mem.zeroes(c.VkPushConstantRange);
     pc_range.stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT;
@@ -1083,7 +1172,7 @@ fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shad
     pipeline_layout_info.pPushConstantRanges = if (push_constant_size == 0) null else &pc_range;
     var pipeline_layout: c.VkPipelineLayout = null;
     try Utils.checkVk(c.vkCreatePipelineLayout(vk, &pipeline_layout_info, null, &pipeline_layout));
-    result.layout = @intFromPtr(pipeline_layout);
+    resource.layout = pipeline_layout;
 
     const bytes = try fs.cwd().readFileAlloc(shader_path, allocator, 16 * 1024 * 1024);
     defer allocator.free(bytes);
@@ -1102,13 +1191,18 @@ fn createComputePipeline(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, shad
     pipeline_info.layout = pipeline_layout;
     var pipeline: c.VkPipeline = null;
     try Utils.checkVk(c.vkCreateComputePipelines(vk, null, 1, &pipeline_info, null, &pipeline));
-    result.pipeline = @intFromPtr(pipeline);
+    resource.pipeline = pipeline;
+    const handle = ctx.compute_resources.next_pipeline_handle;
+    ctx.compute_resources.next_pipeline_handle +%= 1;
+    try ctx.compute_resources.pipelines.put(ctx.allocator, handle, resource);
+    result.handle = handle;
     return result;
 }
 
-fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const u64) void {
+fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const rhi.ComputeBufferBinding) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT or buffers.len == 0) return;
+    const pipeline_resource = computePipelineResource(ctx, pipeline) orelse return;
 
     const infos = ctx.allocator.alloc(c.VkDescriptorBufferInfo, buffers.len) catch |err| {
         log.log.err("Failed to allocate compute descriptor buffer infos: {}", .{err});
@@ -1123,10 +1217,12 @@ fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, 
     defer ctx.allocator.free(writes);
 
     for (buffers, 0..) |buffer, i| {
-        infos[i] = .{ .buffer = @ptrFromInt(buffer), .offset = 0, .range = c.VK_WHOLE_SIZE };
+        const vk_buffer = bindingBuffer(ctx, buffer);
+        if (vk_buffer == null) return;
+        infos[i] = .{ .buffer = vk_buffer, .offset = 0, .range = c.VK_WHOLE_SIZE };
         writes[i] = std.mem.zeroes(c.VkWriteDescriptorSet);
         writes[i].sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet = @ptrFromInt(pipeline.descriptor_sets[frame_index]);
+        writes[i].dstSet = pipeline_resource.descriptor_sets[frame_index];
         writes[i].dstBinding = @intCast(i);
         writes[i].descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[i].descriptorCount = 1;
@@ -1138,10 +1234,14 @@ fn updateComputeDescriptors(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, 
 fn destroyComputePipeline(ctx_ptr: *anyopaque, pipeline: *rhi.ComputePipeline) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const vk = ctx.vulkan_device.vk_device;
-    if (pipeline.pipeline != 0) c.vkDestroyPipeline(vk, @ptrFromInt(pipeline.pipeline), null);
-    if (pipeline.layout != 0) c.vkDestroyPipelineLayout(vk, @ptrFromInt(pipeline.layout), null);
-    if (pipeline.descriptor_set_layout != 0) c.vkDestroyDescriptorSetLayout(vk, @ptrFromInt(pipeline.descriptor_set_layout), null);
-    if (pipeline.descriptor_pool != 0) c.vkDestroyDescriptorPool(vk, @ptrFromInt(pipeline.descriptor_pool), null);
+    const resource = ctx.compute_resources.pipelines.fetchRemove(pipeline.handle) orelse {
+        pipeline.* = .{};
+        return;
+    };
+    if (resource.value.pipeline != null) c.vkDestroyPipeline(vk, resource.value.pipeline, null);
+    if (resource.value.layout != null) c.vkDestroyPipelineLayout(vk, resource.value.layout, null);
+    if (resource.value.descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(vk, resource.value.descriptor_set_layout, null);
+    if (resource.value.descriptor_pool != null) c.vkDestroyDescriptorPool(vk, resource.value.descriptor_pool, null);
     pipeline.* = .{};
 }
 
@@ -1151,26 +1251,31 @@ fn dispatchCompute(ctx_ptr: *anyopaque, group_count_x: u32, group_count_y: u32, 
     c.vkCmdDispatch(cmd, group_count_x, group_count_y, group_count_z);
 }
 
-fn pushComputeConstants(ctx_ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+fn pushComputeConstants(ctx_ptr: *anyopaque, pipeline: rhi.ComputePipeline, offset: u32, size: u32, data: *const anyopaque) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const cmd = currentCommandBuffer(ctx) orelse return;
-    c.vkCmdPushConstants(cmd, @ptrFromInt(pipeline_layout), c.VK_SHADER_STAGE_COMPUTE_BIT, offset, size, data);
+    const resource = computePipelineResource(ctx, pipeline) orelse return;
+    c.vkCmdPushConstants(cmd, resource.layout, c.VK_SHADER_STAGE_COMPUTE_BIT, offset, size, data);
 }
 
-fn fillComputeBuffer(ctx_ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void {
+fn fillComputeBuffer(ctx_ptr: *anyopaque, buffer: rhi.ComputeBuffer, offset: u64, size: u64, data: u32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const cmd = currentCommandBuffer(ctx) orelse return;
-    c.vkCmdFillBuffer(cmd, @ptrFromInt(buffer), offset, size, data);
+    const resource = computeBufferResource(ctx, buffer) orelse return;
+    c.vkCmdFillBuffer(cmd, resource.buffer, offset, size, data);
 }
 
-fn copyComputeBuffer(ctx_ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+fn copyComputeBuffer(ctx_ptr: *anyopaque, src_buffer: rhi.ComputeBufferBinding, dst_buffer: rhi.ComputeBufferBinding, src_offset: u64, dst_offset: u64, size: u64) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const cmd = currentCommandBuffer(ctx) orelse return;
+    const src = bindingBuffer(ctx, src_buffer);
+    const dst = bindingBuffer(ctx, dst_buffer);
+    if (src == null or dst == null) return;
     var region = std.mem.zeroes(c.VkBufferCopy);
     region.srcOffset = src_offset;
     region.dstOffset = dst_offset;
     region.size = size;
-    c.vkCmdCopyBuffer(cmd, @ptrFromInt(src_buffer), @ptrFromInt(dst_buffer), 1, &region);
+    c.vkCmdCopyBuffer(cmd, src, dst, 1, &region);
 }
 
 fn computePipelineBarrier(ctx_ptr: *anyopaque, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags) void {
@@ -1183,10 +1288,11 @@ fn computePipelineBarrier(ctx_ptr: *anyopaque, src_stage: rhi.PipelineStageFlags
     c.vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 1, &barrier, 0, null, 0, null);
 }
 
-fn computeBufferBarrier(ctx_ptr: *anyopaque, buffer: u64, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
+fn computeBufferBarrier(ctx_ptr: *anyopaque, buffer: rhi.ComputeBufferBinding, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     const cmd = currentCommandBuffer(ctx) orelse return;
-    if (buffer == 0 or size == 0) return;
+    const vk_buffer = bindingBuffer(ctx, buffer);
+    if (vk_buffer == null or size == 0) return;
 
     var barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
     barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -1194,7 +1300,7 @@ fn computeBufferBarrier(ctx_ptr: *anyopaque, buffer: u64, src_stage: rhi.Pipelin
     barrier.dstAccessMask = dst_access;
     barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = @ptrFromInt(buffer);
+    barrier.buffer = vk_buffer;
     barrier.offset = offset;
     barrier.size = size;
 
@@ -1206,12 +1312,6 @@ fn waitForFrameFence(ctx_ptr: *anyopaque, frame_index: usize) bool {
     if (frame_index >= rhi.MAX_FRAMES_IN_FLIGHT) return false;
     const fence = ctx.frames.in_flight_fences[frame_index] orelse return false;
     return c.vkWaitForFences(ctx.vulkan_device.vk_device, 1, &fence, c.VK_TRUE, 5_000_000_000) == c.VK_SUCCESS;
-}
-
-fn getNativeBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) u64 {
-    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
-    const buffer = ctx.resources.buffers.get(handle) orelse return 0;
-    return @intFromPtr(buffer.buffer);
 }
 
 fn hasComputeCommandBuffer(ctx_ptr: *anyopaque) bool {
@@ -1234,7 +1334,6 @@ const VULKAN_COMPUTE_CONTEXT_VTABLE = rhi.IComputeContext.VTable{
     .pipelineBarrier = computePipelineBarrier,
     .bufferBarrier = computeBufferBarrier,
     .waitForFrameFence = waitForFrameFence,
-    .getNativeBuffer = getNativeBuffer,
     .hasCommandBuffer = hasComputeCommandBuffer,
 };
 
@@ -1363,6 +1462,7 @@ const VULKAN_RHI_INTERFACES = rhi.RHI.Interfaces{
     .water = &VULKAN_WATER_CONTEXT_VTABLE,
     .compute = &VULKAN_COMPUTE_CONTEXT_VTABLE,
     .ui = &VULKAN_UI_CONTEXT_VTABLE,
+    .imgui = &VULKAN_IMGUI_CONTEXT_VTABLE,
     .query = &VULKAN_DEVICE_QUERY_VTABLE,
     .timing = &VULKAN_DEVICE_TIMING_VTABLE,
     .quality = &VULKAN_RENDER_QUALITY_OPTIONS_VTABLE,

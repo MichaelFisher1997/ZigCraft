@@ -230,14 +230,14 @@ const MockContext = struct {
         self.draw_depth_texture_called = true;
     }
 
-    fn bindComputePipeline(ptr: *anyopaque, pipeline: u64) void {
+    fn bindComputePipeline(ptr: *anyopaque, pipeline: rhi.ComputePipeline) void {
         _ = ptr;
         _ = pipeline;
     }
-    fn bindDescriptorSet(ptr: *anyopaque, pipeline_layout: u64, descriptor_set: u64) void {
+    fn bindDescriptorSet(ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize) void {
         _ = ptr;
-        _ = pipeline_layout;
-        _ = descriptor_set;
+        _ = pipeline;
+        _ = frame_index;
     }
     fn createComputeBuffer(ptr: *anyopaque, size: usize, host_visible: bool) rhi.RhiError!rhi.ComputeBuffer {
         _ = ptr;
@@ -257,7 +257,7 @@ const MockContext = struct {
         _ = push_constant_size;
         return .{};
     }
-    fn updateComputeDescriptors(ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const u64) void {
+    fn updateComputeDescriptors(ptr: *anyopaque, pipeline: rhi.ComputePipeline, frame_index: usize, buffers: []const rhi.ComputeBufferBinding) void {
         _ = ptr;
         _ = pipeline;
         _ = frame_index;
@@ -273,21 +273,21 @@ const MockContext = struct {
         _ = group_count_y;
         _ = group_count_z;
     }
-    fn pushComputeConstants(ptr: *anyopaque, pipeline_layout: u64, offset: u32, size: u32, data: *const anyopaque) void {
+    fn pushComputeConstants(ptr: *anyopaque, pipeline: rhi.ComputePipeline, offset: u32, size: u32, data: *const anyopaque) void {
         _ = ptr;
-        _ = pipeline_layout;
+        _ = pipeline;
         _ = offset;
         _ = size;
         _ = data;
     }
-    fn fillComputeBuffer(ptr: *anyopaque, buffer: u64, offset: u64, size: u64, data: u32) void {
+    fn fillComputeBuffer(ptr: *anyopaque, buffer: rhi.ComputeBuffer, offset: u64, size: u64, data: u32) void {
         _ = ptr;
         _ = buffer;
         _ = offset;
         _ = size;
         _ = data;
     }
-    fn copyComputeBuffer(ptr: *anyopaque, src_buffer: u64, dst_buffer: u64, src_offset: u64, dst_offset: u64, size: u64) void {
+    fn copyComputeBuffer(ptr: *anyopaque, src_buffer: rhi.ComputeBufferBinding, dst_buffer: rhi.ComputeBufferBinding, src_offset: u64, dst_offset: u64, size: u64) void {
         _ = ptr;
         _ = src_buffer;
         _ = dst_buffer;
@@ -302,7 +302,7 @@ const MockContext = struct {
         _ = src_access;
         _ = dst_access;
     }
-    fn computeBufferBarrier(ptr: *anyopaque, buffer: u64, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
+    fn computeBufferBarrier(ptr: *anyopaque, buffer: rhi.ComputeBufferBinding, src_stage: rhi.PipelineStageFlags, dst_stage: rhi.PipelineStageFlags, src_access: rhi.AccessFlags, dst_access: rhi.AccessFlags, offset: u64, size: u64) void {
         _ = ptr;
         _ = buffer;
         _ = src_stage;
@@ -316,11 +316,6 @@ const MockContext = struct {
         _ = ptr;
         _ = frame_index;
         return true;
-    }
-    fn getNativeBuffer(ptr: *anyopaque, handle: rhi.BufferHandle) u64 {
-        _ = ptr;
-        _ = handle;
-        return 0;
     }
     fn hasCommandBuffer(ptr: *anyopaque) bool {
         _ = ptr;
@@ -531,7 +526,6 @@ const MockContext = struct {
             .pipelineBarrier = computePipelineBarrier,
             .bufferBarrier = computeBufferBarrier,
             .waitForFrameFence = waitForFrameFence,
-            .getNativeBuffer = getNativeBuffer,
             .hasCommandBuffer = hasCommandBuffer,
         },
         .ui = MOCK_UI_VTABLE,

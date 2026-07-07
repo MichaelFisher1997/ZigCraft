@@ -546,9 +546,6 @@ test "RHI contract declares IComputeContext.bufferBarrier" {
 test "RHI contract declares IComputeContext.waitForFrameFence" {
     try std.testing.expect(@hasDecl(rhi.IComputeContext, "waitForFrameFence"));
 }
-test "RHI contract declares IComputeContext.getNativeBuffer" {
-    try std.testing.expect(@hasDecl(rhi.IComputeContext, "getNativeBuffer"));
-}
 test "RHI contract declares IComputeContext.hasCommandBuffer" {
     try std.testing.expect(@hasDecl(rhi.IComputeContext, "hasCommandBuffer"));
 }

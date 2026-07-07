@@ -3,10 +3,9 @@ const c = @import("c").c;
 const rhi_pkg = @import("engine-rhi").rhi;
 const log = @import("engine-core").log;
 const Vec3 = @import("engine-math").Vec3;
-const VulkanContext = @import("vulkan/rhi_context_types.zig").VulkanContext;
-const Utils = @import("vulkan/utils.zig");
-const lpv_utils = @import("lpv_utils.zig");
-const LPVBackend = @import("lpv_backend.zig").LPVBackend;
+const VulkanContext = @import("rhi_context_types.zig").VulkanContext;
+const Utils = @import("utils.zig");
+const lpv_utils = @import("../lpv_utils.zig");
 const lpv_types = @import("engine-lighting").lpv_types;
 
 const MAX_LIGHTS_PER_UPDATE = lpv_types.MAX_LIGHTS_PER_UPDATE;
@@ -71,7 +70,6 @@ pub const LPVSystem = struct {
     pub fn init(
         allocator: std.mem.Allocator,
         rhi: rhi_pkg.RHI,
-        backend: LPVBackend,
         grid_size: u32,
         cell_size: f32,
         intensity: f32,
@@ -81,7 +79,7 @@ pub const LPVSystem = struct {
         const self = try allocator.create(LPVSystem);
         errdefer allocator.destroy(self);
 
-        const vk_ctx = backend.vk_ctx;
+        const vk_ctx: *VulkanContext = @ptrCast(@alignCast(rhi.ptr));
         const clamped_grid = std.math.clamp(grid_size, 16, 64);
 
         self.* = .{

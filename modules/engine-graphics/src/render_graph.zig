@@ -52,8 +52,7 @@ const log = @import("engine-core").log;
 const CSM = @import("engine-shadows").csm;
 pub const AtmosphereSystem = @import("engine-atmosphere").AtmosphereSystem;
 const MaterialSystem = @import("engine-assets").MaterialSystem;
-pub const LPVSystem = @import("lpv_system.zig").LPVSystem;
-const LPVBackend = @import("lpv_backend.zig").LPVBackend;
+pub const LPVSystem = @import("vulkan/lpv_system.zig").LPVSystem;
 const TextureAtlas = @import("engine-assets").TextureAtlas;
 const CloudSystem = @import("engine-clouds").CloudSystem;
 
@@ -149,7 +148,6 @@ pub const RenderGraph = struct {
         const lpv_system = try LPVSystem.init(
             allocator,
             rhi,
-            LPVBackend.fromVulkanRHI(rhi),
             lpv_config.grid_size,
             lpv_config.cell_size,
             lpv_config.intensity,

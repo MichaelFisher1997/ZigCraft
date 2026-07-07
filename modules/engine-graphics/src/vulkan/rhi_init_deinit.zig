@@ -185,6 +185,25 @@ pub fn deinit(ctx: anytype) void {
     if (vk_device != null) {
         _ = c.vkDeviceWaitIdle(vk_device);
 
+        var compute_pipeline_iter = ctx.compute_resources.pipelines.iterator();
+        while (compute_pipeline_iter.next()) |entry| {
+            const pipeline = entry.value_ptr.*;
+            if (pipeline.pipeline != null) c.vkDestroyPipeline(vk_device, pipeline.pipeline, null);
+            if (pipeline.layout != null) c.vkDestroyPipelineLayout(vk_device, pipeline.layout, null);
+            if (pipeline.descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(vk_device, pipeline.descriptor_set_layout, null);
+            if (pipeline.descriptor_pool != null) c.vkDestroyDescriptorPool(vk_device, pipeline.descriptor_pool, null);
+        }
+        ctx.compute_resources.pipelines.deinit(ctx.allocator);
+
+        var compute_buffer_iter = ctx.compute_resources.buffers.iterator();
+        while (compute_buffer_iter.next()) |entry| {
+            const buffer = entry.value_ptr.*;
+            if (buffer.mapped_ptr != null) c.vkUnmapMemory(vk_device, buffer.memory);
+            if (buffer.buffer != null) c.vkDestroyBuffer(vk_device, buffer.buffer, null);
+            if (buffer.memory != null) c.vkFreeMemory(vk_device, buffer.memory, null);
+        }
+        ctx.compute_resources.buffers.deinit(ctx.allocator);
+
         if (ctx.render_pass_manager.main_framebuffer != null) {
             c.vkDestroyFramebuffer(vk_device, ctx.render_pass_manager.main_framebuffer, null);
             ctx.render_pass_manager.main_framebuffer = null;
