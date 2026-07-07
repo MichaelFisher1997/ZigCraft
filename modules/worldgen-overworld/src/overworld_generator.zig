@@ -186,7 +186,7 @@ pub const OverworldGenerator = struct {
             break :blk .{ .x = self.cache_center_x, .z = self.cache_center_z };
         };
 
-        const phase_data = self.allocator.create(terrain_shape_mod.ChunkPhaseData) catch return;
+        const phase_data = try self.allocator.create(terrain_shape_mod.ChunkPhaseData);
         defer self.allocator.destroy(phase_data);
         if (!self.terrain_shape.prepareChunkPhaseData(
             phase_data,
@@ -230,13 +230,13 @@ pub const OverworldGenerator = struct {
         }
         LightingComputer.computeSkylight(chunk, self.allocator) catch |err| {
             log.log.errWithTrace("Failed to compute skylight for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
-            return;
+            return err;
         };
         if (stop_flag) |sf| if (sf.*) return;
         if (!self.basic_chunks_only) {
             LightingComputer.computeBlockLight(chunk, self.allocator) catch |err| {
                 log.log.errWithTrace("Failed to compute block light for chunk ({}, {}): {}", .{ chunk.chunk_x, chunk.chunk_z, err });
-                return;
+                return err;
             };
         }
 
@@ -820,4 +820,42 @@ pub const OverworldGenerator = struct {
 test "LOD cached water surfaces resolve to seabed block" {
     try std.testing.expectEqual(BlockType.water, OverworldGenerator.surfaceTypeToBlock(undefined, .water_shallow));
     try std.testing.expectEqual(BlockType.water, OverworldGenerator.surfaceTypeToBlock(undefined, .water_deep));
+}
+
+fn testDecorationProvider() DecorationProvider {
+    const NoopProvider = struct {
+        fn decorate(_: ?*anyopaque, _: DecorationProvider.DecorationContext) void {}
+
+        const VTABLE = DecorationProvider.VTable{
+            .decorate = decorate,
+        };
+    };
+
+    return .{ .ptr = null, .vtable = &NoopProvider.VTABLE };
+}
+
+test "OverworldGenerator propagates phase allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var gen = OverworldGenerator.initWithParams(0, failing.allocator(), testDecorationProvider(), .{
+        .terrain_shape = .{ .disable_caves = true },
+        .basic_chunks_only = true,
+    });
+    defer gen.deinit();
+
+    var chunk = Chunk.init(0, 0);
+    try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
+    try std.testing.expect(!chunk.generated);
+}
+
+test "OverworldGenerator propagates lighting allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
+    var gen = OverworldGenerator.initWithParams(0, failing.allocator(), testDecorationProvider(), .{
+        .terrain_shape = .{ .disable_caves = true },
+        .basic_chunks_only = true,
+    });
+    defer gen.deinit();
+
+    var chunk = Chunk.init(0, 0);
+    try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
+    try std.testing.expect(!chunk.generated);
 }

@@ -156,7 +156,7 @@ pub const OverworldV2Generator = struct {
         self.placeVegetation(chunk, stop_flag);
 
         if (self.params.enable_lighting) {
-            LightingComputer.computeSkylight(chunk, self.allocator) catch return;
+            try LightingComputer.computeSkylight(chunk, self.allocator);
         }
 
         chunk.generated = true;
@@ -510,4 +510,13 @@ test "overworld-v2 LOD tree density covers forest variants" {
     try std.testing.expectEqual(TreeShape.birch, trees.defaultTreeShapeForBiome(.birch_forest));
     try std.testing.expectEqual(TreeShape.spruce, trees.defaultTreeShapeForBiome(.old_growth_taiga));
     try std.testing.expectEqual(TreeShape.jungle, trees.defaultTreeShapeForBiome(.bamboo_jungle));
+}
+
+test "overworld-v2 propagates lighting allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var gen = OverworldV2Generator.init(0, failing.allocator());
+    var chunk = Chunk.init(0, 0);
+
+    try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
+    try std.testing.expect(!chunk.generated);
 }

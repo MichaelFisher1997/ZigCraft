@@ -67,6 +67,7 @@ pub const SaveManager = struct {
     failed_chunks: std.ArrayListUnmanaged(ChunkKey),
     failed_save_count: std.atomic.Value(usize),
     persisted_failed_save_count: std.atomic.Value(usize),
+    persisted_failed_save_mutex: sync.Mutex,
 
     thread: std.Thread,
 
@@ -107,6 +108,7 @@ pub const SaveManager = struct {
             .failed_chunks = .empty,
             .failed_save_count = std.atomic.Value(usize).init(0),
             .persisted_failed_save_count = std.atomic.Value(usize).init(persisted_failures),
+            .persisted_failed_save_mutex = .{},
             .level_data = blk: {
                 const generator_copy = try allocator.dupe(u8, generator_name);
                 errdefer allocator.free(generator_copy);
@@ -246,6 +248,9 @@ pub const SaveManager = struct {
     }
 
     pub fn takePersistedFailedSaveCount(self: *SaveManager) usize {
+        self.persisted_failed_save_mutex.lock();
+        defer self.persisted_failed_save_mutex.unlock();
+
         const count = self.persisted_failed_save_count.swap(0, .acq_rel);
         if (count > 0) {
             self.save_dir.deleteFile(SAVE_FAILURE_COUNT_FILE) catch |err| {
@@ -257,7 +262,11 @@ pub const SaveManager = struct {
 
     fn recordSaveFailure(self: *SaveManager) void {
         _ = self.failed_save_count.fetchAdd(1, .monotonic);
-        const persisted_count = self.persisted_failed_save_count.fetchAdd(1, .monotonic) + 1;
+        self.persisted_failed_save_mutex.lock();
+        defer self.persisted_failed_save_mutex.unlock();
+
+        const persisted_count = self.persisted_failed_save_count.load(.acquire) + 1;
+        self.persisted_failed_save_count.store(persisted_count, .release);
         persistSaveFailureCount(self.save_dir, persisted_count) catch |err| {
             log.log.err("Failed to persist save failure count: {}", .{err});
         };
