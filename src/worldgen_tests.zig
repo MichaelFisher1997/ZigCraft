@@ -39,8 +39,8 @@ test "WorldGen same seed produces identical blocks at origin" {
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
 
-    gen1.generate(&chunk1, null);
-    gen2.generate(&chunk2, null);
+    try gen1.generate(&chunk1, null);
+    try gen2.generate(&chunk2, null);
 
     try testing.expectEqualSlices(BlockType, &chunk1.blocks, &chunk2.blocks);
 }
@@ -56,8 +56,8 @@ test "WorldGen same seed produces identical biomes at origin" {
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
 
-    gen1.generate(&chunk1, null);
-    gen2.generate(&chunk2, null);
+    try gen1.generate(&chunk1, null);
+    try gen2.generate(&chunk2, null);
 
     try testing.expectEqualSlices(BiomeId, &chunk1.biomes, &chunk2.biomes);
 }
@@ -73,9 +73,9 @@ test "WorldGen same seed produces identical blocks at different positions" {
     var chunk1b = Chunk.init(1, 0);
     var chunk1c = Chunk.init(0, 1);
 
-    gen1.generate(&chunk1a, null);
-    gen1.generate(&chunk1b, null);
-    gen1.generate(&chunk1c, null);
+    try gen1.generate(&chunk1a, null);
+    try gen1.generate(&chunk1b, null);
+    try gen1.generate(&chunk1c, null);
 
     var gen2 = OverworldGenerator.init(seed, allocator, deco_registry.StandardDecorationProvider.provider());
     defer gen2.deinit();
@@ -83,9 +83,9 @@ test "WorldGen same seed produces identical blocks at different positions" {
     var chunk2b = Chunk.init(1, 0);
     var chunk2c = Chunk.init(0, 1);
 
-    gen2.generate(&chunk2a, null);
-    gen2.generate(&chunk2b, null);
-    gen2.generate(&chunk2c, null);
+    try gen2.generate(&chunk2a, null);
+    try gen2.generate(&chunk2b, null);
+    try gen2.generate(&chunk2c, null);
 
     try testing.expectEqualSlices(BlockType, &chunk1a.blocks, &chunk2a.blocks);
     try testing.expectEqualSlices(BlockType, &chunk1b.blocks, &chunk2b.blocks);
@@ -106,8 +106,8 @@ test "WorldGen different seeds produce different blocks" {
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
 
-    gen1.generate(&chunk1, null);
-    gen2.generate(&chunk2, null);
+    try gen1.generate(&chunk1, null);
+    try gen2.generate(&chunk2, null);
 
     const all_same = std.mem.eql(BlockType, &chunk1.blocks, &chunk2.blocks);
     try testing.expect(!all_same);
@@ -135,8 +135,8 @@ test "WorldGen different seeds produce different biomes" {
         var chunk1 = Chunk.init(loc[0], loc[1]);
         var chunk2 = Chunk.init(loc[0], loc[1]);
 
-        gen1.generate(&chunk1, null);
-        gen2.generate(&chunk2, null);
+        try gen1.generate(&chunk1, null);
+        try gen2.generate(&chunk2, null);
 
         if (!std.mem.eql(BiomeId, &chunk1.biomes, &chunk2.biomes)) {
             differences_found += 1;
@@ -170,11 +170,11 @@ test "WorldGen determinism across multiple chunks with same seed" {
     };
 
     for (&gens, 0..) |*gen, i| {
-        gen.generate(&chunks1[i], null);
+        try gen.generate(&chunks1[i], null);
     }
 
     for (&gens, 0..) |*gen, i| {
-        gen.generate(&chunks2[i], null);
+        try gen.generate(&chunks2[i], null);
     }
 
     for (0..3) |i| {
@@ -190,7 +190,7 @@ test "WorldGen golden output for known seed at origin" {
     defer gen.deinit();
     var chunk = Chunk.init(0, 0);
 
-    gen.generate(&chunk, null);
+    try gen.generate(&chunk, null);
 
     try testing.expect(chunk.generated);
     try testing.expect(chunk.dirty);
@@ -213,8 +213,8 @@ test "Overworld V2 generator is deterministic" {
     var chunk1 = Chunk.init(0, 0);
     var chunk2 = Chunk.init(0, 0);
 
-    gen1.generate(&chunk1, null);
-    gen2.generate(&chunk2, null);
+    try gen1.generate(&chunk1, null);
+    try gen2.generate(&chunk2, null);
 
     try testing.expectEqualSlices(BlockType, &chunk1.blocks, &chunk2.blocks);
     try testing.expectEqualSlices(BiomeId, &chunk1.biomes, &chunk2.biomes);
@@ -239,7 +239,7 @@ test "Overworld V2 stable chunk fingerprints for known seed" {
 
     for (positions, 0..) |pos, i| {
         var chunk = Chunk.init(pos[0], pos[1]);
-        gen.generate(&chunk, null);
+        try gen.generate(&chunk, null);
         const fp = chunkFingerprint(&chunk);
         try testing.expectEqual(expected[i], fp);
     }
@@ -270,7 +270,7 @@ test "WorldGen stable chunk fingerprints for known seed" {
 
     for (positions, 0..) |pos, i| {
         var chunk = Chunk.init(pos[0], pos[1]);
-        gen.generate(&chunk, null);
+        try gen.generate(&chunk, null);
         const fp = chunkFingerprint(&chunk);
         try testing.expectEqual(expected[i], fp);
     }
@@ -282,7 +282,7 @@ test "WorldGen populates heightmap and biomes" {
     defer gen.deinit();
     var chunk = Chunk.init(0, 0);
 
-    gen.generate(&chunk, null);
+    try gen.generate(&chunk, null);
 
     const h = chunk.getSurfaceHeight(8, 8);
     try testing.expect(h > 0);

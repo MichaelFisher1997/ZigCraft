@@ -3,6 +3,11 @@ const testing = std.testing;
 const Vec3 = @import("zig-math").Vec3;
 const player_module = @import("game-core").player;
 const Player = player_module.Player;
+const world_runtime = @import("world-runtime");
+const IWorld = world_runtime.IWorld;
+const IWorldSimulation = world_runtime.IWorldSimulation;
+const BlockType = @import("world-core").BlockType;
+const Face = @import("world-core").Face;
 
 test "Player.init creates player with correct initial state" {
     const spawn_pos = Vec3.init(10, 100, 20);
@@ -172,4 +177,143 @@ test "Player constants are reasonable values" {
 
     // Reach distance should be positive
     try testing.expect(Player.REACH_DISTANCE > 0.0);
+}
+
+test "Player block mutation errors are handled" {
+    const FailingWorld = struct {
+        set_block_calls: usize = 0,
+
+        const VTABLE = IWorld.VTable{
+            .update = update,
+            .render = render,
+            .renderOpaque = render,
+            .renderFluid = render,
+            .deinit = deinit,
+            .getRenderStats = getRenderStats,
+            .getStats = getStats,
+            .getLODStats = getLODStats,
+            .isLODEnabled = isLODEnabled,
+            .shadowScene = shadowScene,
+            .enableSaveManager = enableSaveManager,
+            .takeSaveFailureWarningCount = takeSaveFailureWarningCount,
+            .pauseGeneration = pauseGeneration,
+            .isPaused = isPaused,
+            .collisionWorld = collisionWorld,
+            .getBlock = getBlock,
+            .setBlock = setBlock,
+            .getColumnInfo = getColumnInfo,
+            .getDebugLightInfo = getDebugLightInfo,
+            .getRegionInfo = getRegionInfo,
+            .getGenerator = getGenerator,
+            .getGeneratorName = getGeneratorName,
+            .getRenderDistance = getRenderDistance,
+            .setRenderDistance = setRenderDistance,
+            .getHorizonDistance = getHorizonDistance,
+            .setHorizonDistance = setHorizonDistance,
+            .isLODRenderingEnabled = isLODRenderingEnabled,
+            .toggleLODRendering = toggleLODRendering,
+            .getChunkStateCounts = getChunkStateCounts,
+            .isStartupBusy = isStartupBusy,
+            .getWorldStateData = getWorldStateData,
+            .lpvWorld = lpvWorld,
+            .graphicsRenderView = graphicsRenderView,
+            .getGpuMeshDispatch = getGpuMeshDispatch,
+        };
+
+        fn interface(self: *@This()) IWorldSimulation {
+            return .{ .world = .{ .ptr = self, .vtable = &VTABLE } };
+        }
+
+        fn update(_: *anyopaque, _: Vec3, _: f32) anyerror!void {}
+        fn render(_: *anyopaque, _: @import("engine-math").Mat4, _: Vec3, _: bool) void {}
+        fn deinit(_: *anyopaque) void {}
+        fn getRenderStats(_: *anyopaque) @import("world-runtime").RenderStats {
+            return .{};
+        }
+        fn getStats(_: *anyopaque) @import("world-runtime").WorldStatsData {
+            return .{ .chunks_loaded = 0, .total_vertices = 0, .gen_queue = 0, .mesh_queue = 0, .upload_queue = 0 };
+        }
+        fn getLODStats(_: *anyopaque) ?@import("world-lod").LODStats {
+            return null;
+        }
+        fn isLODEnabled(_: *anyopaque) bool {
+            return false;
+        }
+        fn shadowScene(_: *anyopaque) @import("engine-rhi").IShadowScene {
+            return undefined;
+        }
+        fn enableSaveManager(_: *anyopaque, _: []const u8, _: []const u8) anyerror!void {}
+        fn takeSaveFailureWarningCount(_: *anyopaque) usize {
+            return 0;
+        }
+        fn pauseGeneration(_: *anyopaque) void {}
+        fn isPaused(_: *anyopaque) bool {
+            return false;
+        }
+        fn collisionWorld(_: *anyopaque) @import("engine-physics").VoxelCollisionWorld {
+            return undefined;
+        }
+        fn getBlock(_: *anyopaque, _: i32, _: i32, _: i32) BlockType {
+            return .stone;
+        }
+        fn setBlock(ptr: *anyopaque, _: i32, _: i32, _: i32, _: BlockType) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.set_block_calls += 1;
+            return error.TestExpectedError;
+        }
+        fn getColumnInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").ColumnInfo {
+            return undefined;
+        }
+        fn getDebugLightInfo(_: *anyopaque, _: i32, _: i32, _: i32) ?@import("world-runtime").DebugLightInfo {
+            return null;
+        }
+        fn getRegionInfo(_: *anyopaque, _: i32, _: i32) @import("world-worldgen").RegionInfo {
+            return undefined;
+        }
+        fn getGenerator(_: *anyopaque) @import("world-worldgen").Generator {
+            return undefined;
+        }
+        fn getGeneratorName(_: *anyopaque) []const u8 {
+            return "failing";
+        }
+        fn getRenderDistance(_: *anyopaque) i32 {
+            return 0;
+        }
+        fn setRenderDistance(_: *anyopaque, _: i32) void {}
+        fn getHorizonDistance(_: *anyopaque) i32 {
+            return 0;
+        }
+        fn setHorizonDistance(_: *anyopaque, _: i32) void {}
+        fn isLODRenderingEnabled(_: *anyopaque) bool {
+            return false;
+        }
+        fn toggleLODRendering(_: *anyopaque) bool {
+            return false;
+        }
+        fn getChunkStateCounts(_: *anyopaque) @import("world-core").ChunkStateCounts {
+            return .{};
+        }
+        fn isStartupBusy(_: *anyopaque) bool {
+            return false;
+        }
+        fn getWorldStateData(_: *anyopaque) @import("world-core").WorldStateData {
+            return .{ .generator_name = "failing", .seed = 0, .gen_queue = 0, .mesh_queue = 0, .upload_queue = 0 };
+        }
+        fn lpvWorld(_: *anyopaque) @import("engine-rhi").ILPVWorld {
+            return undefined;
+        }
+        fn graphicsRenderView(ptr: *anyopaque) @import("engine-rhi").IWorldRenderView {
+            return .{ .ptr = ptr, .vtable = &.{ .render = render, .renderOpaque = render, .renderFluid = render } };
+        }
+        fn getGpuMeshDispatch(_: *anyopaque) @import("world-runtime").GpuMeshDispatch {
+            return .{ .dispatch_fn = null, .dispatch_ctx = null };
+        }
+    };
+
+    var world = FailingWorld{};
+    var player = Player.init(Vec3.init(0, 10, 0), true);
+    player.target_block = .{ .x = 1, .y = 2, .z = 3, .face = Face.east, .distance = 1.0 };
+
+    player.breakTargetBlock(world.interface());
+    try testing.expectEqual(@as(usize, 1), world.set_block_calls);
 }

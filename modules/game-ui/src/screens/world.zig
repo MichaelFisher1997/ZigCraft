@@ -22,6 +22,7 @@ const FRUSTUM_VERTEX_COUNT = DebugFrustum.FRUSTUM_VERTEX_COUNT;
 const ChunkInspectorOverlay = @import("engine-ui").ChunkInspectorOverlay;
 const Font = @import("engine-ui").font;
 const Color = @import("engine-ui").Color;
+const Rect = @import("engine-ui").Rect;
 const WorldStats = @import("engine-ui").WorldStats;
 const LODStatsDisplay = @import("engine-ui").LODStatsDisplay;
 const log = @import("engine-core").log;
@@ -64,6 +65,7 @@ pub const WorldScreen = struct {
     startup_diagnostic_logged: bool = false,
     stable_shadow_sun_dir: Vec3 = Vec3.init(0.0, 1.0, 0.0),
     stable_shadow_sun_initialized: bool = false,
+    save_failure_warning_count: usize = 0,
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
         .update = update,
@@ -90,6 +92,7 @@ pub const WorldScreen = struct {
             .startup_diagnostic_start = context.time.elapsed,
             .startup_diagnostic_start_frame = context.time.frame_count,
             .startup_diagnostic_logged = false,
+            .save_failure_warning_count = world.takeSaveFailureWarningCount(),
         };
         settings_data.clearTerrainDebugViews(context.settings);
         render_system.getRHI().options().setShadowDebugChannel(@intFromEnum(settings_data.resolveShadowDebugChannel(context.settings)));
@@ -113,6 +116,11 @@ pub const WorldScreen = struct {
         const now = ctx.time.elapsed;
         const benchmark_mode = ctx.benchmark_runner != null;
         const automated_capture = ctx.build_config.shadow_test_scene and ctx.build_config.screenshot_path.len > 0;
+
+        const save_failures = self.world.takeSaveFailureWarningCount();
+        if (save_failures > 0) {
+            self.save_failure_warning_count += save_failures;
+        }
 
         if (!benchmark_mode and !automated_capture) {
             if (try self.processControls(now)) return;
@@ -335,6 +343,15 @@ pub const WorldScreen = struct {
         const shadow_sun_dir = if (shadow_sandbox_active) self.resolveStableShadowSunDir(render_sun_dir) else render_sun_dir;
         if (!shadow_sandbox_active) self.stable_shadow_sun_initialized = false;
 
+        if (self.save_failure_warning_count > 0) {
+            var save_warning_buf: [96]u8 = undefined;
+            const save_warning = std.fmt.bufPrint(&save_warning_buf, "SAVE WARNING: {} save failure(s). Check logs.", .{self.save_failure_warning_count}) catch "SAVE WARNING: save failures. Check logs.";
+            const warning_rect = Rect{ .x = 14.0 * ctx.settings.ui_scale, .y = 14.0 * ctx.settings.ui_scale, .width = 360.0 * ctx.settings.ui_scale, .height = 34.0 * ctx.settings.ui_scale };
+            ui.drawRect(warning_rect, Color.rgba(0.18, 0.04, 0.05, 0.88));
+            ui.drawRectOutline(warning_rect, Color.rgba(0.78, 0.30, 0.34, 1.0), 1.0 * ctx.settings.ui_scale);
+            Font.drawText(ui, save_warning, warning_rect.x + 10.0 * ctx.settings.ui_scale, warning_rect.y + 10.0 * ctx.settings.ui_scale, 0.78 * ctx.settings.ui_scale, Color.rgba(1.0, 0.90, 0.84, 1.0));
+        }
+
         // TODO: Replace this stabilization toggle with a user-facing simple lighting setting.
         const simple_lighting_mode = true;
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
@@ -394,7 +411,19 @@ pub const WorldScreen = struct {
                 std.math.clamp(boosted_horizon.z, 0.0, 1.0),
             );
             rhi.renderContext().setClearColor(clear_color);
-            try rhi.renderContext().updateGlobalUniforms(view_proj_render, camera.position, render_sun_dir, self.session.atmosphere.sun_color, self.session.atmosphere.time.time_of_day, self.session.atmosphere.fog_color, self.session.atmosphere.fog_density, self.session.atmosphere.fog_enabled and !safe_mode, self.session.atmosphere.sun_intensity, self.session.atmosphere.ambient_intensity, ctx.settings.textures_enabled, frame_params);
+            try rhi.renderContext().updateGlobalUniforms(.{
+                .view_proj = view_proj_render,
+                .cam_pos = camera.position,
+                .sun_dir = render_sun_dir,
+                .sun_color = self.session.atmosphere.sun_color,
+                .time = self.session.atmosphere.time.time_of_day,
+                .fog_color = self.session.atmosphere.fog_color,
+                .fog_density = self.session.atmosphere.fog_density,
+                .fog_enabled = self.session.atmosphere.fog_enabled and !safe_mode,
+                .sun_intensity = self.session.atmosphere.sun_intensity,
+                .ambient = self.session.atmosphere.ambient_intensity,
+                .use_texture = ctx.settings.textures_enabled,
+            }, frame_params);
 
             const env_map_ptr = render_system.getEnvMapPtr();
             const env_map_handle = if (env_map_ptr.*) |t| t.handle else 0;

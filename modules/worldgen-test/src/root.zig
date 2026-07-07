@@ -38,7 +38,7 @@ pub const ShadowTestWorldGenerator = struct {
         return .{ .seed = seed, .allocator = allocator };
     }
 
-    pub fn generate(self: *ShadowTestWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) void {
+    pub fn generate(self: *ShadowTestWorldGenerator, chunk: *Chunk, stop_flag: ?*const bool) worldgen_api.WorldgenError!void {
         chunk.generated = false;
 
         var local_z: u32 = 0;
@@ -56,8 +56,8 @@ pub const ShadowTestWorldGenerator = struct {
         }
 
         updateColumnMetadata(chunk);
-        LightingComputer.computeSkylight(chunk, self.allocator) catch unreachable;
-        LightingComputer.computeBlockLight(chunk, self.allocator) catch unreachable;
+        try LightingComputer.computeSkylight(chunk, self.allocator);
+        try LightingComputer.computeBlockLight(chunk, self.allocator);
 
         chunk.generated = true;
         chunk.dirty = true;
@@ -226,9 +226,9 @@ pub const ShadowTestWorldGenerator = struct {
         .deinit = deinitWrapper,
     };
 
-    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) void {
+    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) worldgen_api.WorldgenError!void {
         const self: *ShadowTestWorldGenerator = @ptrCast(@alignCast(ptr));
-        self.generate(chunk, stop_flag);
+        try self.generate(chunk, stop_flag);
     }
 
     fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
@@ -266,6 +266,15 @@ pub fn create(context: worldgen_api.CreateContext) worldgen_api.RegistryError!Ge
     const gen = context.allocator.create(ShadowTestWorldGenerator) catch return error.OutOfMemory;
     gen.* = ShadowTestWorldGenerator.init(context.seed, context.allocator);
     return gen.generator();
+}
+
+test "ShadowTestWorldGenerator propagates lighting allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var gen = ShadowTestWorldGenerator.init(0, failing.allocator());
+    var chunk = Chunk.init(0, 0);
+
+    try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
+    try std.testing.expect(!chunk.generated);
 }
 
 pub const descriptor = worldgen_api.GeneratorDescriptor{

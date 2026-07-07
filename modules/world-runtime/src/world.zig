@@ -39,7 +39,7 @@ const MAX_MDI_CHUNKS = @import("world_renderer.zig").MAX_MDI_CHUNKS;
 const RenderStats = @import("world_renderer.zig").RenderStats;
 const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const ShadowStats = @import("world_renderer.zig").ShadowStats;
-const ChunkStateCounts = @import("engine-ui").chunk_inspector_overlay.ChunkStateCounts;
+const ChunkStateCounts = world_core.ChunkStateCounts;
 const VoxelCollisionWorld = @import("engine-physics").VoxelCollisionWorld;
 const GraphicsWorldRenderView = @import("engine-rhi").IWorldRenderView;
 const ILPVWorld = @import("engine-rhi").ILPVWorld;
@@ -51,7 +51,7 @@ pub const DebugLightInfo = struct {
     block: u4,
     entrance_bounce: u4,
 };
-const WorldStateData = @import("engine-ui").chunk_inspector_overlay.WorldStateData;
+const WorldStateData = world_core.WorldStateData;
 pub const GpuMeshDispatch = struct {
     dispatch_fn: ?*const fn (ctx: *anyopaque) void,
     dispatch_ctx: ?*anyopaque,
@@ -113,6 +113,7 @@ pub const IWorld = struct {
         isLODEnabled: *const fn (ptr: *anyopaque) bool,
         shadowScene: *const fn (ptr: *anyopaque) IShadowScene,
         enableSaveManager: *const fn (ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void,
+        takeSaveFailureWarningCount: *const fn (ptr: *anyopaque) usize,
         pauseGeneration: *const fn (ptr: *anyopaque) void,
         isPaused: *const fn (ptr: *anyopaque) bool,
         collisionWorld: *const fn (ptr: *anyopaque) VoxelCollisionWorld,
@@ -179,6 +180,10 @@ pub const IWorld = struct {
 
     pub fn enableSaveManager(self: IWorld, save_dir_path: []const u8, world_name: []const u8) !void {
         try self.vtable.enableSaveManager(self.ptr, save_dir_path, world_name);
+    }
+
+    pub fn takeSaveFailureWarningCount(self: IWorld) usize {
+        return self.vtable.takeSaveFailureWarningCount(self.ptr);
     }
 
     pub fn pauseGeneration(self: IWorld) void {
@@ -605,6 +610,11 @@ pub const World = struct {
         }
     }
 
+    pub fn takeSaveFailureWarningCount(self: *World) usize {
+        const sm = self.save_manager orelse return 0;
+        return sm.takePersistedFailedSaveCount();
+    }
+
     fn enqueueModifiedChunks(self: *World, sm: *SaveManager) std.ArrayListUnmanaged(ChunkKey) {
         var dirty_keys = std.ArrayListUnmanaged(ChunkKey).empty;
 
@@ -646,6 +656,10 @@ pub const World = struct {
         defer dirty_keys.deinit(self.allocator);
 
         const failed = sm.flush();
+        const failure_count = sm.takeFailedSaveCount();
+        if (failure_count > 0) {
+            log.log.warn("{} save failure(s) occurred while saving modified chunks", .{failure_count});
+        }
         self.remarkFailedSaves(failed);
     }
 
@@ -658,6 +672,10 @@ pub const World = struct {
 
         const failed = sm.flush();
         sm.markAutoSaved();
+        const failure_count = sm.takeFailedSaveCount();
+        if (failure_count > 0) {
+            log.log.warn("{} save failure(s) occurred during auto-save", .{failure_count});
+        }
         self.remarkFailedSaves(failed);
     }
 
@@ -888,6 +906,7 @@ pub const World = struct {
         .isLODEnabled = iisLODEnabled,
         .shadowScene = ishadowScene,
         .enableSaveManager = ienableSaveManager,
+        .takeSaveFailureWarningCount = itakeSaveFailureWarningCount,
         .pauseGeneration = ipauseGeneration,
         .isPaused = iisPaused,
         .collisionWorld = icollisionWorld,
@@ -971,6 +990,11 @@ pub const World = struct {
     fn ienableSaveManager(ptr: *anyopaque, save_dir_path: []const u8, world_name: []const u8) anyerror!void {
         const self: *World = @ptrCast(@alignCast(ptr));
         try self.enableSaveManager(save_dir_path, world_name);
+    }
+
+    fn itakeSaveFailureWarningCount(ptr: *anyopaque) usize {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.takeSaveFailureWarningCount();
     }
 
     fn ipauseGeneration(ptr: *anyopaque) void {

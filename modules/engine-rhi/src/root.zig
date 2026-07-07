@@ -43,6 +43,7 @@ pub const InstanceData = rhi_types.InstanceData;
 pub const SkyParams = rhi_types.SkyParams;
 pub const SkyPushConstants = rhi_types.SkyPushConstants;
 pub const FrameRenderParams = rhi_types.FrameRenderParams;
+pub const GlobalUniforms = rhi_types.GlobalUniforms;
 pub const ShadowConfig = rhi_types.ShadowConfig;
 pub const ShadowParams = rhi_types.ShadowParams;
 pub const Color = rhi_types.Color;

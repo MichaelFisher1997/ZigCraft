@@ -222,6 +222,7 @@ pub fn build(b: *std.Build) void {
     engine_ui.addImport("engine-math", engine_math);
     engine_ui.addImport("engine-core", engine_core);
     engine_ui.addImport("engine-rhi", engine_rhi);
+    engine_ui.addImport("world-core", world_core);
     engine_ui.addOptions("engine_ui_options", engine_ui_options);
     engine_ui.linkSystemLibrary("sdl3", .{});
     engine_ui.linkSystemLibrary("vulkan", .{});

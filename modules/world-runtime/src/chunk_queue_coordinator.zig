@@ -275,7 +275,14 @@ pub const ChunkQueueCoordinator = struct {
                 if (load_result == .read_error or load_result == .corrupt_data) {
                     log.log.warn("Save load failed for chunk ({}, {}): {}, regenerating", .{ cx, cz, load_result });
                 }
-                self.generator.generate(&chunk_data.chunk, &self.gen_queue.abort_worker);
+                self.generator.generate(&chunk_data.chunk, &self.gen_queue.abort_worker) catch |err| {
+                    log.log.warn("CHUNK_GEN_ERROR: ({},{}) generator failed: {}", .{ cx, cz, err });
+                    self.storage.chunks_mutex.lock();
+                    chunk_data.chunk.state = .missing;
+                    chunk_data.chunk.generated = false;
+                    self.storage.chunks_mutex.unlock();
+                    return;
+                };
                 if (self.gen_queue.abort_worker) {
                     self.storage.chunks_mutex.lock();
                     chunk_data.chunk.state = .missing;

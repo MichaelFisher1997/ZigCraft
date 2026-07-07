@@ -130,3 +130,21 @@ test "scanWorlds keeps directory fallback when level.dat is missing" {
     try testing.expectEqual(@as(u64, 0), worlds[0].seed);
     try testing.expectEqual(@as(usize, 0), worlds[0].generator_index);
 }
+
+test "deleteWorld removes directory and reports invalid paths" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+
+    try dir.makePath("victim");
+
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const base_path = try dir.realpath(".", &path_buf);
+
+    var victim_path_buf: [fs.max_path_bytes]u8 = undefined;
+    const victim_path = try std.fmt.bufPrint(&victim_path_buf, "{s}/victim", .{base_path});
+
+    try world_list.deleteWorld(victim_path);
+    try testing.expectError(error.FileNotFound, dir.openDir("victim", .{}));
+    try testing.expectError(error.InvalidSavePath, world_list.deleteWorld("victim"));
+}

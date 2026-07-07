@@ -212,7 +212,11 @@ pub const WorldStreamer = struct {
                 if (data.chunk.generated) continue;
 
                 data.chunk.state = .generating;
-                self.generator.generate(&data.chunk, null);
+                self.generator.generate(&data.chunk, null) catch |err| {
+                    log.log.warn("STARTUP_WARMUP_GEN_FAILED: ({},{}) {}", .{ cx, cz, err });
+                    data.chunk.state = .missing;
+                    continue;
+                };
                 if (!data.chunk.generated) {
                     data.chunk.state = .missing;
                     continue;

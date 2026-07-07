@@ -29,17 +29,17 @@ const GlobalUniforms = extern struct {
     lpv_origin: [4]f32,
 };
 
-pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_dir: Vec3, sun_color: Vec3, time_val: f32, fog_color: Vec3, fog_density: f32, fog_enabled: bool, sun_intensity: f32, ambient: f32, use_texture: bool, frame_params: rhi.FrameRenderParams) !void {
+pub fn updateGlobalUniforms(ctx: anytype, uniforms: rhi.GlobalUniforms, frame_params: rhi.FrameRenderParams) !void {
     const global_uniforms = GlobalUniforms{
-        .view_proj = view_proj,
+        .view_proj = uniforms.view_proj,
         .view_proj_prev = ctx.velocity.view_proj_prev,
-        .cam_pos = .{ cam_pos.x, cam_pos.y, cam_pos.z, 1.0 },
-        .sun_dir = .{ sun_dir.x, sun_dir.y, sun_dir.z, 0.0 },
-        .sun_color = .{ sun_color.x, sun_color.y, sun_color.z, 1.0 },
-        .fog_color = .{ fog_color.x, fog_color.y, fog_color.z, 1.0 },
+        .cam_pos = .{ uniforms.cam_pos.x, uniforms.cam_pos.y, uniforms.cam_pos.z, 1.0 },
+        .sun_dir = .{ uniforms.sun_dir.x, uniforms.sun_dir.y, uniforms.sun_dir.z, 0.0 },
+        .sun_color = .{ uniforms.sun_color.x, uniforms.sun_color.y, uniforms.sun_color.z, 1.0 },
+        .fog_color = .{ uniforms.fog_color.x, uniforms.fog_color.y, uniforms.fog_color.z, 1.0 },
         .reserved0 = .{ 0.0, 0.0, 0.0, 0.0 },
-        .params = .{ time_val, fog_density, if (fog_enabled) 1.0 else 0.0, sun_intensity },
-        .lighting = .{ ambient, if (use_texture) 1.0 else 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, 0.0 },
+        .params = .{ uniforms.time, uniforms.fog_density, if (uniforms.fog_enabled) 1.0 else 0.0, uniforms.sun_intensity },
+        .lighting = .{ uniforms.ambient, if (uniforms.use_texture) 1.0 else 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, 0.0 },
         .render_flags = .{ 0.0, 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, if (frame_params.simple_lighting_enabled) 1.0 else 0.0 },
         .shadow_params = .{ @floatFromInt(frame_params.shadow.pcf_samples), if (frame_params.shadow.cascade_blend) 1.0 else 0.0, frame_params.shadow.strength, if (frame_params.shadow_apply_to_beauty) 1.0 else 0.0 },
         .pbr_params = .{ @floatFromInt(frame_params.pbr_quality), frame_params.exposure, frame_params.saturation, if (frame_params.ssao_enabled) 1.0 else 0.0 },
@@ -62,7 +62,7 @@ pub fn updateGlobalUniforms(ctx: anytype, view_proj: Mat4, cam_pos: Vec3, sun_di
     }
 
     try ctx.descriptors.updateGlobalUniforms(ctx.frames.current_frame, &global_uniforms);
-    ctx.velocity.view_proj_prev = view_proj;
+    ctx.velocity.view_proj_prev = uniforms.view_proj;
 }
 
 pub fn setModelMatrix(ctx: anytype, model: Mat4, color: Vec3, mask_radius: f32) void {

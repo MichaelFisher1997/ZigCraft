@@ -124,7 +124,7 @@ pub const OverworldV2Generator = struct {
         _ = self;
     }
 
-    pub fn generate(self: *OverworldV2Generator, chunk: *Chunk, stop_flag: ?*const bool) void {
+    pub fn generate(self: *OverworldV2Generator, chunk: *Chunk, stop_flag: ?*const bool) worldgen_api.WorldgenError!void {
         chunk.generated = false;
         @memset(&chunk.blocks, .air);
         @memset(&chunk.biomes, .plains);
@@ -156,7 +156,7 @@ pub const OverworldV2Generator = struct {
         self.placeVegetation(chunk, stop_flag);
 
         if (self.params.enable_lighting) {
-            LightingComputer.computeSkylight(chunk, self.allocator) catch return;
+            try LightingComputer.computeSkylight(chunk, self.allocator);
         }
 
         chunk.generated = true;
@@ -358,9 +358,9 @@ pub const OverworldV2Generator = struct {
         .deinit = deinitWrapper,
     };
 
-    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) void {
+    fn generateWrapper(ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) worldgen_api.WorldgenError!void {
         const self: *OverworldV2Generator = @ptrCast(@alignCast(ptr));
-        self.generate(chunk, stop_flag);
+        try self.generate(chunk, stop_flag);
     }
 
     fn generateHeightmapOnlyWrapper(ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
@@ -427,7 +427,7 @@ test "overworld-v2 deterministic terrain columns" {
 test "overworld-v2 generates a chunk" {
     var gen = OverworldV2Generator.init(12345, std.testing.allocator);
     var chunk = Chunk.init(0, 0);
-    gen.generate(&chunk, null);
+    try gen.generate(&chunk, null);
     try std.testing.expect(chunk.generated);
     try std.testing.expect(chunk.getBlock(0, 0, 0) == .bedrock);
     try std.testing.expect(chunk.getSurfaceHeight(8, 8) > 0);
@@ -448,7 +448,7 @@ test "overworld-v2 places trees in forested chunks" {
 
     for (positions) |pos| {
         var chunk = Chunk.init(pos[0], pos[1]);
-        gen.generate(&chunk, null);
+        try gen.generate(&chunk, null);
         for (chunk.blocks) |block| {
             if (trees.isTreeBlock(block)) tree_blocks += 1;
         }
@@ -472,7 +472,7 @@ test "overworld-v2 places ground vegetation" {
 
     for (positions) |pos| {
         var chunk = Chunk.init(pos[0], pos[1]);
-        gen.generate(&chunk, null);
+        try gen.generate(&chunk, null);
         for (chunk.blocks) |block| {
             if (vegetation.isVegetationBlock(block)) vegetation_blocks += 1;
         }
@@ -510,4 +510,13 @@ test "overworld-v2 LOD tree density covers forest variants" {
     try std.testing.expectEqual(TreeShape.birch, trees.defaultTreeShapeForBiome(.birch_forest));
     try std.testing.expectEqual(TreeShape.spruce, trees.defaultTreeShapeForBiome(.old_growth_taiga));
     try std.testing.expectEqual(TreeShape.jungle, trees.defaultTreeShapeForBiome(.bamboo_jungle));
+}
+
+test "overworld-v2 propagates lighting allocation failure" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var gen = OverworldV2Generator.init(0, failing.allocator());
+    var chunk = Chunk.init(0, 0);
+
+    try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
+    try std.testing.expect(!chunk.generated);
 }

@@ -80,7 +80,7 @@ pub const Generator = struct {
     info: GeneratorInfo,
 
     pub const VTable = struct {
-        generate: *const fn (ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) void,
+        generate: *const fn (ptr: *anyopaque, chunk: *Chunk, stop_flag: ?*const bool) WorldgenError!void,
         generateHeightmapOnly: *const fn (ptr: *anyopaque, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void,
         maybeRecenterCache: *const fn (ptr: *anyopaque, player_x: i32, player_z: i32) bool,
         getSeed: *const fn (ptr: *anyopaque) u64,
@@ -89,8 +89,8 @@ pub const Generator = struct {
         deinit: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) void,
     };
 
-    pub fn generate(self: Generator, chunk: *Chunk, stop_flag: ?*const bool) void {
-        self.vtable.generate(self.ptr, chunk, stop_flag);
+    pub fn generate(self: Generator, chunk: *Chunk, stop_flag: ?*const bool) WorldgenError!void {
+        try self.vtable.generate(self.ptr, chunk, stop_flag);
     }
 
     pub fn generateHeightmapOnly(self: Generator, data: *LODSimplifiedData, region_x: i32, region_z: i32, lod_level: LODLevel, stop_flag: ?*const std.atomic.Value(bool)) void {
@@ -126,6 +126,10 @@ pub const CreateContext = struct {
 pub const RegistryError = error{
     InvalidGeneratorIndex,
     InvalidGeneratorId,
+    OutOfMemory,
+};
+
+pub const WorldgenError = error{
     OutOfMemory,
 };
 

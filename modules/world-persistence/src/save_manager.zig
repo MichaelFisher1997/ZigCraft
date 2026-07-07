@@ -27,6 +27,7 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const SAVE_THREAD_INTERVAL_NS: u64 = 25 * std.time.ns_per_ms;
 const AUTO_SAVE_INTERVAL_MS: i64 = 60_000;
 const MAX_OPEN_REGIONS: usize = 16;
+const SAVE_FAILURE_COUNT_FILE = "save_failures.dat";
 
 pub const LoadResult = enum {
     success,
@@ -64,6 +65,9 @@ pub const SaveManager = struct {
 
     failed_mutex: sync.Mutex,
     failed_chunks: std.ArrayListUnmanaged(ChunkKey),
+    failed_save_count: std.atomic.Value(usize),
+    persisted_failed_save_count: std.atomic.Value(usize),
+    persisted_failed_save_mutex: sync.Mutex,
 
     thread: std.Thread,
 
@@ -86,6 +90,8 @@ pub const SaveManager = struct {
         const path_copy = try allocator.dupe(u8, save_dir_path);
         errdefer allocator.free(path_copy);
 
+        const persisted_failures = loadPersistedSaveFailureCount(allocator, dir);
+
         sm.* = .{
             .allocator = allocator,
             .save_dir = dir,
@@ -100,6 +106,9 @@ pub const SaveManager = struct {
             .region_cache = .empty,
             .failed_mutex = .{},
             .failed_chunks = .empty,
+            .failed_save_count = std.atomic.Value(usize).init(0),
+            .persisted_failed_save_count = std.atomic.Value(usize).init(persisted_failures),
+            .persisted_failed_save_mutex = .{},
             .level_data = blk: {
                 const generator_copy = try allocator.dupe(u8, generator_name);
                 errdefer allocator.free(generator_copy);
@@ -129,6 +138,7 @@ pub const SaveManager = struct {
         self.level_data.touchLastPlayed();
         self.level_data.saveToFile(self.allocator, self.save_dir) catch |err| {
             log.log.err("Failed to save level.dat: {}", .{err});
+            self.recordSaveFailure();
         };
 
         self.queue.deinit(self.allocator);
@@ -166,6 +176,7 @@ pub const SaveManager = struct {
 
         self.queue.append(self.allocator, snapshot) catch |err| {
             log.log.err("Failed to enqueue chunk ({}, {}) for save: {}", .{ snapshot.chunk_x, snapshot.chunk_z, err });
+            self.recordSaveFailure();
         };
     }
 
@@ -232,6 +243,35 @@ pub const SaveManager = struct {
         return failed;
     }
 
+    pub fn takeFailedSaveCount(self: *SaveManager) usize {
+        return self.failed_save_count.swap(0, .acq_rel);
+    }
+
+    pub fn takePersistedFailedSaveCount(self: *SaveManager) usize {
+        self.persisted_failed_save_mutex.lock();
+        defer self.persisted_failed_save_mutex.unlock();
+
+        const count = self.persisted_failed_save_count.swap(0, .acq_rel);
+        if (count > 0) {
+            self.save_dir.deleteFile(SAVE_FAILURE_COUNT_FILE) catch |err| {
+                log.log.warn("Failed to clear persisted save failure count: {}", .{err});
+            };
+        }
+        return count;
+    }
+
+    fn recordSaveFailure(self: *SaveManager) void {
+        _ = self.failed_save_count.fetchAdd(1, .monotonic);
+        self.persisted_failed_save_mutex.lock();
+        defer self.persisted_failed_save_mutex.unlock();
+
+        const persisted_count = self.persisted_failed_save_count.load(.acquire) + 1;
+        self.persisted_failed_save_count.store(persisted_count, .release);
+        persistSaveFailureCount(self.save_dir, persisted_count) catch |err| {
+            log.log.err("Failed to persist save failure count: {}", .{err});
+        };
+    }
+
     fn saveThreadFn(self: *SaveManager) void {
         log.log.debug("Save thread started", .{});
 
@@ -284,8 +324,12 @@ pub const SaveManager = struct {
         for (batch[0..count]) |entry| {
             self.saveOneChunk(&entry) catch |err| {
                 log.log.err("Failed to save chunk ({}, {}): {}", .{ entry.chunk_x, entry.chunk_z, err });
+                self.recordSaveFailure();
                 self.failed_mutex.lock();
-                self.failed_chunks.append(self.allocator, .{ .x = entry.chunk_x, .z = entry.chunk_z }) catch {};
+                self.failed_chunks.append(self.allocator, .{ .x = entry.chunk_x, .z = entry.chunk_z }) catch |append_err| {
+                    log.log.err("Failed to track failed chunk save ({}, {}): {}", .{ entry.chunk_x, entry.chunk_z, append_err });
+                    self.recordSaveFailure();
+                };
                 self.failed_mutex.unlock();
             };
         }
@@ -394,6 +438,20 @@ pub const SaveManager = struct {
     }
 };
 
+fn loadPersistedSaveFailureCount(allocator: Allocator, save_dir: fs.Dir) usize {
+    const content = save_dir.readFileAlloc(SAVE_FAILURE_COUNT_FILE, allocator, 128) catch return 0;
+    defer allocator.free(content);
+    return std.fmt.parseInt(usize, std.mem.trim(u8, content, " \t\r\n"), 10) catch 0;
+}
+
+fn persistSaveFailureCount(save_dir: fs.Dir, count: usize) !void {
+    var buf: [32]u8 = undefined;
+    const text = try std.fmt.bufPrint(&buf, "{}\n", .{count});
+    const file = try save_dir.createFile(SAVE_FAILURE_COUNT_FILE, .{});
+    defer file.close();
+    try file.writeAll(text);
+}
+
 const testing = std.testing;
 
 test "SaveManager init creates save directory and level.dat" {
@@ -500,4 +558,30 @@ test "SaveManager duplicate enqueue overwrites previous" {
     var loaded = Chunk.init(0, 0);
     try testing.expect(sm.loadChunk(0, 0, &loaded) == .success);
     try testing.expectEqual(BlockType.gold_ore, loaded.getBlock(5, 5, 5));
+}
+
+test "SaveManager persists and consumes save failure count" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const base_path = try dir.realpath(".", &path_buf);
+
+    var save_path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/test_failures", .{base_path});
+
+    {
+        var sm = try SaveManager.init(testing.allocator, save_path, "test_failures", 0, "flat");
+        sm.recordSaveFailure();
+        try testing.expectEqual(@as(usize, 1), sm.takeFailedSaveCount());
+        sm.deinit();
+    }
+
+    var sm = try SaveManager.init(testing.allocator, save_path, "test_failures", 0, "flat");
+    defer sm.deinit();
+
+    try testing.expectEqual(@as(usize, 1), sm.takePersistedFailedSaveCount());
+    try testing.expectEqual(@as(usize, 0), sm.takePersistedFailedSaveCount());
 }
