@@ -1,0 +1,16 @@
+rules:
+  - id: zigcraft.shell.eval
+    message: Avoid eval in shell scripts; parse arguments explicitly instead.
+    severity: ERROR
+    languages: [bash]
+    pattern: eval $EXPR
+
+  - id: zigcraft.shell.curl-pipe-shell
+    message: Avoid piping downloaded content directly into a shell.
+    severity: ERROR
+    languages: [bash]
+    pattern-either:
+      - pattern: curl ... | sh
+      - pattern: curl ... | bash
+      - pattern: wget ... | sh
+      - pattern: wget ... | bash
