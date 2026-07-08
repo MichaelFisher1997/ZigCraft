@@ -110,7 +110,7 @@ jobs:
           path: dist/
           retention-days: 7
 
-  unit-test:
+  unit-test-matrix:
     permissions:
       contents: read
       id-token: write
@@ -158,6 +158,22 @@ jobs:
           path: unit-test-${{ matrix.optimize }}.log
           if-no-files-found: ignore
           retention-days: 7
+
+  unit-test:
+    permissions:
+      contents: read
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    needs: [unit-test-matrix]
+    if: always()
+    steps:
+      - name: Require unit test matrix success
+        run: |
+          if [ "${{ needs.unit-test-matrix.result }}" != "success" ]; then
+            echo "Unit test matrix result: ${{ needs.unit-test-matrix.result }}" >&2
+            exit 1
+          fi
+          echo "Unit test matrix passed."
 
   integration-test:
     permissions:
