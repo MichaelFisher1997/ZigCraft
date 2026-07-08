@@ -124,39 +124,63 @@ pub const IResourceFactory = struct {
         unmapBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
     };
 
+    /// Allocates a backend buffer with the requested byte size and usage flags.
+    /// The returned handle is owned by the caller and must later be passed to `destroyBuffer`. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createBuffer(self: IResourceFactory, size: usize, usage: BufferUsage) RhiError!BufferHandle {
         return self.vtable.createBuffer(self.ptr, size, usage);
     }
+    /// Uploads a complete byte slice into an existing buffer handle.
+    /// The handle must be live and large enough for `data`; ownership of `data` remains with the caller. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn uploadBuffer(self: IResourceFactory, handle: BufferHandle, data: []const u8) RhiError!void {
         return self.vtable.uploadBuffer(self.ptr, handle, data);
     }
+    /// Writes `data` into an existing buffer starting at `offset` bytes.
+    /// `offset + data.len` must fit the allocation; the backend defines when the write becomes visible to GPU work. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn updateBuffer(self: IResourceFactory, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void {
         return self.vtable.updateBuffer(self.ptr, handle, offset, data);
     }
+    /// Releases a buffer handle previously returned by `createBuffer`.
+    /// Callers must not use the handle again after destruction; invalid or already-destroyed handles are backend errors. Must be called from the render thread that owns the backend context.
     pub fn destroyBuffer(self: IResourceFactory, handle: BufferHandle) void {
         self.vtable.destroyBuffer(self.ptr, handle);
     }
+    /// Creates a 2D texture resource and optionally initializes it from CPU pixels.
+    /// `data`, when provided, must match the texture dimensions, format, and configuration expected by the backend. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createTexture(self: IResourceFactory, width: u32, height: u32, format: TextureFormat, config: TextureConfig, data: ?[]const u8) RhiError!TextureHandle {
         return self.vtable.createTexture(self.ptr, width, height, format, config, data);
     }
+    /// Creates a 3D texture resource and optionally initializes it from CPU voxel data.
+    /// `data`, when provided, must match width, height, depth, and format layout. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createTexture3D(self: IResourceFactory, width: u32, height: u32, depth: u32, format: TextureFormat, config: TextureConfig, data: ?[]const u8) RhiError!TextureHandle {
         return self.vtable.createTexture3D(self.ptr, width, height, depth, format, config, data);
     }
+    /// Releases a texture handle previously returned by a texture creation call.
+    /// The texture must no longer be referenced by queued draw or compute work. Must be called from the render thread that owns the backend context.
     pub fn destroyTexture(self: IResourceFactory, handle: TextureHandle) void {
         self.vtable.destroyTexture(self.ptr, handle);
     }
+    /// Replaces texture contents from a CPU byte slice.
+    /// The texture handle must be live and the byte layout must match the texture format. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn updateTexture(self: IResourceFactory, handle: TextureHandle, data: []const u8) RhiError!void {
         return self.vtable.updateTexture(self.ptr, handle, data);
     }
+    /// Builds a shader program from null-terminated vertex and fragment sources.
+    /// Returned shader handles are backend-owned objects and must be destroyed explicitly. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createShader(self: IResourceFactory, vertex_src: [*c]const u8, fragment_src: [*c]const u8) RhiError!ShaderHandle {
         return self.vtable.createShader(self.ptr, vertex_src, fragment_src);
     }
+    /// Destroys a shader program handle.
+    /// The shader must not be bound by subsequent draw calls after this returns. Must be called from the render thread that owns the backend context.
     pub fn destroyShader(self: IResourceFactory, handle: ShaderHandle) void {
         self.vtable.destroyShader(self.ptr, handle);
     }
+    /// Maps a buffer for CPU access when the backend supports host-visible memory for it.
+    /// Returns `null` for buffers that cannot be mapped; non-null pointers are valid until `unmapBuffer`. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn mapBuffer(self: IResourceFactory, handle: BufferHandle) RhiError!?*anyopaque {
         return self.vtable.mapBuffer(self.ptr, handle);
     }
+    /// Ends CPU access to a mapped buffer.
+    /// The handle must refer to a buffer previously mapped through this interface. Must be called from the render thread that owns the backend context.
     pub fn unmapBuffer(self: IResourceFactory, handle: BufferHandle) void {
         self.vtable.unmapBuffer(self.ptr, handle);
     }
@@ -176,39 +200,63 @@ pub const IResourceFactory = struct {
 pub const ResourceManager = struct {
     factory: IResourceFactory,
 
+    /// Allocates a backend buffer with the requested byte size and usage flags.
+    /// The returned handle is owned by the caller and must later be passed to `destroyBuffer`. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createBuffer(self: ResourceManager, size: usize, usage: BufferUsage) RhiError!BufferHandle {
         return self.factory.createBuffer(size, usage);
     }
+    /// Uploads a complete byte slice into an existing buffer handle.
+    /// The handle must be live and large enough for `data`; ownership of `data` remains with the caller. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn uploadBuffer(self: ResourceManager, handle: BufferHandle, data: []const u8) RhiError!void {
         return self.factory.uploadBuffer(handle, data);
     }
+    /// Writes `data` into an existing buffer starting at `offset` bytes.
+    /// `offset + data.len` must fit the allocation; the backend defines when the write becomes visible to GPU work. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn updateBuffer(self: ResourceManager, handle: BufferHandle, offset: usize, data: []const u8) RhiError!void {
         return self.factory.updateBuffer(handle, offset, data);
     }
+    /// Releases a buffer handle previously returned by `createBuffer`.
+    /// Callers must not use the handle again after destruction; invalid or already-destroyed handles are backend errors. Must be called from the render thread that owns the backend context.
     pub fn destroyBuffer(self: ResourceManager, handle: BufferHandle) void {
         self.factory.destroyBuffer(handle);
     }
+    /// Creates a 2D texture resource and optionally initializes it from CPU pixels.
+    /// `data`, when provided, must match the texture dimensions, format, and configuration expected by the backend. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createTexture(self: ResourceManager, width: u32, height: u32, format: TextureFormat, config: TextureConfig, data: ?[]const u8) RhiError!TextureHandle {
         return self.factory.createTexture(width, height, format, config, data);
     }
+    /// Creates a 3D texture resource and optionally initializes it from CPU voxel data.
+    /// `data`, when provided, must match width, height, depth, and format layout. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createTexture3D(self: ResourceManager, width: u32, height: u32, depth: u32, format: TextureFormat, config: TextureConfig, data: ?[]const u8) RhiError!TextureHandle {
         return self.factory.createTexture3D(width, height, depth, format, config, data);
     }
+    /// Releases a texture handle previously returned by a texture creation call.
+    /// The texture must no longer be referenced by queued draw or compute work. Must be called from the render thread that owns the backend context.
     pub fn destroyTexture(self: ResourceManager, handle: TextureHandle) void {
         self.factory.destroyTexture(handle);
     }
+    /// Replaces texture contents from a CPU byte slice.
+    /// The texture handle must be live and the byte layout must match the texture format. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn updateTexture(self: ResourceManager, handle: TextureHandle, data: []const u8) RhiError!void {
         return self.factory.updateTexture(handle, data);
     }
+    /// Builds a shader program from null-terminated vertex and fragment sources.
+    /// Returned shader handles are backend-owned objects and must be destroyed explicitly. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createShader(self: ResourceManager, vertex_src: [*c]const u8, fragment_src: [*c]const u8) RhiError!ShaderHandle {
         return self.factory.createShader(vertex_src, fragment_src);
     }
+    /// Destroys a shader program handle.
+    /// The shader must not be bound by subsequent draw calls after this returns. Must be called from the render thread that owns the backend context.
     pub fn destroyShader(self: ResourceManager, handle: ShaderHandle) void {
         self.factory.destroyShader(handle);
     }
+    /// Maps a buffer for CPU access when the backend supports host-visible memory for it.
+    /// Returns `null` for buffers that cannot be mapped; non-null pointers are valid until `unmapBuffer`. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn mapBuffer(self: ResourceManager, handle: BufferHandle) RhiError!?*anyopaque {
         return self.factory.mapBuffer(handle);
     }
+    /// Ends CPU access to a mapped buffer.
+    /// The handle must refer to a buffer previously mapped through this interface. Must be called from the render thread that owns the backend context.
     pub fn unmapBuffer(self: ResourceManager, handle: BufferHandle) void {
         self.factory.unmapBuffer(handle);
     }
@@ -241,120 +289,194 @@ pub const RenderContext = struct {
 
     // --- IRenderContext delegates ---
 
+    /// Begins the per-frame command recording scope.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFrame(self: RenderContext) void {
         self.render.beginFrame();
     }
+    /// Ends the per-frame command recording scope and submits queued frame work.
+    /// All commands for that scope must be recorded before this call.
     pub fn endFrame(self: RenderContext) void {
         self.render.endFrame();
     }
+    /// Cancels the current frame after a recoverable startup or rendering failure.
+    /// Use only before `endFrame`; the backend may discard recorded commands for the active frame. Must be called from the render thread that owns the backend context.
     pub fn abortFrame(self: RenderContext) void {
         self.render.abortFrame();
     }
+    /// Begins the main scene render pass for opaque and sky/world drawing.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginMainPass(self: RenderContext) void {
         self.passes.beginMainPass();
     }
+    /// Ends the main scene render pass and finalizes its attachments for later passes.
+    /// All commands for that scope must be recorded before this call.
     pub fn endMainPass(self: RenderContext) void {
         self.passes.endMainPass();
     }
+    /// Begins the post-process pass that consumes scene color/depth outputs.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginPostProcessPass(self: RenderContext) void {
         self.passes.beginPostProcessPass();
     }
+    /// Ends the post-process pass and makes its output available for presentation or later passes.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPostProcessPass(self: RenderContext) void {
         self.passes.endPostProcessPass();
     }
+    /// Begins the G-pass that writes geometry buffers for screen-space effects.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginGPass(self: RenderContext) void {
         self.passes.beginGPass();
     }
+    /// Ends the G-pass and makes geometry buffers available to SSAO or lighting passes.
+    /// All commands for that scope must be recorded before this call.
     pub fn endGPass(self: RenderContext) void {
         self.passes.endGPass();
     }
+    /// Begins the FXAA post-process pass for the current frame.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFXAAPass(self: RenderContext) void {
         self.passes.beginFXAAPass();
     }
+    /// Ends the FXAA post-process pass for the current frame.
+    /// All commands for that scope must be recorded before this call.
     pub fn endFXAAPass(self: RenderContext) void {
         self.passes.endFXAAPass();
     }
+    /// Runs the bloom extraction and blur compute passes for the current frame.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeBloom(self: RenderContext) void {
         self.post_process.computeBloom();
     }
+    /// Runs the TAA resolve pass using the current color, history, and velocity inputs.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeTAA(self: RenderContext) void {
         self.post_process.computeTAA();
     }
+    /// Builds the hierarchical depth pyramid used by culling and screen-space effects.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeDepthPyramid(self: RenderContext) void {
         self.post_process.computeDepthPyramid();
     }
+    /// Draws the sky and atmosphere contribution for the current camera parameters.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation.
     pub fn drawSky(self: RenderContext, params: SkyParams) RhiError!void {
         return self.effects.drawSky(params);
     }
+    /// Begins water rendering using reflection and scene-depth textures as inputs.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginWaterDraw(self: RenderContext, reflection: TextureHandle, scene_depth: TextureHandle) bool {
         return self.effects.beginWaterDraw(reflection, scene_depth);
     }
+    /// Ends water rendering and restores normal scene rendering state.
+    /// All commands for that scope must be recorded before this call.
     pub fn endWaterDraw(self: RenderContext) void {
         self.effects.endWaterDraw();
     }
+    /// Marks the swapchain-dependent render targets for recreation.
+    /// Use after window resize or presentation errors; actual recreation is backend-controlled. Must be called from the render thread that owns the backend context.
     pub fn requestSwapchainRecreate(self: RenderContext) void {
         self.render.requestSwapchainRecreate();
     }
+    /// Sets clear color on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setClearColor(self: RenderContext, color: Vec3) void {
         self.render.vtable.setClearColor(self.render.ptr, color);
     }
+    /// Returns native swapchain extent from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getNativeSwapchainExtent(self: RenderContext) [2]u32 {
         return self.vulkan.getSwapchainExtent();
     }
+    /// Returns native device from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getNativeDevice(self: RenderContext) u64 {
         return self.vulkan.getDevice();
     }
 
     // --- IGraphicsCommandEncoder delegates ---
 
+    /// Binds a texture handle to the requested shader slot.
+    /// The handle must be live and compatible with the active pipeline layout. Must be called from the render thread that owns the backend context.
     pub fn bindTexture(self: RenderContext, handle: TextureHandle, slot: u32) void {
         self.encoder.bindTexture(handle, slot);
     }
+    /// Binds a buffer handle for subsequent draw or dispatch commands.
+    /// The handle must be live and match the binding expected by the current pipeline. Must be called from the render thread that owns the backend context.
     pub fn bindBuffer(self: RenderContext, handle: BufferHandle, usage: BufferUsage) void {
         self.encoder.bindBuffer(handle, usage);
     }
+    /// Uploads a small byte payload as push constants for the active pipeline.
+    /// The payload size and layout must match the shader stage declaration. Must be called from the render thread that owns the backend context.
     pub fn pushConstants(self: RenderContext, stages: ShaderStageFlags, offset: u32, size: u32, data: *const anyopaque) void {
         self.encoder.pushConstants(stages, offset, size, data);
     }
+    /// Issues a non-indexed draw using the currently bound graphics state.
+    /// A compatible pipeline and vertex buffer must already be bound. Must be called from the render thread that owns the backend context.
     pub fn draw(self: RenderContext, handle: BufferHandle, count: u32, mode: DrawMode) void {
         self.encoder.draw(handle, count, mode);
     }
+    /// Issues a non-indexed draw starting at a byte or vertex offset in the bound buffer.
+    /// The offset and vertex count must stay within the bound buffer allocation. Must be called from the render thread that owns the backend context.
     pub fn drawOffset(self: RenderContext, handle: BufferHandle, count: u32, mode: DrawMode, offset: usize) void {
         self.encoder.drawOffset(handle, count, mode, offset);
     }
+    /// Issues an indexed draw using currently bound vertex and index buffers.
+    /// Index data and pipeline state must be valid for the requested primitive topology. Must be called from the render thread that owns the backend context.
     pub fn drawIndexed(self: RenderContext, vbo: BufferHandle, ebo: BufferHandle, count: u32) void {
         self.encoder.drawIndexed(vbo, ebo, count);
     }
+    /// Issues indirect draw commands from a GPU buffer.
+    /// The indirect buffer must contain backend-compatible command records and remain valid through submission. Must be called from the render thread that owns the backend context.
     pub fn drawIndirect(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
         self.encoder.drawIndirect(handle, command_buffer, offset, draw_count, stride);
     }
+    /// Issues an instanced draw using currently bound per-instance state.
+    /// Instance buffers and model data must be populated for the active frame. Must be called from the render thread that owns the backend context.
     pub fn drawInstance(self: RenderContext, handle: BufferHandle, count: u32, instance_index: u32) void {
         self.encoder.drawInstance(handle, count, instance_index);
     }
+    /// Sets viewport on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setViewport(self: RenderContext, width: u32, height: u32) void {
         self.encoder.setViewport(width, height);
     }
 
     // --- IRenderStateContext delegates ---
 
+    /// Sets model matrix on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setModelMatrix(self: RenderContext, model: Mat4, color: Vec3, mask_radius: f32) void {
         self.state.setModelMatrix(model, color, mask_radius);
     }
+    /// Sets instance buffer on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setInstanceBuffer(handle);
     }
+    /// Binds the LOD instance buffer used by distant-terrain draw calls.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setLODInstanceBuffer(handle);
     }
+    /// Sets terrain pipeline bound on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTerrainPipelineBound(self: RenderContext, bound: bool) void {
         self.state.setTerrainPipelineBound(bound);
     }
+    /// Sets selection mode on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setSelectionMode(self: RenderContext, enabled: bool) void {
         self.state.setSelectionMode(enabled);
     }
+    /// Updates camera, lighting, and frame-global shader uniforms.
+    /// Uniform payloads are copied into backend-managed per-frame storage. Must be called from the render thread that owns the backend context.
     pub fn updateGlobalUniforms(self: RenderContext, uniforms: GlobalUniforms, frame_params: FrameRenderParams) !void {
         try self.state.updateGlobalUniforms(uniforms, frame_params);
     }
+    /// Sets texture uniforms on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTextureUniforms(self: RenderContext, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.state.setTextureUniforms(texture_enabled, shadow_map_handles);
     }
@@ -371,15 +493,23 @@ pub const IShadowContext = struct {
         getShadowMapHandle: *const fn (ptr: *anyopaque, cascade_index: u32) TextureHandle,
     };
 
+    /// Begins rendering one shadow cascade using the supplied light-space transform.
+    /// Must be paired with `endPass` after all shadow casters for the cascade are drawn.
     pub fn beginPass(self: IShadowContext, cascade_index: u32, light_space_matrix: Mat4) void {
         self.vtable.beginPass(self.ptr, cascade_index, light_space_matrix);
     }
+    /// Ends this subsystem render pass and finalizes its pass-local state.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: IShadowContext) void {
         self.vtable.endPass(self.ptr);
     }
+    /// Updates subsystem uniform data for later draws in the current frame.
+    /// Inputs must remain valid for the duration of the call; backend storage owns any copied data. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation.
     pub fn updateUniforms(self: IShadowContext, params: ShadowParams) !void {
         try self.vtable.updateUniforms(self.ptr, params);
     }
+    /// Returns shadow map handle from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getShadowMapHandle(self: IShadowContext, cascade_index: u32) TextureHandle {
         return self.vtable.getShadowMapHandle(self.ptr, cascade_index);
     }
@@ -401,15 +531,23 @@ pub const IShadowContext = struct {
 pub const ShadowSystemWrapper = struct {
     ctx: IShadowContext,
 
+    /// Begins rendering one shadow cascade through the focused shadow-system wrapper.
+    /// Must be paired with `endPass`; draw shadow casters between the two calls.
     pub fn beginPass(self: ShadowSystemWrapper, cascade_index: u32, light_space_matrix: Mat4) void {
         self.ctx.beginPass(cascade_index, light_space_matrix);
     }
+    /// Ends this subsystem render pass and finalizes its pass-local state.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: ShadowSystemWrapper) void {
         self.ctx.endPass();
     }
+    /// Updates subsystem uniform data for later draws in the current frame.
+    /// Inputs must remain valid for the duration of the call; backend storage owns any copied data. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation.
     pub fn updateUniforms(self: ShadowSystemWrapper, params: ShadowParams) !void {
         try self.ctx.updateUniforms(params);
     }
+    /// Returns shadow map handle from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getShadowMapHandle(self: ShadowSystemWrapper, cascade_index: u32) TextureHandle {
         return self.ctx.getShadowMapHandle(cascade_index);
     }
@@ -427,18 +565,28 @@ pub const IWaterContext = struct {
         computeReflectedViewProj: *const fn (ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4,
     };
 
+    /// Begins rendering the reflected scene into the water reflection target.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginReflectionPass(self: IWaterContext) void {
         self.vtable.beginReflectionPass(self.ptr);
     }
+    /// Ends reflection rendering and makes the reflection texture available to water shading.
+    /// All commands for that scope must be recorded before this call.
     pub fn endReflectionPass(self: IWaterContext) void {
         self.vtable.endReflectionPass(self.ptr);
     }
+    /// Returns reflection texture handle from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getReflectionTextureHandle(self: IWaterContext) TextureHandle {
         return self.vtable.getReflectionTextureHandle(self.ptr);
     }
+    /// Returns scene depth texture handle from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getSceneDepthTextureHandle(self: IWaterContext) TextureHandle {
         return self.vtable.getSceneDepthTextureHandle(self.ptr);
     }
+    /// Computes the reflected view-projection matrix used for water reflections.
+    /// The input view-projection matrix is not modified.
     pub fn computeReflectedViewProj(self: IWaterContext, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
         return self.vtable.computeReflectedViewProj(self.ptr, view, proj, camera_pos);
     }
@@ -447,18 +595,28 @@ pub const IWaterContext = struct {
 pub const WaterSystemWrapper = struct {
     ctx: IWaterContext,
 
+    /// Begins rendering the reflected scene into the water reflection target.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginReflectionPass(self: WaterSystemWrapper) void {
         self.ctx.beginReflectionPass();
     }
+    /// Ends reflection rendering and makes the reflection texture available to water shading.
+    /// All commands for that scope must be recorded before this call.
     pub fn endReflectionPass(self: WaterSystemWrapper) void {
         self.ctx.endReflectionPass();
     }
+    /// Returns reflection texture handle from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getReflectionTextureHandle(self: WaterSystemWrapper) TextureHandle {
         return self.ctx.getReflectionTextureHandle();
     }
+    /// Returns scene depth texture handle from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getSceneDepthTextureHandle(self: WaterSystemWrapper) TextureHandle {
         return self.ctx.getSceneDepthTextureHandle();
     }
+    /// Computes the reflected view-projection matrix used for water reflections.
+    /// The input view-projection matrix is not modified.
     pub fn computeReflectedViewProj(self: WaterSystemWrapper, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4 {
         return self.ctx.computeReflectedViewProj(view, proj, camera_pos);
     }
@@ -478,24 +636,38 @@ pub const IUIContext = struct {
         bindPipeline: *const fn (ptr: *anyopaque, textured: bool) void,
     };
 
+    /// Begins the immediate-mode UI pass for a framebuffer of `width` by `height` pixels.
+    /// UI draw calls must be issued between this call and `endPass` on the render thread.
     pub fn beginPass(self: IUIContext, width: f32, height: f32) void {
         self.vtable.beginPass(self.ptr, width, height);
     }
+    /// Ends this subsystem render pass and finalizes its pass-local state.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: IUIContext) void {
         self.vtable.endPass(self.ptr);
     }
+    /// Queues an immediate-mode rectangle draw for the active UI pass.
+    /// Coordinates and colors are interpreted by the UI backend for the current frame. Must be called from the render thread that owns the backend context.
     pub fn drawRect(self: IUIContext, rect: Rect, color: Color) void {
         self.vtable.drawRect(self.ptr, rect, color);
     }
+    /// Queues an immediate-mode textured rectangle draw for the active UI pass.
+    /// The texture handle must be valid and accessible to the UI pipeline. Must be called from the render thread that owns the backend context.
     pub fn drawTexture(self: IUIContext, texture: TextureHandle, rect: Rect) void {
         self.vtable.drawTexture(self.ptr, texture, rect);
     }
+    /// Queues a textured UI rectangle using a subregion of the source texture.
+    /// Source and destination rectangles are consumed immediately by the active UI pass. Must be called from the render thread that owns the backend context.
     pub fn drawTextureRegion(self: IUIContext, texture: TextureHandle, rect: Rect, uv: UVRect, color: Color) void {
         self.vtable.drawTextureRegion(self.ptr, texture, rect, uv, color);
     }
+    /// Queues a debug draw of a depth texture through the UI pipeline.
+    /// The depth texture must remain valid for the current frame. Must be called from the render thread that owns the backend context.
     pub fn drawDepthTexture(self: IUIContext, texture: TextureHandle, rect: Rect) void {
         self.vtable.drawDepthTexture(self.ptr, texture, rect);
     }
+    /// Binds the UI pipeline variant needed by subsequent UI draw commands.
+    /// Call inside an active UI pass before issuing dependent draw calls. Must be called from the render thread that owns the backend context.
     pub fn bindPipeline(self: IUIContext, textured: bool) void {
         self.vtable.bindPipeline(self.ptr, textured);
     }
@@ -512,15 +684,23 @@ pub const IImGuiContext = struct {
         renderDrawData: *const fn (ptr: *anyopaque, draw_data: *anyopaque) void,
     };
 
+    /// Initializes the ImGui backend bridge against the active renderer.
+    /// Must run after the graphics backend exists and before rendering ImGui draw data. Must be called from the render thread that owns the backend context.
     pub fn initBackend(self: IImGuiContext, window: *anyopaque) bool {
         return self.vtable.initBackend(self.ptr, window);
     }
+    /// Shuts down ImGui backend resources.
+    /// No further ImGui draw-data rendering is valid until `initBackend` succeeds again. Must be called from the render thread that owns the backend context.
     pub fn shutdownBackend(self: IImGuiContext) void {
         self.vtable.shutdownBackend(self.ptr);
     }
+    /// Starts a new ImGui frame for the backend bridge.
+    /// Call once per frame before building ImGui widgets. Must be called from the render thread that owns the backend context.
     pub fn newFrame(self: IImGuiContext) void {
         self.vtable.newFrame(self.ptr);
     }
+    /// Submits ImGui draw data to the backend for the current frame.
+    /// The draw data must be produced by the active ImGui frame and used on the render thread. Must be called from the render thread that owns the backend context.
     pub fn renderDrawData(self: IImGuiContext, draw_data: *anyopaque) void {
         self.vtable.renderDrawData(self.ptr, draw_data);
     }
@@ -541,24 +721,38 @@ pub const IImGuiContext = struct {
 pub const UIRenderer = struct {
     ctx: IUIContext,
 
+    /// Begins the immediate-mode UI pass through the focused UI renderer wrapper.
+    /// UI rectangles and textures queued after this call target the supplied framebuffer size.
     pub fn beginPass(self: UIRenderer, width: f32, height: f32) void {
         self.ctx.beginPass(width, height);
     }
+    /// Ends this subsystem render pass and finalizes its pass-local state.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: UIRenderer) void {
         self.ctx.endPass();
     }
+    /// Queues an immediate-mode rectangle draw for the active UI pass.
+    /// Coordinates and colors are interpreted by the UI backend for the current frame. Must be called from the render thread that owns the backend context.
     pub fn drawRect(self: UIRenderer, rect: Rect, color: Color) void {
         self.ctx.drawRect(rect, color);
     }
+    /// Queues an immediate-mode textured rectangle draw for the active UI pass.
+    /// The texture handle must be valid and accessible to the UI pipeline. Must be called from the render thread that owns the backend context.
     pub fn drawTexture(self: UIRenderer, texture: TextureHandle, rect: Rect) void {
         self.ctx.drawTexture(texture, rect);
     }
+    /// Queues a textured UI rectangle using a subregion of the source texture.
+    /// Source and destination rectangles are consumed immediately by the active UI pass. Must be called from the render thread that owns the backend context.
     pub fn drawTextureRegion(self: UIRenderer, texture: TextureHandle, rect: Rect, uv: UVRect, color: Color) void {
         self.ctx.drawTextureRegion(texture, rect, uv, color);
     }
+    /// Queues a debug draw of a depth texture through the UI pipeline.
+    /// The depth texture must remain valid for the current frame. Must be called from the render thread that owns the backend context.
     pub fn drawDepthTexture(self: UIRenderer, texture: TextureHandle, rect: Rect) void {
         self.ctx.drawDepthTexture(texture, rect);
     }
+    /// Binds the UI pipeline variant needed by subsequent UI draw commands.
+    /// Call inside an active UI pass before issuing dependent draw calls. Must be called from the render thread that owns the backend context.
     pub fn bindPipeline(self: UIRenderer, textured: bool) void {
         self.ctx.bindPipeline(textured);
     }
@@ -580,30 +774,48 @@ pub const IGraphicsCommandEncoder = struct {
         setViewport: *const fn (ptr: *anyopaque, width: u32, height: u32) void,
     };
 
+    /// Binds a texture handle to the requested shader slot.
+    /// The handle must be live and compatible with the active pipeline layout. Must be called from the render thread that owns the backend context.
     pub fn bindTexture(self: IGraphicsCommandEncoder, handle: TextureHandle, slot: u32) void {
         self.vtable.bindTexture(self.ptr, handle, slot);
     }
+    /// Binds a buffer handle for subsequent draw or dispatch commands.
+    /// The handle must be live and match the binding expected by the current pipeline. Must be called from the render thread that owns the backend context.
     pub fn bindBuffer(self: IGraphicsCommandEncoder, handle: BufferHandle, usage: BufferUsage) void {
         self.vtable.bindBuffer(self.ptr, handle, usage);
     }
+    /// Uploads a small byte payload as push constants for the active pipeline.
+    /// The payload size and layout must match the shader stage declaration. Must be called from the render thread that owns the backend context.
     pub fn pushConstants(self: IGraphicsCommandEncoder, stages: ShaderStageFlags, offset: u32, size: u32, data: *const anyopaque) void {
         self.vtable.pushConstants(self.ptr, stages, offset, size, data);
     }
+    /// Issues a non-indexed draw using the currently bound graphics state.
+    /// A compatible pipeline and vertex buffer must already be bound. Must be called from the render thread that owns the backend context.
     pub fn draw(self: IGraphicsCommandEncoder, handle: BufferHandle, count: u32, mode: DrawMode) void {
         self.vtable.draw(self.ptr, handle, count, mode);
     }
+    /// Issues a non-indexed draw starting at a byte or vertex offset in the bound buffer.
+    /// The offset and vertex count must stay within the bound buffer allocation. Must be called from the render thread that owns the backend context.
     pub fn drawOffset(self: IGraphicsCommandEncoder, handle: BufferHandle, count: u32, mode: DrawMode, offset: usize) void {
         self.vtable.drawOffset(self.ptr, handle, count, mode, offset);
     }
+    /// Issues an indexed draw using currently bound vertex and index buffers.
+    /// Index data and pipeline state must be valid for the requested primitive topology. Must be called from the render thread that owns the backend context.
     pub fn drawIndexed(self: IGraphicsCommandEncoder, vbo: BufferHandle, ebo: BufferHandle, count: u32) void {
         self.vtable.drawIndexed(self.ptr, vbo, ebo, count);
     }
+    /// Issues indirect draw commands from a GPU buffer.
+    /// The indirect buffer must contain backend-compatible command records and remain valid through submission. Must be called from the render thread that owns the backend context.
     pub fn drawIndirect(self: IGraphicsCommandEncoder, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
         self.vtable.drawIndirect(self.ptr, handle, command_buffer, offset, draw_count, stride);
     }
+    /// Issues an instanced draw using currently bound per-instance state.
+    /// Instance buffers and model data must be populated for the active frame. Must be called from the render thread that owns the backend context.
     pub fn drawInstance(self: IGraphicsCommandEncoder, handle: BufferHandle, count: u32, instance_index: u32) void {
         self.vtable.drawInstance(self.ptr, handle, count, instance_index);
     }
+    /// Sets viewport on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setViewport(self: IGraphicsCommandEncoder, width: u32, height: u32) void {
         self.vtable.setViewport(self.ptr, width, height);
     }
@@ -623,24 +835,38 @@ pub const IRenderStateContext = struct {
         setTextureUniforms: *const fn (ptr: *anyopaque, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void,
     };
 
+    /// Sets model matrix on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setModelMatrix(self: IRenderStateContext, model: Mat4, color: Vec3, mask_radius: f32) void {
         self.vtable.setModelMatrix(self.ptr, model, color, mask_radius);
     }
+    /// Sets instance buffer on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setInstanceBuffer(self.ptr, handle);
     }
+    /// Binds the LOD instance buffer used by distant-terrain draw calls.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setLODInstanceBuffer(self.ptr, handle);
     }
+    /// Sets terrain pipeline bound on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTerrainPipelineBound(self: IRenderStateContext, bound: bool) void {
         self.vtable.setTerrainPipelineBound(self.ptr, bound);
     }
+    /// Sets selection mode on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setSelectionMode(self: IRenderStateContext, enabled: bool) void {
         self.vtable.setSelectionMode(self.ptr, enabled);
     }
+    /// Updates camera, lighting, and frame-global shader uniforms.
+    /// Uniform payloads are copied into backend-managed per-frame storage. Must be called from the render thread that owns the backend context.
     pub fn updateGlobalUniforms(self: IRenderStateContext, uniforms: GlobalUniforms, frame_params: FrameRenderParams) !void {
         try self.vtable.updateGlobalUniforms(self.ptr, uniforms, frame_params);
     }
+    /// Sets texture uniforms on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTextureUniforms(self: IRenderStateContext, texture_enabled: bool, shadow_map_handles: [SHADOW_CASCADE_COUNT]TextureHandle) void {
         self.vtable.setTextureUniforms(self.ptr, texture_enabled, shadow_map_handles);
     }
@@ -655,6 +881,8 @@ pub const ISSAOContext = struct {
         compute: *const fn (ptr: *anyopaque, proj: Mat4, inv_proj: Mat4) void,
     };
 
+    /// Returns the compute command interface.
+    /// Use for backend compute buffers, pipelines, dispatches, and barriers.
     pub fn compute(self: ISSAOContext, proj: Mat4, inv_proj: Mat4) void {
         self.vtable.compute(self.ptr, proj, inv_proj);
     }
@@ -669,6 +897,8 @@ pub const IDebugOverlayContext = struct {
         drawDebugShadowMap: *const fn (ptr: *anyopaque, cascade_index: usize, depth_map_handle: TextureHandle) void,
     };
 
+    /// Draws a debug visualization of the shadow map.
+    /// Call from a debug overlay pass with a valid shadow-map target. Must be called from the render thread that owns the backend context.
     pub fn drawDebugShadowMap(self: IDebugOverlayContext, cascade_index: usize, depth_map_handle: TextureHandle) void {
         self.vtable.drawDebugShadowMap(self.ptr, cascade_index, depth_map_handle);
     }
@@ -720,48 +950,78 @@ pub const IComputeContext = struct {
         hasCommandBuffer: *const fn (ptr: *anyopaque) bool,
     };
 
+    /// Binds a compute pipeline for following compute commands.
+    /// The pipeline handle must be live and compatible with later descriptor bindings. Must be called from the render thread that owns the backend context.
     pub fn bindComputePipeline(self: IComputeContext, pipeline: ComputePipeline) void {
         self.vtable.bindComputePipeline(self.ptr, pipeline);
     }
+    /// Binds a descriptor set for the active compute pipeline.
+    /// The set layout must match the currently bound pipeline. Must be called from the render thread that owns the backend context.
     pub fn bindDescriptorSet(self: IComputeContext, pipeline: ComputePipeline, frame_index: usize) void {
         self.vtable.bindDescriptorSet(self.ptr, pipeline, frame_index);
     }
+    /// Allocates a buffer intended for compute workloads.
+    /// Usage and size must match the dispatch path that will read or write the buffer. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createComputeBuffer(self: IComputeContext, size: usize, host_visible: bool) RhiError!ComputeBuffer {
         return self.vtable.createComputeBuffer(self.ptr, size, host_visible);
     }
+    /// Destroys a compute buffer handle.
+    /// No queued compute work may reference the buffer after destruction. Must be called from the render thread that owns the backend context.
     pub fn destroyComputeBuffer(self: IComputeContext, buffer: *ComputeBuffer) void {
         self.vtable.destroyComputeBuffer(self.ptr, buffer);
     }
+    /// Creates a compute pipeline from shader bytecode or backend shader metadata.
+    /// The returned handle is owned by the caller and must be destroyed explicitly. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createComputePipeline(self: IComputeContext, allocator: Allocator, shader_path: []const u8, storage_binding_count: u32, push_constant_size: u32) anyerror!ComputePipeline {
         return self.vtable.createComputePipeline(self.ptr, allocator, shader_path, storage_binding_count, push_constant_size);
     }
+    /// Refreshes descriptor bindings for a compute pipeline.
+    /// All referenced buffers and textures must be live and layout-compatible. Must be called from the render thread that owns the backend context.
     pub fn updateComputeDescriptors(self: IComputeContext, pipeline: ComputePipeline, frame_index: usize, storage_buffers: []const ComputeBufferBinding) void {
         self.vtable.updateComputeDescriptors(self.ptr, pipeline, frame_index, storage_buffers);
     }
+    /// Destroys a compute pipeline handle.
+    /// The pipeline must not be bound by any later dispatch. Must be called from the render thread that owns the backend context.
     pub fn destroyComputePipeline(self: IComputeContext, pipeline: *ComputePipeline) void {
         self.vtable.destroyComputePipeline(self.ptr, pipeline);
     }
+    /// Dispatches compute workgroups for the active compute pipeline.
+    /// Group counts must match shader expectations and bound resource sizes. Must be called from the render thread that owns the backend context.
     pub fn dispatch(self: IComputeContext, group_count_x: u32, group_count_y: u32, group_count_z: u32) void {
         self.vtable.dispatch(self.ptr, group_count_x, group_count_y, group_count_z);
     }
+    /// Uploads a small byte payload as push constants for the active pipeline.
+    /// The payload size and layout must match the shader stage declaration. Must be called from the render thread that owns the backend context.
     pub fn pushConstants(self: IComputeContext, pipeline: ComputePipeline, offset: u32, size: u32, data: *const anyopaque) void {
         self.vtable.pushConstants(self.ptr, pipeline, offset, size, data);
     }
+    /// Records a command to fill a buffer range with a repeated value.
+    /// The target range must be valid for the buffer allocation. Must be called from the render thread that owns the backend context.
     pub fn fillBuffer(self: IComputeContext, buffer: ComputeBuffer, offset: u64, size: u64, data: u32) void {
         self.vtable.fillBuffer(self.ptr, buffer, offset, size, data);
     }
+    /// Records a GPU buffer-to-buffer copy.
+    /// Source and destination ranges must be valid and non-overlapping unless the backend documents otherwise. Must be called from the render thread that owns the backend context.
     pub fn copyBuffer(self: IComputeContext, src_buffer: ComputeBufferBinding, dst_buffer: ComputeBufferBinding, src_offset: u64, dst_offset: u64, size: u64) void {
         self.vtable.copyBuffer(self.ptr, src_buffer, dst_buffer, src_offset, dst_offset, size);
     }
+    /// Inserts a backend synchronization barrier between pipeline stages.
+    /// Use to make prior writes visible to later reads or writes. Must be called from the render thread that owns the backend context.
     pub fn pipelineBarrier(self: IComputeContext, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags) void {
         self.vtable.pipelineBarrier(self.ptr, src_stage, dst_stage, src_access, dst_access);
     }
+    /// Inserts synchronization for a specific buffer resource.
+    /// The buffer handle must be live and the access masks must describe the surrounding commands. Must be called from the render thread that owns the backend context.
     pub fn bufferBarrier(self: IComputeContext, buffer: ComputeBufferBinding, src_stage: PipelineStageFlags, dst_stage: PipelineStageFlags, src_access: AccessFlags, dst_access: AccessFlags, offset: u64, size: u64) void {
         self.vtable.bufferBarrier(self.ptr, buffer, src_stage, dst_stage, src_access, dst_access, offset, size);
     }
+    /// Waits for the frame fence associated with a frame index.
+    /// Use only for explicit synchronization points; waiting on the render thread may stall the frame.
     pub fn waitForFrameFence(self: IComputeContext, frame_index: usize) bool {
         return self.vtable.waitForFrameFence(self.ptr, frame_index);
     }
+    /// Reports whether the backend has a command buffer for a frame index.
+    /// Useful for optional compute paths that must skip frames without command recording.
     pub fn hasCommandBuffer(self: IComputeContext) bool {
         return self.vtable.hasCommandBuffer(self.ptr);
     }
@@ -786,21 +1046,33 @@ pub const IRenderContext = struct {
         setClearColor: *const fn (ptr: *anyopaque, color: Vec3) void,
     };
 
+    /// Begins the per-frame command recording scope.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFrame(self: IRenderContext) void {
         self.vtable.beginFrame(self.ptr);
     }
+    /// Ends the per-frame command recording scope and submits queued frame work.
+    /// All commands for that scope must be recorded before this call.
     pub fn endFrame(self: IRenderContext) void {
         self.vtable.endFrame(self.ptr);
     }
+    /// Cancels the current frame after a recoverable startup or rendering failure.
+    /// Use only before `endFrame`; the backend may discard recorded commands for the active frame. Must be called from the render thread that owns the backend context.
     pub fn abortFrame(self: IRenderContext) void {
         self.vtable.abortFrame(self.ptr);
     }
+    /// Marks the swapchain-dependent render targets for recreation.
+    /// Use after window resize or presentation errors; actual recreation is backend-controlled. Must be called from the render thread that owns the backend context.
     pub fn requestSwapchainRecreate(self: IRenderContext) void {
         self.vtable.requestSwapchainRecreate(self.ptr);
     }
+    /// Returns encoder from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getEncoder(self: IRenderContext) IGraphicsCommandEncoder {
         return self.vtable.getEncoder(self.ptr);
     }
+    /// Returns state from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getState(self: IRenderContext) IRenderStateContext {
         return self.vtable.getStateContext(self.ptr);
     }
@@ -821,27 +1093,43 @@ pub const IPassOrchestrationContext = struct {
         endFXAAPass: *const fn (ptr: *anyopaque) void,
     };
 
+    /// Begins the main scene render pass for opaque and sky/world drawing.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginMainPass(self: IPassOrchestrationContext) void {
         self.vtable.beginMainPass(self.ptr);
     }
+    /// Ends the main scene render pass and finalizes its attachments for later passes.
+    /// All commands for that scope must be recorded before this call.
     pub fn endMainPass(self: IPassOrchestrationContext) void {
         self.vtable.endMainPass(self.ptr);
     }
+    /// Begins the post-process pass that consumes scene color/depth outputs.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginPostProcessPass(self: IPassOrchestrationContext) void {
         self.vtable.beginPostProcessPass(self.ptr);
     }
+    /// Ends the post-process pass and makes its output available for presentation or later passes.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPostProcessPass(self: IPassOrchestrationContext) void {
         self.vtable.endPostProcessPass(self.ptr);
     }
+    /// Begins the G-pass that writes geometry buffers for screen-space effects.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginGPass(self: IPassOrchestrationContext) void {
         self.vtable.beginGPass(self.ptr);
     }
+    /// Ends the G-pass and makes geometry buffers available to SSAO or lighting passes.
+    /// All commands for that scope must be recorded before this call.
     pub fn endGPass(self: IPassOrchestrationContext) void {
         self.vtable.endGPass(self.ptr);
     }
+    /// Begins the FXAA post-process pass for the current frame.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFXAAPass(self: IPassOrchestrationContext) void {
         self.vtable.beginFXAAPass(self.ptr);
     }
+    /// Ends the FXAA post-process pass for the current frame.
+    /// All commands for that scope must be recorded before this call.
     pub fn endFXAAPass(self: IPassOrchestrationContext) void {
         self.vtable.endFXAAPass(self.ptr);
     }
@@ -857,12 +1145,18 @@ pub const IPostProcessContext = struct {
         computeDepthPyramid: *const fn (ptr: *anyopaque) void,
     };
 
+    /// Runs the bloom extraction and blur compute passes for the current frame.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeBloom(self: IPostProcessContext) void {
         self.vtable.computeBloom(self.ptr);
     }
+    /// Runs the TAA resolve pass using the current color, history, and velocity inputs.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeTAA(self: IPostProcessContext) void {
         self.vtable.computeTAA(self.ptr);
     }
+    /// Builds the hierarchical depth pyramid used by culling and screen-space effects.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeDepthPyramid(self: IPostProcessContext) void {
         self.vtable.computeDepthPyramid(self.ptr);
     }
@@ -878,12 +1172,18 @@ pub const IRenderEffectsContext = struct {
         endWaterDraw: *const fn (ptr: *anyopaque) void,
     };
 
+    /// Draws the sky and atmosphere contribution for the current camera parameters.
+    /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation.
     pub fn drawSky(self: IRenderEffectsContext, params: SkyParams) RhiError!void {
         return self.vtable.drawSky(self.ptr, params);
     }
+    /// Begins water rendering using reflection and scene-depth textures as inputs.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginWaterDraw(self: IRenderEffectsContext, reflection: TextureHandle, scene_depth: TextureHandle) bool {
         return self.vtable.beginWaterDraw(self.ptr, reflection, scene_depth);
     }
+    /// Ends water rendering and restores normal scene rendering state.
+    /// All commands for that scope must be recorded before this call.
     pub fn endWaterDraw(self: IRenderEffectsContext) void {
         self.vtable.endWaterDraw(self.ptr);
     }
@@ -909,33 +1209,53 @@ pub const VulkanNativeHandles = struct {
         getSwapchainImageCount: *const fn (ptr: *anyopaque) u32,
     };
 
+    /// Returns command buffer from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getCommandBuffer(self: VulkanNativeHandles) u64 {
         return self.vtable.getCommandBuffer(self.ptr);
     }
+    /// Returns swapchain extent from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getSwapchainExtent(self: VulkanNativeHandles) [2]u32 {
         return self.vtable.getSwapchainExtent(self.ptr);
     }
+    /// Returns device from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getDevice(self: VulkanNativeHandles) u64 {
         return self.vtable.getDevice(self.ptr);
     }
+    /// Returns instance from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getInstance(self: VulkanNativeHandles) u64 {
         return self.vtable.getInstance(self.ptr);
     }
+    /// Returns physical device from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getPhysicalDevice(self: VulkanNativeHandles) u64 {
         return self.vtable.getPhysicalDevice(self.ptr);
     }
+    /// Returns queue from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getQueue(self: VulkanNativeHandles) u64 {
         return self.vtable.getQueue(self.ptr);
     }
+    /// Returns queue family from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getQueueFamily(self: VulkanNativeHandles) u32 {
         return self.vtable.getQueueFamily(self.ptr);
     }
+    /// Returns descriptor pool from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getDescriptorPool(self: VulkanNativeHandles) u64 {
         return self.vtable.getDescriptorPool(self.ptr);
     }
+    /// Returns ui render pass from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getUiRenderPass(self: VulkanNativeHandles) u64 {
         return self.vtable.getUiRenderPass(self.ptr);
     }
+    /// Returns swapchain image count from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getSwapchainImageCount(self: VulkanNativeHandles) u32 {
         return self.vtable.getSwapchainImageCount(self.ptr);
     }
@@ -958,30 +1278,46 @@ pub const IDeviceQuery = struct {
         waitIdle: *const fn (ptr: *anyopaque) void,
     };
 
+    /// Returns frame index from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getFrameIndex(self: IDeviceQuery) usize {
         return self.vtable.getFrameIndex(self.ptr);
     }
+    /// Reports whether indirect draw commands may use non-zero `firstInstance`.
+    /// Callers must fall back to direct or rebased draws when this returns false.
     pub fn supportsIndirectFirstInstance(self: IDeviceQuery) bool {
         return self.vtable.supportsIndirectFirstInstance(self.ptr);
     }
+    /// Returns fault count from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getFaultCount(self: IDeviceQuery) u32 {
         return self.vtable.getFaultCount(self.ptr);
     }
+    /// Returns validation error count from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getValidationErrorCount(self: IDeviceQuery) u32 {
         return self.vtable.getValidationErrorCount(self.ptr);
     }
 
+    /// Returns draw call count from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getDrawCallCount(self: IDeviceQuery) u32 {
         return self.vtable.getDrawCallCount(self.ptr);
     }
 
+    /// Returns device local vram bytes from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getDeviceLocalVramBytes(self: IDeviceQuery) u64 {
         return self.vtable.getDeviceLocalVramBytes(self.ptr);
     }
 
+    /// Returns render resolution from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getRenderResolution(self: IDeviceQuery) RenderResolution {
         return self.vtable.getRenderResolution(self.ptr);
     }
+    /// Blocks until the backend device has completed queued work.
+    /// Use during shutdown, resource teardown, or tests; avoid in normal frame paths.
     pub fn waitIdle(self: IDeviceQuery) void {
         self.vtable.waitIdle(self.ptr);
     }
@@ -999,18 +1335,28 @@ pub const IDeviceTiming = struct {
         setTimingEnabled: *const fn (ptr: *anyopaque, enabled: bool) void,
     };
 
+    /// Starts GPU timestamp collection for a named render pass.
+    /// Must be paired with the matching end call and used from the render thread.
     pub fn beginPassTiming(self: IDeviceTiming, pass_name: []const u8) void {
         self.vtable.beginPassTiming(self.ptr, pass_name);
     }
+    /// Stops GPU timestamp collection for a named render pass.
+    /// All commands for that scope must be recorded before this call.
     pub fn endPassTiming(self: IDeviceTiming, pass_name: []const u8) void {
         self.vtable.endPassTiming(self.ptr, pass_name);
     }
+    /// Returns timing results from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getTimingResults(self: IDeviceTiming) GpuTimingResults {
         return self.vtable.getTimingResults(self.ptr);
     }
+    /// Reports whether GPU timing capture is enabled.
+    /// Callers can use this to avoid timing-only work when profiling is disabled.
     pub fn isTimingEnabled(self: IDeviceTiming) bool {
         return self.vtable.isTimingEnabled(self.ptr);
     }
+    /// Sets timing enabled on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTimingEnabled(self: IDeviceTiming, enabled: bool) void {
         self.vtable.setTimingEnabled(self.ptr, enabled);
     }
@@ -1044,66 +1390,108 @@ pub const IRenderQualityOptions = struct {
         getResolutionScale: *const fn (ctx: *anyopaque) f32,
     };
 
+    /// Sets wireframe on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setWireframe(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setWireframe(self.ptr, enabled);
     }
+    /// Sets textures enabled on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTexturesEnabled(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setTexturesEnabled(self.ptr, enabled);
     }
+    /// Sets debug shadow view on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setDebugShadowView(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setDebugShadowView(self.ptr, enabled);
     }
+    /// Sets shadow debug channel on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setShadowDebugChannel(self: IRenderQualityOptions, channel: u32) void {
         self.vtable.setShadowDebugChannel(self.ptr, channel);
     }
+    /// Sets v sync on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setVSync(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setVSync(self.ptr, enabled);
     }
+    /// Sets anisotropic filtering on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setAnisotropicFiltering(self: IRenderQualityOptions, level: u8) void {
         self.vtable.setAnisotropicFiltering(self.ptr, level);
     }
+    /// Sets volumetric density on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setVolumetricDensity(self: IRenderQualityOptions, density: f32) void {
         self.vtable.setVolumetricDensity(self.ptr, density);
     }
+    /// Sets the requested MSAA sample count on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setMSAA(self: IRenderQualityOptions, samples: u8) void {
         self.vtable.setMSAA(self.ptr, samples);
     }
+    /// Enables or disables FXAA on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setFXAA(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setFXAA(self.ptr, enabled);
     }
+    /// Sets bloom on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setBloom(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setBloom(self.ptr, enabled);
     }
+    /// Sets bloom intensity on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setBloomIntensity(self: IRenderQualityOptions, intensity: f32) void {
         self.vtable.setBloomIntensity(self.ptr, intensity);
     }
+    /// Sets vignette enabled on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setVignetteEnabled(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setVignetteEnabled(self.ptr, enabled);
     }
+    /// Sets vignette intensity on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setVignetteIntensity(self: IRenderQualityOptions, intensity: f32) void {
         self.vtable.setVignetteIntensity(self.ptr, intensity);
     }
+    /// Sets film grain enabled on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setFilmGrainEnabled(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setFilmGrainEnabled(self.ptr, enabled);
     }
+    /// Sets film grain intensity on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setFilmGrainIntensity(self: IRenderQualityOptions, intensity: f32) void {
         self.vtable.setFilmGrainIntensity(self.ptr, intensity);
     }
+    /// Sets color grading enabled on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setColorGradingEnabled(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setColorGradingEnabled(self.ptr, enabled);
     }
+    /// Sets color grading intensity on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setColorGradingIntensity(self: IRenderQualityOptions, intensity: f32) void {
         self.vtable.setColorGradingIntensity(self.ptr, intensity);
     }
+    /// Sets the TAA history blend factor on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTAABlendFactor(self: IRenderQualityOptions, value: f32) void {
         self.vtable.setTAABlendFactor(self.ptr, value);
     }
+    /// Sets the TAA velocity rejection threshold on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTAAVelocityRejection(self: IRenderQualityOptions, value: f32) void {
         self.vtable.setTAAVelocityRejection(self.ptr, value);
     }
+    /// Sets dynamic resolution on the active graphics backend.
+    /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setDynamicResolution(self: IRenderQualityOptions, enabled: bool, min_scale: f32, max_scale: f32, target_fps: u32) void {
         self.vtable.setDynamicResolution(self.ptr, enabled, min_scale, max_scale, target_fps);
     }
+    /// Returns resolution scale from the active graphics backend.
+    /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getResolutionScale(self: IRenderQualityOptions) f32 {
         return self.vtable.getResolutionScale(self.ptr);
     }
@@ -1117,6 +1505,8 @@ pub const IDeviceRecovery = struct {
         recover: *const fn (ctx: *anyopaque) anyerror!void,
     };
 
+    /// Attempts to recover the graphics backend after a recoverable failure.
+    /// Returns an error if backend resources cannot be recreated safely. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn recover(self: IDeviceRecovery) !void {
         return self.vtable.recover(self.ptr);
     }
@@ -1130,6 +1520,8 @@ pub const ICullingSystemFactory = struct {
         createCullingSystem: *const fn (ctx: *anyopaque, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem,
     };
 
+    /// Creates a GPU culling system bound to the active backend resources.
+    /// The caller owns the returned interface and must deinitialize it through its contract. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createCullingSystem(self: ICullingSystemFactory, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
         return self.vtable.createCullingSystem(self.ptr, allocator, max_chunks);
     }
@@ -1143,6 +1535,8 @@ pub const IScreenshotContext = struct {
         captureFrame: *const fn (ctx: *anyopaque, path: []const u8) bool,
     };
 
+    /// Captures the current framebuffer to the requested output path.
+    /// The path must be writable and capture resources must be available for the active backend. Must be called from the render thread that owns the backend context.
     pub fn captureFrame(self: IScreenshotContext, path: []const u8) bool {
         return self.vtable.captureFrame(self.ptr, path);
     }
@@ -1216,6 +1610,8 @@ pub const RHI = struct {
         screenshot: ?*const IScreenshotContext.VTable = null,
     };
 
+    /// Builds the composite RHI vtable from subsystem interfaces.
+    /// Used during RHI construction; all subsystem pointers must outlive the composed `RHI`.
     pub fn composeVTable(lifecycle: Lifecycle, interfaces: Interfaces) VTable {
         return .{
             .init = lifecycle.init,
@@ -1242,15 +1638,23 @@ pub const RHI = struct {
         };
     }
 
+    /// Returns the resource factory interface for direct buffer, texture, and shader lifecycle operations.
+    /// The returned interface borrows the RHI backend and must not outlive it.
     pub fn factory(self: RHI) IResourceFactory {
         return .{ .ptr = self.ptr, .vtable = self.vtable.resources orelse unreachable };
     }
+    /// Returns the convenience resource manager wrapper.
+    /// Use when a subsystem needs resource lifecycle operations without the full RHI surface.
     pub fn resourceManager(self: RHI) ResourceManager {
         return .{ .factory = self.factory() };
     }
+    /// Returns the legacy render-context wrapper for frame and draw operations.
+    /// Prefer narrower interfaces for new subsystem code when possible.
     pub fn context(self: RHI) IRenderContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.render orelse unreachable };
     }
+    /// Returns the frame-local render context wrapper.
+    /// Construct per frame because encoder and pass state are tied to current backend state.
     pub fn renderContext(self: RHI) RenderContext {
         const rc = self.context();
         return .{
@@ -1263,12 +1667,18 @@ pub const RHI = struct {
             .state = rc.getState(),
         };
     }
+    /// Returns the pass orchestration interface.
+    /// Use to begin and end high-level render passes in backend-defined order.
     pub fn passOrchestration(self: RHI) IPassOrchestrationContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.passes orelse unreachable };
     }
+    /// Returns the post-processing interface.
+    /// Use for bloom, TAA, and depth-pyramid compute passes.
     pub fn postProcess(self: RHI) IPostProcessContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.post_process orelse unreachable };
     }
+    /// Returns the render-effects interface.
+    /// Use for sky, water, and other effect-specific draw orchestration.
     pub fn renderEffects(self: RHI) IRenderEffectsContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.effects orelse unreachable };
     }
@@ -1278,74 +1688,120 @@ pub const RHI = struct {
     pub fn vulkanHandles(self: RHI) VulkanNativeHandles {
         return .{ .ptr = self.ptr, .vtable = self.vtable.vulkan orelse unreachable };
     }
+    /// Returns the graphics command encoder interface.
+    /// The encoder is frame-scoped and follows render-thread ownership.
     pub fn encoder(self: RHI) IGraphicsCommandEncoder {
         return self.context().getEncoder();
     }
+    /// Returns the render state interface.
+    /// Use to update uniforms, bind instance buffers, and configure draw state.
     pub fn state(self: RHI) IRenderStateContext {
         return self.context().getState();
     }
+    /// Returns the SSAO subsystem interface.
+    /// The subsystem remains owned by the RHI backend.
     pub fn ssao(self: RHI) ISSAOContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.ssao orelse unreachable };
     }
+    /// Returns the debug-overlay rendering interface.
+    /// Use only for diagnostic visualizations.
     pub fn debugOverlay(self: RHI) IDebugOverlayContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.debug_overlay orelse unreachable };
     }
+    /// Returns the shadow-scene pass interface.
+    /// Use for shadow-map pass control and uniforms.
     pub fn shadow(self: RHI) IShadowContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.shadow orelse unreachable };
     }
+    /// Returns the shadow system interface.
+    /// Use for shadow resources and debug inspection.
     pub fn shadowSystem(self: RHI) ShadowSystemWrapper {
         return .{ .ctx = self.shadow() };
     }
+    /// Returns the water reflection system interface.
+    /// Use for reflection pass control and water render targets.
     pub fn waterSystem(self: RHI) WaterSystemWrapper {
         return .{ .ctx = self.water() };
     }
+    /// Returns the water convenience wrapper.
+    /// This borrows the RHI backend and must not outlive it.
     pub fn water(self: RHI) IWaterContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.water orelse unreachable };
     }
+    /// Returns the compute command interface.
+    /// Use for backend compute buffers, pipelines, dispatches, and barriers.
     pub fn compute(self: RHI) IComputeContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.compute orelse unreachable };
     }
+    /// Returns the immediate-mode UI rendering interface.
+    /// Use inside UI pass setup for rectangles and textures.
     pub fn ui(self: RHI) IUIContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.ui orelse unreachable };
     }
+    /// Returns the Dear ImGui backend interface.
+    /// Use when the optional ImGui integration is enabled.
     pub fn imgui(self: RHI) IImGuiContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.imgui orelse unreachable };
     }
+    /// Returns the convenience UI renderer wrapper.
+    /// This narrows callers to UI drawing operations.
     pub fn uiRenderer(self: RHI) UIRenderer {
         return .{ .ctx = self.ui() };
     }
+    /// Returns backend query and diagnostic counters.
+    /// Use for frame index, indirect support, validation, and memory telemetry.
     pub fn query(self: RHI) IDeviceQuery {
         return .{ .ptr = self.ptr, .vtable = self.vtable.query orelse unreachable };
     }
+    /// Returns the GPU timing interface.
+    /// Use for optional pass timing capture and result retrieval.
     pub fn timing(self: RHI) IDeviceTiming {
         return .{ .ptr = self.ptr, .vtable = self.vtable.timing orelse unreachable };
     }
+    /// Returns the render-quality option interface.
+    /// Use to mutate graphics settings exposed by the backend.
     pub fn options(self: RHI) IRenderQualityOptions {
         return self.renderQualityOptions();
     }
+    /// Returns the convenience render-quality wrapper.
+    /// This narrows callers to quality option mutation and queries.
     pub fn renderQualityOptions(self: RHI) IRenderQualityOptions {
         return .{ .ptr = self.ptr, .vtable = self.vtable.quality orelse unreachable };
     }
+    /// Returns the backend recovery interface.
+    /// Use only around recoverable device or swapchain failures.
     pub fn recovery(self: RHI) IDeviceRecovery {
         return .{ .ptr = self.ptr, .vtable = self.vtable.recovery orelse unreachable };
     }
+    /// Returns the GPU culling factory interface.
+    /// Use to construct culling systems backed by the active RHI.
     pub fn cullingFactory(self: RHI) ICullingSystemFactory {
         return .{ .ptr = self.ptr, .vtable = self.vtable.culling_factory orelse unreachable };
     }
+    /// Returns the screenshot capture interface.
+    /// Use for test and diagnostic frame capture.
     pub fn screenshot(self: RHI) IScreenshotContext {
         return .{ .ptr = self.ptr, .vtable = self.vtable.screenshot orelse unreachable };
     }
+    /// Creates a GPU culling system bound to the active backend resources.
+    /// The caller owns the returned interface and must deinitialize it through its contract. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createCullingSystem(self: RHI, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
         return self.cullingFactory().createCullingSystem(allocator, max_chunks);
     }
 
     // Lifecycle
+    /// Constructs an `RHI` composite from a backend pointer and vtable.
+    /// The backend pointer and vtable must remain valid until `deinit`.
     pub fn init(self: RHI, allocator: Allocator, device: ?*RenderDevice) !void {
         return self.vtable.init(self.ptr, allocator, device);
     }
+    /// Destroys the RHI backend and releases owned graphics resources.
+    /// No borrowed subsystem interfaces may be used after this returns. Must be called from the render thread that owns the backend context.
     pub fn deinit(self: RHI) void {
         self.vtable.deinit(self.ptr);
     }
+    /// Blocks until the backend device has completed queued work.
+    /// Use during shutdown, resource teardown, or tests; avoid in normal frame paths.
     pub fn waitIdle(self: RHI) void {
         (self.vtable.query orelse unreachable).waitIdle(self.ptr);
     }

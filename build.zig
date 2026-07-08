@@ -1,88 +1,82 @@
 const std = @import("std");
 
+const BuildOptions = struct {
+    options: *std.Build.Step.Options,
+    engine_ui_options: *std.Build.Step.Options,
+    world_lod_options: *std.Build.Step.Options,
+    world_runtime_options: *std.Build.Step.Options,
+    engine_graphics_options: *std.Build.Step.Options,
+    enable_debug_shadows: bool,
+    enable_imgui: bool,
+    chunk_debug_mode: bool,
+    chunk_debug_enable: []const u8,
+    startup_diagnostic_seconds: u32,
+    skip_present: bool,
+    monitor_index: i32,
+    monitor_name: []const u8,
+    window_video_driver: []const u8,
+    window_no_focus: bool,
+    shadow_test_variant: []const u8,
+    benchmark_preset: []const u8,
+    benchmark_duration: u32,
+    benchmark_output: []const u8,
+};
+
+const BuildModules = struct {
+    zig_math: *std.Build.Module,
+    zig_noise: *std.Build.Module,
+    fs_module: *std.Build.Module,
+    sync_module: *std.Build.Module,
+    c_module: *std.Build.Module,
+    engine_math: *std.Build.Module,
+    engine_audio: *std.Build.Module,
+    engine_core: *std.Build.Module,
+    engine_ecs: *std.Build.Module,
+    engine_input: *std.Build.Module,
+    engine_physics: *std.Build.Module,
+    engine_rhi: *std.Build.Module,
+    engine_graphics: *std.Build.Module,
+    engine_assets: *std.Build.Module,
+    engine_camera: *std.Build.Module,
+    engine_clouds: *std.Build.Module,
+    engine_atmosphere: *std.Build.Module,
+    engine_shadows: *std.Build.Module,
+    engine_lighting: *std.Build.Module,
+    engine_ui: *std.Build.Module,
+    world_core: *std.Build.Module,
+    world_worldgen: *std.Build.Module,
+    world_meshing: *std.Build.Module,
+    world_lod: *std.Build.Module,
+    world_runtime: *std.Build.Module,
+    world_persistence: *std.Build.Module,
+    game_core: *std.Build.Module,
+    game_ui: *std.Build.Module,
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const options = b.addOptions();
-    const enable_debug_shadows = b.option(bool, "debug_shadows", "Enable debug shadow visualization resources") orelse false;
-    options.addOption(bool, "debug_shadows", enable_debug_shadows);
+    const opts = defineBuildOptions(b);
+    const modules = defineModules(b, target, optimize, opts);
+    defineBuildSteps(b, target, optimize, opts, modules);
+}
 
-    const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration") orelse true;
-    options.addOption(bool, "imgui", enable_imgui);
-    const engine_ui_options = b.addOptions();
-    engine_ui_options.addOption(bool, "imgui", enable_imgui);
-
-    const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
-    options.addOption(bool, "smoke_test", smoke_test);
-
-    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, and decorations for chunk-only debugging") orelse false;
-    options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
-
-    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
-    options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
-    const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly by id or alias (normal, overworld, overworld-v2, flat, test)") orelse "";
-    options.addOption([]const u8, "auto_world", auto_world);
-
-    const auto_preset = b.option([]const u8, "auto-preset", "Graphics preset to apply for auto-world launches (low, medium, high, ultra, extreme)") orelse "";
-    options.addOption([]const u8, "auto_preset", auto_preset);
-
-    const startup_diagnostic_seconds = b.option(u32, "startup-diagnostic-seconds", "Wait N seconds after auto-world startup, log chunk counts, and exit") orelse 0;
-    options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
-    const world_lod_options = b.addOptions();
-    world_lod_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
-    const world_runtime_options = b.addOptions();
-    world_runtime_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
-    world_runtime_options.addOption(bool, "world_runtime_module", true);
-
-    const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
-    options.addOption(bool, "skip_present", skip_present);
-
-    const monitor_index = b.option(i32, "monitor-index", "Open the game window on a specific SDL display index (0-based, -1 = default)") orelse -1;
-    options.addOption(i32, "monitor_index", monitor_index);
-
-    const monitor_name = b.option([]const u8, "monitor-name", "Move the game window to a named Hyprland monitor (e.g. DP-2)") orelse "";
-    options.addOption([]const u8, "monitor_name", monitor_name);
-
-    const window_video_driver = b.option([]const u8, "window-video-driver", "SDL video driver override for the game window (x11, wayland, or empty)") orelse "";
-    options.addOption([]const u8, "window_video_driver", window_video_driver);
-
-    const window_no_focus = b.option(bool, "window-no-focus", "Create the game window without taking keyboard focus") orelse false;
-    options.addOption(bool, "window_no_focus", window_no_focus);
-
-    const engine_graphics_options = b.addOptions();
-    engine_graphics_options.addOption(bool, "debug_shadows", enable_debug_shadows);
-    engine_graphics_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
-    engine_graphics_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
-    engine_graphics_options.addOption(bool, "skip_present", skip_present);
-    engine_graphics_options.addOption(bool, "imgui", enable_imgui);
-
-    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
-    options.addOption([]const u8, "screenshot_path", screenshot_path);
-
-    const screenshot_frame = b.option(u32, "screenshot-frame", "Frame number to capture when screenshot-path is set") orelse 120;
-    options.addOption(u32, "screenshot_frame", screenshot_frame);
-
-    const screenshot_delay_seconds = b.option(u32, "screenshot-delay-seconds", "Seconds to wait after screenshot target is ready before capture") orelse 0;
-    options.addOption(u32, "screenshot_delay_seconds", screenshot_delay_seconds);
-
-    const shadow_test_scene = b.option(bool, "shadow-test-scene", "Launch the deterministic shadow/cave lighting test scene") orelse false;
-    options.addOption(bool, "shadow_test_scene", shadow_test_scene);
-
-    const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
-    options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
-
-    const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
-    options.addOption(bool, "benchmark", benchmark);
-
-    const benchmark_preset = b.option([]const u8, "benchmark-preset", "Graphics preset to benchmark (low, medium, high, ultra, extreme)") orelse "medium";
-    options.addOption([]const u8, "benchmark_preset", benchmark_preset);
-
-    const benchmark_duration = b.option(u32, "benchmark-duration", "Benchmark duration in seconds") orelse 60;
-    options.addOption(u32, "benchmark_duration", benchmark_duration);
-
-    const benchmark_output = b.option([]const u8, "benchmark-output", "Benchmark JSON output path") orelse "benchmark_results.json";
-    options.addOption([]const u8, "benchmark_output", benchmark_output);
+fn defineModules(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    opts: BuildOptions,
+) BuildModules {
+    const options = opts.options;
+    const enable_imgui = opts.enable_imgui;
+    const engine_ui_options = opts.engine_ui_options;
+    const world_lod_options = opts.world_lod_options;
+    const world_runtime_options = opts.world_runtime_options;
+    const engine_graphics_options = opts.engine_graphics_options;
+    const chunk_debug_mode = opts.chunk_debug_mode;
+    const chunk_debug_enable = opts.chunk_debug_enable;
+    const shadow_test_variant = opts.shadow_test_variant;
 
     const zig_math = b.createModule(.{
         .root_source_file = b.path("libs/zig-math/math.zig"),
@@ -152,6 +146,37 @@ pub fn build(b: *std.Build) void {
     const world_persistence = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/root.zig"), .target = target, .optimize = optimize });
     const game_core = b.createModule(.{ .root_source_file = b.path("modules/game-core/src/root.zig"), .target = target, .optimize = optimize });
     const game_ui = b.createModule(.{ .root_source_file = b.path("modules/game-ui/src/root.zig"), .target = target, .optimize = optimize });
+
+    const modules = BuildModules{
+        .zig_math = zig_math,
+        .zig_noise = zig_noise,
+        .fs_module = fs_module,
+        .sync_module = sync_module,
+        .c_module = c_module,
+        .engine_math = engine_math,
+        .engine_audio = engine_audio,
+        .engine_core = engine_core,
+        .engine_ecs = engine_ecs,
+        .engine_input = engine_input,
+        .engine_physics = engine_physics,
+        .engine_rhi = engine_rhi,
+        .engine_graphics = engine_graphics,
+        .engine_assets = engine_assets,
+        .engine_camera = engine_camera,
+        .engine_clouds = engine_clouds,
+        .engine_atmosphere = engine_atmosphere,
+        .engine_shadows = engine_shadows,
+        .engine_lighting = engine_lighting,
+        .engine_ui = engine_ui,
+        .world_core = world_core,
+        .world_worldgen = world_worldgen,
+        .world_meshing = world_meshing,
+        .world_lod = world_lod,
+        .world_runtime = world_runtime,
+        .world_persistence = world_persistence,
+        .game_core = game_core,
+        .game_ui = game_ui,
+    };
 
     addSharedImports(engine_math, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     addSharedImports(engine_audio, zig_math, zig_noise, fs_module, sync_module, c_module, options);
@@ -310,11 +335,43 @@ pub fn build(b: *std.Build) void {
     world_runtime.addOptions("world_runtime_options", world_runtime_options);
 
     addSharedImportsNoOptions(game_core, zig_math, zig_noise, fs_module, sync_module, c_module);
-    addProjectModuleImports(game_core, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(game_core, modules);
 
     addSharedImportsNoOptions(game_ui, zig_math, zig_noise, fs_module, sync_module, c_module);
-    addProjectModuleImports(game_ui, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(game_ui, modules);
     game_ui.addImport("game-core", game_core);
+
+    return modules;
+}
+
+fn defineBuildSteps(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    opts: BuildOptions,
+    modules: BuildModules,
+) void {
+    const options = opts.options;
+    const enable_debug_shadows = opts.enable_debug_shadows;
+    const enable_imgui = opts.enable_imgui;
+    const monitor_index = opts.monitor_index;
+    const monitor_name = opts.monitor_name;
+    const window_video_driver = opts.window_video_driver;
+    const window_no_focus = opts.window_no_focus;
+    const benchmark_preset = opts.benchmark_preset;
+    const benchmark_duration = opts.benchmark_duration;
+    const benchmark_output = opts.benchmark_output;
+    const zig_math = modules.zig_math;
+    const zig_noise = modules.zig_noise;
+    const fs_module = modules.fs_module;
+    const sync_module = modules.sync_module;
+    const c_module = modules.c_module;
+    const engine_core = modules.engine_core;
+    const engine_graphics = modules.engine_graphics;
+    const world_core = modules.world_core;
+    const world_worldgen = modules.world_worldgen;
+    const game_core = modules.game_core;
+    const game_ui = modules.game_ui;
 
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -326,7 +383,7 @@ pub fn build(b: *std.Build) void {
     root_module.addImport("fs", fs_module);
     root_module.addImport("sync", sync_module);
     root_module.addImport("c", c_module);
-    addProjectModuleImports(root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(root_module, modules);
     root_module.addImport("game-core", game_core);
     root_module.addImport("game-ui", game_ui);
     root_module.addOptions("build_options", options);
@@ -401,7 +458,7 @@ pub fn build(b: *std.Build) void {
     benchmark_root_module.addImport("fs", fs_module);
     benchmark_root_module.addImport("sync", sync_module);
     benchmark_root_module.addImport("c", c_module);
-    addProjectModuleImports(benchmark_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(benchmark_root_module, modules);
     benchmark_root_module.addImport("game-core", game_core);
     benchmark_root_module.addImport("game-ui", game_ui);
     benchmark_root_module.addOptions("build_options", benchmark_options);
@@ -502,7 +559,7 @@ pub fn build(b: *std.Build) void {
     test_root_module.addImport("fs", fs_module);
     test_root_module.addImport("sync", sync_module);
     test_root_module.addImport("c", c_module);
-    addProjectModuleImports(test_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(test_root_module, modules);
     test_root_module.addImport("game-core", game_core);
     test_root_module.addImport("game-ui", game_ui);
     test_root_module.addOptions("build_options", options);
@@ -543,7 +600,7 @@ pub fn build(b: *std.Build) void {
     integration_root_module.addImport("fs", fs_module);
     integration_root_module.addImport("sync", sync_module);
     integration_root_module.addImport("c", c_module);
-    addProjectModuleImports(integration_root_module, engine_math, engine_audio, engine_core, engine_ecs, engine_input, engine_physics, engine_rhi, engine_graphics, engine_assets, engine_camera, engine_clouds, engine_atmosphere, engine_shadows, engine_lighting, engine_ui, world_core, world_worldgen, world_meshing, world_lod, world_runtime, world_persistence);
+    addProjectModuleImports(integration_root_module, modules);
     integration_root_module.addImport("game-core", game_core);
     integration_root_module.addImport("game-ui", game_ui);
     integration_root_module.addOptions("build_options", options);
@@ -623,57 +680,146 @@ pub fn build(b: *std.Build) void {
     const run_robust_step = b.step("run-robust", "Run the GPU robustness demo");
     run_robust_step.dependOn(&run_robust_cmd.step);
 
-    const validate_vulkan_terrain_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/terrain.vert" });
-    const validate_vulkan_terrain_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/terrain.frag" });
-    const validate_vulkan_shadow_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/shadow.vert" });
-    const validate_vulkan_shadow_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/shadow.frag" });
-    const validate_vulkan_sky_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/sky.vert" });
-    const validate_vulkan_sky_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/sky.frag" });
-    const validate_vulkan_ui_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui.vert" });
-    const validate_vulkan_ui_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui.frag" });
-    const validate_vulkan_ui_tex_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui_tex.vert" });
-    const validate_vulkan_ui_tex_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ui_tex.frag" });
-    const validate_vulkan_debug_shadow_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/debug_shadow.vert" });
-    const validate_vulkan_debug_shadow_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/debug_shadow.frag" });
-    const validate_vulkan_ssao_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ssao.vert" });
-    const validate_vulkan_ssao_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ssao.frag" });
-    const validate_vulkan_ssao_blur_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/ssao_blur.frag" });
-    const validate_vulkan_g_pass_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/g_pass.frag" });
-    const validate_vulkan_taa_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/taa.vert" });
-    const validate_vulkan_taa_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/taa.frag" });
-    const validate_vulkan_lpv_inject_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/lpv_inject.comp" });
-    const validate_vulkan_lpv_propagate_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/lpv_propagate.comp" });
-    const validate_vulkan_culling_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/culling.comp" });
-    const validate_vulkan_depth_pyramid_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/depth_pyramid.comp" });
-    const validate_vulkan_water_vert = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/water.vert" });
-    const validate_vulkan_water_frag = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/water.frag" });
-    const validate_vulkan_mesh_comp = b.addSystemCommand(&.{ "glslangValidator", "-V", "assets/shaders/vulkan/mesh.comp" });
+    defineShaderValidation(b, test_step);
+}
 
-    test_step.dependOn(&validate_vulkan_terrain_vert.step);
-    test_step.dependOn(&validate_vulkan_terrain_frag.step);
-    test_step.dependOn(&validate_vulkan_shadow_vert.step);
-    test_step.dependOn(&validate_vulkan_shadow_frag.step);
-    test_step.dependOn(&validate_vulkan_sky_vert.step);
-    test_step.dependOn(&validate_vulkan_sky_frag.step);
-    test_step.dependOn(&validate_vulkan_ui_vert.step);
-    test_step.dependOn(&validate_vulkan_ui_frag.step);
-    test_step.dependOn(&validate_vulkan_ui_tex_vert.step);
-    test_step.dependOn(&validate_vulkan_ui_tex_frag.step);
-    test_step.dependOn(&validate_vulkan_debug_shadow_vert.step);
-    test_step.dependOn(&validate_vulkan_debug_shadow_frag.step);
-    test_step.dependOn(&validate_vulkan_ssao_vert.step);
-    test_step.dependOn(&validate_vulkan_ssao_frag.step);
-    test_step.dependOn(&validate_vulkan_ssao_blur_frag.step);
-    test_step.dependOn(&validate_vulkan_g_pass_frag.step);
-    test_step.dependOn(&validate_vulkan_taa_vert.step);
-    test_step.dependOn(&validate_vulkan_taa_frag.step);
-    test_step.dependOn(&validate_vulkan_lpv_inject_comp.step);
-    test_step.dependOn(&validate_vulkan_lpv_propagate_comp.step);
-    test_step.dependOn(&validate_vulkan_culling_comp.step);
-    test_step.dependOn(&validate_vulkan_depth_pyramid_comp.step);
-    test_step.dependOn(&validate_vulkan_water_vert.step);
-    test_step.dependOn(&validate_vulkan_water_frag.step);
-    test_step.dependOn(&validate_vulkan_mesh_comp.step);
+fn defineBuildOptions(b: *std.Build) BuildOptions {
+    const options = b.addOptions();
+    const enable_debug_shadows = b.option(bool, "debug_shadows", "Enable debug shadow visualization resources") orelse false;
+    options.addOption(bool, "debug_shadows", enable_debug_shadows);
+
+    const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration") orelse true;
+    options.addOption(bool, "imgui", enable_imgui);
+    const engine_ui_options = b.addOptions();
+    engine_ui_options.addOption(bool, "imgui", enable_imgui);
+
+    const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
+    options.addOption(bool, "smoke_test", smoke_test);
+
+    const chunk_debug_mode = b.option(bool, "chunk-debug-mode", "Disable LOD, water, caves, and decorations for chunk-only debugging") orelse false;
+    options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
+
+    const chunk_debug_enable = b.option([]const u8, "chunk-debug-enable", "Re-enable one subsystem in chunk-debug-mode (lod, water, caves, decorations)") orelse "";
+    options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
+    const auto_world = b.option([]const u8, "auto-world", "Auto-open a world generator directly by id or alias (normal, overworld, overworld-v2, flat, test)") orelse "";
+    options.addOption([]const u8, "auto_world", auto_world);
+
+    const auto_preset = b.option([]const u8, "auto-preset", "Graphics preset to apply for auto-world launches (low, medium, high, ultra, extreme)") orelse "";
+    options.addOption([]const u8, "auto_preset", auto_preset);
+
+    const startup_diagnostic_seconds = b.option(u32, "startup-diagnostic-seconds", "Wait N seconds after auto-world startup, log chunk counts, and exit") orelse 0;
+    options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+    const world_lod_options = b.addOptions();
+    world_lod_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+    const world_runtime_options = b.addOptions();
+    world_runtime_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
+    world_runtime_options.addOption(bool, "world_runtime_module", true);
+
+    const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
+    options.addOption(bool, "skip_present", skip_present);
+
+    const monitor_index = b.option(i32, "monitor-index", "Open the game window on a specific SDL display index (0-based, -1 = default)") orelse -1;
+    options.addOption(i32, "monitor_index", monitor_index);
+
+    const monitor_name = b.option([]const u8, "monitor-name", "Move the game window to a named Hyprland monitor (e.g. DP-2)") orelse "";
+    options.addOption([]const u8, "monitor_name", monitor_name);
+
+    const window_video_driver = b.option([]const u8, "window-video-driver", "SDL video driver override for the game window (x11, wayland, or empty)") orelse "";
+    options.addOption([]const u8, "window_video_driver", window_video_driver);
+
+    const window_no_focus = b.option(bool, "window-no-focus", "Create the game window without taking keyboard focus") orelse false;
+    options.addOption(bool, "window_no_focus", window_no_focus);
+
+    const engine_graphics_options = b.addOptions();
+    engine_graphics_options.addOption(bool, "debug_shadows", enable_debug_shadows);
+    engine_graphics_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
+    engine_graphics_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
+    engine_graphics_options.addOption(bool, "skip_present", skip_present);
+    engine_graphics_options.addOption(bool, "imgui", enable_imgui);
+
+    const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
+    options.addOption([]const u8, "screenshot_path", screenshot_path);
+
+    const screenshot_frame = b.option(u32, "screenshot-frame", "Frame number to capture when screenshot-path is set") orelse 120;
+    options.addOption(u32, "screenshot_frame", screenshot_frame);
+
+    const screenshot_delay_seconds = b.option(u32, "screenshot-delay-seconds", "Seconds to wait after screenshot target is ready before capture") orelse 0;
+    options.addOption(u32, "screenshot_delay_seconds", screenshot_delay_seconds);
+
+    const shadow_test_scene = b.option(bool, "shadow-test-scene", "Launch the deterministic shadow/cave lighting test scene") orelse false;
+    options.addOption(bool, "shadow_test_scene", shadow_test_scene);
+
+    const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
+    options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
+
+    const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
+    options.addOption(bool, "benchmark", benchmark);
+
+    const benchmark_preset = b.option([]const u8, "benchmark-preset", "Graphics preset to benchmark (low, medium, high, ultra, extreme)") orelse "medium";
+    options.addOption([]const u8, "benchmark_preset", benchmark_preset);
+
+    const benchmark_duration = b.option(u32, "benchmark-duration", "Benchmark duration in seconds") orelse 60;
+    options.addOption(u32, "benchmark_duration", benchmark_duration);
+
+    const benchmark_output = b.option([]const u8, "benchmark-output", "Benchmark JSON output path") orelse "benchmark_results.json";
+    options.addOption([]const u8, "benchmark_output", benchmark_output);
+
+    return .{
+        .options = options,
+        .engine_ui_options = engine_ui_options,
+        .world_lod_options = world_lod_options,
+        .world_runtime_options = world_runtime_options,
+        .engine_graphics_options = engine_graphics_options,
+        .enable_debug_shadows = enable_debug_shadows,
+        .enable_imgui = enable_imgui,
+        .chunk_debug_mode = chunk_debug_mode,
+        .chunk_debug_enable = chunk_debug_enable,
+        .startup_diagnostic_seconds = startup_diagnostic_seconds,
+        .skip_present = skip_present,
+        .monitor_index = monitor_index,
+        .monitor_name = monitor_name,
+        .window_video_driver = window_video_driver,
+        .window_no_focus = window_no_focus,
+        .shadow_test_variant = shadow_test_variant,
+        .benchmark_preset = benchmark_preset,
+        .benchmark_duration = benchmark_duration,
+        .benchmark_output = benchmark_output,
+    };
+}
+
+fn defineShaderValidation(b: *std.Build, test_step: *std.Build.Step) void {
+    const shader_paths = [_][]const u8{
+        "assets/shaders/vulkan/terrain.vert",
+        "assets/shaders/vulkan/terrain.frag",
+        "assets/shaders/vulkan/shadow.vert",
+        "assets/shaders/vulkan/shadow.frag",
+        "assets/shaders/vulkan/sky.vert",
+        "assets/shaders/vulkan/sky.frag",
+        "assets/shaders/vulkan/ui.vert",
+        "assets/shaders/vulkan/ui.frag",
+        "assets/shaders/vulkan/ui_tex.vert",
+        "assets/shaders/vulkan/ui_tex.frag",
+        "assets/shaders/vulkan/debug_shadow.vert",
+        "assets/shaders/vulkan/debug_shadow.frag",
+        "assets/shaders/vulkan/ssao.vert",
+        "assets/shaders/vulkan/ssao.frag",
+        "assets/shaders/vulkan/ssao_blur.frag",
+        "assets/shaders/vulkan/g_pass.frag",
+        "assets/shaders/vulkan/taa.vert",
+        "assets/shaders/vulkan/taa.frag",
+        "assets/shaders/vulkan/lpv_inject.comp",
+        "assets/shaders/vulkan/lpv_propagate.comp",
+        "assets/shaders/vulkan/culling.comp",
+        "assets/shaders/vulkan/depth_pyramid.comp",
+        "assets/shaders/vulkan/water.vert",
+        "assets/shaders/vulkan/water.frag",
+        "assets/shaders/vulkan/mesh.comp",
+    };
+
+    for (shader_paths) |path| {
+        const validate = b.addSystemCommand(&.{ "glslangValidator", "-V", path });
+        test_step.dependOn(&validate.step);
+    }
 }
 
 fn addCimgui(_: *std.Build, compile: *std.Build.Step.Compile) void {
@@ -696,47 +842,27 @@ fn addSharedImportsNoOptions(module: *std.Build.Module, zig_math: *std.Build.Mod
 
 fn addProjectModuleImports(
     module: *std.Build.Module,
-    engine_math: *std.Build.Module,
-    engine_audio: *std.Build.Module,
-    engine_core: *std.Build.Module,
-    engine_ecs: *std.Build.Module,
-    engine_input: *std.Build.Module,
-    engine_physics: *std.Build.Module,
-    engine_rhi: *std.Build.Module,
-    engine_graphics: *std.Build.Module,
-    engine_assets: *std.Build.Module,
-    engine_camera: *std.Build.Module,
-    engine_clouds: *std.Build.Module,
-    engine_atmosphere: *std.Build.Module,
-    engine_shadows: *std.Build.Module,
-    engine_lighting: *std.Build.Module,
-    engine_ui: *std.Build.Module,
-    world_core: *std.Build.Module,
-    world_worldgen: *std.Build.Module,
-    world_meshing: *std.Build.Module,
-    world_lod: *std.Build.Module,
-    world_runtime: *std.Build.Module,
-    world_persistence: *std.Build.Module,
+    modules: BuildModules,
 ) void {
-    module.addImport("engine-math", engine_math);
-    module.addImport("engine-audio", engine_audio);
-    module.addImport("engine-core", engine_core);
-    module.addImport("engine-ecs", engine_ecs);
-    module.addImport("engine-input", engine_input);
-    module.addImport("engine-physics", engine_physics);
-    module.addImport("engine-rhi", engine_rhi);
-    module.addImport("engine-graphics", engine_graphics);
-    module.addImport("engine-assets", engine_assets);
-    module.addImport("engine-camera", engine_camera);
-    module.addImport("engine-clouds", engine_clouds);
-    module.addImport("engine-atmosphere", engine_atmosphere);
-    module.addImport("engine-shadows", engine_shadows);
-    module.addImport("engine-lighting", engine_lighting);
-    module.addImport("engine-ui", engine_ui);
-    module.addImport("world-core", world_core);
-    module.addImport("world-worldgen", world_worldgen);
-    module.addImport("world-meshing", world_meshing);
-    module.addImport("world-lod", world_lod);
-    module.addImport("world-runtime", world_runtime);
-    module.addImport("world-persistence", world_persistence);
+    module.addImport("engine-math", modules.engine_math);
+    module.addImport("engine-audio", modules.engine_audio);
+    module.addImport("engine-core", modules.engine_core);
+    module.addImport("engine-ecs", modules.engine_ecs);
+    module.addImport("engine-input", modules.engine_input);
+    module.addImport("engine-physics", modules.engine_physics);
+    module.addImport("engine-rhi", modules.engine_rhi);
+    module.addImport("engine-graphics", modules.engine_graphics);
+    module.addImport("engine-assets", modules.engine_assets);
+    module.addImport("engine-camera", modules.engine_camera);
+    module.addImport("engine-clouds", modules.engine_clouds);
+    module.addImport("engine-atmosphere", modules.engine_atmosphere);
+    module.addImport("engine-shadows", modules.engine_shadows);
+    module.addImport("engine-lighting", modules.engine_lighting);
+    module.addImport("engine-ui", modules.engine_ui);
+    module.addImport("world-core", modules.world_core);
+    module.addImport("world-worldgen", modules.world_worldgen);
+    module.addImport("world-meshing", modules.world_meshing);
+    module.addImport("world-lod", modules.world_lod);
+    module.addImport("world-runtime", modules.world_runtime);
+    module.addImport("world-persistence", modules.world_persistence);
 }

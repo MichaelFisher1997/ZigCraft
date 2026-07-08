@@ -58,12 +58,16 @@ pub const GpuMeshDispatch = struct {
 };
 
 pub const WorldOrchestration = struct {
+    /// Advances world streaming, generation, meshing, autosave, and runtime queues for one frame.
+    /// `player_pos` drives chunk residency; `dt` is frame time in seconds. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn update(renderer: anytype, streamer: anytype, world: anytype, player_pos: Vec3, dt: f32) !void {
         renderer.beginFrame();
         try streamer.updateFrame(player_pos, dt);
         world.checkAutoSave();
     }
 
+    /// Renders all enabled world layers for the current camera.
+    /// LOD rendering is controlled by `render_lod` and the world configuration; call after `update` has advanced queues.
     pub fn render(renderer: anytype, streamer: anytype, lod_manager: anytype, lod_enabled: bool, view_proj: Mat4, camera_pos: Vec3, render_lod: bool, layer: anytype) void {
         const allow_lod = lod_enabled and render_lod;
         renderer.render(view_proj, camera_pos, streamer.getActiveRenderDistance(), lod_manager, allow_lod, layer);
@@ -151,150 +155,224 @@ pub const IWorld = struct {
         getGpuMeshDispatch: *const fn (ptr: *anyopaque) GpuMeshDispatch,
     };
 
+    /// Advances world streaming, generation, meshing, autosave, and runtime queues for one frame.
+    /// `player_pos` drives chunk residency; `dt` is frame time in seconds. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn update(self: IWorld, player_pos: Vec3, dt: f32) !void {
         try self.vtable.update(self.ptr, player_pos, dt);
     }
 
+    /// Renders all enabled world layers for the current camera.
+    /// LOD rendering is controlled by `render_lod` and the world configuration; call after `update` has advanced queues.
     pub fn render(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.vtable.render(self.ptr, view_proj, camera_pos, render_lod);
     }
 
+    /// Renders opaque terrain and world geometry for the current camera.
+    /// Fluid and transparent passes are intentionally excluded.
     pub fn renderOpaque(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.vtable.renderOpaque(self.ptr, view_proj, camera_pos, render_lod);
     }
 
+    /// Renders fluid surfaces for the current camera.
+    /// Opaque depth and reflection resources should already be prepared by the renderer.
     pub fn renderFluid(self: IWorld, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.vtable.renderFluid(self.ptr, view_proj, camera_pos, render_lod);
     }
 
+    /// Stops world jobs and releases streaming, meshing, LOD, rendering, and persistence resources.
+    /// No borrowed world sub-interfaces may be used after this returns.
     pub fn deinit(self: IWorld) void {
         self.vtable.deinit(self.ptr);
     }
 
+    /// Returns renderer counters for the latest world render work.
+    /// Used by HUDs and diagnostics; values are snapshots, not live references.
     pub fn getRenderStats(self: IWorld) RenderStats {
         return self.vtable.getRenderStats(self.ptr);
     }
 
+    /// Returns chunk, vertex, and queue counts for world runtime diagnostics.
+    /// The values reflect the current world manager state.
     pub fn getStats(self: IWorld) WorldStatsData {
         return self.vtable.getStats(self.ptr);
     }
 
+    /// Returns distant-terrain LOD statistics when LOD is available.
+    /// Returns `null` when the world has no active LOD manager.
     pub fn getLODStats(self: IWorld) ?@import("world-lod").LODStats {
         return self.vtable.getLODStats(self.ptr);
     }
 
+    /// Reports whether the world was constructed with LOD support.
+    /// This is a capability flag, separate from runtime LOD render toggles.
     pub fn isLODEnabled(self: IWorld) bool {
         return self.vtable.isLODEnabled(self.ptr);
     }
 
+    /// Returns the world shadow-scene interface used by the shadow renderer.
+    /// The returned interface borrows the world and must not outlive it.
     pub fn shadowScene(self: IWorld) IShadowScene {
         return self.vtable.shadowScene(self.ptr);
     }
 
+    /// Attaches persistence to the world using a save directory and world name.
+    /// May load metadata or create save structures; call before relying on autosave. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn enableSaveManager(self: IWorld, save_dir_path: []const u8, world_name: []const u8) !void {
         try self.vtable.enableSaveManager(self.ptr, save_dir_path, world_name);
     }
 
+    /// Returns and clears the accumulated save-failure warning count.
+    /// Use to surface persistence warnings without repeating already-consumed failures.
     pub fn takeSaveFailureWarningCount(self: IWorld) usize {
         return self.vtable.takeSaveFailureWarningCount(self.ptr);
     }
 
+    /// Pauses background chunk generation and streaming work.
+    /// Already loaded chunks remain accessible and renderable.
     pub fn pauseGeneration(self: IWorld) void {
         self.vtable.pauseGeneration(self.ptr);
     }
 
+    /// Reports whether chunk generation is currently paused.
+    /// Rendering and loaded-chunk queries may still continue while paused.
     pub fn isPaused(self: IWorld) bool {
         return self.vtable.isPaused(self.ptr);
     }
 
+    /// Returns the voxel collision query interface for loaded world data.
+    /// The interface borrows world storage and follows world lifetime.
     pub fn collisionWorld(self: IWorld) VoxelCollisionWorld {
         return self.vtable.collisionWorld(self.ptr);
     }
 
+    /// Returns the block type at world-space coordinates.
+    /// Returns air or generated fallback behavior when the target chunk is unavailable.
     pub fn getBlock(self: IWorld, world_x: i32, world_y: i32, world_z: i32) BlockType {
         return self.vtable.getBlock(self.ptr, world_x, world_y, world_z);
     }
 
+    /// Applies a block mutation at world-space coordinates.
+    /// Updates chunk data and schedules affected mesh/render state refreshes. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn setBlock(self: IWorld, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         try self.vtable.setBlock(self.ptr, world_x, world_y, world_z, block);
     }
 
+    /// Returns generator column metadata for a world X/Z column.
+    /// Does not require the chunk to be resident.
     pub fn getColumnInfo(self: IWorld, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
         return self.vtable.getColumnInfo(self.ptr, world_x, world_z);
     }
 
+    /// Returns packed light debug data for a world-space voxel when available.
+    /// Returns `null` when the target chunk or light sample is unavailable.
     pub fn getDebugLightInfo(self: IWorld, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
         return self.vtable.getDebugLightInfo(self.ptr, world_x, world_y, world_z);
     }
 
+    /// Returns generator region metadata for a world X/Z location.
+    /// Used by debug UI and terrain diagnostics.
     pub fn getRegionInfo(self: IWorld, world_x: i32, world_z: i32) gen_interface.RegionInfo {
         return self.vtable.getRegionInfo(self.ptr, world_x, world_z);
     }
 
+    /// Returns the active world generator interface.
+    /// The generator is owned by the world runtime.
     pub fn getGenerator(self: IWorld) Generator {
         return self.vtable.getGenerator(self.ptr);
     }
 
+    /// Returns the display name of the active world generator.
+    /// The slice is owned by the generator metadata.
     pub fn getGeneratorName(self: IWorld) []const u8 {
         return self.vtable.getGeneratorName(self.ptr);
     }
 
+    /// Returns the active chunk render distance in chunks.
+    /// Used by streaming, renderer masks, and settings UI.
     pub fn getRenderDistance(self: IWorld) i32 {
         return self.vtable.getRenderDistance(self.ptr);
     }
 
+    /// Changes the active chunk render distance.
+    /// The streamer reconciles loaded chunks on subsequent updates.
     pub fn setRenderDistance(self: IWorld, distance: i32) void {
         self.vtable.setRenderDistance(self.ptr, distance);
     }
 
+    /// Returns the distant-terrain horizon distance in chunks.
+    /// Used by LOD scheduling and settings UI.
     pub fn getHorizonDistance(self: IWorld) i32 {
         return self.vtable.getHorizonDistance(self.ptr);
     }
 
+    /// Changes the distant-terrain horizon distance.
+    /// LOD queues and visibility update on subsequent world ticks.
     pub fn setHorizonDistance(self: IWorld, distance: i32) void {
         self.vtable.setHorizonDistance(self.ptr, distance);
     }
 
+    /// Reports whether LOD drawing is currently enabled.
+    /// This runtime toggle is separate from LOD subsystem availability.
     pub fn isLODRenderingEnabled(self: IWorld) bool {
         return self.vtable.isLODRenderingEnabled(self.ptr);
     }
 
+    /// Toggles LOD drawing and returns the new enabled state.
+    /// Does not destroy LOD data; it only changes render participation.
     pub fn toggleLODRendering(self: IWorld) bool {
         return self.vtable.toggleLODRendering(self.ptr);
     }
 
+    /// Returns counts of chunks in each streaming/meshing state.
+    /// Used for diagnostics and startup-busy checks.
     pub fn getChunkStateCounts(self: IWorld) ChunkStateCounts {
         return self.vtable.getChunkStateCounts(self.ptr);
     }
 
+    /// Reports whether startup generation or streaming still has visible work pending.
+    /// Used by smoke tests and startup diagnostics.
     pub fn isStartupBusy(self: IWorld) bool {
         return self.vtable.isStartupBusy(self.ptr);
     }
 
+    /// Returns compact world state telemetry for UI and diagnostics.
+    /// The returned struct is a snapshot of runtime state.
     pub fn getWorldStateData(self: IWorld) WorldStateData {
         return self.vtable.getWorldStateData(self.ptr);
     }
 
+    /// Returns the world data interface used by LPV lighting injection.
+    /// The returned interface borrows the world and must not outlive it.
     pub fn lpvWorld(self: IWorld) ILPVWorld {
         return self.vtable.lpvWorld(self.ptr);
     }
 
+    /// Returns the graphics-facing world render view.
+    /// Use for renderer systems that need chunk buffers without full world mutation access.
     pub fn graphicsRenderView(self: IWorld) GraphicsWorldRenderView {
         return self.vtable.graphicsRenderView(self.ptr);
     }
 
+    /// Returns the optional GPU meshing dispatch hook.
+    /// The hook is null when GPU meshing is unavailable.
     pub fn getGpuMeshDispatch(self: IWorld) GpuMeshDispatch {
         return self.vtable.getGpuMeshDispatch(self.ptr);
     }
 
+    /// Narrows the world facade to simulation and mutation operations.
+    /// Use to avoid giving consumers render or telemetry access.
     pub fn simulation(self: IWorld) IWorldSimulation {
         return .{ .world = self };
     }
 
+    /// Narrows the world facade to render-facing operations.
+    /// Use by graphics systems that should not mutate simulation state.
     pub fn renderView(self: IWorld) IWorldRenderView {
         return .{ .world = self };
     }
 
+    /// Narrows the world facade to diagnostics and settings operations.
+    /// Use by UI/debug systems that only need world state snapshots.
     pub fn telemetry(self: IWorld) IWorldTelemetry {
         return .{ .world = self };
     }
@@ -303,38 +381,56 @@ pub const IWorld = struct {
 pub const IWorldSimulation = struct {
     world: IWorld,
 
+    /// Advances world streaming, generation, meshing, autosave, and runtime queues for one frame.
+    /// `player_pos` drives chunk residency; `dt` is frame time in seconds. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn update(self: IWorldSimulation, player_pos: Vec3, dt: f32) !void {
         try self.world.update(player_pos, dt);
     }
 
+    /// Stops world jobs and releases streaming, meshing, LOD, rendering, and persistence resources.
+    /// No borrowed world sub-interfaces may be used after this returns.
     pub fn deinit(self: IWorldSimulation) void {
         self.world.deinit();
     }
 
+    /// Attaches persistence to the world using a save directory and world name.
+    /// May load metadata or create save structures; call before relying on autosave. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn enableSaveManager(self: IWorldSimulation, save_dir_path: []const u8, world_name: []const u8) !void {
         try self.world.enableSaveManager(save_dir_path, world_name);
     }
 
+    /// Pauses background chunk generation and streaming work.
+    /// Already loaded chunks remain accessible and renderable.
     pub fn pauseGeneration(self: IWorldSimulation) void {
         self.world.pauseGeneration();
     }
 
+    /// Reports whether chunk generation is currently paused.
+    /// Rendering and loaded-chunk queries may still continue while paused.
     pub fn isPaused(self: IWorldSimulation) bool {
         return self.world.isPaused();
     }
 
+    /// Returns the voxel collision query interface for loaded world data.
+    /// The interface borrows world storage and follows world lifetime.
     pub fn collisionWorld(self: IWorldSimulation) VoxelCollisionWorld {
         return self.world.collisionWorld();
     }
 
+    /// Returns the block type at world-space coordinates.
+    /// Returns air or generated fallback behavior when the target chunk is unavailable.
     pub fn getBlock(self: IWorldSimulation, world_x: i32, world_y: i32, world_z: i32) BlockType {
         return self.world.getBlock(world_x, world_y, world_z);
     }
 
+    /// Applies a block mutation at world-space coordinates.
+    /// Updates chunk data and schedules affected mesh/render state refreshes. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn setBlock(self: IWorldSimulation, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         try self.world.setBlock(world_x, world_y, world_z, block);
     }
 
+    /// Returns generator column metadata for a world X/Z column.
+    /// Does not require the chunk to be resident.
     pub fn getColumnInfo(self: IWorldSimulation, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
         return self.world.getColumnInfo(world_x, world_z);
     }
@@ -343,30 +439,44 @@ pub const IWorldSimulation = struct {
 pub const IWorldRenderView = struct {
     world: IWorld,
 
+    /// Renders all enabled world layers for the current camera.
+    /// LOD rendering is controlled by `render_lod` and the world configuration; call after `update` has advanced queues.
     pub fn render(self: IWorldRenderView, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.world.render(view_proj, camera_pos, render_lod);
     }
 
+    /// Renders opaque terrain and world geometry for the current camera.
+    /// Fluid and transparent passes are intentionally excluded.
     pub fn renderOpaque(self: IWorldRenderView, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.world.renderOpaque(view_proj, camera_pos, render_lod);
     }
 
+    /// Renders fluid surfaces for the current camera.
+    /// Opaque depth and reflection resources should already be prepared by the renderer.
     pub fn renderFluid(self: IWorldRenderView, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         self.world.renderFluid(view_proj, camera_pos, render_lod);
     }
 
+    /// Returns the world shadow-scene interface used by the shadow renderer.
+    /// The returned interface borrows the world and must not outlive it.
     pub fn shadowScene(self: IWorldRenderView) IShadowScene {
         return self.world.shadowScene();
     }
 
+    /// Returns the world data interface used by LPV lighting injection.
+    /// The returned interface borrows the world and must not outlive it.
     pub fn lpvWorld(self: IWorldRenderView) ILPVWorld {
         return self.world.lpvWorld();
     }
 
+    /// Returns the graphics-facing world render view.
+    /// Use for renderer systems that need chunk buffers without full world mutation access.
     pub fn graphicsRenderView(self: IWorldRenderView) GraphicsWorldRenderView {
         return self.world.graphicsRenderView();
     }
 
+    /// Returns the optional GPU meshing dispatch hook.
+    /// The hook is null when GPU meshing is unavailable.
     pub fn getGpuMeshDispatch(self: IWorldRenderView) GpuMeshDispatch {
         return self.world.getGpuMeshDispatch();
     }
@@ -375,74 +485,110 @@ pub const IWorldRenderView = struct {
 pub const IWorldTelemetry = struct {
     world: IWorld,
 
+    /// Returns renderer counters for the latest world render work.
+    /// Used by HUDs and diagnostics; values are snapshots, not live references.
     pub fn getRenderStats(self: IWorldTelemetry) RenderStats {
         return self.world.getRenderStats();
     }
 
+    /// Returns chunk, vertex, and queue counts for world runtime diagnostics.
+    /// The values reflect the current world manager state.
     pub fn getStats(self: IWorldTelemetry) WorldStatsData {
         return self.world.getStats();
     }
 
+    /// Returns distant-terrain LOD statistics when LOD is available.
+    /// Returns `null` when the world has no active LOD manager.
     pub fn getLODStats(self: IWorldTelemetry) ?@import("world-lod").LODStats {
         return self.world.getLODStats();
     }
 
+    /// Reports whether the world was constructed with LOD support.
+    /// This is a capability flag, separate from runtime LOD render toggles.
     pub fn isLODEnabled(self: IWorldTelemetry) bool {
         return self.world.isLODEnabled();
     }
 
+    /// Returns the active chunk render distance in chunks.
+    /// Used by streaming, renderer masks, and settings UI.
     pub fn getRenderDistance(self: IWorldTelemetry) i32 {
         return self.world.getRenderDistance();
     }
 
+    /// Changes the active chunk render distance.
+    /// The streamer reconciles loaded chunks on subsequent updates.
     pub fn setRenderDistance(self: IWorldTelemetry, distance: i32) void {
         self.world.setRenderDistance(distance);
     }
 
+    /// Returns the distant-terrain horizon distance in chunks.
+    /// Used by LOD scheduling and settings UI.
     pub fn getHorizonDistance(self: IWorldTelemetry) i32 {
         return self.world.getHorizonDistance();
     }
 
+    /// Changes the distant-terrain horizon distance.
+    /// LOD queues and visibility update on subsequent world ticks.
     pub fn setHorizonDistance(self: IWorldTelemetry, distance: i32) void {
         self.world.setHorizonDistance(distance);
     }
 
+    /// Reports whether LOD drawing is currently enabled.
+    /// This runtime toggle is separate from LOD subsystem availability.
     pub fn isLODRenderingEnabled(self: IWorldTelemetry) bool {
         return self.world.isLODRenderingEnabled();
     }
 
+    /// Toggles LOD drawing and returns the new enabled state.
+    /// Does not destroy LOD data; it only changes render participation.
     pub fn toggleLODRendering(self: IWorldTelemetry) bool {
         return self.world.toggleLODRendering();
     }
 
+    /// Returns counts of chunks in each streaming/meshing state.
+    /// Used for diagnostics and startup-busy checks.
     pub fn getChunkStateCounts(self: IWorldTelemetry) ChunkStateCounts {
         return self.world.getChunkStateCounts();
     }
 
+    /// Reports whether startup generation or streaming still has visible work pending.
+    /// Used by smoke tests and startup diagnostics.
     pub fn isStartupBusy(self: IWorldTelemetry) bool {
         return self.world.isStartupBusy();
     }
 
+    /// Returns compact world state telemetry for UI and diagnostics.
+    /// The returned struct is a snapshot of runtime state.
     pub fn getWorldStateData(self: IWorldTelemetry) WorldStateData {
         return self.world.getWorldStateData();
     }
 
+    /// Returns the display name of the active world generator.
+    /// The slice is owned by the generator metadata.
     pub fn getGeneratorName(self: IWorldTelemetry) []const u8 {
         return self.world.getGeneratorName();
     }
 
+    /// Returns the block type at world-space coordinates.
+    /// Returns air or generated fallback behavior when the target chunk is unavailable.
     pub fn getBlock(self: IWorldTelemetry, world_x: i32, world_y: i32, world_z: i32) BlockType {
         return self.world.getBlock(world_x, world_y, world_z);
     }
 
+    /// Returns packed light debug data for a world-space voxel when available.
+    /// Returns `null` when the target chunk or light sample is unavailable.
     pub fn getDebugLightInfo(self: IWorldTelemetry, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
         return self.world.getDebugLightInfo(world_x, world_y, world_z);
     }
 
+    /// Returns generator region metadata for a world X/Z location.
+    /// Used by debug UI and terrain diagnostics.
     pub fn getRegionInfo(self: IWorldTelemetry, world_x: i32, world_z: i32) gen_interface.RegionInfo {
         return self.world.getRegionInfo(world_x, world_z);
     }
 
+    /// Returns the active world generator interface.
+    /// The generator is owned by the world runtime.
     pub fn getGenerator(self: IWorldTelemetry) Generator {
         return self.world.getGenerator();
     }
@@ -489,6 +635,8 @@ pub const World = struct {
     // LPV lighting grid builder (Issue #789)
     lpv_grid_builder: LpvGridBuilder,
 
+    /// Creates a world runtime with chunk storage, streaming, meshing, rendering, and optional LOD support.
+    /// The allocator, generator, and RHI-backed resources must remain valid for the world lifetime. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn init(options: InitOptions) !*World {
         const allocator = options.allocator;
         const world = try allocator.create(World);
@@ -565,6 +713,8 @@ pub const World = struct {
         return world;
     }
 
+    /// Stops world jobs and releases streaming, meshing, LOD, rendering, and persistence resources.
+    /// No borrowed world sub-interfaces may be used after this returns.
     pub fn deinit(self: *World) void {
         // Pause generation first: clears the gen/mesh/LOD job queues so worker
         // threads stop pulling new jobs. (In-flight LOD heightmap jobs are
@@ -595,6 +745,8 @@ pub const World = struct {
         self.allocator.destroy(self);
     }
 
+    /// Pauses background chunk generation and streaming work.
+    /// Already loaded chunks remain accessible and renderable.
     pub fn pauseGeneration(self: *World) void {
         self.paused = true;
         self.streamer.setPaused(true);
@@ -604,6 +756,8 @@ pub const World = struct {
         }
     }
 
+    /// Resumes background chunk generation after a pause.
+    /// Queued work may continue on subsequent `update` calls.
     pub fn resumeGeneration(self: *World) void {
         self.paused = false;
         self.streamer.setPaused(false);
@@ -613,6 +767,8 @@ pub const World = struct {
         }
     }
 
+    /// Attaches persistence to the world using a save directory and world name.
+    /// May load metadata or create save structures; call before relying on autosave. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn enableSaveManager(self: *World, save_dir_path: []const u8, world_name: []const u8) !void {
         const seed = self.generator.getSeed();
         const gen_name = self.generator.info.name;
@@ -623,6 +779,8 @@ pub const World = struct {
         }
     }
 
+    /// Returns and clears the accumulated save-failure warning count.
+    /// Use to surface persistence warnings without repeating already-consumed failures.
     pub fn takeSaveFailureWarningCount(self: *World) usize {
         const sm = self.save_manager orelse return 0;
         return sm.takePersistedFailedSaveCount();
@@ -662,6 +820,8 @@ pub const World = struct {
         self.storage.chunks_mutex.unlock();
     }
 
+    /// Synchronously saves chunks marked dirty by mutations or streaming.
+    /// Returns errors from persistence and leaves unsaved chunks dirty for later retry.
     pub fn saveAllModifiedChunks(self: *World) void {
         const sm = self.save_manager orelse return;
 
@@ -676,6 +836,8 @@ pub const World = struct {
         self.remarkFailedSaves(failed);
     }
 
+    /// Runs autosave bookkeeping and persists dirty chunks when the save interval has elapsed.
+    /// No work occurs when persistence is disabled.
     pub fn checkAutoSave(self: *World) void {
         const sm = self.save_manager orelse return;
         if (!sm.shouldAutoSave()) return;
@@ -692,6 +854,8 @@ pub const World = struct {
         self.remarkFailedSaves(failed);
     }
 
+    /// Attempts to load a chunk from persistent storage.
+    /// Returns `null` when no saved data exists for the requested chunk.
     pub fn loadChunkFromSave(self: *World, cx: i32, cz: i32, out_chunk: *Chunk) LoadResult {
         const sm = self.save_manager orelse return .not_found;
         return sm.loadChunk(cx, cz, out_chunk);
@@ -718,6 +882,8 @@ pub const World = struct {
         }
     }
 
+    /// Changes the distant-terrain horizon distance.
+    /// LOD queues and visibility update on subsequent world ticks.
     pub fn setHorizonDistance(self: *World, distance: i32) void {
         const target = @max(distance, self.render_distance);
         if (self.horizon_distance == target) return;
@@ -729,10 +895,14 @@ pub const World = struct {
         }
     }
 
+    /// Returns a resident chunk or creates storage for it.
+    /// May allocate chunk data and enqueue follow-up generation or meshing work. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn getOrCreateChunk(self: *World, chunk_x: i32, chunk_z: i32) !*ChunkData {
         return self.storage.getOrCreate(chunk_x, chunk_z);
     }
 
+    /// Returns the block type at world-space coordinates.
+    /// Returns air or generated fallback behavior when the target chunk is unavailable.
     pub fn getBlock(self: *World, world_x: i32, world_y: i32, world_z: i32) BlockType {
         if (world_y < 0 or world_y >= CHUNK_SIZE_Y) return .air;
         const cp = worldToChunk(world_x, world_z);
@@ -741,6 +911,8 @@ pub const World = struct {
         return data.chunk.getBlock(local.x, @intCast(world_y), local.z);
     }
 
+    /// Returns packed light debug data for a world-space voxel when available.
+    /// Returns `null` when the target chunk or light sample is unavailable.
     pub fn getDebugLightInfo(self: *World, world_x: i32, world_y: i32, world_z: i32) ?DebugLightInfo {
         if (world_y < 0 or world_y >= CHUNK_SIZE_Y) return null;
         const cp = worldToChunk(world_x, world_z);
@@ -754,14 +926,20 @@ pub const World = struct {
         };
     }
 
+    /// Returns generator column metadata for a world X/Z column.
+    /// Does not require the chunk to be resident.
     pub fn getColumnInfo(self: *const World, world_x: i32, world_z: i32) gen_interface.ColumnInfo {
         return self.generator.getColumnInfo(@floatFromInt(world_x), @floatFromInt(world_z));
     }
 
+    /// Returns generator region metadata for a world X/Z location.
+    /// Used by debug UI and terrain diagnostics.
     pub fn getRegionInfo(self: *const World, world_x: i32, world_z: i32) gen_interface.RegionInfo {
         return self.generator.getRegionInfo(world_x, world_z);
     }
 
+    /// Applies a block mutation at world-space coordinates.
+    /// Updates chunk data and schedules affected mesh/render state refreshes. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         _ = try self.mutation.applyBlockMutation(world_x, world_y, world_z, block);
         // Notify the LOD system so distant terrain reflects player edits after
@@ -780,29 +958,41 @@ pub const World = struct {
         return self.storage.get(cx, cz);
     }
 
+    /// Advances world streaming, generation, meshing, autosave, and runtime queues for one frame.
+    /// `player_pos` drives chunk residency; `dt` is frame time in seconds. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn update(self: *World, player_pos: Vec3, dt: f32) !void {
         try WorldOrchestration.update(self.renderer, self.streamer, self, player_pos, dt);
     }
 
+    /// Renders all enabled world layers for the current camera.
+    /// LOD rendering is controlled by `render_lod` and the world configuration; call after `update` has advanced queues.
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
         WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .all);
     }
 
+    /// Renders opaque terrain and world geometry for the current camera.
+    /// Fluid and transparent passes are intentionally excluded.
     pub fn renderOpaque(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
         WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .terrain);
     }
 
+    /// Renders fluid surfaces for the current camera.
+    /// Opaque depth and reflection resources should already be prepared by the renderer.
     pub fn renderFluid(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
         WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .fluid);
     }
 
+    /// Renders world geometry into the active shadow pass.
+    /// Call from the shadow renderer with valid view-projection and shadow config.
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
         self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance);
     }
 
+    /// Returns the world shadow-scene interface used by the shadow renderer.
+    /// The returned interface borrows the world and must not outlive it.
     pub fn shadowScene(self: *World) IShadowScene {
         return .{
             .ptr = self,
@@ -817,14 +1007,20 @@ pub const World = struct {
         self.renderShadowPass(light_space_matrix, camera_pos, shadow_config);
     }
 
+    /// Returns renderer counters for the latest world render work.
+    /// Used by HUDs and diagnostics; values are snapshots, not live references.
     pub fn getRenderStats(self: *const World) RenderStats {
         return self.renderer.last_render_stats;
     }
 
+    /// Returns the voxel collision query interface for loaded world data.
+    /// The interface borrows world storage and follows world lifetime.
     pub fn collisionWorld(self: *World) VoxelCollisionWorld {
         return .{ .ptr = self, .vtable = &COLLISION_VTABLE };
     }
 
+    /// Returns the world data interface used by LPV lighting injection.
+    /// The returned interface borrows the world and must not outlive it.
     pub fn lpvWorld(self: *World) ILPVWorld {
         return self.lpv_grid_builder.interface();
     }
@@ -835,6 +1031,8 @@ pub const World = struct {
         return self.renderer.last_shadow_stats;
     }
 
+    /// Clears accumulated shadow rendering counters.
+    /// Use before measuring a fresh shadow pass or diagnostic interval.
     pub fn resetShadowStats(self: *World) void {
         self.renderer.resetShadowStats();
     }
@@ -864,6 +1062,8 @@ pub const World = struct {
         return counts;
     }
 
+    /// Returns chunk, vertex, and queue counts for world runtime diagnostics.
+    /// The values reflect the current world manager state.
     pub fn getStats(self: *World) WorldStatsData {
         const streamer_stats = self.streamer.getStats();
 
@@ -879,10 +1079,14 @@ pub const World = struct {
         };
     }
 
+    /// Reports whether startup generation or streaming still has visible work pending.
+    /// Used by smoke tests and startup diagnostics.
     pub fn isStartupBusy(self: *World) bool {
         return self.streamer.isStartupBusy(self.render_distance);
     }
 
+    /// Returns compact world state telemetry for UI and diagnostics.
+    /// The returned struct is a snapshot of runtime state.
     pub fn getWorldStateData(self: *World) WorldStateData {
         const stats = self.getStats();
         return .{
@@ -894,10 +1098,14 @@ pub const World = struct {
         };
     }
 
+    /// Returns the full `IWorld` facade for this world instance.
+    /// The facade borrows the world and must not outlive it.
     pub fn interface(self: *World) IWorld {
         return .{ .ptr = self, .vtable = &IWORLD_VTABLE };
     }
 
+    /// Narrows the world facade to render-facing operations.
+    /// Use by graphics systems that should not mutate simulation state.
     pub fn renderView(self: *World) GraphicsWorldRenderView {
         return .{ .ptr = self, .vtable = &WORLD_RENDER_VIEW_VTABLE };
     }

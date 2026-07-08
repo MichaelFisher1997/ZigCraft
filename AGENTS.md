@@ -107,7 +107,8 @@ assets/shaders/     # GLSL shaders (vulkan/ contains SPIR-V)
 
 ### Naming Conventions
 - **Types/Structs/Enums**: `PascalCase` (`RenderSystem`, `BufferHandle`, `BlockType`)
-- **Functions/Variables**: `snake_case` (`init_renderer`, `mesh_queue`, `chunk_x`)
+- **Functions**: `camelCase` following Zig stdlib convention (`initRenderer`, `meshQueue`, `chunkX`)
+- **Variables**: `snake_case` (`mesh_queue`, `chunk_x`)
 - **Constants/Globals**: `SCREAMING_SNAKE_CASE` (`MAX_CHUNKS`, `CHUNK_SIZE_X`)
 - **Files**: `snake_case.zig`
 

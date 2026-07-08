@@ -50,11 +50,11 @@ const addExposedSpanFaces = geom.addExposedSpanFaces;
 const addTreeColumn = geom.addTreeColumn;
 const addTreeCanopyColumn = geom.addTreeCanopyColumn;
 const averageColor = geom.averageColor;
-const ambient_occlusion_for_lod = geom.ambient_occlusion_for_lod;
+const ambientOcclusionForLOD = geom.ambientOcclusionForLOD;
 const applyColorBrightness = geom.applyColorBrightness;
 const applyTextureLuminance = geom.applyTextureLuminance;
 const blockForLODQuad = geom.blockForLODQuad;
-const cell_color_for_lod = geom.cell_color_for_lod;
+const cellColorForLOD = geom.cellColorForLOD;
 const collectColumnSpans = geom.collectColumnSpans;
 const foldedCanopyColumnForLOD = geom.foldedCanopyColumnForLOD;
 const getLodSideTile = geom.getLodSideTile;
@@ -62,7 +62,7 @@ const getLodTopColor = geom.getLodTopColor;
 const getLodTopTile = geom.getLodTopTile;
 const highestSolidSpanIndex = geom.highestSolidSpanIndex;
 const isLeafBlock = geom.isLeafBlock;
-const is_lod_water_cell_for_lod = geom.is_lod_water_cell_for_lod;
+const isLODWaterCellForLOD = geom.isLODWaterCellForLOD;
 const LODColumnSpan = geom.LODColumnSpan;
 const LOD_TREE_COVERAGE_THRESHOLD = geom.LOD_TREE_COVERAGE_THRESHOLD;
 const maxStitchedHeightAdjustment = geom.maxStitchedHeightAdjustment;
@@ -295,13 +295,13 @@ pub const LODMesh = struct {
         while (gz + 1 < data.width) : (gz += 1) {
             var gx: u32 = 0;
             while (gx + 1 < data.width) : (gx += 1) {
-                const cell_color = cell_color_for_lod(data, gx, gz, self.lod_level);
-                const lit_cell_color = applyColorBrightness(cell_color, ambient_occlusion_for_lod(data, gx, gz, self.lod_level));
+                const cell_color = cellColorForLOD(data, gx, gz, self.lod_level);
+                const lit_cell_color = applyColorBrightness(cell_color, ambientOcclusionForLOD(data, gx, gz, self.lod_level));
                 const wx = @as(f32, @floatFromInt(gx)) * cell_size;
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
                 const size = cell_size;
 
-                const is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, self.lod_level);
+                const is_water_cell = isLODWaterCellForLOD(data, gx, gz, self.lod_level);
                 const base_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, self.lod_level);
                 const base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, self.lod_level, is_water_cell);
                 const folded_canopy = foldedCanopyColumnForLOD(data, gx, gz, self.lod_level, base_height, base_block, is_water_cell);
@@ -310,7 +310,7 @@ pub const LODMesh = struct {
                 const top_tile = if (folded_canopy != null) Vertex.LOD_TILE_ID else getLodTopTile(top_block, atlas);
                 const side_tile = if (folded_canopy != null) Vertex.LOD_TILE_ID else getLodSideTile(top_block, atlas);
                 const base_top_color = if (folded_canopy) |folded|
-                    applyColorBrightness(folded.color, ambient_occlusion_for_lod(data, gx, gz, self.lod_level))
+                    applyColorBrightness(folded.color, ambientOcclusionForLOD(data, gx, gz, self.lod_level))
                 else
                     getLodTopColor(top_block, top_tile, lit_cell_color);
                 const top_color = applyTextureLuminance(tintColorForLodFace(data, gx, gz, self.lod_level, top_block, .top, base_top_color), top_block, .top, atlas);
@@ -437,7 +437,7 @@ pub const LODMesh = struct {
                         if (vegetation.leaves == .air) vegetation.leaves = span.block;
                         if (vegetation.tree_coverage < LOD_TREE_COVERAGE_THRESHOLD) vegetation.tree_coverage = LOD_TREE_COVERAGE_THRESHOLD;
                         if (vegetation.avg_tree_height < 2.0) vegetation.avg_tree_height = @max(2.0, span.max_height - span.min_height);
-                        const tree_is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, self.lod_level);
+                        const tree_is_water_cell = isLODWaterCellForLOD(data, gx, gz, self.lod_level);
                         const tree_base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, self.lod_level, tree_is_water_cell);
                         try addTreeCanopyColumn(self.allocator, &vertices, data, gx, gz, self.lod_level, wx, wz, cell_size, tree_base_height, span.min_height, span.max_height, vegetation, atlas, world_x, world_z);
                         continue;

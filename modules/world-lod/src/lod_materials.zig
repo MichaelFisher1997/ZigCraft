@@ -4,12 +4,12 @@ const geom = @import("lod_geometry.zig");
 
 pub const LODTextureFace = geom.LODTextureFace;
 
-pub const ambient_occlusion_for_lod = geom.ambient_occlusion_for_lod;
+pub const ambientOcclusionForLOD = geom.ambientOcclusionForLOD;
 pub const applyColorBrightness = geom.applyColorBrightness;
 pub const applyTextureLuminance = geom.applyTextureLuminance;
 pub const averageColor = geom.averageColor;
 pub const blockForLODQuad = geom.blockForLODQuad;
-pub const cell_color_for_lod = geom.cell_color_for_lod;
+pub const cellColorForLOD = geom.cellColorForLOD;
 pub const getLodSideTile = geom.getLodSideTile;
 pub const getLodTopColor = geom.getLodTopColor;
 pub const getLodTopTile = geom.getLodTopTile;

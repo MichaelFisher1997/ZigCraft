@@ -102,6 +102,8 @@ pub fn LODRenderer(comptime RHI: type) type {
         gpu_culling_requested: bool,
         gpu_culling_fallback_logged: bool,
 
+        /// Allocates LOD renderer GPU buffers and per-frame indirect draw resources.
+        /// The renderer owns created buffers until `deinit`; allocation failures are returned to the caller.
         pub fn init(allocator: std.mem.Allocator, rhi: RHI) !*Self {
             const renderer = try allocator.create(Self);
             errdefer allocator.destroy(renderer);
@@ -150,6 +152,8 @@ pub fn LODRenderer(comptime RHI: type) type {
             return renderer;
         }
 
+        /// Destroys GPU buffers owned by the LOD renderer and releases CPU-side storage.
+        /// Call once when the world LOD renderer is no longer used.
         pub fn deinit(self: *Self) void {
             self.rhi.waitIdle();
             const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;

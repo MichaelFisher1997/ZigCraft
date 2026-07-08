@@ -20,10 +20,8 @@ pub const FullDetailMesh = struct {
     indices: []u32,
 };
 
-/// Build a full-detail indexed triangle mesh from LOD heightmap data.
-/// Produces fine-grained quads with per-vertex heights suitable for QEM simplification.
-/// The mesh uses 1-block resolution: each cell in the heightmap grid becomes a quad
-/// subdivided into 2 triangles with separate indices for QEM edge collapse.
+/// Appends a four-vertex quad and six triangle indices to the caller-owned mesh buffers.
+/// The quad vertices are copied in order and indexed as two triangles `(0,1,2)` and `(0,2,3)`.
 pub fn appendIndexedQuad(
     vertices: *std.ArrayListUnmanaged(Vertex),
     indices: *std.ArrayListUnmanaged(u32),
@@ -50,6 +48,8 @@ pub const SkirtParams = struct {
 
 pub const SkirtDir = enum { north, south, east, west };
 
+/// Builds the vertical boundary skirt quad used to hide cracks at the edge of an LOD heightfield.
+/// `params.x/z/size` choose the edge segment, `avg_h` is the top edge, and the bottom edge drops below it to cover neighbor gaps.
 pub fn makeSkirtQuad(params: SkirtParams, tile_id: u16, world_x: i32, world_z: i32) [4]Vertex {
     const p = params;
     const cr = unpackR(p.avg_c) * p.brightness;
@@ -92,6 +92,8 @@ pub fn makeSkirtQuad(params: SkirtParams, tile_id: u16, world_x: i32, world_z: i
     };
 }
 
+/// Builds an indexed full-detail heightfield mesh from simplified LOD samples.
+/// Each heightmap cell emits a textured top quad, and boundary cells also emit skirts to cover holes before QEM simplification.
 pub fn buildFullDetailHeightmapMesh(
     allocator: std.mem.Allocator,
     lod_level: LODLevel,
@@ -204,47 +206,63 @@ pub const SEA_LEVEL_WATER_EPSILON: f32 = 2.0;
 pub const SYNTHETIC_SEAFLOOR_SKIRT: f32 = 8.0;
 pub const LOD_TREE_COVERAGE_THRESHOLD: f32 = 0.08;
 
-pub fn is_lod_water_cell(data: *const LODSimplifiedData, gx: u32, gz: u32) bool {
-    const stats = water_coverage_stats(data, gx, gz);
+/// Classifies a coarse LOD cell as water using averaged coverage, wet-sample count, and representative depth.
+/// Used for coarse material selection where a single fine water sample should not flood the whole cell.
+pub fn isLODWaterCell(data: *const LODSimplifiedData, gx: u32, gz: u32) bool {
+    const stats = waterCoverageStats(data, gx, gz);
     const water_coverage = stats.average_coverage;
     if (water_coverage >= 0.35) return true;
     return stats.wet_samples >= 2 and water_coverage >= 0.25 and stats.representative_depth >= 1.5;
 }
 
-pub fn is_fine_sample_lod(lod_level: LODLevel) bool {
+/// Reports whether an LOD level should sample one grid cell directly instead of blending a 2x2 neighborhood.
+/// LOD0 and LOD1 preserve per-cell detail; coarser levels average neighboring samples for stability.
+pub fn isFineSampleLOD(lod_level: LODLevel) bool {
     return @intFromEnum(lod_level) <= @intFromEnum(LODLevel.lod1);
 }
 
-pub fn cell_index(data: *const LODSimplifiedData, gx: u32, gz: u32) u32 {
+/// Returns the clamped flat index for a sample-grid coordinate.
+/// `gx` and `gz` may point at a neighbor cell; values are clamped to the valid `data.width` range.
+pub fn cellIndex(data: *const LODSimplifiedData, gx: u32, gz: u32) u32 {
     return @min(gx, data.width - 1) + @min(gz, data.width - 1) * data.width;
 }
 
-pub fn cell_color_for_lod(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) u32 {
-    if (is_fine_sample_lod(lod_level)) return data.colors[cell_index(data, gx, gz)];
-    const c00 = data.colors[cell_index(data, gx, gz)];
-    const c10 = data.colors[cell_index(data, gx + 1, gz)];
-    const c01 = data.colors[cell_index(data, gx, gz + 1)];
-    const c11 = data.colors[cell_index(data, gx + 1, gz + 1)];
+/// Returns the representative packed RGB color for an LOD cell.
+/// Fine LODs use the direct sample; coarse LODs average the surrounding 2x2 colors to avoid abrupt material changes.
+pub fn cellColorForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) u32 {
+    if (isFineSampleLOD(lod_level)) return data.colors[cellIndex(data, gx, gz)];
+    const c00 = data.colors[cellIndex(data, gx, gz)];
+    const c10 = data.colors[cellIndex(data, gx + 1, gz)];
+    const c01 = data.colors[cellIndex(data, gx, gz + 1)];
+    const c11 = data.colors[cellIndex(data, gx + 1, gz + 1)];
     return averageColor(c00, c10, c01, c11);
 }
 
-pub fn ambient_occlusion_for_lod(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
-    if (is_fine_sample_lod(lod_level)) return data.lighting[cell_index(data, gx, gz)].ambient_occlusion;
+/// Returns representative ambient occlusion for an LOD cell.
+/// Fine LODs use the direct lighting sample; coarse LODs average neighboring lighting to smooth distant terrain.
+pub fn ambientOcclusionForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
+    if (isFineSampleLOD(lod_level)) return data.lighting[cellIndex(data, gx, gz)].ambient_occlusion;
     return averageAmbientOcclusion(data, gx, gz);
 }
 
-pub fn is_lod_water_cell_for_lod(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) bool {
-    if (is_fine_sample_lod(lod_level)) {
-        const water = data.water[cell_index(data, gx, gz)];
+/// Classifies water for a cell using LOD-specific sampling rules.
+/// Fine levels require the direct sample to be a shallow-or-deeper water surface; coarse levels use coverage statistics.
+pub fn isLODWaterCellForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) bool {
+    if (isFineSampleLOD(lod_level)) {
+        const water = data.water[cellIndex(data, gx, gz)];
         return water.is_surface and water.coverage > 0.0 and water.depth >= 0.25;
     }
-    return is_lod_water_cell(data, gx, gz);
+    return isLODWaterCell(data, gx, gz);
 }
 
+/// Rounds a height to the nearest block unit for mesh seam stability.
+/// Quantization keeps adjacent LOD cells from producing tiny floating-point cracks.
 pub fn quantizedHeight(height: f32) f32 {
     return @round(height);
 }
 
+/// Returns the solid terrain height used below water surfaces.
+/// For water cells, this clamps the visible terrain floor below the water surface instead of returning the water plane.
 pub fn terrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
@@ -260,42 +278,58 @@ pub fn terrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f
     return @min(height, floor_height);
 }
 
+/// Returns the stitched terrain surface height at a sample-grid point.
+/// Coordinates are clamped and then passed through seam stitching so region boundaries agree.
 pub fn terrainSurfaceHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
     return stitchedHeight(data, clamped_x, clamped_z);
 }
 
+/// Returns the quantized solid terrain height for a sample-grid point.
+/// This is the terrain-floor height, not necessarily the visible water surface.
 pub fn quantizedTerrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainHeightForPoint(data, gx, gz));
 }
 
+/// Returns a quantized solid terrain height for an LOD cell.
+/// Used by material and span generation when terrain should remain below water.
 pub fn quantizedCellTerrainHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainHeightForPoint(data, gx, gz));
 }
 
+/// Returns a quantized stitched surface height for an LOD cell.
+/// Unlike terrain-floor height, this keeps dry columns at the visible terrain surface.
 pub fn quantizedCellSurfaceHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
 }
 
+/// Returns terrain height using fine or coarse sampling appropriate to the LOD level.
+/// Fine levels sample the exact point; coarser levels use the representative cell terrain height.
 pub fn quantizedCellTerrainHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
-    if (is_fine_sample_lod(lod_level)) return quantizedTerrainHeightForPoint(data, gx, gz);
+    if (isFineSampleLOD(lod_level)) return quantizedTerrainHeightForPoint(data, gx, gz);
     return quantizedCellTerrainHeight(data, gx, gz);
 }
 
+/// Returns the height that should be visible for a terrain column at the requested LOD.
+/// Water cells use terrain-floor height, while dry fine cells use the stitched surface height.
 pub fn quantizedCellVisualTerrainHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, is_water_cell: bool) f32 {
     if (is_water_cell) return quantizedCellTerrainHeightForLOD(data, gx, gz, lod_level);
-    if (is_fine_sample_lod(lod_level)) return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
+    if (isFineSampleLOD(lod_level)) return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
     return quantizedCellSurfaceHeight(data, gx, gz);
 }
 
+/// Returns the representative water surface height for a cell when water exists.
+/// Currently delegates to the representative surface picker so water quads share the same height policy.
 pub fn maxWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) ?f32 {
     return representativeWaterSurfaceHeightForCell(data, gx, gz, lod_level);
 }
 
+/// Finds the water surface height to use for a fine or coarse LOD cell.
+/// Fine cells inspect one sample; coarse cells scan the 2x2 neighborhood and return the first valid water surface.
 pub fn representativeWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) ?f32 {
-    if (is_fine_sample_lod(lod_level)) {
-        const idx = cell_index(data, gx, gz);
+    if (isFineSampleLOD(lod_level)) {
+        const idx = cellIndex(data, gx, gz);
         const water = data.water[idx];
         if (!water.is_surface or water.coverage <= 0.0) return null;
         return normalizedWaterSurfaceHeight(data, idx, water);
@@ -321,6 +355,8 @@ pub fn representativeWaterSurfaceHeightForCell(data: *const LODSimplifiedData, g
     return null;
 }
 
+/// Normalizes ocean water surfaces near sea level to the canonical sea-level height.
+/// This removes tiny generator deviations that would otherwise create visible ocean seams.
 pub fn normalizedWaterSurfaceHeight(data: *const LODSimplifiedData, idx: u32, water: world_core.LODWaterState) f32 {
     if (isOceanBiome(data.biomes[idx]) and @abs(water.surface_height - WORLDGEN_SEA_LEVEL) <= SEA_LEVEL_WATER_EPSILON) {
         return WORLDGEN_SEA_LEVEL;
@@ -328,6 +364,8 @@ pub fn normalizedWaterSurfaceHeight(data: *const LODSimplifiedData, idx: u32, wa
     return water.surface_height;
 }
 
+/// Reports whether a biome should use ocean water normalization and ocean-floor material fallback.
+/// Only ocean-family biomes return true.
 pub fn isOceanBiome(biome: BiomeId) bool {
     return switch (biome) {
         .deep_ocean, .ocean, .warm_ocean, .frozen_ocean, .cold_ocean => true,
@@ -335,11 +373,15 @@ pub fn isOceanBiome(biome: BiomeId) bool {
     };
 }
 
+/// Returns the quantized water plane for a cell, falling back to terrain height when no water is present.
+/// Used when constructing water spans and side faces that need a stable top height.
 pub fn quantizedWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
     if (maxWaterSurfaceHeightForCell(data, gx, gz, lod_level)) |height| return quantizedHeight(height);
     return quantizedCellTerrainHeightForLOD(data, gx, gz, lod_level);
 }
 
+/// Returns a quantized water height for a vertical span.
+/// When the cell has no representative water surface, `fallback_height` supplies the span top.
 pub fn quantizedWaterSurfaceHeightForSpan(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, fallback_height: f32) f32 {
     if (maxWaterSurfaceHeightForCell(data, gx, gz, lod_level)) |height| return quantizedHeight(height);
     return quantizedHeight(fallback_height);
@@ -351,15 +393,21 @@ pub const FoldedCanopyColumn = struct {
     color: u32,
 };
 
+/// Reports whether vegetation canopy should be merged into terrain height for this LOD level.
+/// The current policy leaves canopy as separate geometry for every level.
 pub fn shouldFoldCanopyIntoTerrain(lod_level: LODLevel) bool {
     _ = lod_level;
     return false;
 }
 
+/// Reports whether LOD tree trunks are still detailed enough to render at this level.
+/// Very coarse levels skip trunks to avoid noisy distant vertical slivers.
 pub fn shouldRenderLODTreeTrunk(lod_level: LODLevel) bool {
     return @intFromEnum(lod_level) <= @intFromEnum(LODLevel.lod3);
 }
 
+/// Builds a synthetic canopy column when tree coverage should raise the visible LOD terrain.
+/// Returns null for water, non-tree terrain, low coverage, or LOD policies that keep canopy separate.
 pub fn foldedCanopyColumnForLOD(
     data: *const LODSimplifiedData,
     gx: u32,
@@ -384,8 +432,10 @@ pub fn foldedCanopyColumnForLOD(
     };
 }
 
+/// Returns the final visible column height after water and optional canopy folding are considered.
+/// This is the height used by column-span mesh generation for the top of visible terrain.
 pub fn quantizedVisualColumnHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
-    const is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, lod_level);
+    const is_water_cell = isLODWaterCellForLOD(data, gx, gz, lod_level);
     const terrain_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, lod_level);
     const base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, lod_level, is_water_cell);
     if (foldedCanopyColumnForLOD(data, gx, gz, lod_level, base_height, terrain_block, is_water_cell)) |folded| {
@@ -394,6 +444,8 @@ pub fn quantizedVisualColumnHeightForLOD(data: *const LODSimplifiedData, gx: u32
     return base_height;
 }
 
+/// Chooses the side/top terrain block for a possibly-water coarse LOD quad.
+/// Water cells prefer a solid side/subsurface material, then representative surface material, then ocean-floor fallback.
 pub fn terrainBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, is_water_cell: bool) BlockType {
     if (!is_water_cell) return blockForLODQuad(data, gx, gz);
 
@@ -407,11 +459,13 @@ pub fn terrainBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, 
     return data.biomes[idx].getOceanFloorBlock(representativeWaterDepth(data, gx, gz));
 }
 
+/// Chooses the representative terrain material for a quad using LOD-specific sampling rules.
+/// Fine water cells use direct material layers; coarser cells use the coarse representative material logic.
 pub fn terrainBlockForLODQuadForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, is_water_cell: bool, lod_level: LODLevel) BlockType {
-    if (!is_fine_sample_lod(lod_level)) return terrainBlockForLODQuad(data, gx, gz, is_water_cell);
+    if (!isFineSampleLOD(lod_level)) return terrainBlockForLODQuad(data, gx, gz, is_water_cell);
     if (!is_water_cell) return blockForLODCell(data, gx, gz);
 
-    const idx = cell_index(data, gx, gz);
+    const idx = cellIndex(data, gx, gz);
     const subsurface = data.material_layers[idx].subsurface;
     if (subsurface != .air and subsurface != .water) return subsurface;
     const surface = data.material_layers[idx].surface;
@@ -419,6 +473,8 @@ pub fn terrainBlockForLODQuadForLOD(data: *const LODSimplifiedData, gx: u32, gz:
     return data.biomes[idx].getOceanFloorBlock(data.water[idx].depth);
 }
 
+/// Returns the atlas tile id used for LOD side faces of a block.
+/// Air falls back to the stone side tile so missing side material does not sample an invalid atlas entry.
 pub fn getLodSideTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     if (block == .air) return Vertex.LOD_TILE_ID;
     if (isLeafBlock(block)) return Vertex.LOD_TILE_ID;
@@ -427,10 +483,14 @@ pub fn getLodSideTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     return tiles.side;
 }
 
+/// Computes how far boundary skirts should drop below a column top.
+/// Water-adjacent skirts drop to a synthetic seafloor so ocean edges do not expose holes.
 pub fn boundarySkirtDepth(size: f32) f32 {
     return std.math.clamp(size, 16.0, 32.0);
 }
 
+/// Returns directional brightness for vertical heightfield side faces.
+/// North/south/east/west sides use different factors to preserve block-like directional shading.
 pub fn heightfieldSideBrightness(dir: FaceDir) f32 {
     return switch (dir) {
         .west, .east => 0.8,
@@ -438,6 +498,8 @@ pub fn heightfieldSideBrightness(dir: FaceDir) f32 {
     };
 }
 
+/// Adds vertical side geometry around a heightfield cell wherever neighboring cells are lower.
+/// The function compares center height against four neighbors and emits side faces down to terrain or seafloor depth.
 pub fn addSteppedHeightfieldSides(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -460,6 +522,8 @@ pub fn addSteppedHeightfieldSides(
     try addHeightfieldSide(allocator, vertices, wx, wz, size, column_height, if (gz + 1 >= data.width - 1) null else quantizedVisualColumnHeightForLOD(data, gx, gz + 1, lod_level), color, side_tile, .south, world_x, world_z);
 }
 
+/// Adds one vertical side face for a heightfield column edge.
+/// The face uses the provided direction, material tile, color, and world offsets for stable UVs.
 pub fn addHeightfieldSide(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -493,6 +557,8 @@ pub const HeightInterval = struct {
     max_height: f32,
 };
 
+/// Collects the vertical material spans that should be meshed for one LOD column.
+/// It combines terrain, water, canopy folding, and material-layer data into a bounded span list.
 pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan) usize {
     var count: usize = 0;
     var has_water_span = false;
@@ -570,6 +636,8 @@ pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_
     return count;
 }
 
+/// Computes a fallback seafloor height below water for skirt and side geometry.
+/// The result is clamped below the water surface so ocean boundaries hide missing neighboring terrain.
 pub fn syntheticSeafloorMinHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const x_min = if (gx == 0) gx else gx - 1;
     const z_min = if (gz == 0) gz else gz - 1;
@@ -588,10 +656,12 @@ pub fn syntheticSeafloorMinHeight(data: *const LODSimplifiedData, gx: u32, gz: u
     return @max(0.0, min_height - SYNTHETIC_SEAFLOOR_SKIRT);
 }
 
+/// Optionally merges vegetation canopy information into column spans for distant rendering.
+/// When enabled, it raises or inserts a leaf span based on tree coverage and average height.
 pub fn foldCanopyIntoSpansForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, spans: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan, count: *usize) void {
     if (!shouldFoldCanopyIntoTerrain(lod_level) or count.* == 0) return;
 
-    const is_water_cell = is_lod_water_cell_for_lod(data, gx, gz, lod_level);
+    const is_water_cell = isLODWaterCellForLOD(data, gx, gz, lod_level);
     const terrain_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, lod_level);
     const base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, lod_level, is_water_cell);
     const folded = foldedCanopyColumnForLOD(data, gx, gz, lod_level, base_height, terrain_block, is_water_cell) orelse return;
@@ -626,20 +696,26 @@ pub fn foldCanopyIntoSpansForLOD(data: *const LODSimplifiedData, gx: u32, gz: u3
         .max_height = folded.height,
         .block = folded.block,
         .color = folded.color,
-        .ambient_occlusion = ambient_occlusion_for_lod(data, gx, gz, lod_level),
+        .ambient_occlusion = ambientOcclusionForLOD(data, gx, gz, lod_level),
     });
 }
 
+/// Reports whether a span represents canopy detached above the terrain surface.
+/// Detached canopy is treated differently from solid ground spans when selecting visible surfaces.
 pub fn isDetachedCanopySpan(span: LODColumnSpan, base_height: f32) bool {
     return isLeafBlock(span.block) and span.min_height > base_height + 0.5;
 }
 
+/// Returns the block type that best represents a vertical material span.
+/// Air-like spans use fallback material so emitted faces sample a visible tile.
 pub fn representativeSpanBlock(layers: world_core.LODMaterialLayers) BlockType {
     if (layers.surface != .air) return layers.surface;
     if (layers.subsurface != .air) return layers.subsurface;
     return layers.foundation;
 }
 
+/// Inserts a bounded vertical span into the per-column span list.
+/// The list is kept ordered and capped so mesh generation respects `MAX_LOD_VERTICAL_SPANS`.
 pub fn insertColumnSpan(out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan, count: *usize, span: LODColumnSpan) void {
     if (count.* >= out.len) return;
     var dst = count.*;
@@ -650,6 +726,8 @@ pub fn insertColumnSpan(out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSp
     out[dst] = span;
 }
 
+/// Finds the highest span that should behave as solid terrain.
+/// Returns null when a column contains only air, water, or detached canopy spans.
 pub fn highestSolidSpanIndex(spans: []const LODColumnSpan) ?usize {
     var i = spans.len;
     while (i > 0) {
@@ -659,6 +737,8 @@ pub fn highestSolidSpanIndex(spans: []const LODColumnSpan) ?usize {
     return null;
 }
 
+/// Emits faces for portions of a vertical span that are visible from a neighbor direction.
+/// Neighbor intervals are subtracted so covered span ranges do not produce hidden geometry.
 pub fn addExposedSpanFaces(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -681,6 +761,8 @@ pub fn addExposedSpanFaces(
     try addExposedSpanFace(allocator, vertices, data, gx, gz, gx, if (gz + 1 >= data.width - 1) null else gz + 1, lod_level, span, wx, wz, size, color, tile_id, .south, world_x, world_z);
 }
 
+/// Emits one vertical quad for an exposed interval of a span side.
+/// The interval bounds become the face bottom/top heights and share the span material color.
 pub fn addExposedSpanFace(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -733,6 +815,8 @@ pub fn addExposedSpanFace(
     }
 }
 
+/// Subtracts an occluding height interval from a set of visible height intervals.
+/// Used to split side faces around neighboring spans that cover part of the same vertical range.
 pub fn subtractCoveredInterval(intervals: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]HeightInterval, count: *usize, cover_min: f32, cover_max: f32) void {
     var i: usize = 0;
     while (i < count.*) {
@@ -774,10 +858,14 @@ pub fn subtractCoveredInterval(intervals: *[world_core.MAX_LOD_VERTICAL_SPANS + 
 pub const LOD_UV_BLOCK_SCALE: f32 = 1.0;
 pub const LOD_UV_WRAP_BLOCKS: i32 = 256;
 
+/// Computes a repeatable atlas UV offset from world block coordinates.
+/// The offset keeps tiled LOD texture sampling stable as neighboring regions stream in.
 pub fn lodUVOffset(coord: i32) f32 {
     return @floatFromInt(@mod(coord, LOD_UV_WRAP_BLOCKS));
 }
 
+/// Computes atlas UVs for a top face using world-space X/Z position.
+/// World offsets make top textures line up across LOD region boundaries.
 pub fn topFaceUV(pos: [3]f32, world_x: i32, world_z: i32) [2]f32 {
     return .{
         (lodUVOffset(world_x) + pos[0]) * LOD_UV_BLOCK_SCALE,
@@ -785,6 +873,8 @@ pub fn topFaceUV(pos: [3]f32, world_x: i32, world_z: i32) [2]f32 {
     };
 }
 
+/// Computes atlas UVs for a vertical side face using face direction and world position.
+/// Horizontal coordinate follows the face axis while vertical coordinate follows height.
 pub fn sideFaceUV(pos: [3]f32, dir: FaceDir, world_x: i32, world_z: i32) [2]f32 {
     const horizontal = switch (dir) {
         .north, .south => lodUVOffset(world_x) + pos[0],
@@ -793,6 +883,8 @@ pub fn sideFaceUV(pos: [3]f32, dir: FaceDir, world_x: i32, world_z: i32) [2]f32 
     return .{ horizontal * LOD_UV_BLOCK_SCALE, pos[1] * LOD_UV_BLOCK_SCALE };
 }
 
+/// Maps a skirt edge direction to the corresponding material face direction.
+/// The result selects the correct side-face UV and texture slot for boundary skirts.
 pub fn skirtDirToFaceDir(dir: SkirtDir) FaceDir {
     return switch (dir) {
         .north => .north,
@@ -802,6 +894,8 @@ pub fn skirtDirToFaceDir(dir: SkirtDir) FaceDir {
     };
 }
 
+/// Returns the direct top block for a fine LOD cell.
+/// Coordinates are clamped through `cellIndex`, so edge callers can safely request neighbor samples.
 pub fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
@@ -812,11 +906,15 @@ pub fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockTy
     return data.biomes[idx].getSurfaceBlock();
 }
 
+/// Chooses a representative top block for a coarse LOD quad.
+/// The function samples the 2x2 neighborhood and prefers stable surface material over isolated outliers.
 pub fn blockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
-    if (is_lod_water_cell(data, gx, gz)) return .water;
+    if (isLODWaterCell(data, gx, gz)) return .water;
     return representativeSurfaceBlock(data, gx, gz);
 }
 
+/// Returns the best visible surface block from a coarse 2x2 cell neighborhood.
+/// Air and water are ignored when a solid representative material is available.
 pub fn representativeSurfaceBlock(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -850,6 +948,8 @@ pub fn representativeSurfaceBlock(data: *const LODSimplifiedData, gx: u32, gz: u
     return blockForLODCell(data, gx, gz);
 }
 
+/// Computes a representative water depth for a coarse cell.
+/// Depth is weighted by water coverage so thin or partial water samples have less influence.
 pub fn representativeWaterDepth(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -874,6 +974,8 @@ pub fn representativeWaterDepth(data: *const LODSimplifiedData, gx: u32, gz: u32
     return weighted_depth / coverage;
 }
 
+/// Chooses top and side atlas materials for an LOD mesh cell.
+/// Water cells get water top material and terrain side fallback; dry cells use terrain block material.
 pub fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32) TextureAtlas.BlockTiles {
     const top_block = blockForLODQuad(data, gx, gz);
     const side_block = sideBlockForLODQuad(data, gx, gz, top_block);
@@ -886,6 +988,8 @@ pub fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureA
     };
 }
 
+/// Chooses the block material to use for vertical sides of a coarse LOD quad.
+/// It prefers subsurface or neighboring solid material so water and air do not create invisible side walls.
 pub fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top_block: BlockType) BlockType {
     if (top_block != .water) return top_block;
 
@@ -909,10 +1013,14 @@ pub fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top
     return blockForLODCell(data, gx, gz);
 }
 
+/// Reports whether a block type should produce LOD vegetation geometry.
+/// Only leaf-like/tree surface materials participate in distant tree impostors.
 pub fn shouldRenderLODTree(top_block: BlockType) bool {
     return top_block != .water and top_block != .air;
 }
 
+/// Reports whether a block type is one of the leaf materials handled by LOD vegetation code.
+/// Used to decide tinting and canopy representation.
 pub fn isLeafBlock(block: BlockType) bool {
     return switch (block) {
         .leaves,
@@ -926,11 +1034,15 @@ pub fn isLeafBlock(block: BlockType) bool {
     };
 }
 
+/// Returns vegetation hints using direct or coarse sampling for the requested LOD level.
+/// Fine levels use one sample; coarser levels combine the local 2x2 vegetation hints.
 pub fn representativeVegetationForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) world_core.LODVegetationHint {
-    if (is_fine_sample_lod(lod_level)) return data.vegetation[cell_index(data, gx, gz)];
+    if (isFineSampleLOD(lod_level)) return data.vegetation[cellIndex(data, gx, gz)];
     return representativeVegetation(data, gx, gz);
 }
 
+/// Combines a 2x2 neighborhood of vegetation hints into one representative hint.
+/// Coverage uses the strongest sample while average height is averaged across non-empty tree samples.
 pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32) world_core.LODVegetationHint {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -959,8 +1071,10 @@ pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32
     return best;
 }
 
+/// Returns average water coverage for the 2x2 neighborhood around a coarse cell.
+/// Dry or invalid water samples contribute zero coverage.
 pub fn averageWaterCoverage(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
-    return water_coverage_stats(data, gx, gz).average_coverage;
+    return waterCoverageStats(data, gx, gz).average_coverage;
 }
 
 pub const WaterCoverageStats = struct {
@@ -969,7 +1083,9 @@ pub const WaterCoverageStats = struct {
     representative_depth: f32,
 };
 
-pub fn water_coverage_stats(data: *const LODSimplifiedData, gx: u32, gz: u32) WaterCoverageStats {
+/// Computes water coverage, wet-sample count, and coverage-weighted representative depth for a coarse cell.
+/// Only positive-coverage water surfaces with meaningful depth count as wet samples.
+pub fn waterCoverageStats(data: *const LODSimplifiedData, gx: u32, gz: u32) WaterCoverageStats {
     if (data.width == 0) return .{ .average_coverage = 0.0, .wet_samples = 0, .representative_depth = 0.0 };
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -1002,15 +1118,19 @@ pub fn water_coverage_stats(data: *const LODSimplifiedData, gx: u32, gz: u32) Wa
     };
 }
 
+/// Reports whether water should produce a visible span for the requested LOD cell.
+/// Fine LODs always emit water when present; coarse LODs require enough coverage or wet samples.
 pub fn shouldEmitWaterSpanForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, water: world_core.LODWaterState) bool {
     if (!water.is_surface or water.coverage <= 0.0 or water.depth <= 0.01) return false;
-    if (is_fine_sample_lod(lod_level)) return true;
+    if (isFineSampleLOD(lod_level)) return true;
     if (water.coverage >= 0.35) return true;
 
-    const stats = water_coverage_stats(data, gx, gz);
+    const stats = waterCoverageStats(data, gx, gz);
     return stats.wet_samples >= 2 and stats.average_coverage >= 0.25 and stats.representative_depth >= 1.5;
 }
 
+/// Returns a heightmap sample adjusted to match neighboring LOD region boundaries.
+/// Boundary samples may be clamped toward adjacent values to reduce visible cracks.
 pub fn stitchedHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const height = data.getHeight(gx, gz);
     if (data.width < 5) return height;
@@ -1028,6 +1148,8 @@ pub fn stitchedHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return height * (1.0 - blend) + coarse_height * blend;
 }
 
+/// Returns the maximum seam-height adjustment allowed for a point in the sample grid.
+/// Interior points allow no adjustment; boundary points allow bounded correction.
 pub fn maxStitchedHeightAdjustment(data: *const LODSimplifiedData) f32 {
     if (data.width < 5) return 0.0;
 
@@ -1043,18 +1165,26 @@ pub fn maxStitchedHeightAdjustment(data: *const LODSimplifiedData) f32 {
 }
 
 // Helper functions for unpacking colors
+/// Extracts the red channel from a packed 0xRRGGBB color as a normalized float.
+/// The result is in `[0, 1]` for direct use in vertex color data.
 pub fn unpackR(color: u32) f32 {
     return @as(f32, @floatFromInt((color >> 16) & 0xFF)) / 255.0;
 }
 
+/// Extracts the green channel from a packed 0xRRGGBB color as a normalized float.
+/// The result is in `[0, 1]` for direct use in vertex color data.
 pub fn unpackG(color: u32) f32 {
     return @as(f32, @floatFromInt((color >> 8) & 0xFF)) / 255.0;
 }
 
+/// Extracts the blue channel from a packed 0xRRGGBB color as a normalized float.
+/// The result is in `[0, 1]` for direct use in vertex color data.
 pub fn unpackB(color: u32) f32 {
     return @as(f32, @floatFromInt(color & 0xFF)) / 255.0;
 }
 
+/// Averages four packed RGB colors channel-by-channel.
+/// The returned packed color is used for coarse-cell material and skirt shading.
 pub fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     const r = ((c00 >> 16) & 0xFF) + ((c10 >> 16) & 0xFF) + ((c01 >> 16) & 0xFF) + ((c11 >> 16) & 0xFF);
     const g = ((c00 >> 8) & 0xFF) + ((c10 >> 8) & 0xFF) + ((c01 >> 8) & 0xFF) + ((c11 >> 8) & 0xFF);
@@ -1065,6 +1195,8 @@ pub fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     return (r_avg << 16) | (g_avg << 8) | b_avg;
 }
 
+/// Averages ambient-occlusion values from a clamped 2x2 sample neighborhood.
+/// Used by coarse LODs to avoid single-sample lighting artifacts.
 pub fn averageAmbientOcclusion(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -1077,6 +1209,8 @@ pub fn averageAmbientOcclusion(data: *const LODSimplifiedData, gx: u32, gz: u32)
     return (a00 + a10 + a01 + a11) * 0.25;
 }
 
+/// Applies a scalar brightness factor to a packed RGB color.
+/// Channels are clamped to 255 and repacked as 0xRRGGBB.
 pub fn applyColorBrightness(color: u32, brightness: f32) u32 {
     const clamped = std.math.clamp(brightness, 0.0, 1.0);
     const r: u32 = @intFromFloat(@round(@as(f32, @floatFromInt((color >> 16) & 0xFF)) * clamped));
@@ -1087,6 +1221,8 @@ pub fn applyColorBrightness(color: u32, brightness: f32) u32 {
 
 pub const LODTextureFace = enum { top, side, bottom };
 
+/// Chooses biome tinting for LOD top/side/bottom faces when a block type needs tint.
+/// Grass tops, water, and leaves use averaged biome tint; other blocks keep the fallback color.
 pub fn tintColorForLodFace(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, block: BlockType, face: LODTextureFace, fallback: u32) u32 {
     if (block == .grass and face == .top) return averageBiomeBlockTint(data, gx, gz, lod_level, block);
     if (block == .water) return averageBiomeBlockTint(data, gx, gz, lod_level, block);
@@ -1094,18 +1230,22 @@ pub fn tintColorForLodFace(data: *const LODSimplifiedData, gx: u32, gz: u32, lod
     return fallback;
 }
 
+/// Averages biome tint colors for the requested block over the LOD sample neighborhood.
+/// Fine LODs use one biome; coarse LODs blend four neighboring biome tints.
 pub fn averageBiomeBlockTint(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, block: BlockType) u32 {
-    if (is_fine_sample_lod(lod_level)) {
-        return biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx, gz)], block);
+    if (isFineSampleLOD(lod_level)) {
+        return biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz)], block);
     }
 
-    const c00 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx, gz)], block);
-    const c10 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx + 1, gz)], block);
-    const c01 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx, gz + 1)], block);
-    const c11 = biome_mod.getBlockTintColor(data.biomes[cell_index(data, gx + 1, gz + 1)], block);
+    const c00 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz)], block);
+    const c10 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx + 1, gz)], block);
+    const c01 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz + 1)], block);
+    const c11 = biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx + 1, gz + 1)], block);
     return averageColor(c00, c10, c01, c11);
 }
 
+/// Modulates a material color by the average texture luminance for a block face.
+/// This keeps LOD fallback colors closer to the atlas texture brightness.
 pub fn applyTextureLuminance(color: u32, block: BlockType, face: LODTextureFace, atlas: *const TextureAtlas) u32 {
     if (block == .air or block == .water) return color;
     const texture_color = averageTextureColorForFace(block, face, atlas) orelse {
@@ -1122,6 +1262,8 @@ pub fn applyTextureLuminance(color: u32, block: BlockType, face: LODTextureFace,
     return multiplyColors(texture_color, shaderLikeTintColor(color));
 }
 
+/// Returns the average atlas color for a block face when texture statistics are available.
+/// The face selects top, side, or bottom color according to block texture metadata.
 pub fn averageTextureColorForFace(block: BlockType, face: LODTextureFace, atlas: *const TextureAtlas) ?u32 {
     const tiles = atlas.getTilesForBlock(@intFromEnum(block));
     const tile_id = switch (face) {
@@ -1139,12 +1281,16 @@ pub fn averageTextureColorForFace(block: BlockType, face: LODTextureFace, atlas:
     };
 }
 
+/// Reports whether a block face should receive biome tint in the LOD mesh.
+/// Tinting is limited to materials whose in-game shader also applies biome coloration.
 pub fn shouldTintLodFace(block: BlockType, face: LODTextureFace) bool {
     if (block == .grass) return face == .top;
     if (block == .water) return true;
     return isLeafBlock(block);
 }
 
+/// Multiplies two packed RGB colors channel-by-channel.
+/// Used to combine biome tint and texture color in shader-like LOD material paths.
 pub fn multiplyColors(base: u32, tint: u32) u32 {
     const r: u32 = @intFromFloat(@round(unpackR(base) * unpackR(tint) * 255.0));
     const g: u32 = @intFromFloat(@round(unpackG(base) * unpackG(tint) * 255.0));
@@ -1155,6 +1301,8 @@ pub fn multiplyColors(base: u32, tint: u32) u32 {
     return (rr << 16) | (gg << 8) | bb;
 }
 
+/// Approximates the runtime shader tint result for an LOD block face.
+/// It blends biome tint, texture luminance, and fallback color without sampling shaders at runtime.
 pub fn shaderLikeTintColor(color: u32) u32 {
     const r: u32 = (color >> 16) & 0xFF;
     const g: u32 = (color >> 8) & 0xFF;
@@ -1179,11 +1327,15 @@ pub fn shaderLikeTintColor(color: u32) u32 {
     return (rr << 16) | (gg << 8) | bb;
 }
 
+/// Applies cubic Hermite interpolation between two edges.
+/// Returns 0 below `edge0`, 1 above `edge1`, and a smooth transition between them.
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) f32 {
     const t = std.math.clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
 }
 
+/// Scales a packed RGB color by a floating-point factor.
+/// Each channel is clamped before repacking.
 pub fn scaleColor(color: u32, factor: f32) u32 {
     const clamped = std.math.clamp(factor, 0.0, 2.0);
     const r: u32 = @intFromFloat(@round(std.math.clamp(@as(f32, @floatFromInt((color >> 16) & 0xFF)) * clamped, 0.0, 255.0)));
@@ -1192,6 +1344,8 @@ pub fn scaleColor(color: u32, factor: f32) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
+/// Returns a packed fallback color for a block type when atlas or biome data is unavailable.
+/// `fallback` is used for blocks without a known default LOD color.
 pub fn packBlockDefaultColor(block: BlockType, fallback: u32) u32 {
     if (block == .air) return fallback;
     const color = world_core.block_registry.getBlockDefinition(block).default_color;
@@ -1201,6 +1355,8 @@ pub fn packBlockDefaultColor(block: BlockType, fallback: u32) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
+/// Returns the atlas tile id used for the top face of a block in LOD meshes.
+/// Unknown or air blocks fall back to a safe terrain tile.
 pub fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     if (block == .air) return Vertex.LOD_TILE_ID;
     if (isLeafBlock(block)) return Vertex.LOD_TILE_ID;
@@ -1210,12 +1366,16 @@ pub fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     return tiles.top;
 }
 
+/// Returns the packed fallback color used for a block top face.
+/// The tile id can influence texture-derived colors when atlas statistics are available.
 pub fn getLodTopColor(block: BlockType, tile_id: u16, fallback_color: u32) u32 {
     _ = block;
     if (tile_id == Vertex.LOD_TILE_ID) return fallback_color;
     return fallback_color;
 }
 
+/// Packs position, color, normal, UV, and tile id into the shared RHI vertex layout.
+/// The returned vertex is ready for terrain, water, or skirt mesh buffers.
 pub fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id: u16) Vertex {
     return Vertex{
         .pos = pos,
@@ -1228,7 +1388,8 @@ pub fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id
     };
 }
 
-/// Add a top-facing quad (two triangles)
+/// Appends the top face for a column or span to the mesh buffers.
+/// The quad uses top-face UVs, upward normal, and material color for the selected block.
 pub fn addTopFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y: f32, z: f32, size: f32, r: f32, g: f32, b: f32, tile_id: u16, world_x: i32, world_z: i32) !void {
     const normal = [3]f32{ 0, 1, 0 };
     const color = [3]f32{ r, g, b };
@@ -1242,8 +1403,8 @@ pub fn addTopFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnma
     try vertices.append(allocator, makeLODVertex(.{ x + size, y, z }, color, normal, topFaceUV(.{ x + size, y, z }, world_x, world_z), tile_id));
 }
 
-/// Add a downward-facing bottom quad for floating spans (overhangs) so
-/// caves/arches read correctly from below (issue #752 Phase 3.3).
+/// Appends the bottom face for a vertical span when it is exposed.
+/// The face uses a downward normal and the span material color.
 pub fn addBottomFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y: f32, z: f32, size: f32, r: f32, g: f32, b: f32, tile_id: u16, world_x: i32, world_z: i32) !void {
     const normal = [3]f32{ 0, -1, 0 };
     const color = [3]f32{ r, g, b };
@@ -1257,7 +1418,8 @@ pub fn addBottomFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListU
     try vertices.append(allocator, makeLODVertex(.{ x + size, y, z }, color, normal, topFaceUV(.{ x + size, y, z }, world_x, world_z), tile_id));
 }
 
-/// Add a side-facing quad for cliff faces
+/// Appends one side face for a block/span column.
+/// Face direction controls normal, winding, UV projection, and side brightness.
 pub fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnmanaged(Vertex), x: f32, y_top: f32, z: f32, size: f32, y_bottom: f32, r: f32, g: f32, b: f32, dir: FaceDir, tile_id: u16, world_x: i32, world_z: i32) !void {
     const color = [3]f32{ r, g, b };
 
@@ -1305,6 +1467,8 @@ pub fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnm
     try vertices.append(allocator, makeLODVertex(corners[3], color, normal, sideFaceUV(corners[3], dir, world_x, world_z), tile_id));
 }
 
+/// Adds simplified trunk and canopy geometry for a distant tree column.
+/// The tree footprint is derived from vegetation hints and clipped against water/neighbor coverage.
 pub fn addTreeColumn(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1327,6 +1491,8 @@ pub fn addTreeColumn(
     try addTreeCanopyColumn(allocator, vertices, data, gx, gz, lod_level, wx, wz, cell_size, base_height, canopy.min_height, canopy.max_height, vegetation, atlas, world_x, world_z);
 }
 
+/// Adds box-like leaf canopy geometry for a distant tree impostor.
+/// Canopy dimensions come from tree height and coverage and are emitted as colored block faces.
 pub fn addTreeCanopyColumn(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1365,6 +1531,8 @@ pub fn addTreeCanopyColumn(
     }
 }
 
+/// Computes the horizontal footprint size used for an LOD tree canopy.
+/// Higher coverage and taller trees produce larger but bounded canopy boxes.
 pub fn treeCanopyFootprint(cell_size: f32, vegetation: world_core.LODVegetationHint) f32 {
     const coverage = std.math.clamp(vegetation.tree_coverage, LOD_TREE_COVERAGE_THRESHOLD, 1.0);
     const desired = @max(1.0, vegetation.avg_tree_height * (0.30 + coverage * 0.18));
@@ -1375,6 +1543,8 @@ pub fn treeCanopyFootprint(cell_size: f32, vegetation: world_core.LODVegetationH
 
 pub const TreeFootprintOrigin = struct { x: f32, z: f32 };
 
+/// Computes the local origin for centering a tree footprint inside a cell.
+/// The origin keeps trunk/canopy geometry inside the LOD cell area.
 pub fn treeFootprintOrigin(wx: f32, wz: f32, cell_size: f32, footprint: f32, vegetation: world_core.LODVegetationHint) TreeFootprintOrigin {
     const max_offset = @max(0.0, (cell_size - footprint) * 0.5 - 0.01);
     const offset_x = std.math.clamp(vegetation.offset_x, -max_offset, max_offset);
@@ -1385,6 +1555,8 @@ pub fn treeFootprintOrigin(wx: f32, wz: f32, cell_size: f32, footprint: f32, veg
     };
 }
 
+/// Computes the vertical min/max interval occupied by a tree canopy.
+/// The interval starts above terrain height and scales with average tree height.
 pub fn treeCanopyInterval(base_height: f32, vegetation: world_core.LODVegetationHint) HeightInterval {
     const canopy_height = @max(3.0, vegetation.avg_tree_height);
     const top = base_height + canopy_height;
@@ -1395,6 +1567,8 @@ pub fn treeCanopyInterval(base_height: f32, vegetation: world_core.LODVegetation
     };
 }
 
+/// Adds side faces for a tree trunk or canopy box.
+/// Neighbor water information can suppress or adjust faces that would intersect water cells.
 pub fn addTreeColumnSides(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1417,6 +1591,8 @@ pub fn addTreeColumnSides(
     try addTreeColumnSide(allocator, vertices, data, gx, if (gz + 1 >= data.width - 1) null else gz + 1, lod_level, wx, wz, size, canopy, color, tile_id, .south, world_x, world_z);
 }
 
+/// Adds one side face for a tree box column.
+/// The face uses directional normals and material color for a trunk or canopy side.
 pub fn addTreeColumnSide(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1442,7 +1618,7 @@ pub fn addTreeColumnSide(
         if (neighbor_gz) |nz| {
             const neighbor_veg = representativeVegetationForLOD(data, nx, nz, lod_level);
             if (neighbor_veg.tree_coverage >= LOD_TREE_COVERAGE_THRESHOLD) {
-                const neighbor_is_water_cell = is_lod_water_cell_for_lod(data, nx, nz, lod_level);
+                const neighbor_is_water_cell = isLODWaterCellForLOD(data, nx, nz, lod_level);
                 const neighbor_base = quantizedCellVisualTerrainHeightForLOD(data, nx, nz, lod_level, neighbor_is_water_cell);
                 const neighbor_canopy = treeCanopyInterval(neighbor_base, neighbor_veg);
                 subtractCoveredInterval(&exposed, &exposed_count, neighbor_canopy.min_height, neighbor_canopy.max_height);
@@ -1459,6 +1635,8 @@ pub fn addTreeColumnSide(
     }
 }
 
+/// Adds a rectangular prism column to the mesh buffers.
+/// Used by vegetation impostors and other box-like LOD details that need all exposed faces.
 pub fn addBoxColumn(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
