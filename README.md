@@ -246,6 +246,7 @@ nix develop  # glslang is included in the dev shell
 |----------|----------|
 | **Discussions** | [GitHub Discussions](https://github.com/OpenStaticFish/ZigCraft/discussions) |
 | **Issues** | [GitHub Issues](https://github.com/OpenStaticFish/ZigCraft/issues) |
+| **Security** | [Security Policy](SECURITY.md) |
 | **License** | [MIT License](LICENSE) |
 
 ---

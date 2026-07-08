@@ -12,7 +12,7 @@ if ! command -v gh &>/dev/null; then
     exit 1
 fi
 
-stale_epoch=$(date -d "-${STALE_DAYS} days" +%s 2>/dev/null || date -v-${STALE_DAYS}d +%s 2>/dev/null || true)
+stale_epoch=$(date -d "-${STALE_DAYS} days" +%s 2>/dev/null || date -v-"${STALE_DAYS}"d +%s 2>/dev/null || true)
 if [[ -z "${stale_epoch:-}" ]]; then
     echo "error: unable to calculate stale cutoff date" >&2
     exit 1
@@ -106,13 +106,13 @@ if [[ ${#deleted[@]} -gt 0 ]]; then
     gh label create automation --color "#0366d6" --description "Automated processes" 2>/dev/null || true
 
     body=$(printf '### Stale Branch Cleanup Report\n\n')
-    body+=$(printf '**%d** branch(es) deleted (stale, behind `%s`, and 0 commits ahead):\n\n' "${#deleted[@]}" "$HEAD_BRANCH")
+    body+=$(printf "**%d** branch(es) deleted (stale, behind \`%s\`, and 0 commits ahead):\n\n" "${#deleted[@]}" "$HEAD_BRANCH")
     for d in "${deleted[@]}"; do
-        body+=$(printf -- '- `%s`\n' "$d")
+        body+=$(printf -- "- \`%s\`\n" "$d")
     done
     body+=$(printf '\nSkipped **%d** branch(es):\n\n' "${#skipped[@]}")
     for s in "${skipped[@]}"; do
-        body+=$(printf -- '- `%s`\n' "$s")
+        body+=$(printf -- "- \`%s\`\n" "$s")
     done
 
     today=$(date +%Y-%m-%d)

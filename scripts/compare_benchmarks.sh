@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-warn_threshold=10
-fail_threshold=20
+warn_threshold=5
+fail_threshold=10
 preset=""
 
 if [[ $# -lt 2 ]]; then
@@ -42,13 +42,17 @@ read_json() {
 baseline_source="$baseline"
 baseline_generated=$(read_json '.generated' "$baseline")
 if [[ "$baseline_generated" != "true" ]]; then
-    printf 'Baseline placeholder detected, skipping comparison.\n'
-    exit 0
+    printf 'Baseline placeholder detected; refusing to skip benchmark regression gating.\n' >&2
+    exit 1
 fi
 
 if [[ -n "$preset" ]]; then
     baseline_source=$(mktemp)
     jq -c --arg preset "$preset" '.presets[$preset]' "$baseline" > "$baseline_source"
+    if [[ "$(read_json 'type' "$baseline_source")" == "null" ]]; then
+        printf 'Baseline preset not found: %s\n' "$preset" >&2
+        exit 2
+    fi
 fi
 
 cleanup() {
@@ -67,28 +71,49 @@ pct_change() {
     }'
 }
 
-baseline_fps=$(read_json '.fps.avg' "$baseline_source")
-new_fps=$(read_json '.fps.avg' "$new")
+baseline_fps_avg=$(read_json '.fps.avg' "$baseline_source")
+new_fps_avg=$(read_json '.fps.avg' "$new")
+baseline_fps_p1=$(read_json '.fps.p1' "$baseline_source")
+new_fps_p1=$(read_json '.fps.p1' "$new")
 baseline_gpu=$(read_json '.gpu_ms.total_avg' "$baseline_source")
 new_gpu=$(read_json '.gpu_ms.total_avg' "$new")
 baseline_draws=$(read_json '.draw_calls_avg' "$baseline_source")
 new_draws=$(read_json '.draw_calls_avg' "$new")
 
-fps_change=$(pct_change "$baseline_fps" "$new_fps")
+fps_avg_change=$(pct_change "$baseline_fps_avg" "$new_fps_avg")
+fps_p1_change=$(pct_change "$baseline_fps_p1" "$new_fps_p1")
 gpu_change=$(pct_change "$baseline_gpu" "$new_gpu")
 draw_change=$(pct_change "$baseline_draws" "$new_draws")
 
-printf 'FPS avg: %s -> %s (%s%%)\n' "$baseline_fps" "$new_fps" "$fps_change"
+printf 'FPS avg: %s -> %s (%s%%)\n' "$baseline_fps_avg" "$new_fps_avg" "$fps_avg_change"
+printf 'FPS p1: %s -> %s (%s%%)\n' "$baseline_fps_p1" "$new_fps_p1" "$fps_p1_change"
 printf 'GPU total avg: %s -> %s (%s%%)\n' "$baseline_gpu" "$new_gpu" "$gpu_change"
 printf 'Draw calls avg: %s -> %s (%s%%)\n' "$baseline_draws" "$new_draws" "$draw_change"
 
-fps_drop=$(awk -v change="$fps_change" 'BEGIN { if (change < 0) printf "%.2f", -change; else print 0 }')
+fps_p1_drop=$(awk -v change="$fps_p1_change" 'BEGIN { if (change < 0) printf "%.2f", -change; else print 0 }')
+gpu_increase=$(awk -v change="$gpu_change" 'BEGIN { if (change > 0) printf "%.2f", change; else print 0 }')
+draw_increase=$(awk -v change="$draw_change" 'BEGIN { if (change > 0) printf "%.2f", change; else print 0 }')
 
-if awk -v drop="$fps_drop" -v warn="$warn_threshold" 'BEGIN { exit !(drop >= warn) }'; then
-    printf 'Warning: FPS regressed by %s%%\n' "$fps_drop"
-fi
+regressed=0
 
-if awk -v drop="$fps_drop" -v fail="$fail_threshold" 'BEGIN { exit !(drop >= fail) }'; then
-    printf 'Regression exceeds failure threshold (%s%% >= %s%%)\n' "$fps_drop" "$fail_threshold" >&2
+check_metric() {
+    local name=$1
+    local regression=$2
+
+    if awk -v value="$regression" -v warn="$warn_threshold" 'BEGIN { exit !(value >= warn) }'; then
+        printf 'Warning: %s regressed by %s%%\n' "$name" "$regression"
+    fi
+
+    if awk -v value="$regression" -v fail="$fail_threshold" 'BEGIN { exit !(value >= fail) }'; then
+        printf 'Regression exceeds failure threshold for %s (%s%% >= %s%%)\n' "$name" "$regression" "$fail_threshold" >&2
+        regressed=1
+    fi
+}
+
+check_metric "FPS p1" "$fps_p1_drop"
+check_metric "GPU total avg" "$gpu_increase"
+check_metric "draw calls avg" "$draw_increase"
+
+if [[ "$regressed" -ne 0 ]]; then
     exit 1
 fi

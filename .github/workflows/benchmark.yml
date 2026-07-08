@@ -93,7 +93,7 @@ jobs:
           const description = failed
             ? 'Benchmark regression or runtime failure'
             : compareOutcome === 'skipped'
-              ? 'Benchmark completed (baseline placeholder)'
+              ? 'Benchmark comparison skipped'
               : 'Benchmark completed';
 
           await github.rest.repos.createCommitStatus({
