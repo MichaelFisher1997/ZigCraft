@@ -1,0 +1,39 @@
+name: Asset Budget
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "assets/**"
+      - "docs/assets/budget.json"
+      - "scripts/check_asset_budget.sh"
+      - ".github/workflows/asset-budget.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "assets/**"
+      - "docs/assets/budget.json"
+      - "scripts/check_asset_budget.sh"
+      - ".github/workflows/asset-budget.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  asset-budget:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch dev baseline
+        run: git fetch --no-tags --depth=1 origin dev
+
+      - name: Check asset budgets
+        run: bash scripts/check_asset_budget.sh --base-ref origin/dev --budget-file docs/assets/budget.json

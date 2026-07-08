@@ -1,11 +1,21 @@
 const std = @import("std");
 const App = @import("game/app.zig").App;
-const log = @import("engine-core").log;
+const engine_core = @import("engine-core");
+const log = engine_core.log;
+
+pub const panic = std.debug.FullPanic(crashPanic);
+
+fn crashPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    engine_core.crash_handler.writePanicDump(first_trace_addr);
+    std.debug.defaultPanic(msg, first_trace_addr);
+}
 
 pub fn main() !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    engine_core.initCrashHandler();
 
     log.initDefaultFile() catch |err| {
         std.debug.print("[WARN] failed to initialize file logging: {}\n", .{err});

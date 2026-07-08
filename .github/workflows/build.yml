@@ -3,14 +3,49 @@ name: Build
 on:
   push:
     branches: [dev]
+    paths:
+      - "src/**"
+      - "modules/**"
+      - "libs/**"
+      - "assets/shaders/**"
+      - "scripts/**"
+      - "build.zig"
+      - "build.zig.zon"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/actions/setup-nix/**"
+      - ".github/actions/setup-zig-cache/**"
+      - ".github/actions/setup-lavapipe/**"
+      - ".github/vulkan/**"
+      - ".github/workflows/build.yml"
   pull_request:
     branches: [dev]
+    paths:
+      - "src/**"
+      - "modules/**"
+      - "libs/**"
+      - "assets/shaders/**"
+      - "scripts/**"
+      - "build.zig"
+      - "build.zig.zon"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/actions/setup-nix/**"
+      - ".github/actions/setup-zig-cache/**"
+      - ".github/actions/setup-lavapipe/**"
+      - ".github/vulkan/**"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
       ref:
         description: "Branch or ref to build/test"
         required: true
         type: string
+      enable_platform_builds:
+        description: "Run experimental Windows/macOS build-only jobs"
+        default: false
+        required: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
@@ -29,6 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code_changes: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.code_changes }}
+      platform_changes: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.platform_changes }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name != 'workflow_dispatch'
@@ -54,6 +90,11 @@ jobs:
               - '.github/actions/setup-lavapipe/**'
               - '.github/vulkan/**'
               - '.github/workflows/build.yml'
+            platform_changes:
+              - 'src/**'
+              - 'modules/**'
+              - 'build.zig'
+              - 'build.zig.zon'
 
   fmt:
     permissions:
@@ -257,4 +298,89 @@ jobs:
             world-smoke-test.log
             weston.log
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload minidumps
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-minidumps
+          path: zigcraft-minidumps/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 14
+
+  platform-build:
+    permissions:
+      contents: read
+    needs: [changes]
+    if: github.event_name == 'workflow_dispatch' && inputs.enable_platform_builds == true && needs.changes.outputs.platform_changes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: zigcraft-windows
+            binary_path: zig-out/bin/zigcraft.exe
+          - os: macos-latest
+            artifact_name: zigcraft-macos-build-only
+            binary_path: zig-out/bin/zigcraft
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Setup MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: true
+
+      - name: Install Windows Vulkan SDK
+        if: runner.os == 'Windows'
+        run: choco install vulkan-sdk --no-progress -y
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: pacman --noconfirm -S --needed mingw-w64-ucrt-x86_64-sdl3 mingw-w64-ucrt-x86_64-vulkan-loader mingw-w64-ucrt-x86_64-vulkan-headers
+
+      - name: Expose Windows Vulkan import library
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          if [ -f /ucrt64/lib/libvulkan.dll.a ] && [ ! -f /ucrt64/lib/libvulkan.a ]; then
+            cp /ucrt64/lib/libvulkan.dll.a /ucrt64/lib/libvulkan.a
+          fi
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install sdl3 molten-vk vulkan-loader
+
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          CPATH: /ucrt64/include
+          LIBRARY_PATH: /ucrt64/lib
+        run: zig build --search-prefix /ucrt64 -Dimgui=false
+
+      - name: Build macOS
+        if: runner.os == 'macOS'
+        run: zig build -Dimgui=false
+
+      - name: Upload platform binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.binary_path }}
+          if-no-files-found: error
           retention-days: 7

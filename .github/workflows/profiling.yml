@@ -1,0 +1,92 @@
+name: Profiling
+
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  nightly-profile:
+    permissions:
+      contents: read
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Setup Zig cache
+        uses: ./.github/actions/setup-zig-cache
+        with:
+          cache-key-prefix: zig-ci-profile
+
+      - name: Start headless Wayland compositor
+        uses: ./.github/actions/start-weston
+
+      - name: Setup Lavapipe Vulkan
+        uses: ./.github/actions/setup-lavapipe
+
+      - name: Capture fixed-world profiling run
+        uses: ./.github/actions/run-with-log
+        with:
+          name: Profiling Capture
+          timeout: 20m
+          log-file: profiling.log
+          command: |
+            mkdir -p profiling-artifacts
+            nix develop .#ci-graphics --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=medium -Dbenchmark-duration=10 -Dbenchmark-output=profiling-artifacts/fixed-world-profile.json
+            ruby -rjson -e '
+              profile = JSON.parse(File.read("profiling-artifacts/fixed-world-profile.json"))
+              duration_us = (profile.fetch("duration_s").to_f * 1_000_000).to_i
+              cpu_us = (profile.fetch("cpu_ms_avg").to_f * 1_000).to_i
+              gpu_us = (profile.fetch("gpu_ms").fetch("total_avg").to_f * 1_000).to_i
+              events = [
+                {"name"=>"fixed-world-profile", "cat"=>"benchmark", "ph"=>"X", "ts"=>0, "dur"=>duration_us, "pid"=>1, "tid"=>1, "args"=>profile},
+                {"name"=>"cpu-frame-avg", "cat"=>"frame", "ph"=>"X", "ts"=>0, "dur"=>cpu_us, "pid"=>1, "tid"=>2},
+                {"name"=>"gpu-frame-avg", "cat"=>"frame", "ph"=>"X", "ts"=>cpu_us, "dur"=>gpu_us, "pid"=>1, "tid"=>3}
+              ]
+              trace = {"traceEvents"=>events, "displayTimeUnit"=>"ms"}
+              File.write("profiling-artifacts/perfetto-trace.json", JSON.pretty_generate(trace))
+              File.write("profiling-artifacts/tracy-frame.json", JSON.pretty_generate({"format"=>"zigcraft-tracy-frame-v1", "source"=>"fixed-world-profile", "events"=>events}))
+            '
+        env:
+          XDG_RUNTIME_DIR: /tmp/runtime-runner
+          WAYLAND_DISPLAY: headless
+          SDL_AUDIODRIVER: dummy
+          ZIGCRAFT_SAFE_MODE: "1"
+
+      - name: Write nightly summary
+        if: always()
+        run: |
+          {
+            printf "## ZigCraft nightly profiling\n\n"
+            printf 'Run: %s\n\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            printf "Artifacts: \`profiling-artifacts\` contains fixed-world benchmark JSON plus generated Tracy/Perfetto trace artifacts.\n"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop headless Wayland compositor
+        if: always()
+        uses: ./.github/actions/stop-weston
+
+      - name: Upload profiling artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: profiling-artifacts
+          path: |
+            profiling-artifacts
+            profiling.log
+            weston.log
+          if-no-files-found: error
+          retention-days: 30

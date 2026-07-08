@@ -1,0 +1,8 @@
+{
+  "rationale": "Keep committed game assets small enough for fast CI checkout and bounded release artifacts. 4K source textures are already ignored; these limits catch accidental large binary commits.",
+  "per_asset": {
+    "texture_bytes": 4194304,
+    "model_bytes": 8388608
+  },
+  "total_assets_growth_bytes": 16777216
+}

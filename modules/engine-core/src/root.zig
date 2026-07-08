@@ -1,4 +1,5 @@
 pub const fs = @import("fs");
+pub const crash_handler = @import("crash_handler.zig");
 pub const interfaces = @import("interfaces.zig");
 pub const job_system = @import("job_system.zig");
 pub const log = @import("log.zig");
@@ -22,6 +23,7 @@ pub const REPRIORITIZE_THRESHOLD = job_system.REPRIORITIZE_THRESHOLD;
 pub const Time = time.Time;
 pub const WorkerPool = job_system.WorkerPool;
 pub const WindowManager = window.WindowManager;
+pub const initCrashHandler = crash_handler.init;
 pub const timestampMs = time.timestampMs;
 pub const envFlag = runtime_env.envFlag;
 pub const getenv = runtime_env.getenv;
