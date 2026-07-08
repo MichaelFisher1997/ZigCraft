@@ -8,7 +8,7 @@ on:
       duration:
         description: Benchmark duration per preset (seconds)
         required: false
-        default: '30'
+        default: '5'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,7 +25,7 @@ jobs:
       contents: read
       statuses: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 90
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
 
@@ -48,14 +48,16 @@ jobs:
       uses: ./.github/actions/run-with-log
       with:
         name: Benchmark
-        timeout: 75m
+        timeout: 20m
         log-file: benchmark.log
-        command: nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results
+        command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results
       env:
         XDG_RUNTIME_DIR: /tmp/runtime-runner
         WAYLAND_DISPLAY: headless
+        MESA_SHADER_CACHE_DIR: /tmp/mesa_shader_cache
+        SDL_AUDIODRIVER: dummy
         ZIGCRAFT_SAFE_MODE: '1'
-        BENCHMARK_DURATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '30' }}
+        BENCHMARK_DURATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '5' }}
 
     - name: Stop headless Wayland compositor
       if: always()

@@ -12,7 +12,7 @@ Baselines are captured on the GitHub Actions benchmark job runner:
 - Zig version: `0.16.0`, provided by the Nix flake
 - Build mode: `ReleaseFast`
 - Presets: `low`, `medium`, `high`
-- Duration: 30 seconds per preset
+- Duration: 5 seconds per preset for the CI canary gate
 
 Lavapipe and Zig versions are pinned by the Nix inputs used by the workflow. If the flake lock changes, refresh this baseline so performance drift is tied to a known toolchain.
 
@@ -21,10 +21,12 @@ Lavapipe and Zig versions are pinned by the Nix inputs used by the workflow. If 
 Run the benchmark workflow on the baseline branch or on `dev`:
 
 ```bash
-gh workflow run benchmark.yml --repo OpenStaticFish/ZigCraft --ref <branch> -f duration=30
+gh workflow run benchmark.yml --repo OpenStaticFish/ZigCraft --ref <branch> -f duration=5
 ```
 
 After the run finishes, download the `benchmark-results` artifact and replace the corresponding `low`, `medium`, and `high` entries in `baseline.json` with the captured JSON payloads. Keep `generated` set to `true`.
+
+This gate is intentionally a short canary so every `dev` push gets a bounded performance signal without consuming long runner time. Longer profiling runs should use the manual workflow input with a larger duration and should not replace the CI canary baseline unless that policy changes deliberately.
 
 ## Tolerance Policy
 
