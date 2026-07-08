@@ -233,6 +233,16 @@ jobs:
           ZIGCRAFT_SMOKE_FRAMES: "3"
           ZIGCRAFT_SAFE_MODE: "1"
 
+      - name: Fail on Vulkan validation log errors
+        if: needs.changes.outputs.code_changes == 'true'
+        run: |
+          set -euo pipefail
+          if grep -E "Vulkan validation error|Validation Error:|VUID-" integration-test.log world-smoke-test.log; then
+            echo "Vulkan validation errors were found in integration logs." >&2
+            exit 1
+          fi
+          echo "No Vulkan validation errors found in integration logs."
+
       - name: Stop headless Wayland compositor
         if: always() && needs.changes.outputs.code_changes == 'true'
         uses: ./.github/actions/stop-weston
