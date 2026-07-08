@@ -19,9 +19,9 @@ pub const ICullingSystem = struct {
 
     pub const VTable = struct {
         deinit: *const fn (ptr: *anyopaque) void,
-        update_aabb_data: *const fn (ptr: *anyopaque, frame_index: usize, chunks: []const ChunkCullData) void,
-        read_visible_count: *const fn (ptr: *anyopaque, frame_index: usize) u32,
-        read_visible_indices: *const fn (ptr: *anyopaque, frame_index: usize, count: u32, out: []u32) void,
+        updateAABBData: *const fn (ptr: *anyopaque, frame_index: usize, chunks: []const ChunkCullData) void,
+        readVisibleCount: *const fn (ptr: *anyopaque, frame_index: usize) u32,
+        readVisibleIndices: *const fn (ptr: *anyopaque, frame_index: usize, count: u32, out: []u32) void,
         dispatch: *const fn (ptr: *anyopaque, config: DispatchConfig) void,
     };
 
@@ -29,16 +29,16 @@ pub const ICullingSystem = struct {
         self.vtable.deinit(self.ptr);
     }
 
-    pub fn update_aabb_data(self: ICullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
-        self.vtable.update_aabb_data(self.ptr, frame_index, chunks);
+    pub fn updateAABBData(self: ICullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
+        self.vtable.updateAABBData(self.ptr, frame_index, chunks);
     }
 
-    pub fn read_visible_count(self: ICullingSystem, frame_index: usize) u32 {
-        return self.vtable.read_visible_count(self.ptr, frame_index);
+    pub fn readVisibleCount(self: ICullingSystem, frame_index: usize) u32 {
+        return self.vtable.readVisibleCount(self.ptr, frame_index);
     }
 
-    pub fn read_visible_indices(self: ICullingSystem, frame_index: usize, count: u32, out: []u32) void {
-        self.vtable.read_visible_indices(self.ptr, frame_index, count, out);
+    pub fn readVisibleIndices(self: ICullingSystem, frame_index: usize, count: u32, out: []u32) void {
+        self.vtable.readVisibleIndices(self.ptr, frame_index, count, out);
     }
 
     pub fn dispatch(self: ICullingSystem, config: DispatchConfig) void {

@@ -102,6 +102,7 @@ pub fn LODRenderer(comptime RHI: type) type {
         gpu_culling_requested: bool,
         gpu_culling_fallback_logged: bool,
 
+        /// LOD renderer API `init` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn init(allocator: std.mem.Allocator, rhi: RHI) !*Self {
             const renderer = try allocator.create(Self);
             errdefer allocator.destroy(renderer);
@@ -150,6 +151,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             return renderer;
         }
 
+        /// LOD renderer API `deinit` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn deinit(self: *Self) void {
             self.rhi.waitIdle();
             const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
@@ -690,17 +692,22 @@ test "LODRenderer init/deinit lifecycle" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(self: @This(), _: usize, _: anytype) !u32 {
             self.state.buffers_created += 1;
             return self.state.buffers_created;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(self: @This(), _: u32) void {
             self.state.buffers_destroyed += 1;
         }
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(_: @This(), _: u32, _: u32, _: anytype) void {}
     };
 
@@ -735,13 +742,16 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(self: @This(), _: usize, usage: anytype) !u32 {
             _ = usage;
             const handle = self.state.next_handle;
             self.state.next_handle += 1;
             return handle;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `updateBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn updateBuffer(self: @This(), _: u32, _: usize, data: []const u8) !void {
             if (data.len % @sizeOf(rhi_types.InstanceData) == 0 and data.len != @sizeOf(rhi_types.DrawIndirectCommand)) {
                 self.state.instance_updates += 1;
@@ -749,18 +759,27 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
                 self.state.indirect_updates += 1;
             }
         }
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `supportsIndirectFirstInstance` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn supportsIndirectFirstInstance(_: @This()) bool {
             return true;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(_: @This(), _: u32, _: u32, _: anytype) void {}
+        /// LOD renderer API `drawOffset` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn drawOffset(_: @This(), _: u32, _: u32, _: anytype, _: usize) void {}
+        /// LOD renderer API `drawIndirect` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn drawIndirect(self: @This(), _: u32, _: u32, _: usize, draw_count: u32, _: u32) void {
             self.state.draw_indirect_calls += 1;
             self.state.last_draw_count += draw_count;
@@ -870,18 +889,25 @@ test "LODRenderer render draw path" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, _: f32) void {
             self.state.set_matrix_calls += 1;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), handle: u32, count: u32, _: anytype) void {
             self.state.draw_calls += 1;
             self.state.last_buffer_handle = handle;
@@ -967,18 +993,25 @@ test "LODRenderer keeps coarse LOD visible while finer bands stream" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, _: f32) void {
             self.state.set_matrix_calls += 1;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1039,18 +1072,25 @@ test "LODRenderer disables mask when chunks are missing inside chunk render radi
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
             self.state.last_mask_radius = mask_radius;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1113,18 +1153,25 @@ test "LODRenderer chunk mask uses chunk render radius instead of LOD0 radius" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
             self.state.last_mask_radius = mask_radius;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1193,18 +1240,25 @@ test "LODRenderer keeps mask when only outside-radius chunks are uncovered" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
             self.state.last_mask_radius = mask_radius;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1267,18 +1321,25 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, mask_radius: f32) void {
             self.state.last_mask_radius = mask_radius;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1340,16 +1401,23 @@ test "LODRenderer skips coarse LOD when finer coverage is ready" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1425,16 +1493,23 @@ test "LODRenderer always renders ready LOD0 regions" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }
@@ -1493,16 +1568,23 @@ test "LODRenderer keeps coarse LOD when a finer child is missing" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), handle: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
             self.state.handle_sum += handle;
@@ -1577,16 +1659,23 @@ test "LODRenderer resolves finer coverage across negative region boundaries" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(_: @This(), _: u32) void {}
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(_: @This(), _: Mat4, _: Vec3, _: f32) void {}
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `setSelectionMode` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setSelectionMode(_: @This(), _: bool) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), handle: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
             self.state.handle_sum += handle;
@@ -1665,26 +1754,34 @@ test "LODRenderer createGPUBridge and toInterface round-trip" {
     const MockRHI = struct {
         state: *MockRHIState,
 
+        /// LOD renderer API `createBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn createBuffer(self: @This(), _: usize, _: anytype) !u32 {
             _ = self;
             return 1;
         }
+        /// LOD renderer API `destroyBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn destroyBuffer(self: @This(), _: u32) void {
             self.state.destroy_calls += 1;
         }
+        /// LOD renderer API `uploadBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn uploadBuffer(self: @This(), _: u32, _: []const u8) !void {
             self.state.upload_calls += 1;
         }
+        /// LOD renderer API `getFrameIndex` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn getFrameIndex(_: @This()) usize {
             return 0;
         }
+        /// LOD renderer API `waitIdle` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn waitIdle(self: @This()) void {
             self.state.wait_idle_calls += 1;
         }
+        /// LOD renderer API `setModelMatrix` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setModelMatrix(self: @This(), _: Mat4, _: Vec3, _: f32) void {
             self.state.set_matrix_calls += 1;
         }
+        /// LOD renderer API `setLODInstanceBuffer` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        /// LOD renderer API `draw` manages distant-terrain render resources or draw-time state owned by the LOD renderer.
         pub fn draw(self: @This(), _: u32, _: u32, _: anytype) void {
             self.state.draw_calls += 1;
         }

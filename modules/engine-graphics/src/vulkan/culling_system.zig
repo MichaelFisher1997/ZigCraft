@@ -121,7 +121,7 @@ pub const CullingSystem = struct {
         };
     }
 
-    pub fn update_aabb_data(self: *CullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
+    pub fn updateAABBData(self: *CullingSystem, frame_index: usize, chunks: []const ChunkCullData) void {
         const buf = &self.aabb_buffers[frame_index];
         if (buf.mapped_ptr == null) return;
         const copy_len = @min(chunks.len, self.max_chunks) * @sizeOf(ChunkCullData);
@@ -220,14 +220,14 @@ pub const CullingSystem = struct {
         self.copyCounterToReadback(cmd, fi);
     }
 
-    pub fn read_visible_count(self: *CullingSystem, frame_index: usize) u32 {
+    pub fn readVisibleCount(self: *CullingSystem, frame_index: usize) u32 {
         const buf = &self.counter_readback_buffers[frame_index];
         if (buf.mapped_ptr == null) return 0;
         const ptr: *align(1) u32 = @ptrCast(@alignCast(buf.mapped_ptr.?));
         return ptr.*;
     }
 
-    pub fn read_visible_indices(self: *CullingSystem, frame_index: usize, count: u32, out: []u32) void {
+    pub fn readVisibleIndices(self: *CullingSystem, frame_index: usize, count: u32, out: []u32) void {
         if (count == 0) return;
         const buf = &self.visible_index_buffers[frame_index];
         if (buf.mapped_ptr == null) return;
@@ -462,9 +462,9 @@ pub const CullingSystem = struct {
 
 const interface_vtable = culling.ICullingSystem.VTable{
     .deinit = interfaceDeinit,
-    .update_aabb_data = interfaceUpdateAabbData,
-    .read_visible_count = interfaceReadVisibleCount,
-    .read_visible_indices = interfaceReadVisibleIndices,
+    .updateAABBData = interfaceUpdateAabbData,
+    .readVisibleCount = interfaceReadVisibleCount,
+    .readVisibleIndices = interfaceReadVisibleIndices,
     .dispatch = interfaceDispatch,
 };
 
@@ -475,17 +475,17 @@ fn interfaceDeinit(ptr: *anyopaque) void {
 
 fn interfaceUpdateAabbData(ptr: *anyopaque, frame_index: usize, chunks: []const ChunkCullData) void {
     const self: *CullingSystem = @ptrCast(@alignCast(ptr));
-    self.update_aabb_data(frame_index, chunks);
+    self.updateAABBData(frame_index, chunks);
 }
 
 fn interfaceReadVisibleCount(ptr: *anyopaque, frame_index: usize) u32 {
     const self: *CullingSystem = @ptrCast(@alignCast(ptr));
-    return self.read_visible_count(frame_index);
+    return self.readVisibleCount(frame_index);
 }
 
 fn interfaceReadVisibleIndices(ptr: *anyopaque, frame_index: usize, count: u32, out: []u32) void {
     const self: *CullingSystem = @ptrCast(@alignCast(ptr));
-    self.read_visible_indices(frame_index, count, out);
+    self.readVisibleIndices(frame_index, count, out);
 }
 
 fn interfaceDispatch(ptr: *anyopaque, config: culling.DispatchConfig) void {

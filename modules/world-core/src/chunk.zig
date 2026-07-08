@@ -49,6 +49,7 @@ pub const Chunk = struct {
     modified: bool = false,
     pin_count: std.atomic.Value(u32),
 
+    /// Chunk storage API `init` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn init(chunk_x: i32, chunk_z: i32) Chunk {
         return .{
             .chunk_x = chunk_x,
@@ -64,6 +65,7 @@ pub const Chunk = struct {
         };
     }
 
+    /// Chunk storage API `getIndex` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getIndex(x: u32, y: u32, z: u32) usize {
         std.debug.assert(x < CHUNK_SIZE_X);
         std.debug.assert(y < CHUNK_SIZE_Y);
@@ -71,82 +73,101 @@ pub const Chunk = struct {
         return @as(usize, x) + @as(usize, z) * CHUNK_SIZE_X + @as(usize, y) * CHUNK_SIZE_X * CHUNK_SIZE_Z;
     }
 
+    /// Chunk storage API `getBlock` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getBlock(self: *const Chunk, x: u32, y: u32, z: u32) BlockType {
         return self.blocks[getIndex(x, y, z)];
     }
 
+    /// Chunk storage API `setBlock` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setBlock(self: *Chunk, x: u32, y: u32, z: u32, block: BlockType) void {
         self.blocks[getIndex(x, y, z)] = block;
         self.dirty = true;
         self.modified = true;
     }
 
+    /// Chunk storage API `getBlockSafe` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getBlockSafe(self: *const Chunk, x: i32, y: i32, z: i32) BlockType {
         if (x < 0 or x >= CHUNK_SIZE_X or y < 0 or y >= CHUNK_SIZE_Y or z < 0 or z >= CHUNK_SIZE_Z) return .air;
         return self.getBlock(@intCast(x), @intCast(y), @intCast(z));
     }
 
+    /// Chunk storage API `getBiome` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getBiome(self: *const Chunk, x: u32, z: u32) BiomeId {
         return self.biomes[x + z * CHUNK_SIZE_X];
     }
 
+    /// Chunk storage API `setBiome` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setBiome(self: *Chunk, x: u32, z: u32, biome: BiomeId) void {
         self.biomes[x + z * CHUNK_SIZE_X] = biome;
         self.dirty = true;
     }
 
+    /// Chunk storage API `getLight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getLight(self: *const Chunk, x: u32, y: u32, z: u32) PackedLight {
         return self.light[getIndex(x, y, z)];
     }
 
+    /// Chunk storage API `setLight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setLight(self: *Chunk, x: u32, y: u32, z: u32, light_val: PackedLight) void {
         self.light[getIndex(x, y, z)] = light_val;
     }
 
+    /// Chunk storage API `getSkyLight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getSkyLight(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         return self.light[getIndex(x, y, z)].getSkyLight();
     }
 
+    /// Chunk storage API `setSkyLight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setSkyLight(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
         self.light[getIndex(x, y, z)].setSkyLight(val);
     }
 
+    /// Chunk storage API `getEntranceBounce` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getEntranceBounce(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         return self.entrance_bounce[getIndex(x, y, z)];
     }
 
+    /// Chunk storage API `setEntranceBounce` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setEntranceBounce(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
         self.entrance_bounce[getIndex(x, y, z)] = val;
     }
 
+    /// Chunk storage API `getEntranceDir` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getEntranceDir(self: *const Chunk, x: u32, y: u32, z: u32) u8 {
         return self.entrance_dir[getIndex(x, y, z)];
     }
 
+    /// Chunk storage API `setEntranceDir` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setEntranceDir(self: *Chunk, x: u32, y: u32, z: u32, val: u8) void {
         self.entrance_dir[getIndex(x, y, z)] = val;
     }
 
+    /// Chunk storage API `getBlockLight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getBlockLight(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         return self.light[getIndex(x, y, z)].getBlockLight();
     }
 
+    /// Chunk storage API `getSurfaceHeight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getSurfaceHeight(self: *const Chunk, x: u32, z: u32) i16 {
         return self.heightmap[x + z * CHUNK_SIZE_X];
     }
 
+    /// Chunk storage API `setSurfaceHeight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setSurfaceHeight(self: *Chunk, x: u32, z: u32, height: i16) void {
         self.heightmap[x + z * CHUNK_SIZE_X] = height;
     }
 
+    /// Chunk storage API `setBlockLight` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setBlockLight(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
         self.light[getIndex(x, y, z)].setBlockLight(val);
     }
 
+    /// Chunk storage API `setBlockLightRGB` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn setBlockLightRGB(self: *Chunk, x: u32, y: u32, z: u32, r: u4, g: u4, b: u4) void {
         self.light[getIndex(x, y, z)].setBlockLightRGB(r, g, b);
     }
 
+    /// Chunk storage API `getLightSafe` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getLightSafe(self: *const Chunk, x: i32, y: i32, z: i32) PackedLight {
         // Out-of-bounds X/Z returns zero light. Out-of-bounds Y returns:
         //   - MAX_LIGHT sky light for y >= CHUNK_SIZE_Y: the meshing system samples this
@@ -161,24 +182,29 @@ pub const Chunk = struct {
         return self.getLight(@intCast(x), @intCast(y), @intCast(z));
     }
 
+    /// Chunk storage API `getEntranceBounceSafe` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getEntranceBounceSafe(self: *const Chunk, x: i32, y: i32, z: i32) u4 {
         if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return 0;
         return self.getEntranceBounce(@intCast(x), @intCast(y), @intCast(z));
     }
 
+    /// Chunk storage API `getEntranceDirSafe` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getEntranceDirSafe(self: *const Chunk, x: i32, y: i32, z: i32) u8 {
         if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return packEntranceDir(0, 0);
         return self.getEntranceDir(@intCast(x), @intCast(y), @intCast(z));
     }
 
+    /// Chunk storage API `getWorldX` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getWorldX(self: *const Chunk) i32 {
         return self.chunk_x * CHUNK_SIZE_X;
     }
 
+    /// Chunk storage API `getWorldZ` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getWorldZ(self: *const Chunk) i32 {
         return self.chunk_z * CHUNK_SIZE_Z;
     }
 
+    /// Chunk storage API `getHighestSolidY` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn getHighestSolidY(self: *const Chunk, x: u32, z: u32) u32 {
         var y: i32 = CHUNK_SIZE_Y - 1;
         while (y >= 0) : (y -= 1) {
@@ -188,23 +214,28 @@ pub const Chunk = struct {
         return 0;
     }
 
+    /// Chunk storage API `pin` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn pin(self: *Chunk) void {
         _ = self.pin_count.fetchAdd(1, .monotonic);
     }
 
+    /// Chunk storage API `unpin` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn unpin(self: *Chunk) void {
         _ = self.pin_count.fetchSub(1, .monotonic);
     }
 
+    /// Chunk storage API `isPinned` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn isPinned(self: *const Chunk) bool {
         return self.pin_count.load(.monotonic) > 0;
     }
 
+    /// Chunk storage API `fill` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn fill(self: *Chunk, block: BlockType) void {
         @memset(&self.blocks, block);
         self.dirty = true;
     }
 
+    /// Chunk storage API `fillLayer` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn fillLayer(self: *Chunk, y: u32, block: BlockType) void {
         var x: u32 = 0;
         while (x < CHUNK_SIZE_X) : (x += 1) {
@@ -215,6 +246,7 @@ pub const Chunk = struct {
         }
     }
 
+    /// Chunk storage API `generateFlat` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn generateFlat(self: *Chunk, ground_level: u32) void {
         var y: u32 = 0;
         while (y < CHUNK_SIZE_Y) : (y += 1) {
@@ -235,6 +267,7 @@ pub const Chunk = struct {
         self.dirty = true;
     }
 
+    /// Chunk storage API `updateSkylightColumn` reads or mutates chunk-local block and light data using world-core coordinate conventions.
     pub fn updateSkylightColumn(self: *Chunk, x: u32, z: u32) void {
         var sky_light: u4 = MAX_LIGHT;
         var y: i32 = CHUNK_SIZE_Y - 1;
@@ -251,11 +284,13 @@ pub const Chunk = struct {
     }
 };
 
+/// Chunk storage API `worldToChunkFromFloat` reads or mutates chunk-local block and light data using world-core coordinate conventions.
 pub fn worldToChunkFromFloat(world_x: f32, world_z: f32) struct { chunk_x: i32, chunk_z: i32 } {
     const chunk = worldToChunk(@as(i32, @intFromFloat(@floor(world_x))), @as(i32, @intFromFloat(@floor(world_z))));
     return .{ .chunk_x = chunk.chunk_x, .chunk_z = chunk.chunk_z };
 }
 
+/// Chunk storage API `worldToChunk` reads or mutates chunk-local block and light data using world-core coordinate conventions.
 pub fn worldToChunk(world_x: i32, world_z: i32) struct { chunk_x: i32, chunk_z: i32 } {
     return .{
         .chunk_x = @divFloor(world_x, CHUNK_SIZE_X),
@@ -263,6 +298,7 @@ pub fn worldToChunk(world_x: i32, world_z: i32) struct { chunk_x: i32, chunk_z: 
     };
 }
 
+/// Chunk storage API `worldToLocal` reads or mutates chunk-local block and light data using world-core coordinate conventions.
 pub fn worldToLocal(world_x: i32, world_z: i32) struct { x: u32, z: u32 } {
     return .{
         .x = @intCast(@mod(world_x, CHUNK_SIZE_X)),

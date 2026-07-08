@@ -32,6 +32,7 @@ pub const LODRegionKey = struct {
     /// LOD level
     lod: LODLevel,
 
+    /// LOD chunk API `fromChunkCoords` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn fromChunkCoords(chunk_x: i32, chunk_z: i32, lod: LODLevel) LODRegionKey {
         const scale: i32 = @intCast(lod.chunksPerSide());
         return .{
@@ -41,6 +42,7 @@ pub const LODRegionKey = struct {
         };
     }
 
+    /// LOD chunk API `hash` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn hash(self: LODRegionKey) u64 {
         const ux: u64 = @bitCast(@as(i64, self.rx));
         const uz: u64 = @bitCast(@as(i64, self.rz));
@@ -48,10 +50,12 @@ pub const LODRegionKey = struct {
         return ux ^ (uz *% 0x9e3779b97f4a7c15) ^ (ul *% 0x517cc1b727220a95);
     }
 
+    /// LOD chunk API `eql` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn eql(a: LODRegionKey, b: LODRegionKey) bool {
         return a.rx == b.rx and a.rz == b.rz and a.lod == b.lod;
     }
 
+    /// LOD chunk API `parentKey` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn parentKey(self: LODRegionKey) ?LODRegionKey {
         const lod_idx = @intFromEnum(self.lod);
         if (lod_idx + 1 >= LODLevel.count) return null;
@@ -62,6 +66,7 @@ pub const LODRegionKey = struct {
         };
     }
 
+    /// LOD chunk API `childKeys` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn childKeys(self: LODRegionKey) ?[4]LODRegionKey {
         const lod_idx = @intFromEnum(self.lod);
         if (lod_idx == 0) return null;
@@ -94,12 +99,14 @@ pub const ChunkBounds = struct {
     max_x: i32,
     max_z: i32,
 
+    /// LOD chunk API `distanceSquaredToPoint` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn distanceSquaredToPoint(self: ChunkBounds, point_x: i32, point_z: i32) i64 {
         const dx = axisDistance(point_x, self.min_x, self.max_x);
         const dz = axisDistance(point_z, self.min_z, self.max_z);
         return dx * dx + dz * dz;
     }
 
+    /// LOD chunk API `intersectsRadius` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn intersectsRadius(self: ChunkBounds, center_x: i32, center_z: i32, radius_chunks: i32) bool {
         const radius_sq: i64 = @as(i64, radius_chunks) * @as(i64, radius_chunks);
         return self.distanceSquaredToPoint(center_x, center_z) <= radius_sq;
@@ -114,11 +121,13 @@ pub const ChunkBounds = struct {
 
 /// Context for LODRegionKey HashMap
 pub const LODRegionKeyContext = struct {
+    /// LOD chunk API `hash` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn hash(self: @This(), key: LODRegionKey) u64 {
         _ = self;
         return key.hash();
     }
 
+    /// LOD chunk API `eql` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn eql(self: @This(), a: LODRegionKey, b: LODRegionKey) bool {
         _ = self;
         return a.eql(b);
@@ -174,6 +183,7 @@ pub const LODChunk = struct {
     /// or edit). The manager writes the region container to disk lazily.
     store_dirty: bool,
 
+    /// LOD chunk API `init` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn init(rx: i32, rz: i32, lod: LODLevel) LODChunk {
         return .{
             .region_x = rx,
@@ -193,6 +203,7 @@ pub const LODChunk = struct {
         };
     }
 
+    /// LOD chunk API `deinit` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn deinit(self: *LODChunk, allocator: std.mem.Allocator) void {
         _ = allocator;
         switch (self.data) {
@@ -203,46 +214,57 @@ pub const LODChunk = struct {
         self.* = undefined;
     }
 
+    /// LOD chunk API `pin` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn pin(self: *LODChunk) void {
         _ = self.pin_count.fetchAdd(1, .monotonic);
     }
 
+    /// LOD chunk API `unpin` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn unpin(self: *LODChunk) void {
         _ = self.pin_count.fetchSub(1, .monotonic);
     }
 
+    /// LOD chunk API `isPinned` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn isPinned(self: *const LODChunk) bool {
         return self.pin_count.load(.monotonic) > 0;
     }
 
+    /// LOD chunk API `key` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn key(self: *const LODChunk) LODRegionKey {
         return .{ .rx = self.region_x, .rz = self.region_z, .lod = self.lod_level };
     }
 
+    /// LOD chunk API `getState` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getState(self: *const LODChunk) LODState {
         return self.state;
     }
 
+    /// LOD chunk API `setState` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn setState(self: *LODChunk, state: LODState) void {
         self.state = state;
     }
 
+    /// LOD chunk API `isInFlight` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn isInFlight(self: *const LODChunk) bool {
         return self.state == .generating or self.state == .meshing or self.state == .uploading;
     }
 
+    /// LOD chunk API `isRenderable` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn isRenderable(self: *const LODChunk) bool {
         return self.state == .renderable;
     }
 
+    /// LOD chunk API `lodLevel` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn lodLevel(self: *const LODChunk) LODLevel {
         return self.lod_level;
     }
 
+    /// LOD chunk API `readyChildren` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn readyChildren(self: *const LODChunk) u8 {
         return self.ready_children;
     }
 
+    /// LOD chunk API `transitionFadeProgress` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn transitionFadeProgress(self: *const LODChunk) f32 {
         if (self.transition_frames_remaining == 0) return 1.0;
         const remaining = @as(f32, @floatFromInt(self.transition_frames_remaining));
@@ -252,6 +274,7 @@ pub const LODChunk = struct {
         return 1.0 - t;
     }
 
+    /// LOD chunk API `adjustReadyChildren` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn adjustReadyChildren(self: *LODChunk, delta: i8) void {
         const before = self.ready_children;
         if (delta > 0) {
@@ -267,16 +290,19 @@ pub const LODChunk = struct {
         }
     }
 
+    /// LOD chunk API `markRenderable` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn markRenderable(self: *LODChunk, ready_children: u8) void {
         self.ready_children = @min(ready_children, 4);
         self.transition_frames_remaining = TRANSITION_FADE_FRAMES;
         self.state = .renderable;
     }
 
+    /// LOD chunk API `tickTransition` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn tickTransition(self: *LODChunk) void {
         if (self.transition_frames_remaining > 0) self.transition_frames_remaining -= 1;
     }
 
+    /// LOD chunk API `isCoveredByFinerLOD` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn isCoveredByFinerLOD(self: *const LODChunk, fallback_missing_child_threshold: f32) bool {
         if (self.lod_level == .lod0) return false;
         const missing_children = 4 - @min(self.ready_children, 4);
@@ -284,11 +310,13 @@ pub const LODChunk = struct {
         return missing_fraction <= fallback_missing_child_threshold and self.transition_frames_remaining == 0;
     }
 
+    /// LOD chunk API `markSourceDirty` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;
     }
 
+    /// LOD chunk API `setReadyChildren` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn setReadyChildren(self: *LODChunk, ready_children: u8) void {
         self.ready_children = @min(ready_children, 4);
     }
@@ -317,6 +345,7 @@ pub const LODChunk = struct {
         };
     }
 
+    /// LOD chunk API `updateHeightBoundsFromData` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn updateHeightBoundsFromData(self: *LODChunk) void {
         switch (self.data) {
             .simplified => |*data| {
@@ -347,6 +376,7 @@ pub const LODChunk = struct {
         }
     }
 
+    /// LOD chunk API `chunkBounds` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn chunkBounds(self: *const LODChunk) ChunkBounds {
         return .{
             .min_x = self.region_x * @as(i32, @intCast(self.lod_level.chunksPerSide())),
@@ -385,33 +415,43 @@ pub const ILODConfig = struct {
         getLODStoreSizeCapMB: *const fn (ptr: *anyopaque) u32,
     };
 
+    /// LOD chunk API `getRadii` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
         return self.vtable.getRadii(self.ptr);
     }
+    /// LOD chunk API `getChunkRenderRadius` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getChunkRenderRadius(self: ILODConfig) i32 {
         return self.vtable.getChunkRenderRadius(self.ptr);
     }
+    /// LOD chunk API `getActiveLODCount` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getActiveLODCount(self: ILODConfig) u32 {
         return self.vtable.getActiveLODCount(self.ptr);
     }
+    /// LOD chunk API `setActiveLODCount` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn setActiveLODCount(self: ILODConfig, count: u32) void {
         self.vtable.setActiveLODCount(self.ptr, count);
     }
+    /// LOD chunk API `setChunkRenderRadius` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn setChunkRenderRadius(self: ILODConfig, radius: i32) void {
         self.vtable.setChunkRenderRadius(self.ptr, radius);
     }
+    /// LOD chunk API `setLOD0Radius` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn setLOD0Radius(self: ILODConfig, radius: i32) void {
         self.vtable.setLOD0Radius(self.ptr, radius);
     }
+    /// LOD chunk API `setRadii` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn setRadii(self: ILODConfig, radii: [LODLevel.count]i32) void {
         self.vtable.setRadii(self.ptr, radii);
     }
+    /// LOD chunk API `getLODForDistance` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getLODForDistance(self: ILODConfig, dist_chunks: i32) LODLevel {
         return self.vtable.getLODForDistance(self.ptr, dist_chunks);
     }
+    /// LOD chunk API `isInRange` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn isInRange(self: ILODConfig, dist_chunks: i32) bool {
         return self.vtable.isInRange(self.ptr, dist_chunks);
     }
+    /// LOD chunk API `getMaxUploadsPerFrame` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getMaxUploadsPerFrame(self: ILODConfig) u32 {
         return self.vtable.getMaxUploadsPerFrame(self.ptr);
     }
@@ -422,43 +462,53 @@ pub const ILODConfig = struct {
         return self.vtable.calculateMaskRadius(self.ptr);
     }
 
+    /// LOD chunk API `getQEMTarget` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getQEMTarget(self: ILODConfig, lod: LODLevel) u32 {
         return self.vtable.getQEMTarget(self.ptr, lod);
     }
 
+    /// LOD chunk API `getQEMMinInputTriangles` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getQEMMinInputTriangles(self: ILODConfig) u32 {
         return self.vtable.getQEMMinInputTriangles(self.ptr);
     }
 
+    /// LOD chunk API `getHorizontalDetail` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getHorizontalDetail(self: ILODConfig, lod: LODLevel) u32 {
         return self.vtable.getHorizontalDetail(self.ptr, lod);
     }
 
+    /// LOD chunk API `getVerticalSpanBudget` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getVerticalSpanBudget(self: ILODConfig) u8 {
         return self.vtable.getVerticalSpanBudget(self.ptr);
     }
 
+    /// LOD chunk API `getMeshPath` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getMeshPath(self: ILODConfig) LODMeshPath {
         return self.vtable.getMeshPath(self.ptr);
     }
 
+    /// LOD chunk API `getFogStartPercent` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getFogStartPercent(self: ILODConfig, lod: LODLevel) f32 {
         return self.vtable.getFogStartPercent(self.ptr, lod);
     }
 
+    /// LOD chunk API `getFallbackMissingChildThreshold` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getFallbackMissingChildThreshold(self: ILODConfig) f32 {
         return self.vtable.getFallbackMissingChildThreshold(self.ptr);
     }
 
+    /// LOD chunk API `getMemoryBudgetMB` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getMemoryBudgetMB(self: ILODConfig) u32 {
         return self.vtable.getMemoryBudgetMB(self.ptr);
     }
 
+    /// LOD chunk API `getLODStoreSizeCapMB` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getLODStoreSizeCapMB(self: ILODConfig) u32 {
         return self.vtable.getLODStoreSizeCapMB(self.ptr);
     }
 };
 
+/// LOD chunk API `activeLODCount` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
 pub fn activeLODCount(config: ILODConfig) usize {
     return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
 }
@@ -509,14 +559,17 @@ pub const LODConfig = struct {
     /// a coarser parent must remain visible as fallback terrain.
     fallback_missing_child_threshold: f32 = 0.2,
 
+    /// LOD chunk API `getQEMTarget` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getQEMTarget(self: *const LODConfig, lod: LODLevel) u32 {
         return self.qem_triangle_targets[@intFromEnum(lod)];
     }
 
+    /// LOD chunk API `radiiForRenderDistance` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
         return radiiForDistances(distance, default_horizon_radius);
     }
 
+    /// LOD chunk API `radiiForDistances` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn radiiForDistances(distance: i32, horizon_distance: i32) [LODLevel.count]i32 {
         const requested = @max(distance, 1);
         const lod0_target = @max(@as(i64, requested) * 3, @as(i64, requested + 16));
@@ -532,15 +585,18 @@ pub const LODConfig = struct {
         return .{ lod0, lod1, lod2, lod3, horizon };
     }
 
+    /// LOD chunk API `activeCountForRenderDistance` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn activeCountForRenderDistance(distance: i32) u32 {
         _ = distance;
         return LODLevel.count;
     }
 
+    /// LOD chunk API `coarsestLOD` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn coarsestLOD() LODLevel {
         return @enumFromInt(@as(u3, @intCast(LODLevel.count - 1)));
     }
 
+    /// LOD chunk API `getLODForDistance` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
         const active_lod_count = activeLODCount(self.interfaceConst());
         for (0..active_lod_count) |i| {
@@ -549,6 +605,7 @@ pub const LODConfig = struct {
         return @enumFromInt(@as(u3, @intCast(active_lod_count - 1)));
     }
 
+    /// LOD chunk API `isInRange` reads or updates one distant-terrain chunk while preserving its generation and mesh lifecycle invariants.
     pub fn isInRange(self: *const LODConfig, dist_chunks: i32) bool {
         return dist_chunks <= self.radii[activeLODCount(self.interfaceConst()) - 1];
     }

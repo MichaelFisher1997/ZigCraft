@@ -539,11 +539,11 @@ pub const WorldRenderer = struct {
         const fi = self.query.getFrameIndex();
         const prev_fi = (fi + rhi_mod.MAX_FRAMES_IN_FLIGHT - 1) % rhi_mod.MAX_FRAMES_IN_FLIGHT;
 
-        const prev_visible_count = cs.read_visible_count(prev_fi);
+        const prev_visible_count = cs.readVisibleCount(prev_fi);
         self.gpu_visible_indices.clearRetainingCapacity();
         if (prev_visible_count > 0) {
             self.gpu_visible_indices.resize(self.allocator, prev_visible_count) catch return;
-            cs.read_visible_indices(prev_fi, prev_visible_count, self.gpu_visible_indices.items);
+            cs.readVisibleIndices(prev_fi, prev_visible_count, self.gpu_visible_indices.items);
 
             const limit = @min(@as(usize, @intCast(prev_visible_count)), self.gpu_visible_indices.items.len);
             for (self.gpu_visible_indices.items[0..limit]) |idx| {
@@ -578,7 +578,7 @@ pub const WorldRenderer = struct {
             self.last_render_stats.chunks_culled += chunk_count - @min(prev_rendered, chunk_count);
         }
 
-        cs.update_aabb_data(fi, self.aabb_data.items);
+        cs.updateAABBData(fi, self.aabb_data.items);
         // The previous-frame depth pyramid is currently too unstable during camera
         // rotation and causes chunks to be wrongly occluded. Keep GPU frustum
         // culling, but disable temporal occlusion until the reprojection path is fixed.
