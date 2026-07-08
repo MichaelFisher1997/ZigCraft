@@ -4,6 +4,7 @@ set -euo pipefail
 duration=60
 presets="low,medium,high"
 output_dir="docs/benchmarks/results"
+per_preset_timeout=600
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -17,6 +18,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output-dir)
             output_dir="$2"
+            shift 2
+            ;;
+        --per-preset-timeout)
+            per_preset_timeout="$2"
             shift 2
             ;;
         *)
@@ -35,8 +40,8 @@ for preset in "${preset_list[@]}"; do
     printf 'Running benchmark preset %s -> %s\n' "$preset" "$output_file"
     benchmark_cmd=(zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset="$preset" -Dbenchmark-duration="$duration" -Dbenchmark-output="$output_file")
     if [[ -n "${IN_NIX_SHELL:-}" ]]; then
-        ZIGCRAFT_SAFE_MODE=1 "${benchmark_cmd[@]}"
+        ZIGCRAFT_SAFE_MODE=1 timeout --preserve-status "${per_preset_timeout}s" "${benchmark_cmd[@]}"
     else
-        ZIGCRAFT_SAFE_MODE=1 nix develop --command "${benchmark_cmd[@]}"
+        ZIGCRAFT_SAFE_MODE=1 timeout --preserve-status "${per_preset_timeout}s" nix develop --command "${benchmark_cmd[@]}"
     fi
 done

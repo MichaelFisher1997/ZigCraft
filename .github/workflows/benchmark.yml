@@ -50,7 +50,7 @@ jobs:
         name: Benchmark
         timeout: 20m
         log-file: benchmark.log
-        command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results
+        command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results --per-preset-timeout 600
       env:
         XDG_RUNTIME_DIR: /tmp/runtime-runner
         WAYLAND_DISPLAY: headless
