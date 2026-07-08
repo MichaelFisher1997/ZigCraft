@@ -65,6 +65,7 @@ const MockWorld = struct {
         .lpvWorld = lpvWorld,
         .graphicsRenderView = graphicsRenderView,
         .getGpuMeshDispatch = getGpuMeshDispatch,
+        .isGpuCullingEnabled = isGpuCullingEnabled,
     };
 
     fn cast(ptr: *anyopaque) *@This() {
@@ -255,6 +256,11 @@ const MockWorld = struct {
     fn getGpuMeshDispatch(ptr: *anyopaque) world_mod.GpuMeshDispatch {
         _ = ptr;
         return .{ .dispatch_fn = null, .dispatch_ctx = null };
+    }
+
+    fn isGpuCullingEnabled(ptr: *anyopaque) bool {
+        _ = ptr;
+        return false;
     }
 };
 

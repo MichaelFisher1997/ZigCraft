@@ -330,6 +330,7 @@
               pkgs.zls
               pkgs.pkg-config
               pkgs.glslang
+              pkgs.kcov
               pkgs.shellcheck
               pkgs.weston
             ];
@@ -354,6 +355,7 @@
               zig
               pkgs.pkg-config
               pkgs.glslang
+              pkgs.kcov
               pkgs.shellcheck
             ];
 

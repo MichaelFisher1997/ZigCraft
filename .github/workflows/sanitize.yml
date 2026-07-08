@@ -1,0 +1,49 @@
+name: Sanitize
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-sanitize:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        optimize: [Debug, ReleaseSafe]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Setup Zig cache
+        uses: ./.github/actions/setup-zig-cache
+        with:
+          cache-key-prefix: zig-ci-sanitize-${{ matrix.optimize }}
+
+      - name: Run sanitizer unit suite (${{ matrix.optimize }})
+        uses: ./.github/actions/run-with-log
+        with:
+          name: Sanitizer Unit Test (${{ matrix.optimize }})
+          timeout: 35m
+          log-file: sanitize-${{ matrix.optimize }}.log
+          command: nix develop .#ci-unit --command zig build -Dsanitize=address -Doptimize=${{ matrix.optimize }} test
+
+      - name: Upload sanitizer log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitize-log-${{ matrix.optimize }}
+          path: sanitize-${{ matrix.optimize }}.log
+          if-no-files-found: ignore
+          retention-days: 14

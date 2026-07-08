@@ -98,6 +98,7 @@ pub const SceneContext = struct {
     env_map_handle: rhi_pkg.TextureHandle,
     shadow: rhi_pkg.ShadowConfig,
     ssao_enabled: bool,
+    gpu_culling_enabled: bool = false,
     shadow_draw_enabled: bool,
     fxaa_enabled: bool = true,
     bloom_enabled: bool = true,
@@ -367,6 +368,8 @@ pub const SSAOPass = struct {
 };
 
 pub const DepthPyramidPass = struct {
+    enabled: bool = true,
+
     const VTABLE = IRenderPass.VTable{
         .name = "DepthPyramidPass",
         .needs_main_pass = false,
@@ -380,7 +383,8 @@ pub const DepthPyramidPass = struct {
     }
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
+        const self: *DepthPyramidPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled or !ctx.gpu_culling_enabled) return;
         ctx.render_ctx.computeDepthPyramid();
     }
 };

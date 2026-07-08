@@ -1,0 +1,57 @@
+name: Coverage
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kcov:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Setup Zig cache
+        uses: ./.github/actions/setup-zig-cache
+        with:
+          cache-key-prefix: zig-ci-coverage
+
+      - name: Run kcov line coverage
+        run: |
+          set -euo pipefail
+          mkdir -p coverage/kcov
+          nix develop .#ci-unit --command kcov \
+            --include-path=src,modules,libs \
+            --exclude-path=.zig-cache,zig-cache,assets,docs \
+            coverage/kcov \
+            zig build test
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: kcov-report
+          path: coverage/kcov
+          retention-days: 14
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          directory: coverage/kcov
+          flags: unit
+          name: zigcraft-kcov
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
