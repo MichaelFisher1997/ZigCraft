@@ -1,0 +1,5 @@
+# Suggest owner review for high-risk engine, persistence, shader, and CI paths.
+modules/engine-graphics/**   @OpenStaticFish
+modules/world-persistence/** @OpenStaticFish
+.github/workflows/**         @OpenStaticFish
+assets/shaders/**            @OpenStaticFish

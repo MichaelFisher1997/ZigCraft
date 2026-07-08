@@ -1,0 +1,44 @@
+name: Stale Issues and PRs
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Log stale decisions without labeling or closing issues/PRs
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark and close stale issues and PRs
+        uses: actions/stale@v10
+        with:
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: pinned,roadmap,production-readiness,audit-b1,audit-b2,audit-b3,audit-b4,audit-b5,audit-b6,security,help wanted
+          exempt-pr-labels: pinned,roadmap,production-readiness,audit-b1,audit-b2,audit-b3,audit-b4,audit-b5,audit-b6,security,help wanted
+          stale-issue-message: This issue has had no activity for 60 days. It will be closed in 14 days unless there is new activity or an exemption label is added.
+          stale-pr-message: This pull request has had no activity for 60 days. It will be closed in 14 days unless there is new activity or an exemption label is added.
+          close-issue-message: Closing this issue because it remained stale for 14 days without new activity.
+          close-pr-message: Closing this pull request because it remained stale for 14 days without new activity.
+          operations-per-run: 100
+          enable-statistics: true
+          debug-only: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true' }}

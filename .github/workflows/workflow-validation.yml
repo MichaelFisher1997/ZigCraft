@@ -7,12 +7,16 @@ on:
       - '.github/workflows/**'
       - '.github/actions/**'
       - 'scripts/*.sh'
+      - '.shellcheckrc'
+      - 'flake.nix'
   pull_request:
     branches: [ dev ]
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
       - 'scripts/*.sh'
+      - '.shellcheckrc'
+      - 'flake.nix'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -38,6 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
       - name: Parse workflow YAML
         run: |
           ruby -e 'require "yaml"; Dir[".github/workflows/*.{yml,yaml}"].sort.each { |f| YAML.load_file(f); puts "OK #{f}" }'
@@ -47,4 +54,7 @@ jobs:
           ruby -e 'require "yaml"; Dir[".github/actions/**/action.{yml,yaml}"].sort.each { |f| YAML.load_file(f); puts "OK #{f}" }'
 
       - name: Check shell script syntax
-        run: bash -n scripts/*.sh
+        run: nix develop .#ci-unit --command bash -n scripts/*.sh
+
+      - name: Run ShellCheck
+        run: nix develop .#ci-unit --command shellcheck scripts/*.sh

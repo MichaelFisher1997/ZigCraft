@@ -9,14 +9,15 @@ set -e
 TARGET_RES=${2:-512}
 MAGICK_CMD="magick"
 
-if ! command -v $MAGICK_CMD &> /dev/null; then
+if ! command -v "$MAGICK_CMD" &> /dev/null; then
     echo "Error: ImageMagick (magick) not found. Please install it."
     exit 1
 fi
 
 process_dir() {
     local dir=$1
-    local block_name=$(basename "$dir")
+    local block_name
+    block_name=$(basename "$dir")
     
     echo "Processing directory: $dir (Block: $block_name)"
     
@@ -30,8 +31,10 @@ process_dir() {
     )
     
     for mapping in "${mappings[@]}"; do
-        local suffix=$(echo "$mapping" | cut -d'|' -f1)
-        local patterns_str=$(echo "$mapping" | cut -d'|' -f2-)
+        local suffix
+        local patterns_str
+        suffix=$(echo "$mapping" | cut -d'|' -f1)
+        patterns_str=$(echo "$mapping" | cut -d'|' -f2-)
         
         # Try to find a matching file
         local found=""
@@ -41,7 +44,8 @@ process_dir() {
         
         for pattern in "${pattern_list[@]}"; do
             # Case-insensitive search for image files matching the pattern, excluding already processed ones
-            local match=$(find "$dir" -maxdepth 1 -type f -iname "*${pattern}*" \
+            local match
+            match=$(find "$dir" -maxdepth 1 -type f -iname "*${pattern}*" \
                 -not -name "${block_name}_${suffix}.png" \
                 \( -name "*.jpg" -o -name "*.png" -o -name "*.exr" -o -name "*.tga" -o -name "*.jpeg" -o -name "*.webp" \) | head -n 1)
             
@@ -76,9 +80,9 @@ if [ -d "$TARGET_PATH" ]; then
     
     if [ -n "$subdirs" ]; then
         echo "Detected pack root. Processing subdirectories..."
-        for d in $subdirs; do
+        while IFS= read -r d; do
             process_dir "$d"
-        done
+        done <<< "$subdirs"
     else
         process_dir "$TARGET_PATH"
     fi

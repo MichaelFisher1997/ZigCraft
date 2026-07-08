@@ -1,0 +1,2 @@
+enable=add-default-case,deprecate-which,quote-safe-variables
+severity=warning
