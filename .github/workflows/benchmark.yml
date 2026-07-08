@@ -94,9 +94,7 @@ jobs:
           const failed = runOutcome === 'failure' || compareOutcome === 'failure';
           const description = failed
             ? 'Benchmark regression or runtime failure'
-            : compareOutcome === 'skipped'
-              ? 'Benchmark comparison skipped'
-              : 'Benchmark completed';
+            : 'Benchmark completed';
 
           await github.rest.repos.createCommitStatus({
             owner: context.repo.owner,
