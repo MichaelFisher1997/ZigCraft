@@ -247,6 +247,10 @@ pub const WorldRenderer = struct {
         return self.gpu_mesher;
     }
 
+    pub fn isGpuCullingEnabled(self: *const WorldRenderer) bool {
+        return self.use_gpu_culling;
+    }
+
     pub fn processGpuMeshing(ctx: *anyopaque) void {
         const self: *WorldRenderer = @ptrCast(@alignCast(ctx));
         if (self.gpu_mesher) |mesher| {

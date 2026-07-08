@@ -218,6 +218,7 @@ test "Player block mutation errors are handled" {
             .lpvWorld = lpvWorld,
             .graphicsRenderView = graphicsRenderView,
             .getGpuMeshDispatch = getGpuMeshDispatch,
+            .isGpuCullingEnabled = isGpuCullingEnabled,
         };
 
         fn interface(self: *@This()) IWorldSimulation {
@@ -307,6 +308,10 @@ test "Player block mutation errors are handled" {
         }
         fn getGpuMeshDispatch(_: *anyopaque) @import("world-runtime").GpuMeshDispatch {
             return .{ .dispatch_fn = null, .dispatch_ctx = null };
+        }
+
+        fn isGpuCullingEnabled(_: *anyopaque) bool {
+            return false;
         }
     };
 

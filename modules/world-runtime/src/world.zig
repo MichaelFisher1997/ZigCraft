@@ -153,6 +153,7 @@ pub const IWorld = struct {
         lpvWorld: *const fn (ptr: *anyopaque) ILPVWorld,
         graphicsRenderView: *const fn (ptr: *anyopaque) GraphicsWorldRenderView,
         getGpuMeshDispatch: *const fn (ptr: *anyopaque) GpuMeshDispatch,
+        isGpuCullingEnabled: *const fn (ptr: *anyopaque) bool,
     };
 
     /// Advances world streaming, generation, meshing, autosave, and runtime queues for one frame.
@@ -357,6 +358,11 @@ pub const IWorld = struct {
     /// The hook is null when GPU meshing is unavailable.
     pub fn getGpuMeshDispatch(self: IWorld) GpuMeshDispatch {
         return self.vtable.getGpuMeshDispatch(self.ptr);
+    }
+
+    /// Returns true when chunk visibility is currently produced by GPU culling.
+    pub fn isGpuCullingEnabled(self: IWorld) bool {
+        return self.vtable.isGpuCullingEnabled(self.ptr);
     }
 
     /// Narrows the world facade to simulation and mutation operations.
@@ -1145,6 +1151,7 @@ pub const World = struct {
         .lpvWorld = ilpvWorld,
         .graphicsRenderView = igraphicsRenderView,
         .getGpuMeshDispatch = igetGpuMeshDispatch,
+        .isGpuCullingEnabled = iisGpuCullingEnabled,
     };
 
     const WORLD_RENDER_VIEW_VTABLE = GraphicsWorldRenderView.VTable{
@@ -1325,6 +1332,11 @@ pub const World = struct {
             .{ .dispatch_fn = WorldRenderer.processGpuMeshing, .dispatch_ctx = @ptrCast(self.renderer) }
         else
             .{ .dispatch_fn = null, .dispatch_ctx = null };
+    }
+
+    fn iisGpuCullingEnabled(ptr: *anyopaque) bool {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        return self.renderer.isGpuCullingEnabled();
     }
 
     const COLLISION_VTABLE = VoxelCollisionWorld.VTable{
