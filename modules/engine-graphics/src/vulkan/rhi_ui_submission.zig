@@ -285,7 +285,7 @@ pub fn drawDepthTexture(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect
     const width_f32 = ctx.ui.ui_screen_width;
     const height_f32 = ctx.ui.ui_screen_height;
     const proj = Mat4.orthographic(0, width_f32, height_f32, 0, -1, 1);
-    c.vkCmdPushConstants(command_buffer, ctx.debug_shadow.pipeline_layout.?, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+    c.vkCmdPushConstants(command_buffer, ctx.debug_shadow.pipeline_layout.?, UI_PUSH_STAGES, 0, @sizeOf(Mat4), &proj.data);
 
     var image_info = std.mem.zeroes(c.VkDescriptorImageInfo);
     image_info.imageLayout = sampledImageLayout(tex.format);
