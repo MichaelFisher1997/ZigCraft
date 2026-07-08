@@ -1,0 +1,99 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: semgrep scan --config p/default --severity ERROR --error --sarif --output semgrep.sarif
+
+      - name: Upload Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif
+
+  gitleaks:
+    name: Gitleaks Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Scan working tree for secrets
+        if: github.event_name != 'schedule'
+        run: nix run nixpkgs#gitleaks -- detect --source . --redact --verbose --no-git
+
+      - name: Scan full history for secrets
+        if: github.event_name == 'schedule'
+        run: nix run nixpkgs#gitleaks -- detect --source . --redact --verbose --log-opts="--all"
+
+  trivy:
+    name: Trivy Filesystem
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Record flake dependency graph
+        run: nix flake show --json > nix-flake-show.json
+
+      - name: Scan filesystem
+        run: |
+          mkdir -p /tmp/trivy-cache
+          nix run nixpkgs#trivy -- fs --severity HIGH,CRITICAL --exit-code 1 --format table .
+        env:
+          TRIVY_CACHE_DIR: /tmp/trivy-cache
+
+      - name: Upload flake dependency graph
+        uses: actions/upload-artifact@v7
+        with:
+          name: nix-flake-show
+          path: nix-flake-show.json
+          retention-days: 7
+
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: zigcraft.cdx.json
+          upload-artifact: true
+          dependency-snapshot: true

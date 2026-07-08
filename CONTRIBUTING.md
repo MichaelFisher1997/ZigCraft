@@ -150,17 +150,26 @@ nix develop --command zig build test
 
 ### 3. Commit Changes
 
-Use conventional commits for clear commit messages:
+Use conventional commits for clear commit messages and PR titles. Allowed types are `feat`, `fix`, `refactor`, `test`, `docs`, `ci`, `chore`, `perf`, `build`, `style`, and `revert`.
 
 ```
 feat: add LOD system for distant terrain
 fix: resolve chunk mesh memory leak
-hotfix: prevent crash on save file corruption
 ci: update runner configuration for faster builds
 refactor: extract lighting calculation to separate module
 test: add unit tests for Vec3 operations
 docs: update CONTRIBUTING.md with workflow changes
 ```
+
+### Developer Certificate of Origin (DCO)
+
+Every PR commit must include a `Signed-off-by` trailer certifying the Developer Certificate of Origin. Create signed-off commits with `git commit -s`:
+
+```bash
+git commit -s -m "fix: resolve chunk mesh memory leak"
+```
+
+If a commit is already created, amend it with `git commit --amend -s` before pushing. The DCO check validates the trailer on every PR commit.
 
 ### 4. Push & Create PR
 

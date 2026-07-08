@@ -1,0 +1,11 @@
+{
+  "config": {
+    "default": false,
+    "MD001": true,
+    "MD013": false,
+    "MD046": {
+      "style": "fenced",
+    },
+  },
+  "globs": ["**/*.md", "!zig-out/**", "!.zig-cache/**", "!node_modules/**"],
+}

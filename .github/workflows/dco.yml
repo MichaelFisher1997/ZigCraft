@@ -1,0 +1,40 @@
+name: DCO
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signed-off-by:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Signed-off-by trailers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          failures=0
+          while IFS= read -r sha; do
+            if ! git log -1 --format=%B "$sha" | grep -Eiq '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "Commit $sha is missing a Signed-off-by trailer."
+              failures=1
+            fi
+          done < <(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA")
+
+          if [[ "$failures" -ne 0 ]]; then
+            echo "Add DCO sign-off with: git commit -s"
+            echo "See CONTRIBUTING.md#developer-certificate-of-origin-dco."
+            exit 1
+          fi

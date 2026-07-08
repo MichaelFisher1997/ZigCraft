@@ -2,18 +2,18 @@ name: Model Update Checker
 
 on:
   schedule:
-    - cron: '0 8 * * 1'
+    - cron: "0 8 * * 1"
   workflow_dispatch:
     inputs:
       model_id:
-        description: 'Model to check (e.g. minimax-coding-plan/MiniMax-M2.7)'
+        description: "Model to check (e.g. minimax-coding-plan/MiniMax-M2.7)"
         required: false
         type: string
       family_only:
-        description: 'Only check for family updates (skip spec-only updates)'
+        description: "Only check for family updates (skip spec-only updates)"
         required: false
         type: boolean
-        default: 'true'
+        default: "true"
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.model_id || 'default' }}

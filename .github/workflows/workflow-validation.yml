@@ -2,21 +2,23 @@ name: Workflow Validation
 
 on:
   push:
-    branches: [ dev ]
+    branches: [dev]
     paths:
-      - '.github/workflows/**'
-      - '.github/actions/**'
-      - 'scripts/*.sh'
-      - '.shellcheckrc'
-      - 'flake.nix'
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "scripts/*.sh"
+      - ".shellcheckrc"
+      - "flake.nix"
+      - "flake.lock"
   pull_request:
-    branches: [ dev ]
+    branches: [dev]
     paths:
-      - '.github/workflows/**'
-      - '.github/actions/**'
-      - 'scripts/*.sh'
-      - '.shellcheckrc'
-      - 'flake.nix'
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "scripts/*.sh"
+      - ".shellcheckrc"
+      - "flake.nix"
+      - "flake.lock"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -58,3 +60,6 @@ jobs:
 
       - name: Run ShellCheck
         run: nix develop .#ci-unit --command shellcheck scripts/*.sh
+
+      - name: Check Nix flake metadata
+        run: nix flake check --no-build
