@@ -218,6 +218,7 @@ pub fn deinit(ctx: anytype) void {
         lifecycle.destroyFXAAResources(ctx);
         lifecycle.destroyTAAResources(ctx);
         lifecycle.destroyBloomResources(ctx);
+        lifecycle.destroyUpscaleResources(ctx);
         lifecycle.destroyVelocityResources(ctx);
         lifecycle.destroyPostProcessResources(ctx);
         lifecycle.destroyGPassResources(ctx);
