@@ -7,5 +7,5 @@
       "style": "fenced",
     },
   },
-  "globs": ["**/*.md", "!zig-out/**", "!.zig-cache/**"],
+  "globs": ["**/*.md", "!zig-out/**", "!.zig-cache/**", "!node_modules/**"],
 }

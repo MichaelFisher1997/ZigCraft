@@ -5,6 +5,7 @@ zig-out/
 blocks-temp/
 libs/zig-image/
 result
+node_modules/
 .direnv/
 *-profile*
 test_output.txt

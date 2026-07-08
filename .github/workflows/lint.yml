@@ -22,6 +22,9 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Install lint tools
+        run: bun install --frozen-lockfile
+
       - name: Lint Markdown
         run: bunx markdownlint-cli2
 

@@ -3,3 +3,5 @@ assets/
 result/
 zig-out/
 .zig-cache/
+node_modules/
+.github/actions/
