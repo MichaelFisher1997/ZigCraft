@@ -217,7 +217,7 @@ jobs:
           name: Integration Test
           timeout: 25m
           log-file: integration-test.log
-          command: nix develop .#ci-graphics --command zig build test-integration
+          command: nix develop .#ci-graphics --command zig build test-integration -Dskip-present=true
 
       - name: Run world load smoke test (headless)
         if: needs.changes.outputs.code_changes == 'true'
