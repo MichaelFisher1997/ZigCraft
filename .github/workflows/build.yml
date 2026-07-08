@@ -51,6 +51,9 @@ jobs:
               - 'flake.lock'
               - '.github/actions/setup-nix/**'
               - '.github/actions/setup-zig-cache/**'
+              - '.github/actions/setup-lavapipe/**'
+              - '.github/vulkan/**'
+              - '.github/workflows/build.yml'
 
   fmt:
     permissions:
@@ -114,6 +117,10 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     needs: [changes, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        optimize: [Debug, ReleaseSafe]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -132,23 +139,23 @@ jobs:
         if: needs.changes.outputs.code_changes == 'true'
         uses: ./.github/actions/setup-zig-cache
         with:
-          cache-key-prefix: zig-ci-unit
+          cache-key-prefix: zig-ci-unit-${{ matrix.optimize }}
 
-      - name: Run unit tests
+      - name: Run unit tests (${{ matrix.optimize }})
         if: needs.changes.outputs.code_changes == 'true'
         uses: ./.github/actions/run-with-log
         with:
-          name: Unit Test
+          name: Unit Test (${{ matrix.optimize }})
           timeout: 25m
-          log-file: unit-test.log
-          command: nix develop .#ci-unit --command zig build test
+          log-file: unit-test-${{ matrix.optimize }}.log
+          command: nix develop .#ci-unit --command zig build -Doptimize=${{ matrix.optimize }} test
 
       - name: Upload unit test log
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: unit-test-log
-          path: unit-test.log
+          name: unit-test-log-${{ matrix.optimize }}
+          path: unit-test-${{ matrix.optimize }}.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -183,6 +190,10 @@ jobs:
         if: needs.changes.outputs.code_changes == 'true'
         uses: ./.github/actions/start-weston
 
+      - name: Setup Lavapipe Vulkan validation
+        if: needs.changes.outputs.code_changes == 'true'
+        uses: ./.github/actions/setup-lavapipe
+
       - name: Run integration smoke test
         if: needs.changes.outputs.code_changes == 'true'
         uses: ./.github/actions/run-with-log
@@ -191,10 +202,6 @@ jobs:
           timeout: 15m
           log-file: integration-test.log
           command: nix develop .#ci-graphics --command zig build test-integration
-
-      - name: Setup Lavapipe Vulkan
-        if: needs.changes.outputs.code_changes == 'true'
-        uses: ./.github/actions/setup-lavapipe
 
       - name: Run world load smoke test (headless)
         if: needs.changes.outputs.code_changes == 'true'

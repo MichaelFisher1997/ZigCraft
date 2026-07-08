@@ -239,6 +239,7 @@ pub const RenderSystem = struct {
         self.g_pass = render_graph_pkg.GPass.init(material_system);
         self.g_pass.enabled = !disable_gpass_draw;
         self.ssao_pass.enabled = !disable_ssao;
+        self.depth_pyramid_pass.enabled = !disable_gpass_draw and !disable_ssao;
         self.opaque_pass = render_graph_pkg.OpaquePass.init(material_system);
         self.water_reflection_pass = render_graph_pkg.WaterReflectionPass.init(material_system);
         self.water_reflection_pass.enabled = !disable_water;

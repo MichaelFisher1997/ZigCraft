@@ -34,9 +34,11 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         return;
     };
 
-    lifecycle.transitionImagesToPresent(ctx, ctx.swapchain.swapchain.images.items) catch |err| {
-        log.log.warn("Failed to transition swapchain images to PRESENT: {}", .{err});
-    };
+    if (!ctx.swapchain.skip_present) {
+        lifecycle.transitionImagesToPresent(ctx, ctx.swapchain.swapchain.images.items) catch |err| {
+            log.log.warn("Failed to transition swapchain images to PRESENT: {}", .{err});
+        };
+    }
 
     lifecycle.createHDRResources(ctx) catch |err| {
         _ = markSwapchainRecreateFailed(ctx, "HDR resources", err);
@@ -117,7 +119,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
 
     ctx.dynamic_resolution.setSwapchainExtent(ctx.swapchain.getExtent());
 
-    {
+    if (!ctx.options.safe_mode) {
         var list: [32]c.VkImage = undefined;
         var count: usize = 0;
         const candidates = [_]c.VkImage{ ctx.hdr.hdr_image, ctx.gpass.g_normal_image, ctx.ssao_system.image, ctx.ssao_system.blur_image, ctx.ssao_system.noise_image, ctx.velocity.velocity_image };

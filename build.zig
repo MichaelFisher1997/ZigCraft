@@ -20,6 +20,7 @@ const BuildOptions = struct {
     benchmark_preset: []const u8,
     benchmark_duration: u32,
     benchmark_output: []const u8,
+    sanitize_c: ?std.zig.SanitizeC,
 };
 
 const BuildModules = struct {
@@ -77,6 +78,7 @@ fn defineModules(
     const chunk_debug_mode = opts.chunk_debug_mode;
     const chunk_debug_enable = opts.chunk_debug_enable;
     const shadow_test_variant = opts.shadow_test_variant;
+    const sanitize_c = opts.sanitize_c;
 
     const zig_math = b.createModule(.{
         .root_source_file = b.path("libs/zig-math/math.zig"),
@@ -146,6 +148,49 @@ fn defineModules(
     const world_persistence = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/root.zig"), .target = target, .optimize = optimize });
     const game_core = b.createModule(.{ .root_source_file = b.path("modules/game-core/src/root.zig"), .target = target, .optimize = optimize });
     const game_ui = b.createModule(.{ .root_source_file = b.path("modules/game-ui/src/root.zig"), .target = target, .optimize = optimize });
+
+    applySanitizeC(sanitize_c, &.{
+        zig_math,
+        zig_noise,
+        fs_module,
+        sync_module,
+        c_module,
+        engine_math,
+        engine_audio,
+        engine_core,
+        engine_ecs,
+        engine_input,
+        engine_physics,
+        engine_rhi,
+        engine_graphics,
+        engine_assets_impl,
+        engine_camera_impl,
+        engine_clouds_impl,
+        engine_atmosphere_impl,
+        engine_shadows_impl,
+        engine_lighting_impl,
+        engine_assets,
+        engine_camera,
+        engine_clouds,
+        engine_atmosphere,
+        engine_shadows,
+        engine_lighting,
+        engine_ui,
+        world_core,
+        worldgen_api,
+        worldgen_common,
+        worldgen_overworld,
+        worldgen_overworld_v2,
+        worldgen_flat,
+        worldgen_test,
+        world_worldgen,
+        world_meshing,
+        world_lod,
+        world_runtime,
+        world_persistence,
+        game_core,
+        game_ui,
+    });
 
     const modules = BuildModules{
         .zig_math = zig_math,
@@ -361,6 +406,7 @@ fn defineBuildSteps(
     const benchmark_preset = opts.benchmark_preset;
     const benchmark_duration = opts.benchmark_duration;
     const benchmark_output = opts.benchmark_output;
+    const sanitize_c = opts.sanitize_c;
     const zig_math = modules.zig_math;
     const zig_noise = modules.zig_noise;
     const fs_module = modules.fs_module;
@@ -377,6 +423,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     root_module.addImport("zig-math", zig_math);
     root_module.addImport("zig-noise", zig_noise);
@@ -452,6 +499,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     benchmark_root_module.addImport("zig-math", zig_math);
     benchmark_root_module.addImport("zig-noise", zig_noise);
@@ -497,6 +545,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/worldgen_report_main.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     worldgen_report_root_module.addImport("world-core", world_core);
     worldgen_report_root_module.addImport("world-worldgen", world_worldgen);
@@ -514,6 +563,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/lod_bench_main.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     lod_bench_root_module.addImport("world-core", world_core);
     lod_bench_root_module.addImport("world-worldgen", world_worldgen);
@@ -532,6 +582,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/worldgen_climate_snapshot_main.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     worldgen_climate_snapshot_root_module.addImport("fs", fs_module);
     worldgen_climate_snapshot_root_module.addImport("world-core", world_core);
@@ -553,6 +604,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     test_root_module.addImport("zig-math", zig_math);
     test_root_module.addImport("zig-noise", zig_noise);
@@ -594,6 +646,7 @@ fn defineBuildSteps(
         .root_source_file = b.path("src/integration_test.zig"),
         .target = target,
         .optimize = optimize,
+        .sanitize_c = sanitize_c,
     });
     integration_root_module.addImport("zig-math", zig_math);
     integration_root_module.addImport("zig-noise", zig_noise);
@@ -635,6 +688,7 @@ fn defineBuildSteps(
             .root_source_file = b.path("src/robust_demo.zig"),
             .target = target,
             .optimize = optimize,
+            .sanitize_c = sanitize_c,
         }),
     });
     robust_demo.root_module.addOptions("build_options", options);
@@ -657,6 +711,7 @@ fn defineBuildSteps(
             .root_source_file = b.path("src/integration_test_robustness.zig"),
             .target = target,
             .optimize = optimize,
+            .sanitize_c = sanitize_c,
         }),
     });
     integration_robustness.root_module.addOptions("build_options", options);
@@ -764,6 +819,9 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
     const benchmark_output = b.option([]const u8, "benchmark-output", "Benchmark JSON output path") orelse "benchmark_results.json";
     options.addOption([]const u8, "benchmark_output", benchmark_output);
 
+    const sanitize = b.option([]const u8, "sanitize", "Sanitizer profile for test builds (none, address)") orelse "none";
+    const sanitize_c = resolveSanitizeC(b, sanitize);
+
     return .{
         .options = options,
         .engine_ui_options = engine_ui_options,
@@ -784,7 +842,27 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
         .benchmark_preset = benchmark_preset,
         .benchmark_duration = benchmark_duration,
         .benchmark_output = benchmark_output,
+        .sanitize_c = sanitize_c,
     };
+}
+
+fn resolveSanitizeC(b: *std.Build, sanitize: []const u8) ?std.zig.SanitizeC {
+    if (std.mem.eql(u8, sanitize, "none")) return null;
+    if (std.mem.eql(u8, sanitize, "address")) return .full;
+    if (std.mem.eql(u8, sanitize, "c")) return .full;
+    if (std.mem.eql(u8, sanitize, "off")) return .off;
+
+    std.log.err("unsupported -Dsanitize value '{s}' (expected none, address, c, or off)", .{sanitize});
+    b.invalid_user_input = true;
+    return null;
+}
+
+fn applySanitizeC(sanitize_c: ?std.zig.SanitizeC, modules: []const *std.Build.Module) void {
+    if (sanitize_c) |mode| {
+        for (modules) |module| {
+            module.sanitize_c = mode;
+        }
+    }
 }
 
 fn defineShaderValidation(b: *std.Build, test_step: *std.Build.Step) void {

@@ -367,6 +367,8 @@ pub const SSAOPass = struct {
 };
 
 pub const DepthPyramidPass = struct {
+    enabled: bool = true,
+
     const VTABLE = IRenderPass.VTable{
         .name = "DepthPyramidPass",
         .needs_main_pass = false,
@@ -380,7 +382,8 @@ pub const DepthPyramidPass = struct {
     }
 
     fn execute(ptr: *anyopaque, ctx: SceneContext) anyerror!void {
-        _ = ptr;
+        const self: *DepthPyramidPass = @ptrCast(@alignCast(ptr));
+        if (!self.enabled or !ctx.ssao_enabled) return;
         ctx.render_ctx.computeDepthPyramid();
     }
 };

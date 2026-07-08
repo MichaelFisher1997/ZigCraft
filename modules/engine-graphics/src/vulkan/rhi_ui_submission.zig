@@ -6,6 +6,8 @@ const Mat4 = @import("engine-math").Mat4;
 const build_options = @import("engine_graphics_options");
 const pass_orchestration = @import("rhi_pass_orchestration.zig");
 
+const UI_PUSH_STAGES = c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT;
+
 fn getUIPipeline(ctx: anytype, textured: bool) c.VkPipeline {
     if (ctx.ui.ui_using_swapchain) {
         return if (textured) ctx.pipeline_manager.ui_swapchain_tex_pipeline else ctx.pipeline_manager.ui_swapchain_pipeline;
@@ -94,7 +96,7 @@ pub fn begin2DPass(ctx: anytype, screen_width: f32, screen_height: f32) void {
     c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &ui_vbo.buffer, &offset_val);
 
     const proj = Mat4.orthographic(0, ctx.ui.ui_screen_width, ctx.ui.ui_screen_height, 0, -1, 1);
-    c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+    c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, UI_PUSH_STAGES, 0, @sizeOf(Mat4), &proj.data);
 
     const viewport = c.VkViewport{ .x = 0, .y = 0, .width = ctx.ui.ui_screen_width, .height = ctx.ui.ui_screen_height, .minDepth = 0, .maxDepth = 1 };
     c.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
@@ -125,7 +127,7 @@ pub fn drawRect2D(ctx: anytype, rect: rhi.Rect, color: rhi.Color) void {
         if (pipeline != null) {
             c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             const proj = Mat4.orthographic(0, ctx.ui.ui_screen_width, ctx.ui.ui_screen_height, 0, -1, 1);
-            c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+            c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, UI_PUSH_STAGES, 0, @sizeOf(Mat4), &proj.data);
         }
     }
 
@@ -226,8 +228,8 @@ pub fn drawTextureRegion2D(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.R
         c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.ui_tex_pipeline_layout, 0, 1, &ds, 0, null);
 
         const proj = Mat4.orthographic(0, ctx.ui.ui_screen_width, ctx.ui.ui_screen_height, 0, -1, 1);
-        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
-        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, c.VK_SHADER_STAGE_FRAGMENT_BIT, @sizeOf(Mat4), @sizeOf(@TypeOf(tint)), &tint);
+        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, UI_PUSH_STAGES, 0, @sizeOf(Mat4), &proj.data);
+        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_tex_pipeline_layout, UI_PUSH_STAGES, @sizeOf(Mat4), @sizeOf(@TypeOf(tint)), &tint);
 
         ctx.ui.ui_active_textured = true;
         ctx.ui.ui_active_texture = texture;
@@ -332,6 +334,6 @@ pub fn drawDepthTexture(ctx: anytype, texture: rhi.TextureHandle, rect: rhi.Rect
     const restore_pipeline = getUIPipeline(ctx, false);
     if (restore_pipeline != null) {
         c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, restore_pipeline);
-        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT, 0, @sizeOf(Mat4), &proj.data);
+        c.vkCmdPushConstants(command_buffer, ctx.pipeline_manager.ui_pipeline_layout, UI_PUSH_STAGES, 0, @sizeOf(Mat4), &proj.data);
     }
 }

@@ -113,6 +113,7 @@ test "smoke test: launch, generate, render, exit" {
 
     const val_count = app.render_system.getRHI().query().getValidationErrorCount();
     if (val_count > 0) {
-        std.debug.print("WARNING: Integration test finished with {} validation errors (ignored for now)\n", .{val_count});
+        std.debug.print("Integration test finished with {} Vulkan validation errors\n", .{val_count});
     }
+    try testing.expectEqual(@as(u32, 0), val_count);
 }

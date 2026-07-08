@@ -12,10 +12,16 @@ runs:
         LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
         {
           echo "VK_ICD_FILENAMES=$LVP_PATH"
+          echo "VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation"
           echo "VK_LAYER_PATH=$LAYER_PATH"
+          echo "VK_LAYER_SETTINGS_PATH=$GITHUB_WORKSPACE/.github/vulkan/vk_layer_settings.txt"
+          echo "VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT"
+          echo "VK_LAYER_LOGGING=stderr"
         } >> "$GITHUB_ENV"
         {
-          echo "### Lavapipe Vulkan"
+          echo "### Lavapipe Vulkan validation"
           echo "- ICD: $LVP_PATH"
           echo "- Layer path: $LAYER_PATH"
+          echo "- Layer: VK_LAYER_KHRONOS_validation"
+          echo "- Best practices: enabled"
         } >> "$GITHUB_STEP_SUMMARY"

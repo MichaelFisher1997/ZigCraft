@@ -517,6 +517,14 @@ pub const App = struct {
                 log.log.info("GPU recovery step completed.", .{});
             }
         }
+
+        if (build_options.smoke_test) {
+            const validation_errors = self.render_system.getRHI().query().getValidationErrorCount();
+            if (validation_errors > 0) {
+                log.log.err("Smoke test finished with {d} Vulkan validation errors", .{validation_errors});
+                return error.VulkanValidationFailed;
+            }
+        }
     }
 };
 

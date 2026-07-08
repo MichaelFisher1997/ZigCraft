@@ -15,6 +15,7 @@ const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 
 const PushConstants = extern struct {
     mip_level: u32,
+    _padding: u32 = 0,
     inv_src_size: [2]f32,
 };
 
@@ -211,7 +212,7 @@ pub const DepthPyramidSystem = struct {
                 var src_info = c.VkDescriptorImageInfo{
                     .sampler = self.pyramid_sampler,
                     .imageView = depth_view,
-                    .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .imageLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
                 };
                 var dst_info = c.VkDescriptorImageInfo{
                     .sampler = null,
@@ -245,7 +246,7 @@ pub const DepthPyramidSystem = struct {
                 var src_info = c.VkDescriptorImageInfo{
                     .sampler = self.pyramid_sampler,
                     .imageView = self.pyramid_view,
-                    .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    .imageLayout = c.VK_IMAGE_LAYOUT_GENERAL,
                 };
                 var dst_info = c.VkDescriptorImageInfo{
                     .sampler = null,
