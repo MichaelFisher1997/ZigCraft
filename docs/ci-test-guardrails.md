@@ -12,7 +12,7 @@ nix develop --command zig build -Doptimize=ReleaseSafe test
 
 ## Coverage
 
-The `Coverage` workflow runs kcov against the unit suite and uploads the generated report to Codecov. This is a non-blocking Phase 1 signal: upload failures do not fail the PR, and the report is intended to establish a stable baseline before a future blocking threshold is enabled.
+The `Coverage` workflow runs kcov against the unit suite, uploads the generated report to Codecov, and posts a non-blocking PR comment pointing reviewers to the coverage artifact. This is a Phase 1 signal: upload/comment failures do not fail the PR, and the report is intended to establish a stable baseline before a future blocking threshold is enabled.
 
 Run locally:
 
@@ -38,4 +38,4 @@ The project is pinned to Zig 0.16.0. That compiler exposes `-fsanitize-c` and `-
 
 ## Vulkan Validation
 
-The integration and world-smoke CI steps run under Lavapipe with `VK_LAYER_KHRONOS_validation`, core validation, and best-practices validation enabled. Integration tests assert that the RHI reports zero validation errors, and smoke-test builds exit non-zero if validation errors are observed before shutdown.
+The integration and world-smoke CI steps run under Lavapipe with `VK_LAYER_KHRONOS_validation`, core validation, and best-practices validation enabled. Integration tests assert that the RHI reports zero validation errors, smoke-test builds exit non-zero if validation errors are observed before shutdown, and the workflow scans both logs for validation-layer error markers as a final fail-on-error gate.
