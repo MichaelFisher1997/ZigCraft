@@ -16,6 +16,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      issues: write
+      pull-requests: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 35
     steps:
@@ -33,6 +35,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p coverage/kcov
+          # kcov currently provides the stable line-coverage signal for Zig tests;
+          # branch coverage and required thresholds are deferred until a baseline exists.
           nix develop .#ci-unit --command kcov \
             --include-path=src,modules,libs \
             --exclude-path=.zig-cache,zig-cache,assets,docs \
@@ -55,3 +59,25 @@ jobs:
           name: zigcraft-kcov
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Comment non-blocking coverage status
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const marker = '<!-- zigcraft-kcov-status -->';
+            const body = `${marker}\n### kcov coverage\n\nLine coverage ran for this PR and uploaded a non-blocking report artifact named \`kcov-report\`. Codecov upload is configured as non-blocking while the project captures a stable baseline.`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
