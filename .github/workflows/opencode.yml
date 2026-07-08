@@ -42,7 +42,7 @@ jobs:
         run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> "$GITHUB_ENV"
 
       - name: Run opencode
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}

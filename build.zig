@@ -866,38 +866,8 @@ fn applySanitizeC(sanitize_c: ?std.zig.SanitizeC, modules: []const *std.Build.Mo
 }
 
 fn defineShaderValidation(b: *std.Build, test_step: *std.Build.Step) void {
-    const shader_paths = [_][]const u8{
-        "assets/shaders/vulkan/terrain.vert",
-        "assets/shaders/vulkan/terrain.frag",
-        "assets/shaders/vulkan/shadow.vert",
-        "assets/shaders/vulkan/shadow.frag",
-        "assets/shaders/vulkan/sky.vert",
-        "assets/shaders/vulkan/sky.frag",
-        "assets/shaders/vulkan/ui.vert",
-        "assets/shaders/vulkan/ui.frag",
-        "assets/shaders/vulkan/ui_tex.vert",
-        "assets/shaders/vulkan/ui_tex.frag",
-        "assets/shaders/vulkan/debug_shadow.vert",
-        "assets/shaders/vulkan/debug_shadow.frag",
-        "assets/shaders/vulkan/ssao.vert",
-        "assets/shaders/vulkan/ssao.frag",
-        "assets/shaders/vulkan/ssao_blur.frag",
-        "assets/shaders/vulkan/g_pass.frag",
-        "assets/shaders/vulkan/taa.vert",
-        "assets/shaders/vulkan/taa.frag",
-        "assets/shaders/vulkan/lpv_inject.comp",
-        "assets/shaders/vulkan/lpv_propagate.comp",
-        "assets/shaders/vulkan/culling.comp",
-        "assets/shaders/vulkan/depth_pyramid.comp",
-        "assets/shaders/vulkan/water.vert",
-        "assets/shaders/vulkan/water.frag",
-        "assets/shaders/vulkan/mesh.comp",
-    };
-
-    for (shader_paths) |path| {
-        const validate = b.addSystemCommand(&.{ "glslangValidator", "-V", path });
-        test_step.dependOn(&validate.step);
-    }
+    const validate = b.addSystemCommand(&.{ "bash", "scripts/check_spirv_sizes.sh", "docs/shaders/spirv-sizes.json" });
+    test_step.dependOn(&validate.step);
 }
 
 fn addCimgui(_: *std.Build, compile: *std.Build.Step.Compile) void {

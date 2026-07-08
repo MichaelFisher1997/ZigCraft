@@ -39,3 +39,19 @@ This gate is intentionally a short canary so every `dev` push gets a bounded per
 - Higher `draw_calls_avg` is a regression.
 
 The p1 FPS metric is the primary user-visible smoothness guard. GPU time and draw calls catch rendering-cost regressions even when FPS is noisy on virtualized runners.
+
+## Absolute SLOs
+
+The benchmark harness also enforces absolute service-level objectives before regression comparison. These thresholds are intentionally separate from `baseline.json`: a run can fail even if there is no baseline drift when the absolute floor or ceiling is breached.
+
+| Preset | p1 FPS min | Max frame ms | Draw calls avg max | Vertices avg max | GPU memory max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| low | 12 | 260 | 700 | 3,500,000 | 1,800 MB |
+| medium | 8 | 260 | 2,600 | 6,000,000 | 2,400 MB |
+| high | 6 | 260 | 3,600 | 8,500,000 | 2,800 MB |
+| ultra | 4 | 260 | 4,500 | 12,000,000 | 3,400 MB |
+| extreme | 3 | 260 | 5,500 | 16,000,000 | 4,096 MB |
+
+The FPS floors are Lavapipe CI canary values, not player-facing hardware targets. The 260 ms spike guard allows the current Lavapipe startup spike in 5-second canary runs while still failing large stalls. Draw-call, vertex, and measured GPU resource memory ceilings are deliberately loose enough for runner variance but strict enough to fail large accidental rendering explosions.
+
+Benchmark history is pushed to Bencher when the `BENCHER_API_TOKEN` and `BENCHER_PROJECT` secrets are configured. Pull-request benchmark runs are gated by either relevant file changes (`src/**`, `modules/**`, `assets/shaders/**`, or `build.zig`) or the `run-benchmark` label.

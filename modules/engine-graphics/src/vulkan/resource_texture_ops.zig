@@ -216,6 +216,7 @@ pub fn createTexture(self: anytype, width: u32, height: u32, format: rhi.Texture
         .depth = 1,
         .format = format,
         .config = config,
+        .allocation_size = @intCast(mem_reqs.size),
         .is_3d = false,
         .is_owned = true,
     });
@@ -367,6 +368,7 @@ pub fn createTexture3D(self: anytype, width: u32, height: u32, depth: u32, forma
         .depth = depth,
         .format = format,
         .config = texture_config,
+        .allocation_size = @intCast(mem_reqs.size),
         .is_3d = true,
         .is_owned = true,
     });

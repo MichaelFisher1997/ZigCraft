@@ -442,8 +442,10 @@ pub const App = struct {
         if (build_options.benchmark) {
             if (self.benchmark_runner) |runner| {
                 const gpu_timing = self.render_system.getRHI().timing().getTimingResults();
-                const draw_calls = self.render_system.getRHI().query().getDrawCallCount();
-                try runner.recordFrame(self.time.delta_time, self.time.fps, gpu_timing, world_stats, draw_calls);
+                const rhi = self.render_system.getRHI();
+                const draw_calls = rhi.query().getDrawCallCount();
+                const gpu_memory_mb = if (rhi.device) |device| gpuMemoryMb(device.getStats()) else 0;
+                try runner.recordFrame(self.time.delta_time, self.time.fps, gpu_timing, world_stats, draw_calls, gpu_memory_mb);
 
                 if (runner.isComplete()) {
                     try runner.writeResults();
@@ -532,6 +534,11 @@ fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
     if (applyNamedPreset(settings, preset_name, "BENCHMARK")) {
         settings.vsync = false;
     }
+}
+
+fn gpuMemoryMb(stats: @import("engine-rhi").Stats) f32 {
+    const bytes = stats.total_buffer_memory + stats.total_texture_memory;
+    return @as(f32, @floatFromInt(bytes)) / (1024.0 * 1024.0);
 }
 
 fn applyNamedPreset(settings: *Settings, preset_name: []const u8, label: []const u8) bool {

@@ -1,81 +1,90 @@
 {
-  "generated": false,
+  "generated": true,
   "presets": {
     "low": {
       "preset": "low",
-      "render_distance": 0,
-      "frames": 0,
-      "duration_s": 0,
+      "render_distance": 6,
+      "gpu_memory_mb_avg": 897.0490755179424,
+      "gpu_memory_mb_max": 1687.2586669921875,
+      "frames": 1689,
+      "duration_s": 5,
       "fps": {
-        "min": 0,
-        "avg": 0,
-        "max": 0,
-        "p1": 0,
-        "p5": 0,
-        "p50": 0,
-        "p95": 0,
-        "p99": 0
+        "min": 4.251558780670166,
+        "avg": 337.6105611060426,
+        "max": 22987.44921875,
+        "p1": 16.746460189819334,
+        "p5": 255.20651245117188,
+        "p50": 568.6878051757812,
+        "p95": 2452.8090820312477,
+        "p99": 4087.7167382812445
       },
-      "cpu_ms_avg": 0,
+      "max_frame_ms": 235.20785522460938,
+      "cpu_ms_avg": 2.9619926483458037,
       "gpu_ms": {
-        "shadow_avg": 0,
-        "opaque_avg": 0,
-        "total_avg": 0
+        "shadow_avg": 0.0003647246829023427,
+        "opaque_avg": 1.2093640969721011,
+        "total_avg": 1.4246198751469066
       },
-      "draw_calls_avg": 0,
-      "vertices_avg": 0,
-      "chunks_rendered_avg": 0
+      "draw_calls_avg": 530.0740082889283,
+      "vertices_avg": 802823.8223801065,
+      "chunks_rendered_avg": 116.20367081113085
     },
     "medium": {
       "preset": "medium",
-      "render_distance": 0,
-      "frames": 0,
-      "duration_s": 0,
+      "render_distance": 10,
+      "gpu_memory_mb_avg": 908.5787859218208,
+      "gpu_memory_mb_max": 1687.2586669921875,
+      "frames": 1009,
+      "duration_s": 5,
       "fps": {
-        "min": 0,
-        "avg": 0,
-        "max": 0,
-        "p1": 0,
-        "p5": 0,
-        "p50": 0,
-        "p95": 0,
-        "p99": 0
+        "min": 4.1065673828125,
+        "avg": 201.66515096869702,
+        "max": 22180.326171875,
+        "p1": 13.274825859069825,
+        "p5": 136.4259033203125,
+        "p50": 352.11181640625,
+        "p95": 1130.5526123046873,
+        "p99": 3102.763417968748
       },
-      "cpu_ms_avg": 0,
+      "max_frame_ms": 243.5123748779297,
+      "cpu_ms_avg": 4.958714954946394,
       "gpu_ms": {
-        "shadow_avg": 0,
-        "opaque_avg": 0,
-        "total_avg": 0
+        "shadow_avg": 0.19116780963035004,
+        "opaque_avg": 1.3985375998425413,
+        "total_avg": 2.3772802531305697
       },
-      "draw_calls_avg": 0,
-      "vertices_avg": 0,
-      "chunks_rendered_avg": 0
+      "draw_calls_avg": 2238.9692765113973,
+      "vertices_avg": 1249039.9623389496,
+      "chunks_rendered_avg": 190.07829534192268
     },
     "high": {
       "preset": "high",
-      "render_distance": 0,
-      "frames": 0,
-      "duration_s": 0,
+      "render_distance": 12,
+      "gpu_memory_mb_avg": 884.0339247241462,
+      "gpu_memory_mb_max": 1639.2586669921875,
+      "frames": 970,
+      "duration_s": 5,
       "fps": {
-        "min": 0,
-        "avg": 0,
-        "max": 0,
-        "p1": 0,
-        "p5": 0,
-        "p50": 0,
-        "p95": 0,
-        "p99": 0
+        "min": 4.183460712432861,
+        "avg": 193.99032472602713,
+        "max": 26217.818359375,
+        "p1": 12.47351658821106,
+        "p5": 125.32577514648438,
+        "p50": 325.8839569091797,
+        "p95": 1058.7565307617183,
+        "p99": 2874.141457519523
       },
-      "cpu_ms_avg": 0,
+      "max_frame_ms": 239.0365447998047,
+      "cpu_ms_avg": 5.154896263060035,
       "gpu_ms": {
-        "shadow_avg": 0,
-        "opaque_avg": 0,
-        "total_avg": 0
+        "shadow_avg": 0.2523342988425002,
+        "opaque_avg": 1.3704036711263903,
+        "total_avg": 2.593851779969697
       },
-      "draw_calls_avg": 0,
-      "vertices_avg": 0,
-      "chunks_rendered_avg": 0
+      "draw_calls_avg": 2228.2072164948454,
+      "vertices_avg": 1245972.1917525774,
+      "chunks_rendered_avg": 189.34329896907215
     }
   },
-  "note": "Populate this file with real benchmark baselines before enabling regression gating."
+  "note": "Generated from 5-second Lavapipe ReleaseFast benchmark runs for CI canary gating."
 }

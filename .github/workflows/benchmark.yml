@@ -1,8 +1,13 @@
 name: Benchmark
 
 on:
+  pull_request:
+    branches: [dev]
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [dev]
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       duration:
@@ -18,32 +23,75 @@ env:
   GIT_CONFIG_COUNT: 1
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
+  BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+  BENCHER_PROJECT: ${{ secrets.BENCHER_PROJECT }}
+  BENCHER_DASHBOARD_URL: ${{ vars.BENCHER_DASHBOARD_URL }}
 
 jobs:
   benchmark:
     permissions:
       contents: read
+      pull-requests: write
+      issues: write
       statuses: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check benchmark trigger gate
+        id: gate
+        uses: actions/github-script@v9
+        with:
+          script: |
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('run', 'true');
+              return;
+            }
+
+            const labels = context.payload.pull_request.labels.map((label) => label.name);
+            if (labels.includes('run-benchmark')) {
+              core.setOutput('run', 'true');
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const shouldRun = files.some((file) => {
+              const name = file.filename;
+              return name === 'build.zig' || name.startsWith('src/') || name.startsWith('modules/') || name.startsWith('assets/shaders/');
+            });
+            core.setOutput('run', shouldRun ? 'true' : 'false');
+
+      - name: Explain skipped benchmark
+        if: steps.gate.outputs.run != 'true'
+        run: |
+          printf 'Skipping benchmark: no benchmark-relevant paths changed and run-benchmark label is absent.\n'
+
       - name: Setup Nix
+        if: steps.gate.outputs.run == 'true'
         uses: ./.github/actions/setup-nix
 
       - name: Setup Zig cache
+        if: steps.gate.outputs.run == 'true'
         uses: ./.github/actions/setup-zig-cache
         with:
           cache-key-prefix: zig-ci-graphics
 
       - name: Start headless Wayland compositor
+        if: steps.gate.outputs.run == 'true'
         uses: ./.github/actions/start-weston
 
       - name: Setup Lavapipe Vulkan
+        if: steps.gate.outputs.run == 'true'
         uses: ./.github/actions/setup-lavapipe
 
       - name: Run benchmark suite
+        if: steps.gate.outputs.run == 'true'
         id: run_benchmark
         uses: ./.github/actions/run-with-log
         with:
@@ -60,18 +108,51 @@ jobs:
           BENCHMARK_DURATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '5' }}
 
       - name: Stop headless Wayland compositor
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         uses: ./.github/actions/stop-weston
 
       - name: Compare against baseline
+        if: steps.gate.outputs.run == 'true'
         id: compare
         run: |
           for preset in low medium high; do
             bash scripts/compare_benchmarks.sh docs/benchmarks/baseline.json "benchmark-results/${preset}.json" --preset "$preset"
           done
 
+      - name: Install Bencher CLI
+        if: steps.gate.outputs.run == 'true' && env.BENCHER_API_TOKEN != '' && env.BENCHER_PROJECT != ''
+        uses: bencherdev/bencher@30a740a2e4246560b1a5fd424057d84aa2b188d6
+
+      - name: Publish Bencher trends
+        if: steps.gate.outputs.run == 'true' && env.BENCHER_API_TOKEN != '' && env.BENCHER_PROJECT != ''
+        env:
+          BENCHER_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          for preset in low medium high; do
+            bencher run \
+              --project "$BENCHER_PROJECT" \
+              --branch "$BENCHER_BRANCH" \
+              --testbed "github-actions-lavapipe" \
+              --token "$BENCHER_API_TOKEN" \
+              --adapter json \
+              --err \
+              "cat benchmark-results/${preset}.json"
+          done
+
+      - name: Comment Bencher dashboard
+        if: steps.gate.outputs.run == 'true' && github.event_name == 'pull_request' && env.BENCHER_DASHBOARD_URL != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `Benchmark trends: ${process.env.BENCHER_DASHBOARD_URL}`,
+            });
+
       - name: Upload benchmark artifacts
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
@@ -82,7 +163,7 @@ jobs:
           retention-days: 30
 
       - name: Publish commit status
-        if: always()
+        if: always() && steps.gate.outputs.run == 'true'
         uses: actions/github-script@v9
         env:
           BENCHMARK_RUN_OUTCOME: ${{ steps.run_benchmark.outcome }}
