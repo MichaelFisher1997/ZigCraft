@@ -1,6 +1,11 @@
 name: visual-test
 
 on:
+  schedule:
+    - cron: "43 4 * * *"
+  pull_request:
+    branches: [dev]
+    types: [labeled]
   workflow_dispatch:
 
 concurrency:
@@ -9,12 +14,14 @@ concurrency:
 
 jobs:
   visual-test:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-visual-test'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       id-token: write
       contents: read
       issues: write
+      pull-requests: read
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +59,11 @@ jobs:
               --description "Issues from automated visual regression tests" \
               --color "E06C75"
           fi
+          if ! gh label list --json name --jq '.[].name' | grep -q '^run-visual-test$'; then
+            gh label create "run-visual-test" \
+              --description "Run deterministic visual regression workflow on a PR" \
+              --color "E06C75"
+          fi
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_PAT }}
 
@@ -66,7 +78,7 @@ jobs:
           name: Visual Test
           timeout: 20m
           log-file: build-output.log
-          command: nix develop .#ci-graphics --command zig build run -Dscreenshot-path=screenshot.ppm -Dskip-present=true
+          command: nix develop .#ci-graphics --command zig build run -Dscreenshot-path=screenshot.png -Dskip-present=true
         env:
           ZIG_GLOBAL_CACHE_DIR: /tmp/zig-cache-global
           XDG_RUNTIME_DIR: /tmp/runtime-runner
@@ -74,25 +86,32 @@ jobs:
           ZIGCRAFT_SMOKE_FRAMES: "5"
           ZIGCRAFT_SAFE_RENDER: "1"
 
-      - name: Convert PPM to PNG
-        id: convert
+      - name: Check screenshot exists
+        id: check_screenshot
         if: always()
         run: |
-          if [ -f screenshot.ppm ]; then
-            nix run nixpkgs#imagemagick -- screenshot.ppm screenshot.png
+          if [ -f screenshot.png ]; then
             echo "screenshot_exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "screenshot_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Compare against golden image
+        id: golden_diff
+        if: steps.check_screenshot.outputs.screenshot_exists == 'true'
+        run: |
+          nix shell nixpkgs#imagemagick -c bash scripts/compare_visual_golden.sh screenshot.png docs/visual-test/golden/menu.png visual-diff.png
+        env:
+          VISUAL_DIFF_RMSE_TOLERANCE: "0.015"
+
       - name: Upload screenshot artifact
-        if: steps.convert.outputs.screenshot_exists == 'true'
+        if: always() && steps.check_screenshot.outputs.screenshot_exists == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: menu-screenshot
           path: |
             screenshot.png
-            screenshot.ppm
+            visual-diff.png
           retention-days: 30
 
       - name: Check build log exists
@@ -115,7 +134,8 @@ jobs:
         uses: ./.github/actions/stop-weston
 
       - name: Run opencode visual verification
-        if: steps.convert.outputs.screenshot_exists == 'true'
+        if: always() && steps.check_screenshot.outputs.screenshot_exists == 'true'
+        continue-on-error: true
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
@@ -125,7 +145,8 @@ jobs:
           prompt: ${{ env.VISUAL_VERIFY_PROMPT }}
 
       - name: Run opencode failure diagnosis
-        if: failure() || steps.screenshot.outcome == 'failure' || steps.convert.outputs.screenshot_exists != 'true'
+        if: failure() || steps.screenshot.outcome == 'failure' || steps.check_screenshot.outputs.screenshot_exists != 'true'
+        continue-on-error: true
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}

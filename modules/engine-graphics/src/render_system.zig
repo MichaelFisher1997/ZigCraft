@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const c = @import("c").c;
 
 const log = @import("engine-core").log;
+const RenderDevice = @import("engine-rhi").RenderDevice;
 const rhi_pkg = @import("engine-rhi").rhi;
 const RHI = rhi_pkg.RHI;
 const backend_dispatcher = @import("backend_dispatcher.zig");
@@ -50,6 +51,7 @@ pub const RenderSystem = struct {
 
     allocator: Allocator,
     rhi: RHI,
+    render_device: *RenderDevice,
     shader: rhi_pkg.ShaderHandle,
     resource_pack_manager: ResourcePackManager,
     atlas: TextureAtlas,
@@ -125,15 +127,21 @@ pub const RenderSystem = struct {
         }
 
         log.log.info("Initializing {s} backend...", .{@tagName(backend_dispatcher.BackendChoice.vulkan)});
-        const rhi = try backend_dispatcher.createRHI(allocator, window, .vulkan, .{
+        var rhi = try backend_dispatcher.createRHI(allocator, window, .vulkan, .{
             .shadow_resolution = config.shadow_resolution,
             .msaa_samples = config.msaa_samples,
             .anisotropic_filtering = config.anisotropic_filtering,
         });
         errdefer rhi.deinit();
 
+        const render_device = try allocator.create(RenderDevice);
+        errdefer allocator.destroy(render_device);
+        render_device.* = try RenderDevice.init(allocator);
+        errdefer render_device.deinit();
+
         log.log.info("RenderSystem.init: initializing RHI device", .{});
-        try rhi.init(allocator, null);
+        try rhi.init(allocator, render_device);
+        rhi.device = render_device;
 
         log.log.info("RenderSystem.init: scanning resource packs", .{});
         var resource_pack_manager = ResourcePackManager.init(allocator);
@@ -197,6 +205,7 @@ pub const RenderSystem = struct {
         self.* = .{
             .allocator = allocator,
             .rhi = rhi,
+            .render_device = render_device,
             .shader = rhi_pkg.InvalidShaderHandle,
             .resource_pack_manager = resource_pack_manager,
             .atlas = atlas,
@@ -299,6 +308,8 @@ pub const RenderSystem = struct {
         self.resource_pack_manager.deinit();
         if (self.shader != rhi_pkg.InvalidShaderHandle) self.rhi.resourceManager().destroyShader(self.shader);
         self.rhi.deinit();
+        self.render_device.deinit();
+        self.allocator.destroy(self.render_device);
 
         self.allocator.destroy(self);
     }

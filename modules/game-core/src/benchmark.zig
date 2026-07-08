@@ -30,6 +30,15 @@ pub const FrameSample = struct {
     draw_calls: u32,
     vertices: u64,
     chunks_rendered: u32,
+    gpu_memory_mb: f32,
+};
+
+pub const SloThresholds = struct {
+    fps_p1_min: f64,
+    max_frame_ms: f64,
+    draw_calls_max: f64,
+    vertices_max: f64,
+    gpu_memory_mb_max: f64,
 };
 
 pub const Summary = struct {
@@ -52,9 +61,12 @@ pub const GpuSummary = struct {
 pub const BenchmarkResults = struct {
     preset: []const u8,
     render_distance: i32,
+    gpu_memory_mb_avg: f64,
+    gpu_memory_mb_max: f64,
     frames: u32,
     duration_s: f32,
     fps: Summary,
+    max_frame_ms: f64,
     cpu_ms_avg: f64,
     gpu_ms: GpuSummary,
     draw_calls_avg: f64,
@@ -104,7 +116,7 @@ pub const BenchmarkRunner = struct {
         player.target_block = null;
     }
 
-    pub fn recordFrame(self: *BenchmarkRunner, dt: f32, fps: f32, gpu: GpuTimingResults, world_stats: ?WorldStats, draw_calls: u32) !void {
+    pub fn recordFrame(self: *BenchmarkRunner, dt: f32, fps: f32, gpu: GpuTimingResults, world_stats: ?WorldStats, draw_calls: u32, gpu_memory_mb: f32) !void {
         const shadow_avg = averageArray(&gpu.shadow_pass_ms);
         const chunks_rendered = if (world_stats) |ws| ws.chunks_rendered else 0;
         const vertices = if (world_stats) |ws| ws.vertices_rendered else 0;
@@ -119,6 +131,7 @@ pub const BenchmarkRunner = struct {
             .draw_calls = draw_calls,
             .vertices = vertices,
             .chunks_rendered = chunks_rendered,
+            .gpu_memory_mb = gpu_memory_mb,
         });
         self.elapsed_s += dt;
     }
@@ -139,6 +152,8 @@ pub const BenchmarkRunner = struct {
         var file = try fs.cwd().createFile(self.output_path, .{ .truncate = true });
         defer file.close();
         try file.writeAll(json);
+
+        try enforceSlo(results);
     }
 
     pub fn makeResults(self: *const BenchmarkRunner) !BenchmarkResults {
@@ -152,15 +167,21 @@ pub const BenchmarkRunner = struct {
         var draw_sum: f64 = 0;
         var vertices_sum: f64 = 0;
         var chunks_sum: f64 = 0;
+        var memory_sum: f64 = 0;
+        var memory_max: f64 = 0;
+        var max_frame_ms: f64 = 0;
 
         for (self.samples.items) |sample| {
             cpu_sum += sample.cpu_ms;
+            max_frame_ms = @max(max_frame_ms, sample.cpu_ms);
             shadow_sum += sample.gpu_shadow_ms;
             opaque_sum += sample.gpu_opaque_ms;
             total_sum += sample.gpu_total_ms;
             draw_sum += @floatFromInt(sample.draw_calls);
             vertices_sum += @floatFromInt(sample.vertices);
             chunks_sum += @floatFromInt(sample.chunks_rendered);
+            memory_sum += sample.gpu_memory_mb;
+            memory_max = @max(memory_max, sample.gpu_memory_mb);
         }
 
         const count = @as(f64, @floatFromInt(@max(self.samples.items.len, 1)));
@@ -173,9 +194,12 @@ pub const BenchmarkRunner = struct {
         return .{
             .preset = self.preset,
             .render_distance = self.render_distance,
+            .gpu_memory_mb_avg = memory_sum / count,
+            .gpu_memory_mb_max = memory_max,
             .frames = @intCast(self.samples.items.len),
             .duration_s = self.duration_s,
             .fps = fps_summary,
+            .max_frame_ms = max_frame_ms,
             .cpu_ms_avg = cpu_sum / count,
             .gpu_ms = .{
                 .shadow_avg = shadow_sum / count,
@@ -200,6 +224,43 @@ pub const BenchmarkRunner = struct {
         return try std.json.Stringify.valueAlloc(allocator, results, .{ .whitespace = .indent_2 });
     }
 };
+
+pub fn thresholdsForPreset(preset: []const u8) SloThresholds {
+    if (std.ascii.eqlIgnoreCase(preset, "low")) return .{ .fps_p1_min = 12, .max_frame_ms = 260, .draw_calls_max = 700, .vertices_max = 3_500_000, .gpu_memory_mb_max = 1800 };
+    if (std.ascii.eqlIgnoreCase(preset, "medium")) return .{ .fps_p1_min = 8, .max_frame_ms = 260, .draw_calls_max = 2600, .vertices_max = 6_000_000, .gpu_memory_mb_max = 2400 };
+    if (std.ascii.eqlIgnoreCase(preset, "high")) return .{ .fps_p1_min = 6, .max_frame_ms = 260, .draw_calls_max = 3600, .vertices_max = 8_500_000, .gpu_memory_mb_max = 2800 };
+    if (std.ascii.eqlIgnoreCase(preset, "ultra")) return .{ .fps_p1_min = 4, .max_frame_ms = 260, .draw_calls_max = 4500, .vertices_max = 12_000_000, .gpu_memory_mb_max = 3400 };
+    if (std.ascii.eqlIgnoreCase(preset, "extreme")) return .{ .fps_p1_min = 3, .max_frame_ms = 260, .draw_calls_max = 5500, .vertices_max = 16_000_000, .gpu_memory_mb_max = 4096 };
+    return .{ .fps_p1_min = 6, .max_frame_ms = 260, .draw_calls_max = 3600, .vertices_max = 8_500_000, .gpu_memory_mb_max = 2800 };
+}
+
+fn enforceSlo(results: BenchmarkResults) !void {
+    const thresholds = thresholdsForPreset(results.preset);
+    var failed = false;
+
+    if (results.fps.p1 < thresholds.fps_p1_min) {
+        std.log.err("benchmark SLO breach: {s} p1 FPS {d:.2} < {d:.2}", .{ results.preset, results.fps.p1, thresholds.fps_p1_min });
+        failed = true;
+    }
+    if (results.max_frame_ms > thresholds.max_frame_ms) {
+        std.log.err("benchmark SLO breach: {s} max frame {d:.2}ms > {d:.2}ms", .{ results.preset, results.max_frame_ms, thresholds.max_frame_ms });
+        failed = true;
+    }
+    if (results.draw_calls_avg > thresholds.draw_calls_max) {
+        std.log.err("benchmark SLO breach: {s} draw calls avg {d:.2} > {d:.2}", .{ results.preset, results.draw_calls_avg, thresholds.draw_calls_max });
+        failed = true;
+    }
+    if (results.vertices_avg > thresholds.vertices_max) {
+        std.log.err("benchmark SLO breach: {s} vertices avg {d:.2} > {d:.2}", .{ results.preset, results.vertices_avg, thresholds.vertices_max });
+        failed = true;
+    }
+    if (results.gpu_memory_mb_max > thresholds.gpu_memory_mb_max) {
+        std.log.err("benchmark SLO breach: {s} GPU memory max {d:.2}MB > {d:.2}MB", .{ results.preset, results.gpu_memory_mb_max, thresholds.gpu_memory_mb_max });
+        failed = true;
+    }
+
+    if (failed) return error.BenchmarkSloBreach;
+}
 
 fn fpsField(sample: FrameSample) f32 {
     return sample.fps;

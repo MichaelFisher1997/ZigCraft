@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c").c;
 const rhi = @import("engine-rhi").rhi;
+const RenderDeviceStats = @import("engine-rhi").Stats;
 const log = @import("engine-core").log;
 const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const Utils = @import("utils.zig");
@@ -24,6 +25,7 @@ pub const TextureResource = struct {
     depth: u32,
     format: rhi.TextureFormat,
     config: rhi.TextureConfig,
+    allocation_size: usize = 0,
     is_3d: bool = false,
     is_owned: bool = true,
 };
@@ -175,6 +177,28 @@ pub const ResourceManager = struct {
             }
         }
         self.image_deletion_queue[frame_index].clearRetainingCapacity();
+    }
+
+    pub fn stats(self: *const ResourceManager) RenderDeviceStats {
+        var result = RenderDeviceStats{
+            .buffer_count = @intCast(self.buffers.count()),
+            .texture_count = @intCast(self.textures.count()),
+            .shader_count = 0,
+            .total_buffer_memory = 0,
+            .total_texture_memory = 0,
+        };
+
+        var buf_it = self.buffers.valueIterator();
+        while (buf_it.next()) |buf| {
+            result.total_buffer_memory += @intCast(buf.size);
+        }
+
+        var tex_it = self.textures.valueIterator();
+        while (tex_it.next()) |tex| {
+            result.total_texture_memory += tex.allocation_size;
+        }
+
+        return result;
     }
 
     pub fn resetTransferState(self: *ResourceManager) void {
@@ -342,6 +366,7 @@ pub const ResourceManager = struct {
             .depth = 1,
             .format = format,
             .config = .{}, // Default config
+            .allocation_size = 0,
             .is_3d = false,
             .is_owned = false,
         });
@@ -365,6 +390,7 @@ pub const ResourceManager = struct {
             .depth = 1,
             .format = format,
             .config = .{},
+            .allocation_size = 0,
             .is_3d = false,
             .is_owned = false,
         });

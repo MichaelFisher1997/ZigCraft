@@ -481,5 +481,9 @@ pub fn endFrame(ctx: anytype) void {
         ctx.resources.resetTransferState();
     }
 
+    if (ctx.render_device) |device| {
+        device.setStats(ctx.resources.stats());
+    }
+
     ctx.runtime.frame_index += 1;
 }
