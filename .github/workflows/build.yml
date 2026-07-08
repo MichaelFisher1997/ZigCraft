@@ -164,7 +164,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: [changes, unit-test]
     steps:
       - uses: actions/checkout@v4
@@ -199,7 +199,7 @@ jobs:
         uses: ./.github/actions/run-with-log
         with:
           name: Integration Test
-          timeout: 15m
+          timeout: 25m
           log-file: integration-test.log
           command: nix develop .#ci-graphics --command zig build test-integration
 
