@@ -31,7 +31,7 @@ jobs:
   benchmark:
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: write
       statuses: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
