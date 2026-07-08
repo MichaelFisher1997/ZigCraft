@@ -62,42 +62,62 @@ pub const IRenderSettings = struct {
         self.vtable.setBloom(self.ptr, enabled);
     }
 
+    /// Sets bloom strength used by the post-process composite.
+    /// Values are backend-defined floats, normally authored by graphics settings UI.
     pub fn setBloomIntensity(self: IRenderSettings, intensity: f32) void {
         self.vtable.setBloomIntensity(self.ptr, intensity);
     }
 
+    /// Sets the temporal anti-aliasing blend factor.
+    /// Lower values favor the current frame; higher values retain more history and may increase ghosting.
     pub fn setTAABlendFactor(self: IRenderSettings, value: f32) void {
         self.vtable.setTAABlendFactor(self.ptr, value);
     }
 
+    /// Sets how aggressively TAA rejects history using velocity differences.
+    /// Higher values preserve more history; lower values reduce ghosting near fast motion.
     pub fn setTAAVelocityRejection(self: IRenderSettings, value: f32) void {
         self.vtable.setTAAVelocityRejection(self.ptr, value);
     }
 
+    /// Enables or disables vignette post-processing.
+    /// The setting affects only post-process composition, not scene lighting.
     pub fn setVignetteEnabled(self: IRenderSettings, enabled: bool) void {
         self.vtable.setVignetteEnabled(self.ptr, enabled);
     }
 
+    /// Sets the vignette darkening strength used during post-processing.
+    /// Implementations should clamp out-of-range values to their supported range.
     pub fn setVignetteIntensity(self: IRenderSettings, intensity: f32) void {
         self.vtable.setVignetteIntensity(self.ptr, intensity);
     }
 
+    /// Enables or disables film-grain post-processing.
+    /// This does not affect render targets, only final color presentation.
     pub fn setFilmGrainEnabled(self: IRenderSettings, enabled: bool) void {
         self.vtable.setFilmGrainEnabled(self.ptr, enabled);
     }
 
+    /// Sets the film-grain strength used by the post-process pass.
+    /// Backends may quantize or clamp this setting to their shader-supported range.
     pub fn setFilmGrainIntensity(self: IRenderSettings, intensity: f32) void {
         self.vtable.setFilmGrainIntensity(self.ptr, intensity);
     }
 
+    /// Sets volumetric effect density for fog/cloud/atmosphere style rendering.
+    /// The value is consumed by later frames and may be clamped by the backend.
     pub fn setVolumetricDensity(self: IRenderSettings, density: f32) void {
         self.vtable.setVolumetricDensity(self.ptr, density);
     }
 
+    /// Enables or disables the debug shadow-map visualization path.
+    /// Intended for diagnostics; normal gameplay rendering should leave this disabled.
     pub fn setDebugShadowView(self: IRenderSettings, enabled: bool) void {
         self.vtable.setDebugShadowView(self.ptr, enabled);
     }
 
+    /// Sets the requested MSAA sample count.
+    /// The backend may recreate render targets or clamp unsupported sample counts.
     pub fn setMSAA(self: IRenderSettings, samples: u8) void {
         self.vtable.setMSAA(self.ptr, samples);
     }

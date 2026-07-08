@@ -49,8 +49,8 @@ pub const Chunk = struct {
     modified: bool = false,
     pin_count: std.atomic.Value(u32),
 
-    /// Allocates and initializes chunk block, biome, light, and height storage.
-    /// The caller owns the returned chunk and must later call `deinit` if provided by owning storage.
+    /// Creates a new chunk at chunk coordinates `(chunk_x, chunk_z)` with default air, plains biome, and zero light.
+    /// The returned value owns no heap memory; chunk storage containers own its lifetime and synchronization.
     pub fn init(chunk_x: i32, chunk_z: i32) Chunk {
         return .{
             .chunk_x = chunk_x,
@@ -66,8 +66,8 @@ pub const Chunk = struct {
         };
     }
 
-    /// Returns index from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Converts chunk-local `(x, y, z)` coordinates into the flat storage index.
+    /// Coordinates must be in bounds; debug builds assert on invalid local positions.
     pub fn getIndex(x: u32, y: u32, z: u32) usize {
         std.debug.assert(x < CHUNK_SIZE_X);
         std.debug.assert(y < CHUNK_SIZE_Y);
@@ -75,120 +75,120 @@ pub const Chunk = struct {
         return @as(usize, x) + @as(usize, z) * CHUNK_SIZE_X + @as(usize, y) * CHUNK_SIZE_X * CHUNK_SIZE_Z;
     }
 
-    /// Returns block from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads the block at chunk-local coordinates.
+    /// Coordinates must be in bounds; use `getBlockSafe` for unchecked neighbor sampling.
     pub fn getBlock(self: *const Chunk, x: u32, y: u32, z: u32) BlockType {
         return self.blocks[getIndex(x, y, z)];
     }
 
-    /// Writes block into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes a block at chunk-local coordinates and marks the chunk dirty and modified.
+    /// Coordinates must be in bounds; callers are responsible for scheduling mesh/light updates.
     pub fn setBlock(self: *Chunk, x: u32, y: u32, z: u32, block: BlockType) void {
         self.blocks[getIndex(x, y, z)] = block;
         self.dirty = true;
         self.modified = true;
     }
 
-    /// Returns block safe from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Safely reads a block for possibly out-of-bounds local coordinates.
+    /// Out-of-range samples return `.air`, matching neighbor-missing meshing behavior.
     pub fn getBlockSafe(self: *const Chunk, x: i32, y: i32, z: i32) BlockType {
         if (x < 0 or x >= CHUNK_SIZE_X or y < 0 or y >= CHUNK_SIZE_Y or z < 0 or z >= CHUNK_SIZE_Z) return .air;
         return self.getBlock(@intCast(x), @intCast(y), @intCast(z));
     }
 
-    /// Returns biome from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads the biome id for a horizontal chunk-local column.
+    /// `x` and `z` must be in range `[0, CHUNK_SIZE_X/Z)`.
     pub fn getBiome(self: *const Chunk, x: u32, z: u32) BiomeId {
         return self.biomes[x + z * CHUNK_SIZE_X];
     }
 
-    /// Writes biome into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes the biome id for a horizontal chunk-local column and marks the chunk dirty.
+    /// This affects tinting and terrain metadata but does not mark the chunk player-modified.
     pub fn setBiome(self: *Chunk, x: u32, z: u32, biome: BiomeId) void {
         self.biomes[x + z * CHUNK_SIZE_X] = biome;
         self.dirty = true;
     }
 
-    /// Returns light from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads packed sky/block light at chunk-local coordinates.
+    /// Coordinates must be in bounds and are not checked outside debug assertions in `getIndex`.
     pub fn getLight(self: *const Chunk, x: u32, y: u32, z: u32) PackedLight {
         return self.light[getIndex(x, y, z)];
     }
 
-    /// Writes light into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes packed sky/block light at chunk-local coordinates.
+    /// Lighting callers are responsible for marking dependent meshes dirty when needed.
     pub fn setLight(self: *Chunk, x: u32, y: u32, z: u32, light_val: PackedLight) void {
         self.light[getIndex(x, y, z)] = light_val;
     }
 
-    /// Returns sky light from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads only the sky-light channel at chunk-local coordinates.
+    /// Coordinates must be in bounds.
     pub fn getSkyLight(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         return self.light[getIndex(x, y, z)].getSkyLight();
     }
 
-    /// Writes sky light into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes only the sky-light channel at chunk-local coordinates.
+    /// Coordinates must be in bounds and `val` is a packed 4-bit light value.
     pub fn setSkyLight(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
         self.light[getIndex(x, y, z)].setSkyLight(val);
     }
 
-    /// Returns entrance bounce from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads the entrance-bounce light value used by cave/entrance lighting propagation.
+    /// Coordinates must be in bounds.
     pub fn getEntranceBounce(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         return self.entrance_bounce[getIndex(x, y, z)];
     }
 
-    /// Writes entrance bounce into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes the entrance-bounce light value used by cave/entrance lighting propagation.
+    /// Coordinates must be in bounds and `val` is stored as a 4-bit value.
     pub fn setEntranceBounce(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
         self.entrance_bounce[getIndex(x, y, z)] = val;
     }
 
-    /// Returns entrance dir from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads the packed horizontal direction associated with entrance lighting.
+    /// Coordinates must be in bounds.
     pub fn getEntranceDir(self: *const Chunk, x: u32, y: u32, z: u32) u8 {
         return self.entrance_dir[getIndex(x, y, z)];
     }
 
-    /// Writes entrance dir into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes the packed horizontal direction associated with entrance lighting.
+    /// Use `packEntranceDir` to encode direction components.
     pub fn setEntranceDir(self: *Chunk, x: u32, y: u32, z: u32, val: u8) void {
         self.entrance_dir[getIndex(x, y, z)] = val;
     }
 
-    /// Returns block light from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads only the block-light channel at chunk-local coordinates.
+    /// Coordinates must be in bounds.
     pub fn getBlockLight(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
         return self.light[getIndex(x, y, z)].getBlockLight();
     }
 
-    /// Returns surface height from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Reads the cached surface height for a horizontal chunk-local column.
+    /// The value is maintained by generation/lighting paths and used by worldgen and meshing.
     pub fn getSurfaceHeight(self: *const Chunk, x: u32, z: u32) i16 {
         return self.heightmap[x + z * CHUNK_SIZE_X];
     }
 
-    /// Writes surface height into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes the cached surface height for a horizontal chunk-local column.
+    /// Does not recompute lighting or mesh data by itself.
     pub fn setSurfaceHeight(self: *Chunk, x: u32, z: u32, height: i16) void {
         self.heightmap[x + z * CHUNK_SIZE_X] = height;
     }
 
-    /// Writes block light into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes the scalar block-light channel at chunk-local coordinates.
+    /// Coordinates must be in bounds and `val` is a packed 4-bit light value.
     pub fn setBlockLight(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
         self.light[getIndex(x, y, z)].setBlockLight(val);
     }
 
-    /// Writes block light r g b into chunk-local storage.
-    /// Callers must keep coordinates in bounds; safe variants should be used for unchecked world input.
+    /// Writes RGB block-light channels at chunk-local coordinates.
+    /// Coordinates must be in bounds and each channel is a packed 4-bit value.
     pub fn setBlockLightRGB(self: *Chunk, x: u32, y: u32, z: u32, r: u4, g: u4, b: u4) void {
         self.light[getIndex(x, y, z)].setBlockLightRGB(r, g, b);
     }
 
-    /// Returns light safe from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Safely reads packed light for possibly out-of-bounds local coordinates.
+    /// Horizontal out-of-range samples return dark; samples above the world return full sky light for top-face meshing.
     pub fn getLightSafe(self: *const Chunk, x: i32, y: i32, z: i32) PackedLight {
         // Out-of-bounds X/Z returns zero light. Out-of-bounds Y returns:
         //   - MAX_LIGHT sky light for y >= CHUNK_SIZE_Y: the meshing system samples this
@@ -203,34 +203,34 @@ pub const Chunk = struct {
         return self.getLight(@intCast(x), @intCast(y), @intCast(z));
     }
 
-    /// Returns entrance bounce safe from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Safely reads entrance-bounce light for possibly out-of-bounds local coordinates.
+    /// Out-of-range samples return zero bounce light.
     pub fn getEntranceBounceSafe(self: *const Chunk, x: i32, y: i32, z: i32) u4 {
         if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return 0;
         return self.getEntranceBounce(@intCast(x), @intCast(y), @intCast(z));
     }
 
-    /// Returns entrance dir safe from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Safely reads packed entrance direction for possibly out-of-bounds local coordinates.
+    /// Out-of-range samples return the neutral zero direction.
     pub fn getEntranceDirSafe(self: *const Chunk, x: i32, y: i32, z: i32) u8 {
         if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return packEntranceDir(0, 0);
         return self.getEntranceDir(@intCast(x), @intCast(y), @intCast(z));
     }
 
-    /// Returns world x from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Returns the world-space block X coordinate of this chunk's minimum X edge.
+    /// This is `chunk_x * CHUNK_SIZE_X` and works for negative chunk coordinates.
     pub fn getWorldX(self: *const Chunk) i32 {
         return self.chunk_x * CHUNK_SIZE_X;
     }
 
-    /// Returns world z from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Returns the world-space block Z coordinate of this chunk's minimum Z edge.
+    /// This is `chunk_z * CHUNK_SIZE_Z` and works for negative chunk coordinates.
     pub fn getWorldZ(self: *const Chunk) i32 {
         return self.chunk_z * CHUNK_SIZE_Z;
     }
 
-    /// Returns highest solid y from chunk-local storage.
-    /// Coordinates must be chunk-local unless the function name explicitly says world.
+    /// Scans a local column from top to bottom and returns the highest non-air, non-water block Y.
+    /// Returns zero when the column has no solid block; `x` and `z` must be in bounds.
     pub fn getHighestSolidY(self: *const Chunk, x: u32, z: u32) u32 {
         var y: i32 = CHUNK_SIZE_Y - 1;
         while (y >= 0) : (y -= 1) {
@@ -240,33 +240,33 @@ pub const Chunk = struct {
         return 0;
     }
 
-    /// Manages chunk pin state through `pin`.
-    /// Pinned chunks should not be unloaded while worker jobs may reference them.
+    /// Increments the async-work pin count for this chunk.
+    /// Streamers must not unload pinned chunks while worker jobs may still read them.
     pub fn pin(self: *Chunk) void {
         _ = self.pin_count.fetchAdd(1, .monotonic);
     }
 
-    /// Manages chunk pin state through `unpin`.
-    /// Pinned chunks should not be unloaded while worker jobs may reference them.
+    /// Decrements the async-work pin count for this chunk.
+    /// Must be paired with a previous `pin`; callers are responsible for avoiding underflow.
     pub fn unpin(self: *Chunk) void {
         _ = self.pin_count.fetchSub(1, .monotonic);
     }
 
-    /// Manages chunk pin state through `isPinned`.
-    /// Pinned chunks should not be unloaded while worker jobs may reference them.
+    /// Reports whether any async job currently pins this chunk.
+    /// This is an atomic read suitable for streamer unload checks.
     pub fn isPinned(self: *const Chunk) bool {
         return self.pin_count.load(.monotonic) > 0;
     }
 
-    /// Bulk-updates chunk contents through `fill`.
-    /// The operation mutates block, light, or height data for generation and lighting paths.
+    /// Fills every block in the chunk with one block type and marks block data dirty.
+    /// Does not update biome, light, or heightmap arrays.
     pub fn fill(self: *Chunk, block: BlockType) void {
         @memset(&self.blocks, block);
         self.dirty = true;
     }
 
-    /// Bulk-updates chunk contents through `fillLayer`.
-    /// The operation mutates block, light, or height data for generation and lighting paths.
+    /// Fills one horizontal Y layer with a block type using normal `setBlock` mutation semantics.
+    /// `y` must be in bounds; the chunk becomes dirty and modified.
     pub fn fillLayer(self: *Chunk, y: u32, block: BlockType) void {
         var x: u32 = 0;
         while (x < CHUNK_SIZE_X) : (x += 1) {
@@ -277,8 +277,8 @@ pub const Chunk = struct {
         }
     }
 
-    /// Bulk-updates chunk contents through `generateFlat`.
-    /// The operation mutates block, light, or height data for generation and lighting paths.
+    /// Generates a simple flat terrain stack of bedrock, stone, dirt, grass, and air.
+    /// Marks the chunk generated and dirty; intended for tests and flat-world generation.
     pub fn generateFlat(self: *Chunk, ground_level: u32) void {
         var y: u32 = 0;
         while (y < CHUNK_SIZE_Y) : (y += 1) {
@@ -299,8 +299,8 @@ pub const Chunk = struct {
         self.dirty = true;
     }
 
-    /// Bulk-updates chunk contents through `updateSkylightColumn`.
-    /// The operation mutates block, light, or height data for generation and lighting paths.
+    /// Recomputes top-down sky light for one local `(x, z)` column.
+    /// Opaque blocks stop sky light and water attenuates it by one level per block.
     pub fn updateSkylightColumn(self: *Chunk, x: u32, z: u32) void {
         var sky_light: u4 = MAX_LIGHT;
         var y: i32 = CHUNK_SIZE_Y - 1;
@@ -317,15 +317,15 @@ pub const Chunk = struct {
     }
 };
 
-/// Converts world coordinates with `worldToChunkFromFloat`.
-/// Uses ZigCraft chunk sizing and floor-division conventions for negative coordinates.
+/// Converts floating world X/Z coordinates to chunk coordinates.
+/// Coordinates are floored to block coordinates first, then converted with negative-safe floor division.
 pub fn worldToChunkFromFloat(world_x: f32, world_z: f32) struct { chunk_x: i32, chunk_z: i32 } {
     const chunk = worldToChunk(@as(i32, @intFromFloat(@floor(world_x))), @as(i32, @intFromFloat(@floor(world_z))));
     return .{ .chunk_x = chunk.chunk_x, .chunk_z = chunk.chunk_z };
 }
 
-/// Converts world coordinates with `worldToChunk`.
-/// Uses ZigCraft chunk sizing and floor-division conventions for negative coordinates.
+/// Converts integer world X/Z block coordinates to chunk coordinates.
+/// Uses floor division so negative world coordinates map to the containing negative chunk.
 pub fn worldToChunk(world_x: i32, world_z: i32) struct { chunk_x: i32, chunk_z: i32 } {
     return .{
         .chunk_x = @divFloor(world_x, CHUNK_SIZE_X),
@@ -333,8 +333,8 @@ pub fn worldToChunk(world_x: i32, world_z: i32) struct { chunk_x: i32, chunk_z: 
     };
 }
 
-/// Converts world coordinates with `worldToLocal`.
-/// Uses ZigCraft chunk sizing and floor-division conventions for negative coordinates.
+/// Converts integer world X/Z block coordinates to local coordinates inside their containing chunk.
+/// Uses modulo semantics that produce values in `[0, CHUNK_SIZE_X/Z)` even for negative world coordinates.
 pub fn worldToLocal(world_x: i32, world_z: i32) struct { x: u32, z: u32 } {
     return .{
         .x = @intCast(@mod(world_x, CHUNK_SIZE_X)),

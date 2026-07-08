@@ -102,14 +102,14 @@ pub const LODIngestionQueue = struct {
     edit_cooldown: f32 = 0.0,
     drain_per_frame: u32 = 4,
 
-    /// Constructs an LOD manager through `init`.
-    /// The manager owns scheduling, cache, mesh, and upload state until `deinit`.
+    /// Creates an empty ingestion queue for chunk-derived LOD source updates.
+    /// The caller owns the queue and must call `deinit` with the same allocator before discarding it.
     pub fn init(allocator: std.mem.Allocator) LODIngestionQueue {
         return .{ .edit_dirty = ChunkCoordSet.init(allocator) };
     }
 
-    /// Releases LOD manager queues, caches, meshes, and worker-owned resources.
-    /// Call after pending LOD work has been quiesced or made safe to discard.
+    /// Releases pending ingestion records and dirty-edit tracking owned by the queue.
+    /// The caller must ensure no other thread is appending to or draining this queue.
     pub fn deinit(self: *LODIngestionQueue, allocator: std.mem.Allocator) void {
         self.pending_ingestions.deinit(allocator);
         self.edit_dirty.deinit();
@@ -222,14 +222,14 @@ pub const LODManager = struct {
         return lod_manager_cache_ops.initCacheTestManager(allocator, cache_dir_path);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `storePlayerChunkPos`.
-    /// Call from the world/update thread that owns the manager.
+    /// Stores the player's current chunk position for scheduler and stale-job checks.
+    /// Safe for worker reads through atomics; write from the world update thread.
     pub fn storePlayerChunkPos(self: *Self, cx: i32, cz: i32) void {
         return lod_manager_core.storePlayerChunkPos(self, cx, cz);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `loadPlayerChunkPos`.
-    /// Call from the world/update thread that owns the manager.
+    /// Loads the most recently stored player chunk position.
+    /// Worker jobs use this snapshot to decide whether generated LOD work is still relevant.
     pub fn loadPlayerChunkPos(self: *const Self) PlayerChunkPos {
         return lod_manager_core.loadPlayerChunkPos(self);
     }
@@ -240,38 +240,38 @@ pub const LODManager = struct {
         return lod_manager_core.deinit(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `update`.
-    /// Call from the world/update thread that owns the manager.
+    /// Advances LOD scheduling, ingestion, generation, uploads, transitions, cache flushes, and eviction for one frame.
+    /// Call from the world update thread; errors report failed queueing, mesh creation, or budget/eviction work.
     pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
         return lod_manager_core.update(self, player_pos, player_velocity, chunk_checker, checker_ctx);
     }
 
-    /// Queries LOD manager state via `getStats`.
-    /// This does not mutate scheduling state except for diagnostics explicitly documented by the implementation.
+    /// Returns a snapshot of LOD scheduling, cache, generation, upload, and renderability counters.
+    /// The returned data is diagnostic only and does not hold locks after the call returns.
     pub fn getStats(self: *Self) LODStats {
         return lod_manager_core.getStats(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `pause`.
-    /// Call from the world/update thread that owns the manager.
+    /// Pauses new LOD generation and scheduling work.
+    /// Existing regions and meshes remain available for rendering while paused.
     pub fn pause(self: *Self) void {
         return lod_manager_core.pause(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `unpause`.
-    /// Call from the world/update thread that owns the manager.
+    /// Resumes LOD scheduling after a pause.
+    /// Pending queues may be processed by subsequent `update` calls.
     pub fn unpause(self: *Self) void {
         return lod_manager_core.unpause(self);
     }
 
-    /// Queries LOD manager state via `getLODForDistance`.
-    /// This does not mutate scheduling state except for diagnostics explicitly documented by the implementation.
+    /// Selects the configured LOD level for a chunk coordinate relative to the stored player position.
+    /// This is a read-only policy query used by streaming and debug code.
     pub fn getLODForDistance(self: *const Self, chunk_x: i32, chunk_z: i32) LODLevel {
         return lod_manager_core.getLODForDistance(self, chunk_x, chunk_z);
     }
 
-    /// Queries LOD manager state via `isInRange`.
-    /// This does not mutate scheduling state except for diagnostics explicitly documented by the implementation.
+    /// Returns whether a chunk coordinate falls inside the configured LOD horizon.
+    /// This is a read-only culling/scheduling query based on the current player chunk position.
     pub fn isInRange(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
         return lod_manager_core.isInRange(self, chunk_x, chunk_z);
     }
@@ -282,296 +282,296 @@ pub const LODManager = struct {
         return lod_manager_core.render(self, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer);
     }
 
-    /// Manages persistent LOD cache data through `enableCache`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Enables persistent source-data caching for LOD regions below `save_dir_path`.
+    /// Allocates and stores the cache path; errors indicate allocation or filesystem setup failure.
     pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
         return lod_manager_cache_ops.enableCache(self, save_dir_path);
     }
 
-    /// Manages persistent LOD cache data through `flushDirtyStores`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Writes dirty cached source-data containers to persistent storage.
+    /// Intended for the world update/shutdown path; IO failures are logged and leave data eligible for retry.
     pub fn flushDirtyStores(self: *Self) void {
         return lod_manager_cache_ops.flushDirtyStores(self);
     }
 
-    /// Manages persistent LOD cache data through `cacheKey`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Builds the persistent cache key for an LOD region using generator identity and LOD coordinates.
+    /// The returned key is deterministic for the same generator seed/version and region key.
     pub fn cacheKey(self: *const Self, key: LODRegionKey) lod_cache.Key {
         return lod_manager_cache_ops.cacheKey(self, key);
     }
 
-    /// Manages persistent LOD cache data through `legacyCacheFilePath`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Constructs the legacy single-region cache file path for migration or cleanup.
+    /// The returned path is heap allocated and must be freed by the caller.
     pub fn legacyCacheFilePath(self: *Self, save_dir_path: []const u8, key: lod_cache.Key) ![]u8 {
         return lod_manager_cache_ops.legacyCacheFilePath(self, save_dir_path, key);
     }
 
-    /// Manages persistent LOD cache data through `logLegacyCacheNotice`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Logs the one-time notice that legacy LOD cache data was detected.
+    /// This mutates only the cache-store diagnostic flag to avoid repeated log spam.
     pub fn logLegacyCacheNotice(self: *Self) void {
         return lod_manager_cache_ops.logLegacyCacheNotice(self);
     }
 
-    /// Manages persistent LOD cache data through `cacheDirPathSnapshot`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Returns a heap-owned snapshot of the configured cache directory path.
+    /// Returns `null` when caching is disabled or allocation fails.
     pub fn cacheDirPathSnapshot(self: *Self) ?[]u8 {
         return lod_manager_cache_ops.cacheDirPathSnapshot(self);
     }
 
-    /// Manages persistent LOD cache data through `cacheEnabled`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Reports whether persistent LOD source-data caching is currently configured.
+    /// This is a read-only query protected by the cache-store synchronization.
     pub fn cacheEnabled(self: *Self) bool {
         return lod_manager_cache_ops.cacheEnabled(self);
     }
 
-    /// Manages persistent LOD cache data through `readStorePayload`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Reads a serialized LOD cache payload from the container store.
+    /// Returns `null` for cache misses; errors report filesystem or allocation failures.
     pub fn readStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) !?[]u8 {
         return lod_manager_cache_ops.readStorePayload(self, save_dir_path, cache_key);
     }
 
-    /// Manages persistent LOD cache data through `writeStorePayload`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Writes a serialized LOD cache payload to the container store.
+    /// Errors report filesystem, allocation, or store-encoding failures.
     pub fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key, bytes: []const u8) !void {
         return lod_manager_cache_ops.writeStorePayload(self, save_dir_path, cache_key, bytes);
     }
 
-    /// Manages persistent LOD cache data through `deleteStorePayload`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Deletes one payload from the LOD cache store if it exists.
+    /// Missing payloads are ignored because cache deletion is best-effort cleanup.
     pub fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) void {
         return lod_manager_cache_ops.deleteStorePayload(self, save_dir_path, cache_key);
     }
 
-    /// Manages persistent LOD cache data through `deleteStoreContainer`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Deletes an entire LOD cache store container path.
+    /// Used by cleanup and migration paths; failures are intentionally non-fatal.
     pub fn deleteStoreContainer(self: *Self, path: []const u8) void {
         return lod_manager_cache_ops.deleteStoreContainer(self, path);
     }
 
-    /// Manages persistent LOD cache data through `loadCachedSourceData`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Loads simplified source data for an LOD region from cache when available and valid.
+    /// Returns `null` for misses, invalid payloads, disabled cache, or generator-version mismatch.
     pub fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
         return lod_manager_cache_ops.loadCachedSourceData(self, key);
     }
 
-    /// Manages persistent LOD cache data through `recordCacheHit`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Increments cache-hit counters used by LOD diagnostics.
+    /// This does not mutate cached data or scheduling state.
     pub fn recordCacheHit(self: *Self) void {
         return lod_manager_cache_ops.recordCacheHit(self);
     }
 
-    /// Manages persistent LOD cache data through `recordCacheMiss`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Increments cache-miss counters used by LOD diagnostics.
+    /// This is called when no reusable source data was found for a region.
     pub fn recordCacheMiss(self: *Self) void {
         return lod_manager_cache_ops.recordCacheMiss(self);
     }
 
-    /// Manages persistent LOD cache data through `saveCachedSourceData`.
-    /// Cache paths and payloads are owned by the manager; IO failures are reported or recorded by the caller path.
+    /// Serializes and stores simplified source data for a completed LOD region.
+    /// The input data is borrowed for the call; persistence failures are logged for later diagnosis.
     pub fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
         return lod_manager_cache_ops.saveCachedSourceData(self, key, data);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `setChunkResolver`.
-    /// Call from the world/update thread that owns the manager.
+    /// Installs the callback used to resolve full-detail chunks for ingestion retries.
+    /// Call from the world update thread before requesting deferred ingestion.
     pub fn setChunkResolver(self: *Self, resolver: ChunkResolver) void {
         return lod_manager_ingestion_ops.setChunkResolver(self, resolver);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `ingestChunk`.
-    /// Call from the world/update thread that owns the manager.
+    /// Folds one full-detail chunk into every matching LOD region's simplified source data.
+    /// Marks affected source data dirty so meshes and cache payloads can be refreshed.
     pub fn ingestChunk(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) void {
         return lod_manager_ingestion_ops.ingestChunk(self, cx, cz, chunk, provenance);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `requestIngestion`.
-    /// Call from the world/update thread that owns the manager.
+    /// Queues ingestion for a chunk whose target LOD regions may not exist yet.
+    /// The request is retried by later update ticks until it expires or applies.
     pub fn requestIngestion(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance) void {
         return lod_manager_ingestion_ops.requestIngestion(self, cx, cz, provenance);
     }
 
-    /// Records LOD manager bookkeeping via `markChunkEdited`.
-    /// Used to keep cache, transition, and readiness state consistent with world edits.
+    /// Marks a full-detail chunk as edited so its containing LOD regions can be refreshed.
+    /// The edit is debounced and flushed into ingestion work from the update thread.
     pub fn markChunkEdited(self: *Self, cx: i32, cz: i32) void {
         return lod_manager_ingestion_ops.markChunkEdited(self, cx, cz);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `applyIngestionToRegions`.
-    /// Call from the world/update thread that owns the manager.
+    /// Applies chunk-derived source samples to currently loaded LOD regions.
+    /// Returns a bitmask describing which LOD levels accepted the update.
     pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) u8 {
         return lod_manager_ingestion_ops.applyIngestionToRegions(self, cx, cz, chunk, provenance);
     }
 
-    /// Records LOD manager bookkeeping via `recordPendingLocked`.
-    /// Used to keep cache, transition, and readiness state consistent with world edits.
+    /// Records a deferred ingestion request while the ingestion mutex is already held.
+    /// `mask` tracks which LOD levels still need the chunk once regions become available.
     pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) void {
         return lod_manager_ingestion_ops.recordPendingLocked(self, cx, cz, provenance, mask);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `rerecordPending`.
-    /// Call from the world/update thread that owns the manager.
+    /// Refreshes an existing deferred ingestion request with a new mask and time-to-live.
+    /// Used when chunk edits arrive faster than regions can be regenerated.
     pub fn rerecordPending(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8, ttl: u16) void {
         return lod_manager_ingestion_ops.rerecordPending(self, cx, cz, provenance, mask, ttl);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `decayPendingLocked`.
-    /// Call from the world/update thread that owns the manager.
+    /// Decrements pending-ingestion TTL counters while the ingestion mutex is held.
+    /// Expired requests are dropped to avoid unbounded retry queues.
     pub fn decayPendingLocked(self: *Self) void {
         return lod_manager_ingestion_ops.decayPendingLocked(self);
     }
 
-    /// Advances LOD work scheduling through `drainPendingIngestions`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Resolves and applies a bounded number of deferred ingestion requests for this frame.
+    /// Uses the installed chunk resolver and leaves unresolved requests queued for later ticks.
     pub fn drainPendingIngestions(self: *Self) void {
         return lod_manager_ingestion_ops.drainPendingIngestions(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `flushEditedChunks`.
-    /// Call from the world/update thread that owns the manager.
+    /// Converts debounced edited-chunk coordinates into ingestion requests.
+    /// Clears the dirty-edit set once requests have been queued or applied.
     pub fn flushEditedChunks(self: *Self) void {
         return lod_manager_ingestion_ops.flushEditedChunks(self);
     }
 
-    /// Advances LOD work scheduling through `queueLODRegions`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Queues missing or dirty regions for generation at one LOD level.
+    /// Errors report allocation or job-queue failures; call from the world update thread.
     pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
         return lod_manager_generation_ops.queueLODRegions(self, lod, velocity, chunk_checker, checker_ctx);
     }
 
-    /// Advances LOD work scheduling through `processQueuedGenerations`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Drains completed generation jobs and schedules mesh work for accepted source data.
+    /// Errors report mesh allocation or queueing failures.
     pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
         return lod_manager_generation_ops.processQueuedGenerations(self, velocity);
     }
 
-    /// Advances LOD work scheduling through `processStateTransitions`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Advances LOD region lifecycle transitions such as generated-to-meshing and meshing-to-uploading.
+    /// Errors report failed mesh creation or upload queue insertion.
     pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         return lod_manager_generation_ops.processStateTransitions(self, velocity);
     }
 
-    /// Queries LOD manager state via `getOrCreateMesh`.
-    /// This does not mutate scheduling state except for diagnostics explicitly documented by the implementation.
+    /// Returns the mesh object for a region, allocating it when absent.
+    /// The returned mesh is manager-owned and remains valid until eviction or manager teardown.
     pub fn getOrCreateMesh(self: *Self, key: LODRegionKey) !*LODMesh {
         return lod_manager_generation_ops.getOrCreateMesh(self, key);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `buildMeshForChunk`.
-    /// Call from the world/update thread that owns the manager.
+    /// Builds CPU mesh data for one LOD chunk from its current source data.
+    /// Errors report allocation or meshing failures; successful builds enqueue upload work.
     pub fn buildMeshForChunk(self: *Self, chunk: *LODChunk) !void {
         return lod_manager_generation_ops.buildMeshForChunk(self, chunk);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `effectiveMeshPath`.
-    /// Call from the world/update thread that owns the manager.
+    /// Selects the mesh-building path to use for a particular LOD level.
+    /// The result combines global config with per-level fallbacks for performance and quality.
     pub fn effectiveMeshPath(self: *Self, lod: LODLevel) lod_chunk.LODMeshPath {
         return lod_manager_generation_ops.effectiveMeshPath(self, lod);
     }
 
-    /// Advances LOD work scheduling through `processUploads`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Uploads queued LOD meshes using the configured per-frame upload budget.
+    /// Must run on the render/update thread that owns the GPU bridge.
     pub fn processUploads(self: *Self) void {
         return lod_manager_upload_ops.processUploads(self);
     }
 
-    /// Advances LOD work scheduling through `processUploadsWithBudget`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Uploads queued LOD meshes until `upload_budget_bytes` is exhausted.
+    /// Chunks that cannot be uploaded within the budget are left queued for later frames.
     pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         return lod_manager_upload_ops.processUploadsWithBudget(self, upload_budget_bytes);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `requeueUpload`.
-    /// Call from the world/update thread that owns the manager.
+    /// Places an LOD chunk back onto an upload queue after a deferred or failed upload attempt.
+    /// The chunk remains manager-owned and must stay pinned as required by the caller path.
     pub fn requeueUpload(self: *Self, lod_idx: usize, chunk: *LODChunk) void {
         return lod_manager_upload_ops.requeueUpload(self, lod_idx, chunk);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `countRenderableChildren`.
-    /// Call from the world/update thread that owns the manager.
+    /// Counts direct finer child regions that are currently renderable for a parent region.
+    /// Used to decide parent fallback visibility and transition fades.
     pub fn countRenderableChildren(self: *Self, key: LODRegionKey) u8 {
         return lod_manager_upload_ops.countRenderableChildren(self, key);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `regionContributesGeometry`.
-    /// Call from the world/update thread that owns the manager.
+    /// Reports whether a region should contribute visible geometry in the current hierarchy state.
+    /// Excludes empty, covered, or non-renderable regions that should not affect parent readiness.
     pub fn regionContributesGeometry(self: *Self, key: LODRegionKey, chunk: *const LODChunk) bool {
         return lod_manager_upload_ops.regionContributesGeometry(self, key, chunk);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `adjustParentReadyChildren`.
-    /// Call from the world/update thread that owns the manager.
+    /// Adjusts a parent region's renderable-child count after child visibility changes.
+    /// This may start or cancel transition fades used to hide parent fallback terrain.
     pub fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void {
         return lod_manager_upload_ops.adjustParentReadyChildren(self, key, delta);
     }
 
-    /// Records LOD manager bookkeeping via `markRegionRenderable`.
-    /// Used to keep cache, transition, and readiness state consistent with world edits.
+    /// Marks a region renderable after its mesh upload completes.
+    /// Updates parent readiness and transition state so hierarchy blending remains consistent.
     pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
         return lod_manager_upload_ops.markRegionRenderable(self, key, chunk);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `decayTransitionFrames`.
-    /// Call from the world/update thread that owns the manager.
+    /// Decrements active transition fade counters for renderable regions.
+    /// Call once per update tick before rendering fade-dependent LOD hierarchy state.
     pub fn decayTransitionFrames(self: *Self) void {
         return lod_manager_upload_ops.decayTransitionFrames(self);
     }
 
-    /// Records LOD manager bookkeeping via `noteRegionRemoved`.
-    /// Used to keep cache, transition, and readiness state consistent with world edits.
+    /// Updates hierarchy bookkeeping when a region is removed or evicted.
+    /// Parent ready-child counts are reduced if the removed region contributed geometry.
     pub fn noteRegionRemoved(self: *Self, key: LODRegionKey, chunk: *const LODChunk) void {
         return lod_manager_upload_ops.noteRegionRemoved(self, key, chunk);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `demoteRegionForRemesh`.
-    /// Call from the world/update thread that owns the manager.
+    /// Demotes a renderable region back to mesh/upload work after its source data changes.
+    /// Parent readiness is updated before the region leaves the renderable set.
     pub fn demoteRegionForRemesh(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
         return lod_manager_upload_ops.demoteRegionForRemesh(self, key, chunk);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `unloadDistantRegions`.
-    /// Call from the world/update thread that owns the manager.
+    /// Evicts LOD regions outside their configured radii and queues their meshes for destruction.
+    /// Errors report allocation or bookkeeping failures during eviction.
     pub fn unloadDistantRegions(self: *Self) !void {
         return lod_manager_eviction_ops.unloadDistantRegions(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `unloadDistantForLevel`.
-    /// Call from the world/update thread that owns the manager.
+    /// Evicts regions for one LOD level beyond `max_radius` chunks from the player.
+    /// Pinned or in-flight regions are preserved until background work releases them.
     pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void {
         return lod_manager_eviction_ops.unloadDistantForLevel(self, lod, max_radius);
     }
 
-    /// Advances LOD work scheduling through `queueMeshDeletion`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Defers GPU mesh destruction so the backend is not forced to free resources mid-frame.
+    /// The mesh pointer must remain valid until `processMeshDeletions` consumes it.
     pub fn queueMeshDeletion(self: *Self, mesh: *LODMesh) void {
         return lod_manager_eviction_ops.queueMeshDeletion(self, mesh);
     }
 
-    /// Advances LOD work scheduling through `processMeshDeletions`.
-    /// May enqueue generation, upload, deletion, or state-transition work for later frames.
+    /// Destroys up to `max_count` deferred LOD meshes through the GPU bridge.
+    /// Intended to amortize resource deletion across frames.
     pub fn processMeshDeletions(self: *Self, max_count: usize) void {
         return lod_manager_eviction_ops.processMeshDeletions(self, max_count);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `enforceMemoryBudget`.
-    /// Call from the world/update thread that owns the manager.
+    /// Enforces the configured LOD memory budget by shrinking radii or evicting regions.
+    /// Errors report eviction failures; call from the world update thread.
     pub fn enforceMemoryBudget(self: *Self) !void {
         return lod_manager_eviction_ops.enforceMemoryBudget(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `updateStats`.
-    /// Call from the world/update thread that owns the manager.
+    /// Recomputes diagnostic stats from current LOD maps, queues, cache counters, and memory state.
+    /// This mutates only the stats snapshot exposed by `getStats`.
     pub fn updateStats(self: *Self) void {
         return lod_manager_eviction_ops.updateStats(self);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `unloadLODWhereChunksLoaded`.
-    /// Call from the world/update thread that owns the manager.
+    /// Removes LOD fallback regions fully covered by loaded full-detail chunks.
+    /// Uses `checker` to avoid drawing duplicate distant terrain inside the high-detail area.
     pub fn unloadLODWhereChunksLoaded(self: *Self, checker: ChunkChecker, ctx: *anyopaque) void {
         return lod_manager_eviction_ops.unloadLODWhereChunksLoaded(self, checker, ctx);
     }
 
-    /// Updates LOD manager lifecycle or scheduling state through `areAllChunksLoaded`.
-    /// Call from the world/update thread that owns the manager.
+    /// Tests whether every full-detail chunk inside `bounds` is loaded and renderable.
+    /// Used before unloading an overlapping LOD region to prevent visible holes.
     pub fn areAllChunksLoaded(self: *Self, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool {
         return lod_manager_eviction_ops.areAllChunksLoaded(self, bounds, checker, ctx);
     }

@@ -32,8 +32,8 @@ pub const LODRegionKey = struct {
     /// LOD level
     lod: LODLevel,
 
-    /// Creates LOD chunk identity/state using `fromChunkCoords`.
-    /// The returned value starts with deterministic coordinates, LOD level, and lifecycle state.
+    /// Converts full-detail chunk coordinates to the containing LOD region key.
+    /// Uses floor division so negative world coordinates map to the correct parent region.
     pub fn fromChunkCoords(chunk_x: i32, chunk_z: i32, lod: LODLevel) LODRegionKey {
         const scale: i32 = @intCast(lod.chunksPerSide());
         return .{
@@ -43,8 +43,8 @@ pub const LODRegionKey = struct {
         };
     }
 
-    /// Returns LOD chunk/configuration data via `hash`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Hashes the region coordinates and LOD level for use in region maps.
+    /// The hash is deterministic and does not inspect mutable chunk state.
     pub fn hash(self: LODRegionKey) u64 {
         const ux: u64 = @bitCast(@as(i64, self.rx));
         const uz: u64 = @bitCast(@as(i64, self.rz));
@@ -52,14 +52,14 @@ pub const LODRegionKey = struct {
         return ux ^ (uz *% 0x9e3779b97f4a7c15) ^ (ul *% 0x517cc1b727220a95);
     }
 
-    /// Returns LOD chunk/configuration data via `eql`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Compares two region keys by coordinates and LOD level.
+    /// Intended for hash-map key equality and has no side effects.
     pub fn eql(a: LODRegionKey, b: LODRegionKey) bool {
         return a.rx == b.rx and a.rz == b.rz and a.lod == b.lod;
     }
 
-    /// Provides LOD chunk helper `parentKey`.
-    /// Used by LOD scheduling, meshing, or rendering code to keep chunk state consistent.
+    /// Returns the coarser parent region that spatially contains this region.
+    /// Returns `null` for the coarsest LOD because no parent level exists.
     pub fn parentKey(self: LODRegionKey) ?LODRegionKey {
         const lod_idx = @intFromEnum(self.lod);
         if (lod_idx + 1 >= LODLevel.count) return null;
@@ -70,8 +70,8 @@ pub const LODRegionKey = struct {
         };
     }
 
-    /// Provides LOD chunk helper `childKeys`.
-    /// Used by LOD scheduling, meshing, or rendering code to keep chunk state consistent.
+    /// Returns the four direct finer child regions covered by this region.
+    /// Returns `null` for LOD0 because it has no finer LOD children.
     pub fn childKeys(self: LODRegionKey) ?[4]LODRegionKey {
         const lod_idx = @intFromEnum(self.lod);
         if (lod_idx == 0) return null;
@@ -104,16 +104,16 @@ pub const ChunkBounds = struct {
     max_x: i32,
     max_z: i32,
 
-    /// Provides LOD chunk helper `distanceSquaredToPoint`.
-    /// Used by LOD scheduling, meshing, or rendering code to keep chunk state consistent.
+    /// Computes squared distance from a chunk-coordinate point to this bounds rectangle.
+    /// Points inside the rectangle return zero; used to avoid square roots in range tests.
     pub fn distanceSquaredToPoint(self: ChunkBounds, point_x: i32, point_z: i32) i64 {
         const dx = axisDistance(point_x, self.min_x, self.max_x);
         const dz = axisDistance(point_z, self.min_z, self.max_z);
         return dx * dx + dz * dz;
     }
 
-    /// Computes LOD distance/radius policy through `intersectsRadius`.
-    /// Inputs are chunk or world distances; results are used by scheduler and renderer culling.
+    /// Tests whether this chunk bounds intersects a radius around a chunk-coordinate center.
+    /// The radius is expressed in chunks and is evaluated radially, not as an axis-aligned square.
     pub fn intersectsRadius(self: ChunkBounds, center_x: i32, center_z: i32, radius_chunks: i32) bool {
         const radius_sq: i64 = @as(i64, radius_chunks) * @as(i64, radius_chunks);
         return self.distanceSquaredToPoint(center_x, center_z) <= radius_sq;
@@ -128,15 +128,15 @@ pub const ChunkBounds = struct {
 
 /// Context for LODRegionKey HashMap
 pub const LODRegionKeyContext = struct {
-    /// Returns LOD chunk/configuration data via `hash`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Hashes a region key for `std.HashMap` storage.
+    /// The context has no state; hashing delegates to the key's deterministic hash.
     pub fn hash(self: @This(), key: LODRegionKey) u64 {
         _ = self;
         return key.hash();
     }
 
-    /// Returns LOD chunk/configuration data via `eql`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Compares two region keys for `std.HashMap` lookup.
+    /// The context has no state and the comparison is side-effect-free.
     pub fn eql(self: @This(), a: LODRegionKey, b: LODRegionKey) bool {
         _ = self;
         return a.eql(b);
@@ -192,8 +192,8 @@ pub const LODChunk = struct {
     /// or edit). The manager writes the region container to disk lazily.
     store_dirty: bool,
 
-    /// Creates LOD chunk identity/state using `init`.
-    /// The returned value starts with deterministic coordinates, LOD level, and lifecycle state.
+    /// Creates an empty LOD region record in the missing state.
+    /// Source data, mesh handles, readiness counts, and transition state are initialized to safe defaults.
     pub fn init(rx: i32, rz: i32, lod: LODLevel) LODChunk {
         return .{
             .region_x = rx,
@@ -225,68 +225,68 @@ pub const LODChunk = struct {
         self.* = undefined;
     }
 
-    /// Manages worker-safety pin state through `pin`.
-    /// Pinned chunks are protected from unload while background work may still access them.
+    /// Increments the async-work pin count for this LOD chunk.
+    /// Managers must not unload or deinitialize pinned chunks while worker jobs may still reference them.
     pub fn pin(self: *LODChunk) void {
         _ = self.pin_count.fetchAdd(1, .monotonic);
     }
 
-    /// Manages worker-safety pin state through `unpin`.
-    /// Pinned chunks are protected from unload while background work may still access them.
+    /// Decrements the async-work pin count for this LOD chunk.
+    /// Must be paired with a previous `pin`; callers are responsible for avoiding underflow.
     pub fn unpin(self: *LODChunk) void {
         _ = self.pin_count.fetchSub(1, .monotonic);
     }
 
-    /// Manages worker-safety pin state through `isPinned`.
-    /// Pinned chunks are protected from unload while background work may still access them.
+    /// Reports whether any async job currently pins this LOD chunk.
+    /// This is an atomic read suitable for eviction checks.
     pub fn isPinned(self: *const LODChunk) bool {
         return self.pin_count.load(.monotonic) > 0;
     }
 
-    /// Returns LOD chunk/configuration data via `key`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the immutable map key corresponding to this chunk's region coordinates and LOD level.
+    /// The key can be used to look up the same chunk in manager maps.
     pub fn key(self: *const LODChunk) LODRegionKey {
         return .{ .rx = self.region_x, .rz = self.region_z, .lod = self.lod_level };
     }
 
-    /// Returns LOD chunk/configuration data via `getState`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the current lifecycle state of this LOD chunk.
+    /// The value drives scheduler decisions such as generation, meshing, upload, and rendering.
     pub fn getState(self: *const LODChunk) LODState {
         return self.state;
     }
 
-    /// Updates LOD chunk lifecycle state via `setState`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Sets the lifecycle state used by LOD scheduling and rendering.
+    /// Call from the manager/update thread that owns the chunk maps.
     pub fn setState(self: *LODChunk, state: LODState) void {
         self.state = state;
     }
 
-    /// Returns LOD chunk/configuration data via `isInFlight`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Reports whether generation, meshing, or upload work is currently in flight for this chunk.
+    /// Eviction code should keep in-flight chunks until work completes or is cancelled.
     pub fn isInFlight(self: *const LODChunk) bool {
         return self.state == .generating or self.state == .meshing or self.state == .uploading;
     }
 
-    /// Returns LOD chunk/configuration data via `isRenderable`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Reports whether this chunk has uploaded mesh data ready for rendering.
+    /// This is a state query only; it does not validate the mesh handle.
     pub fn isRenderable(self: *const LODChunk) bool {
         return self.state == .renderable;
     }
 
-    /// Returns LOD chunk/configuration data via `lodLevel`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the LOD level represented by this region.
+    /// Higher levels cover larger areas with more simplified geometry.
     pub fn lodLevel(self: *const LODChunk) LODLevel {
         return self.lod_level;
     }
 
-    /// Returns LOD chunk/configuration data via `readyChildren`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns how many direct finer children are currently renderable.
+    /// Parent fallback rendering uses this count to decide coverage and fade behavior.
     pub fn readyChildren(self: *const LODChunk) u8 {
         return self.ready_children;
     }
 
-    /// Returns LOD chunk/configuration data via `transitionFadeProgress`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the normalized fade progress for parent/child LOD hierarchy transitions.
+    /// Child regions fade in while fully covered parents fade out according to remaining transition frames.
     pub fn transitionFadeProgress(self: *const LODChunk) f32 {
         if (self.transition_frames_remaining == 0) return 1.0;
         const remaining = @as(f32, @floatFromInt(self.transition_frames_remaining));
@@ -296,8 +296,8 @@ pub const LODChunk = struct {
         return 1.0 - t;
     }
 
-    /// Updates LOD chunk lifecycle state via `adjustReadyChildren`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Adjusts the count of renderable direct child regions, clamped to `[0, 4]`.
+    /// Crossing into full child coverage starts a transition fade; losing coverage cancels it.
     pub fn adjustReadyChildren(self: *LODChunk, delta: i8) void {
         const before = self.ready_children;
         if (delta > 0) {
@@ -313,22 +313,22 @@ pub const LODChunk = struct {
         }
     }
 
-    /// Updates LOD chunk lifecycle state via `markRenderable`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Marks this chunk renderable after mesh upload completes.
+    /// Sets child readiness, starts a transition fade, and moves lifecycle state to `.renderable`.
     pub fn markRenderable(self: *LODChunk, ready_children: u8) void {
         self.ready_children = @min(ready_children, 4);
         self.transition_frames_remaining = TRANSITION_FADE_FRAMES;
         self.state = .renderable;
     }
 
-    /// Updates LOD chunk lifecycle state via `tickTransition`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Advances transition fading by one render/update tick.
+    /// Does nothing once the transition counter has reached zero.
     pub fn tickTransition(self: *LODChunk) void {
         if (self.transition_frames_remaining > 0) self.transition_frames_remaining -= 1;
     }
 
-    /// Returns LOD chunk/configuration data via `isCoveredByFinerLOD`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Reports whether finer renderable children cover this region sufficiently to hide the parent.
+    /// `fallback_missing_child_threshold` controls how much missing child coverage is tolerated.
     pub fn isCoveredByFinerLOD(self: *const LODChunk, fallback_missing_child_threshold: f32) bool {
         if (self.lod_level == .lod0) return false;
         const missing_children = 4 - @min(self.ready_children, 4);
@@ -336,15 +336,15 @@ pub const LODChunk = struct {
         return missing_fraction <= fallback_missing_child_threshold and self.transition_frames_remaining == 0;
     }
 
-    /// Updates LOD chunk lifecycle state via `markSourceDirty`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Marks source data dirty after chunk-derived ingestion or edits.
+    /// Also marks persistent cache storage dirty so the manager can flush updated source data.
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;
     }
 
-    /// Updates LOD chunk lifecycle state via `setReadyChildren`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Sets the ready-child count directly, clamped to four direct children.
+    /// Used when reconstructing or synchronizing hierarchy state from manager bookkeeping.
     pub fn setReadyChildren(self: *LODChunk, ready_children: u8) void {
         self.ready_children = @min(ready_children, 4);
     }
@@ -373,8 +373,8 @@ pub const LODChunk = struct {
         };
     }
 
-    /// Provides LOD chunk helper `updateHeightBoundsFromData`.
-    /// Used by LOD scheduling, meshing, or rendering code to keep chunk state consistent.
+    /// Recomputes world-space min/max height bounds from simplified source data.
+    /// Full or empty chunks leave existing bounds unchanged; call after replacing simplified data.
     pub fn updateHeightBoundsFromData(self: *LODChunk) void {
         switch (self.data) {
             .simplified => |*data| {
@@ -405,8 +405,8 @@ pub const LODChunk = struct {
         }
     }
 
-    /// Returns LOD chunk/configuration data via `chunkBounds`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the full-detail chunk-coordinate bounds covered by this LOD region.
+    /// Bounds are inclusive and derived from region coordinates plus chunks-per-side for the LOD level.
     pub fn chunkBounds(self: *const LODChunk) ChunkBounds {
         return .{
             .min_x = self.region_x * @as(i32, @intCast(self.lod_level.chunksPerSide())),
@@ -445,53 +445,53 @@ pub const ILODConfig = struct {
         getLODStoreSizeCapMB: *const fn (ptr: *anyopaque) u32,
     };
 
-    /// Returns LOD chunk/configuration data via `getRadii`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns configured outer radii for every LOD level in chunks.
+    /// Callers should use `getActiveLODCount` to know how many entries are currently active.
     pub fn getRadii(self: ILODConfig) [LODLevel.count]i32 {
         return self.vtable.getRadii(self.ptr);
     }
-    /// Returns LOD chunk/configuration data via `getChunkRenderRadius`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the high-detail chunk render radius that LOD terrain must avoid overlapping.
+    /// Shader masking and eviction use this to preserve the full-detail chunk ring.
     pub fn getChunkRenderRadius(self: ILODConfig) i32 {
         return self.vtable.getChunkRenderRadius(self.ptr);
     }
-    /// Returns LOD chunk/configuration data via `getActiveLODCount`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the number of LOD levels currently enabled by configuration.
+    /// Implementations clamp the value to at least one and at most `LODLevel.count`.
     pub fn getActiveLODCount(self: ILODConfig) u32 {
         return self.vtable.getActiveLODCount(self.ptr);
     }
-    /// Updates LOD chunk lifecycle state via `setActiveLODCount`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Sets how many LOD levels should participate in scheduling and rendering.
+    /// Implementations should clamp out-of-range values to the supported LOD count.
     pub fn setActiveLODCount(self: ILODConfig, count: u32) void {
         self.vtable.setActiveLODCount(self.ptr, count);
     }
-    /// Updates LOD chunk lifecycle state via `setChunkRenderRadius`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Sets the full-detail chunk render radius used by LOD masking and radius expansion.
+    /// Implementations should clamp invalid radii to a positive value.
     pub fn setChunkRenderRadius(self: ILODConfig, radius: i32) void {
         self.vtable.setChunkRenderRadius(self.ptr, radius);
     }
-    /// Updates LOD chunk lifecycle state via `setLOD0Radius`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Sets the outer radius for the LOD0 ring.
+    /// This affects near-distance LOD scheduling without changing the full-detail chunk radius.
     pub fn setLOD0Radius(self: ILODConfig, radius: i32) void {
         self.vtable.setLOD0Radius(self.ptr, radius);
     }
-    /// Updates LOD chunk lifecycle state via `setRadii`.
-    /// State changes are used by streaming, transition, and renderability decisions.
+    /// Replaces all configured LOD outer radii at once.
+    /// Callers must provide radii in increasing order if they want monotonic distance selection.
     pub fn setRadii(self: ILODConfig, radii: [LODLevel.count]i32) void {
         self.vtable.setRadii(self.ptr, radii);
     }
-    /// Returns LOD chunk/configuration data via `getLODForDistance`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Selects the LOD level for a distance from the player measured in chunks.
+    /// Distances beyond active radii resolve to the coarsest active LOD.
     pub fn getLODForDistance(self: ILODConfig, dist_chunks: i32) LODLevel {
         return self.vtable.getLODForDistance(self.ptr, dist_chunks);
     }
-    /// Returns LOD chunk/configuration data via `isInRange`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Reports whether a chunk-distance lies inside the active LOD horizon.
+    /// Used before scheduling or retaining distant LOD regions.
     pub fn isInRange(self: ILODConfig, dist_chunks: i32) bool {
         return self.vtable.isInRange(self.ptr, dist_chunks);
     }
-    /// Returns LOD chunk/configuration data via `getMaxUploadsPerFrame`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the maximum number of LOD uploads the manager should attempt per frame.
+    /// This is a scheduler throttle, separate from byte-budget throttling.
     pub fn getMaxUploadsPerFrame(self: ILODConfig) u32 {
         return self.vtable.getMaxUploadsPerFrame(self.ptr);
     }
@@ -502,63 +502,63 @@ pub const ILODConfig = struct {
         return self.vtable.calculateMaskRadius(self.ptr);
     }
 
-    /// Returns LOD chunk/configuration data via `getQEMTarget`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the target triangle budget for QEM simplification at one LOD level.
+    /// A value of zero means that level should not use QEM reduction.
     pub fn getQEMTarget(self: ILODConfig, lod: LODLevel) u32 {
         return self.vtable.getQEMTarget(self.ptr, lod);
     }
 
-    /// Returns LOD chunk/configuration data via `getQEMMinInputTriangles`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the minimum input triangle count required before QEM simplification is attempted.
+    /// Smaller meshes use the cheaper non-QEM path to avoid unnecessary work.
     pub fn getQEMMinInputTriangles(self: ILODConfig) u32 {
         return self.vtable.getQEMMinInputTriangles(self.ptr);
     }
 
-    /// Returns LOD chunk/configuration data via `getHorizontalDetail`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the horizontal sample resolution used to generate a mesh for one LOD level.
+    /// Higher values preserve more terrain detail at higher CPU/GPU cost.
     pub fn getHorizontalDetail(self: ILODConfig, lod: LODLevel) u32 {
         return self.vtable.getHorizontalDetail(self.ptr, lod);
     }
 
-    /// Returns LOD chunk/configuration data via `getVerticalSpanBudget`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the maximum number of vertical spans retained per LOD column.
+    /// Implementations clamp this to the storage capacity of `LODSimplifiedData`.
     pub fn getVerticalSpanBudget(self: ILODConfig) u8 {
         return self.vtable.getVerticalSpanBudget(self.ptr);
     }
 
-    /// Returns LOD chunk/configuration data via `getMeshPath`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns which mesh-generation algorithm the LOD manager should use.
+    /// The value selects between column-span, QEM, or other backend-supported paths.
     pub fn getMeshPath(self: ILODConfig) LODMeshPath {
         return self.vtable.getMeshPath(self.ptr);
     }
 
-    /// Returns LOD chunk/configuration data via `getFogStartPercent`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns where fog should begin within an LOD level's radius, as a fraction in `[0, 1]`.
+    /// Renderers use this to hide distant LOD transitions and horizon cutoffs.
     pub fn getFogStartPercent(self: ILODConfig, lod: LODLevel) f32 {
         return self.vtable.getFogStartPercent(self.ptr, lod);
     }
 
-    /// Returns LOD chunk/configuration data via `getFallbackMissingChildThreshold`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the fraction of missing finer children allowed before a parent fallback remains visible.
+    /// Values are clamped by concrete implementations to `[0, 1]`.
     pub fn getFallbackMissingChildThreshold(self: ILODConfig) f32 {
         return self.vtable.getFallbackMissingChildThreshold(self.ptr);
     }
 
-    /// Returns LOD chunk/configuration data via `getMemoryBudgetMB`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the approximate memory budget for LOD meshes and source data in MiB.
+    /// The manager uses this to decide when to shrink radii or evict regions.
     pub fn getMemoryBudgetMB(self: ILODConfig) u32 {
         return self.vtable.getMemoryBudgetMB(self.ptr);
     }
 
-    /// Returns LOD chunk/configuration data via `getLODStoreSizeCapMB`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the persistent LOD cache store size cap in MiB.
+    /// Cache maintenance uses this to bound disk usage for source-data containers.
     pub fn getLODStoreSizeCapMB(self: ILODConfig) u32 {
         return self.vtable.getLODStoreSizeCapMB(self.ptr);
     }
 };
 
-/// Provides LOD chunk helper `activeLODCount`.
-/// Used by LOD scheduling, meshing, or rendering code to keep chunk state consistent.
+/// Returns the active LOD count as a `usize`, clamped to the supported range.
+/// Use this when indexing fixed arrays whose length is `LODLevel.count`.
 pub fn activeLODCount(config: ILODConfig) usize {
     return @intCast(std.math.clamp(config.getActiveLODCount(), 1, LODLevel.count));
 }
@@ -609,20 +609,20 @@ pub const LODConfig = struct {
     /// a coarser parent must remain visible as fallback terrain.
     fallback_missing_child_threshold: f32 = 0.2,
 
-    /// Returns LOD chunk/configuration data via `getQEMTarget`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Returns the configured QEM triangle target for one LOD level.
+    /// Used by mesh builders to choose simplification aggressiveness.
     pub fn getQEMTarget(self: *const LODConfig, lod: LODLevel) u32 {
         return self.qem_triangle_targets[@intFromEnum(lod)];
     }
 
-    /// Computes LOD distance/radius policy through `radiiForRenderDistance`.
-    /// Inputs are chunk or world distances; results are used by scheduler and renderer culling.
+    /// Expands a full-detail render distance into the default LOD radius ladder.
+    /// The farthest radius uses the default horizon distance.
     pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
         return radiiForDistances(distance, default_horizon_radius);
     }
 
-    /// Computes LOD distance/radius policy through `radiiForDistances`.
-    /// Inputs are chunk or world distances; results are used by scheduler and renderer culling.
+    /// Expands full-detail and horizon distances into monotonically increasing LOD radii.
+    /// Radii are expressed in chunks and are clamped so they do not exceed the horizon.
     pub fn radiiForDistances(distance: i32, horizon_distance: i32) [LODLevel.count]i32 {
         const requested = @max(distance, 1);
         const lod0_target = @max(@as(i64, requested) * 3, @as(i64, requested + 16));
@@ -638,21 +638,21 @@ pub const LODConfig = struct {
         return .{ lod0, lod1, lod2, lod3, horizon };
     }
 
-    /// Computes LOD distance/radius policy through `activeCountForRenderDistance`.
-    /// Inputs are chunk or world distances; results are used by scheduler and renderer culling.
+    /// Returns how many LOD levels should be active for a render-distance setting.
+    /// The current policy keeps all levels active regardless of near render distance.
     pub fn activeCountForRenderDistance(distance: i32) u32 {
         _ = distance;
         return LODLevel.count;
     }
 
-    /// Provides LOD chunk helper `coarsestLOD`.
-    /// Used by LOD scheduling, meshing, or rendering code to keep chunk state consistent.
+    /// Returns the coarsest supported LOD level.
+    /// Use as a fallback when a distance exceeds all configured active radii.
     pub fn coarsestLOD() LODLevel {
         return @enumFromInt(@as(u3, @intCast(LODLevel.count - 1)));
     }
 
-    /// Returns LOD chunk/configuration data via `getLODForDistance`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Selects the concrete LOD level for a chunk distance using this config's active radii.
+    /// Distances beyond active radii resolve to the coarsest active LOD.
     pub fn getLODForDistance(self: *const LODConfig, dist_chunks: i32) LODLevel {
         const active_lod_count = activeLODCount(self.interfaceConst());
         for (0..active_lod_count) |i| {
@@ -661,8 +661,8 @@ pub const LODConfig = struct {
         return @enumFromInt(@as(u3, @intCast(active_lod_count - 1)));
     }
 
-    /// Returns LOD chunk/configuration data via `isInRange`.
-    /// The query is side-effect-free unless the implementation explicitly updates cached bounds.
+    /// Reports whether a chunk distance lies inside this config's active LOD horizon.
+    /// The horizon is the outer radius of the coarsest active LOD.
     pub fn isInRange(self: *const LODConfig, dist_chunks: i32) bool {
         return dist_chunks <= self.radii[activeLODCount(self.interfaceConst()) - 1];
     }
