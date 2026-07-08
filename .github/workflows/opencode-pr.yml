@@ -75,7 +75,7 @@ jobs:
       - name: Run opencode
         id: ai_review
         timeout-minutes: 40
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ github.token }}

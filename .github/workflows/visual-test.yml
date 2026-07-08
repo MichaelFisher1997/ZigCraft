@@ -136,7 +136,7 @@ jobs:
       - name: Run opencode visual verification
         if: always() && steps.check_screenshot.outputs.screenshot_exists == 'true'
         continue-on-error: true
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
@@ -147,7 +147,7 @@ jobs:
       - name: Run opencode failure diagnosis
         if: failure() || steps.screenshot.outcome == 'failure' || steps.check_screenshot.outputs.screenshot_exists != 'true'
         continue-on-error: true
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           GITHUB_TOKEN: ${{ secrets.OPENCODE_PAT }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
