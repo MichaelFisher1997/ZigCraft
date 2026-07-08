@@ -1,0 +1,5 @@
+libs/
+assets/
+result/
+zig-out/
+.zig-cache/

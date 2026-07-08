@@ -15,14 +15,17 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check PR title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          pattern='^(feat|fix|refactor|test|docs|ci|chore|perf|build|style|revert)(\([A-Za-z0-9_.-]+\))?!?: .+'
+          types=$(jq -r '.rules["type-enum"][2] | join("|")' .commitlintrc.json)
+          pattern="^(${types})(\\([A-Za-z0-9_.-]+\\))?!?: .+"
           if [[ ! "$PR_TITLE" =~ $pattern ]]; then
             echo "PR title must use a conventional commit prefix. See CONTRIBUTING.md#3-commit-changes."
-            echo "Allowed types: feat, fix, refactor, test, docs, ci, chore, perf, build, style, revert."
+            echo "Allowed types: ${types//|/, }."
             exit 1
           fi
 
@@ -41,7 +44,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          pattern='^(feat|fix|refactor|test|docs|ci|chore|perf|build|style|revert)(\([A-Za-z0-9_.-]+\))?!?: .+'
+          types=$(jq -r '.rules["type-enum"][2] | join("|")' .commitlintrc.json)
+          pattern="^(${types})(\\([A-Za-z0-9_.-]+\\))?!?: .+"
           failures=0
           while IFS= read -r subject; do
             if [[ ! "$subject" =~ $pattern ]]; then

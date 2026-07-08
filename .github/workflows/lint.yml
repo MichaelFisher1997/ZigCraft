@@ -23,7 +23,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Lint Markdown
-        run: bunx markdownlint-cli2 "**/*.md" "!zig-out/**" "!.zig-cache/**"
+        run: bunx markdownlint-cli2
 
       - name: Check JSON and YAML formatting
         run: bunx prettier --check "**/*.{json,jsonc,yml,yaml}"
