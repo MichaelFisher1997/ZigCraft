@@ -8,11 +8,11 @@ name: opencode-test-writer
 
 on:
   schedule:
-    - cron: '0 4 * * 2'
+    - cron: "0 4 * * 2"
   workflow_dispatch:
     inputs:
       module:
-        description: 'Module to write tests for (e.g. graphics/vulkan-device, world/meshing)'
+        description: "Module to write tests for (e.g. graphics/vulkan-device, world/meshing)"
         required: false
         type: string
 

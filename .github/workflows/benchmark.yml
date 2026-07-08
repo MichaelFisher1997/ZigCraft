@@ -2,13 +2,13 @@ name: Benchmark
 
 on:
   push:
-    branches: [ dev ]
+    branches: [dev]
   workflow_dispatch:
     inputs:
       duration:
         description: Benchmark duration per preset (seconds)
         required: false
-        default: '5'
+        default: "5"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,80 +27,80 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Nix
-      uses: ./.github/actions/setup-nix
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
 
-    - name: Setup Zig cache
-      uses: ./.github/actions/setup-zig-cache
-      with:
-        cache-key-prefix: zig-ci-graphics
+      - name: Setup Zig cache
+        uses: ./.github/actions/setup-zig-cache
+        with:
+          cache-key-prefix: zig-ci-graphics
 
-    - name: Start headless Wayland compositor
-      uses: ./.github/actions/start-weston
+      - name: Start headless Wayland compositor
+        uses: ./.github/actions/start-weston
 
-    - name: Setup Lavapipe Vulkan
-      uses: ./.github/actions/setup-lavapipe
+      - name: Setup Lavapipe Vulkan
+        uses: ./.github/actions/setup-lavapipe
 
-    - name: Run benchmark suite
-      id: run_benchmark
-      uses: ./.github/actions/run-with-log
-      with:
-        name: Benchmark
-        timeout: 20m
-        log-file: benchmark.log
-        command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results --per-preset-timeout 600
-      env:
-        XDG_RUNTIME_DIR: /tmp/runtime-runner
-        WAYLAND_DISPLAY: headless
-        MESA_SHADER_CACHE_DIR: /tmp/mesa_shader_cache
-        SDL_AUDIODRIVER: dummy
-        ZIGCRAFT_SAFE_MODE: '1'
-        BENCHMARK_DURATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '5' }}
+      - name: Run benchmark suite
+        id: run_benchmark
+        uses: ./.github/actions/run-with-log
+        with:
+          name: Benchmark
+          timeout: 20m
+          log-file: benchmark.log
+          command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --output-dir benchmark-results --per-preset-timeout 600
+        env:
+          XDG_RUNTIME_DIR: /tmp/runtime-runner
+          WAYLAND_DISPLAY: headless
+          MESA_SHADER_CACHE_DIR: /tmp/mesa_shader_cache
+          SDL_AUDIODRIVER: dummy
+          ZIGCRAFT_SAFE_MODE: "1"
+          BENCHMARK_DURATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '5' }}
 
-    - name: Stop headless Wayland compositor
-      if: always()
-      uses: ./.github/actions/stop-weston
+      - name: Stop headless Wayland compositor
+        if: always()
+        uses: ./.github/actions/stop-weston
 
-    - name: Compare against baseline
-      id: compare
-      run: |
-        for preset in low medium high; do
-          bash scripts/compare_benchmarks.sh docs/benchmarks/baseline.json "benchmark-results/${preset}.json" --preset "$preset"
-        done
+      - name: Compare against baseline
+        id: compare
+        run: |
+          for preset in low medium high; do
+            bash scripts/compare_benchmarks.sh docs/benchmarks/baseline.json "benchmark-results/${preset}.json" --preset "$preset"
+          done
 
-    - name: Upload benchmark artifacts
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: benchmark-results
-        path: |
-          benchmark-results
-          benchmark.log
-          weston.log
-        retention-days: 30
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results
+          path: |
+            benchmark-results
+            benchmark.log
+            weston.log
+          retention-days: 30
 
-    - name: Publish commit status
-      if: always()
-      uses: actions/github-script@v9
-      env:
-        BENCHMARK_RUN_OUTCOME: ${{ steps.run_benchmark.outcome }}
-        BENCHMARK_COMPARE_OUTCOME: ${{ steps.compare.outcome }}
-      with:
-        script: |
-          const runOutcome = process.env.BENCHMARK_RUN_OUTCOME;
-          const compareOutcome = process.env.BENCHMARK_COMPARE_OUTCOME;
-          const failed = runOutcome === 'failure' || compareOutcome === 'failure';
-          const description = failed
-            ? 'Benchmark regression or runtime failure'
-            : 'Benchmark completed';
+      - name: Publish commit status
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          BENCHMARK_RUN_OUTCOME: ${{ steps.run_benchmark.outcome }}
+          BENCHMARK_COMPARE_OUTCOME: ${{ steps.compare.outcome }}
+        with:
+          script: |
+            const runOutcome = process.env.BENCHMARK_RUN_OUTCOME;
+            const compareOutcome = process.env.BENCHMARK_COMPARE_OUTCOME;
+            const failed = runOutcome === 'failure' || compareOutcome === 'failure';
+            const description = failed
+              ? 'Benchmark regression or runtime failure'
+              : 'Benchmark completed';
 
-          await github.rest.repos.createCommitStatus({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            sha: context.sha,
-            state: failed ? 'failure' : 'success',
-            context: 'performance/benchmark',
-            description,
-          });
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: failed ? 'failure' : 'success',
+              context: 'performance/benchmark',
+              description,
+            });

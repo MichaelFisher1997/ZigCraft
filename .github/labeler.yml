@@ -3,36 +3,36 @@
 
 engine:
   - changed-files:
-      - any-glob-to-any-file: 'modules/engine-*/**/*'
+      - any-glob-to-any-file: "modules/engine-*/**/*"
 
 world:
   - changed-files:
-      - any-glob-to-any-file: 'src/world/**/*'
+      - any-glob-to-any-file: "src/world/**/*"
 
 game:
   - changed-files:
-      - any-glob-to-any-file: 'src/game/**/*'
+      - any-glob-to-any-file: "src/game/**/*"
 
 ci:
   - changed-files:
-      - any-glob-to-any-file: '.github/**/*'
+      - any-glob-to-any-file: ".github/**/*"
 
 shaders:
   - changed-files:
-      - any-glob-to-any-file: 'assets/shaders/**/*'
+      - any-glob-to-any-file: "assets/shaders/**/*"
 
 documentation:
   - changed-files:
       - any-glob-to-any-file:
-          - '**/*.md'
-          - 'docs/**/*'
-          - '!assets/**/*.md'
-          - '!.github/**/*.md'
+          - "**/*.md"
+          - "docs/**/*"
+          - "!assets/**/*.md"
+          - "!.github/**/*.md"
 
 build:
   - changed-files:
       - any-glob-to-any-file:
-          - 'build.zig'
-          - 'build.zig.zon'
-          - 'flake.nix'
-          - 'flake.lock'
+          - "build.zig"
+          - "build.zig.zon"
+          - "flake.nix"
+          - "flake.lock"

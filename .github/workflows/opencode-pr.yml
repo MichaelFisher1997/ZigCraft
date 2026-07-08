@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to review (triggered by test-writer)'
+        description: "PR number to review (triggered by test-writer)"
         required: true
         type: number
       head_sha:
-        description: 'Head SHA of the PR to review'
+        description: "Head SHA of the PR to review"
         required: true
         type: string
 

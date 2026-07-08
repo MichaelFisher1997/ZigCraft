@@ -8,11 +8,11 @@ name: opencode-audit
 
 on:
   schedule:
-    - cron: '0 6 * * 1'
+    - cron: "0 6 * * 1"
   workflow_dispatch:
     inputs:
       module:
-        description: 'Module to scan (e.g. engine/graphics, world/worldgen)'
+        description: "Module to scan (e.g. engine/graphics, world/worldgen)"
         required: false
         type: string
 
