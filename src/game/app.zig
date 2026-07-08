@@ -360,6 +360,10 @@ pub const App = struct {
         self.input.pollEvents();
 
         const swapchain_extent = self.render_system.getRHI().renderContext().getNativeSwapchainExtent();
+        if (build_options.skip_present and swapchain_extent[0] > 0 and swapchain_extent[1] > 0) {
+            self.input.window_width = swapchain_extent[0];
+            self.input.window_height = swapchain_extent[1];
+        }
         if (self.direct_launch_resize_guard_frames > 0 and swapchain_extent[0] > 0 and swapchain_extent[1] > 0) {
             self.direct_launch_resize_guard_frames -= 1;
             self.input.window_width = swapchain_extent[0];

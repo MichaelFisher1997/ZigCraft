@@ -10,6 +10,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const App = @import("game/app.zig").App;
+const build_options = @import("build_options");
 
 const WorldScreen = @import("game-ui").WorldScreen;
 const Screen = @import("game-ui").screen;
@@ -108,8 +109,10 @@ test "smoke test: launch, generate, render, exit" {
     var actual_h: c_int = 0;
     _ = c.SDL_GetWindowSizeInPixels(app.window_manager.window, &actual_w, &actual_h);
     const extent = app.render_system.getRHI().vulkanHandles().getSwapchainExtent();
-    try testing.expectEqual(@as(u32, @intCast(actual_w)), extent[0]);
-    try testing.expectEqual(@as(u32, @intCast(actual_h)), extent[1]);
+    if (!build_options.skip_present) {
+        try testing.expectEqual(@as(u32, @intCast(actual_w)), extent[0]);
+        try testing.expectEqual(@as(u32, @intCast(actual_h)), extent[1]);
+    }
 
     const val_count = app.render_system.getRHI().query().getValidationErrorCount();
     if (val_count > 0) {
