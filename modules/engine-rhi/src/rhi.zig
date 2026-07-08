@@ -289,12 +289,12 @@ pub const RenderContext = struct {
 
     // --- IRenderContext delegates ---
 
-    /// Begins frame for the current frame.
+    /// Begins the per-frame command recording scope.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFrame(self: RenderContext) void {
         self.render.beginFrame();
     }
-    /// Ends frame for the current frame.
+    /// Ends the per-frame command recording scope and submits queued frame work.
     /// All commands for that scope must be recorded before this call.
     pub fn endFrame(self: RenderContext) void {
         self.render.endFrame();
@@ -304,72 +304,72 @@ pub const RenderContext = struct {
     pub fn abortFrame(self: RenderContext) void {
         self.render.abortFrame();
     }
-    /// Begins main pass for the current frame.
+    /// Begins the main scene render pass for opaque and sky/world drawing.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginMainPass(self: RenderContext) void {
         self.passes.beginMainPass();
     }
-    /// Ends main pass for the current frame.
+    /// Ends the main scene render pass and finalizes its attachments for later passes.
     /// All commands for that scope must be recorded before this call.
     pub fn endMainPass(self: RenderContext) void {
         self.passes.endMainPass();
     }
-    /// Begins post process pass for the current frame.
+    /// Begins the post-process pass that consumes scene color/depth outputs.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginPostProcessPass(self: RenderContext) void {
         self.passes.beginPostProcessPass();
     }
-    /// Ends post process pass for the current frame.
+    /// Ends the post-process pass and makes its output available for presentation or later passes.
     /// All commands for that scope must be recorded before this call.
     pub fn endPostProcessPass(self: RenderContext) void {
         self.passes.endPostProcessPass();
     }
-    /// Begins g pass for the current frame.
+    /// Begins the G-pass that writes geometry buffers for screen-space effects.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginGPass(self: RenderContext) void {
         self.passes.beginGPass();
     }
-    /// Ends g pass for the current frame.
+    /// Ends the G-pass and makes geometry buffers available to SSAO or lighting passes.
     /// All commands for that scope must be recorded before this call.
     pub fn endGPass(self: RenderContext) void {
         self.passes.endGPass();
     }
-    /// Begins f x a a pass for the current frame.
+    /// Begins the FXAA post-process pass for the current frame.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFXAAPass(self: RenderContext) void {
         self.passes.beginFXAAPass();
     }
-    /// Ends f x a a pass for the current frame.
+    /// Ends the FXAA post-process pass for the current frame.
     /// All commands for that scope must be recorded before this call.
     pub fn endFXAAPass(self: RenderContext) void {
         self.passes.endFXAAPass();
     }
-    /// Provides RHI access for compute bloom.
+    /// Runs the bloom extraction and blur compute passes for the current frame.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeBloom(self: RenderContext) void {
         self.post_process.computeBloom();
     }
-    /// Provides RHI access for compute t a a.
+    /// Runs the TAA resolve pass using the current color, history, and velocity inputs.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeTAA(self: RenderContext) void {
         self.post_process.computeTAA();
     }
-    /// Provides RHI access for compute depth pyramid.
+    /// Builds the hierarchical depth pyramid used by culling and screen-space effects.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeDepthPyramid(self: RenderContext) void {
         self.post_process.computeDepthPyramid();
     }
-    /// Provides RHI access for draw sky.
+    /// Draws the sky and atmosphere contribution for the current camera parameters.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation.
     pub fn drawSky(self: RenderContext, params: SkyParams) RhiError!void {
         return self.effects.drawSky(params);
     }
-    /// Begins water draw for the current frame.
+    /// Begins water rendering using reflection and scene-depth textures as inputs.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginWaterDraw(self: RenderContext, reflection: TextureHandle, scene_depth: TextureHandle) bool {
         return self.effects.beginWaterDraw(reflection, scene_depth);
     }
-    /// Ends water draw for the current frame.
+    /// Ends water rendering and restores normal scene rendering state.
     /// All commands for that scope must be recorded before this call.
     pub fn endWaterDraw(self: RenderContext) void {
         self.effects.endWaterDraw();
@@ -455,7 +455,7 @@ pub const RenderContext = struct {
     pub fn setInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setInstanceBuffer(handle);
     }
-    /// Sets l o d instance buffer on the active graphics backend.
+    /// Binds the LOD instance buffer used by distant-terrain draw calls.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setLODInstanceBuffer(handle);
@@ -493,12 +493,12 @@ pub const IShadowContext = struct {
         getShadowMapHandle: *const fn (ptr: *anyopaque, cascade_index: u32) TextureHandle,
     };
 
-    /// Begins pass for the current frame.
-    /// Must be paired with the matching end call and used from the render thread.
+    /// Begins rendering one shadow cascade using the supplied light-space transform.
+    /// Must be paired with `endPass` after all shadow casters for the cascade are drawn.
     pub fn beginPass(self: IShadowContext, cascade_index: u32, light_space_matrix: Mat4) void {
         self.vtable.beginPass(self.ptr, cascade_index, light_space_matrix);
     }
-    /// Ends pass for the current frame.
+    /// Ends this subsystem render pass and finalizes its pass-local state.
     /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: IShadowContext) void {
         self.vtable.endPass(self.ptr);
@@ -531,12 +531,12 @@ pub const IShadowContext = struct {
 pub const ShadowSystemWrapper = struct {
     ctx: IShadowContext,
 
-    /// Begins pass for the current frame.
-    /// Must be paired with the matching end call and used from the render thread.
+    /// Begins rendering one shadow cascade through the focused shadow-system wrapper.
+    /// Must be paired with `endPass`; draw shadow casters between the two calls.
     pub fn beginPass(self: ShadowSystemWrapper, cascade_index: u32, light_space_matrix: Mat4) void {
         self.ctx.beginPass(cascade_index, light_space_matrix);
     }
-    /// Ends pass for the current frame.
+    /// Ends this subsystem render pass and finalizes its pass-local state.
     /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: ShadowSystemWrapper) void {
         self.ctx.endPass();
@@ -565,12 +565,12 @@ pub const IWaterContext = struct {
         computeReflectedViewProj: *const fn (ptr: *anyopaque, view: Mat4, proj: Mat4, camera_pos: Vec3) Mat4,
     };
 
-    /// Begins reflection pass for the current frame.
+    /// Begins rendering the reflected scene into the water reflection target.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginReflectionPass(self: IWaterContext) void {
         self.vtable.beginReflectionPass(self.ptr);
     }
-    /// Ends reflection pass for the current frame.
+    /// Ends reflection rendering and makes the reflection texture available to water shading.
     /// All commands for that scope must be recorded before this call.
     pub fn endReflectionPass(self: IWaterContext) void {
         self.vtable.endReflectionPass(self.ptr);
@@ -595,12 +595,12 @@ pub const IWaterContext = struct {
 pub const WaterSystemWrapper = struct {
     ctx: IWaterContext,
 
-    /// Begins reflection pass for the current frame.
+    /// Begins rendering the reflected scene into the water reflection target.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginReflectionPass(self: WaterSystemWrapper) void {
         self.ctx.beginReflectionPass();
     }
-    /// Ends reflection pass for the current frame.
+    /// Ends reflection rendering and makes the reflection texture available to water shading.
     /// All commands for that scope must be recorded before this call.
     pub fn endReflectionPass(self: WaterSystemWrapper) void {
         self.ctx.endReflectionPass();
@@ -636,12 +636,12 @@ pub const IUIContext = struct {
         bindPipeline: *const fn (ptr: *anyopaque, textured: bool) void,
     };
 
-    /// Begins pass for the current frame.
-    /// Must be paired with the matching end call and used from the render thread.
+    /// Begins the immediate-mode UI pass for a framebuffer of `width` by `height` pixels.
+    /// UI draw calls must be issued between this call and `endPass` on the render thread.
     pub fn beginPass(self: IUIContext, width: f32, height: f32) void {
         self.vtable.beginPass(self.ptr, width, height);
     }
-    /// Ends pass for the current frame.
+    /// Ends this subsystem render pass and finalizes its pass-local state.
     /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: IUIContext) void {
         self.vtable.endPass(self.ptr);
@@ -721,12 +721,12 @@ pub const IImGuiContext = struct {
 pub const UIRenderer = struct {
     ctx: IUIContext,
 
-    /// Begins pass for the current frame.
-    /// Must be paired with the matching end call and used from the render thread.
+    /// Begins the immediate-mode UI pass through the focused UI renderer wrapper.
+    /// UI rectangles and textures queued after this call target the supplied framebuffer size.
     pub fn beginPass(self: UIRenderer, width: f32, height: f32) void {
         self.ctx.beginPass(width, height);
     }
-    /// Ends pass for the current frame.
+    /// Ends this subsystem render pass and finalizes its pass-local state.
     /// All commands for that scope must be recorded before this call.
     pub fn endPass(self: UIRenderer) void {
         self.ctx.endPass();
@@ -845,7 +845,7 @@ pub const IRenderStateContext = struct {
     pub fn setInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setInstanceBuffer(self.ptr, handle);
     }
-    /// Sets l o d instance buffer on the active graphics backend.
+    /// Binds the LOD instance buffer used by distant-terrain draw calls.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setLODInstanceBuffer(self.ptr, handle);
@@ -1046,12 +1046,12 @@ pub const IRenderContext = struct {
         setClearColor: *const fn (ptr: *anyopaque, color: Vec3) void,
     };
 
-    /// Begins frame for the current frame.
+    /// Begins the per-frame command recording scope.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFrame(self: IRenderContext) void {
         self.vtable.beginFrame(self.ptr);
     }
-    /// Ends frame for the current frame.
+    /// Ends the per-frame command recording scope and submits queued frame work.
     /// All commands for that scope must be recorded before this call.
     pub fn endFrame(self: IRenderContext) void {
         self.vtable.endFrame(self.ptr);
@@ -1093,42 +1093,42 @@ pub const IPassOrchestrationContext = struct {
         endFXAAPass: *const fn (ptr: *anyopaque) void,
     };
 
-    /// Begins main pass for the current frame.
+    /// Begins the main scene render pass for opaque and sky/world drawing.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginMainPass(self: IPassOrchestrationContext) void {
         self.vtable.beginMainPass(self.ptr);
     }
-    /// Ends main pass for the current frame.
+    /// Ends the main scene render pass and finalizes its attachments for later passes.
     /// All commands for that scope must be recorded before this call.
     pub fn endMainPass(self: IPassOrchestrationContext) void {
         self.vtable.endMainPass(self.ptr);
     }
-    /// Begins post process pass for the current frame.
+    /// Begins the post-process pass that consumes scene color/depth outputs.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginPostProcessPass(self: IPassOrchestrationContext) void {
         self.vtable.beginPostProcessPass(self.ptr);
     }
-    /// Ends post process pass for the current frame.
+    /// Ends the post-process pass and makes its output available for presentation or later passes.
     /// All commands for that scope must be recorded before this call.
     pub fn endPostProcessPass(self: IPassOrchestrationContext) void {
         self.vtable.endPostProcessPass(self.ptr);
     }
-    /// Begins g pass for the current frame.
+    /// Begins the G-pass that writes geometry buffers for screen-space effects.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginGPass(self: IPassOrchestrationContext) void {
         self.vtable.beginGPass(self.ptr);
     }
-    /// Ends g pass for the current frame.
+    /// Ends the G-pass and makes geometry buffers available to SSAO or lighting passes.
     /// All commands for that scope must be recorded before this call.
     pub fn endGPass(self: IPassOrchestrationContext) void {
         self.vtable.endGPass(self.ptr);
     }
-    /// Begins f x a a pass for the current frame.
+    /// Begins the FXAA post-process pass for the current frame.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginFXAAPass(self: IPassOrchestrationContext) void {
         self.vtable.beginFXAAPass(self.ptr);
     }
-    /// Ends f x a a pass for the current frame.
+    /// Ends the FXAA post-process pass for the current frame.
     /// All commands for that scope must be recorded before this call.
     pub fn endFXAAPass(self: IPassOrchestrationContext) void {
         self.vtable.endFXAAPass(self.ptr);
@@ -1145,17 +1145,17 @@ pub const IPostProcessContext = struct {
         computeDepthPyramid: *const fn (ptr: *anyopaque) void,
     };
 
-    /// Provides RHI access for compute bloom.
+    /// Runs the bloom extraction and blur compute passes for the current frame.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeBloom(self: IPostProcessContext) void {
         self.vtable.computeBloom(self.ptr);
     }
-    /// Provides RHI access for compute t a a.
+    /// Runs the TAA resolve pass using the current color, history, and velocity inputs.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeTAA(self: IPostProcessContext) void {
         self.vtable.computeTAA(self.ptr);
     }
-    /// Provides RHI access for compute depth pyramid.
+    /// Builds the hierarchical depth pyramid used by culling and screen-space effects.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules.
     pub fn computeDepthPyramid(self: IPostProcessContext) void {
         self.vtable.computeDepthPyramid(self.ptr);
@@ -1172,17 +1172,17 @@ pub const IRenderEffectsContext = struct {
         endWaterDraw: *const fn (ptr: *anyopaque) void,
     };
 
-    /// Provides RHI access for draw sky.
+    /// Draws the sky and atmosphere contribution for the current camera parameters.
     /// The call delegates to backend-owned state and must obey the active backend lifetime and render-thread rules. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation.
     pub fn drawSky(self: IRenderEffectsContext, params: SkyParams) RhiError!void {
         return self.vtable.drawSky(self.ptr, params);
     }
-    /// Begins water draw for the current frame.
+    /// Begins water rendering using reflection and scene-depth textures as inputs.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginWaterDraw(self: IRenderEffectsContext, reflection: TextureHandle, scene_depth: TextureHandle) bool {
         return self.vtable.beginWaterDraw(self.ptr, reflection, scene_depth);
     }
-    /// Ends water draw for the current frame.
+    /// Ends water rendering and restores normal scene rendering state.
     /// All commands for that scope must be recorded before this call.
     pub fn endWaterDraw(self: IRenderEffectsContext) void {
         self.vtable.endWaterDraw(self.ptr);
@@ -1335,12 +1335,12 @@ pub const IDeviceTiming = struct {
         setTimingEnabled: *const fn (ptr: *anyopaque, enabled: bool) void,
     };
 
-    /// Begins pass timing for the current frame.
+    /// Starts GPU timestamp collection for a named render pass.
     /// Must be paired with the matching end call and used from the render thread.
     pub fn beginPassTiming(self: IDeviceTiming, pass_name: []const u8) void {
         self.vtable.beginPassTiming(self.ptr, pass_name);
     }
-    /// Ends pass timing for the current frame.
+    /// Stops GPU timestamp collection for a named render pass.
     /// All commands for that scope must be recorded before this call.
     pub fn endPassTiming(self: IDeviceTiming, pass_name: []const u8) void {
         self.vtable.endPassTiming(self.ptr, pass_name);
@@ -1425,12 +1425,12 @@ pub const IRenderQualityOptions = struct {
     pub fn setVolumetricDensity(self: IRenderQualityOptions, density: f32) void {
         self.vtable.setVolumetricDensity(self.ptr, density);
     }
-    /// Sets m s a a on the active graphics backend.
+    /// Sets the requested MSAA sample count on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setMSAA(self: IRenderQualityOptions, samples: u8) void {
         self.vtable.setMSAA(self.ptr, samples);
     }
-    /// Sets f x a a on the active graphics backend.
+    /// Enables or disables FXAA on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setFXAA(self: IRenderQualityOptions, enabled: bool) void {
         self.vtable.setFXAA(self.ptr, enabled);
@@ -1475,12 +1475,12 @@ pub const IRenderQualityOptions = struct {
     pub fn setColorGradingIntensity(self: IRenderQualityOptions, intensity: f32) void {
         self.vtable.setColorGradingIntensity(self.ptr, intensity);
     }
-    /// Sets t a a blend factor on the active graphics backend.
+    /// Sets the TAA history blend factor on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTAABlendFactor(self: IRenderQualityOptions, value: f32) void {
         self.vtable.setTAABlendFactor(self.ptr, value);
     }
-    /// Sets t a a velocity rejection on the active graphics backend.
+    /// Sets the TAA velocity rejection threshold on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setTAAVelocityRejection(self: IRenderQualityOptions, value: f32) void {
         self.vtable.setTAAVelocityRejection(self.ptr, value);
