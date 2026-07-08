@@ -43,12 +43,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: ${{ github.event_name == 'schedule' && 0 || 1 }}
+          fetch-depth: 0
 
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Scan working tree for secrets
+        if: github.event_name != 'schedule'
+        run: nix run nixpkgs#gitleaks -- detect --source . --redact --verbose --no-git
+
+      - name: Scan full history for secrets
+        if: github.event_name == 'schedule'
+        run: nix run nixpkgs#gitleaks -- detect --source . --redact --verbose --log-opts="--all"
 
   trivy:
     name: Trivy Filesystem
@@ -63,13 +69,7 @@ jobs:
         run: nix flake show --json > nix-flake-show.json
 
       - name: Scan filesystem
-        uses: aquasecurity/trivy-action@0.33.1
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          format: table
+        run: nix run nixpkgs#trivy -- fs --severity HIGH,CRITICAL --exit-code 1 --format table .
 
       - name: Upload flake dependency graph
         uses: actions/upload-artifact@v7
