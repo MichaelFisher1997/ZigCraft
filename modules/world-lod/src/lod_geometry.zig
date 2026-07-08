@@ -50,7 +50,8 @@ pub const SkirtParams = struct {
 
 pub const SkirtDir = enum { north, south, east, west };
 
-/// LOD geometry API `makeSkirtQuad` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes make skirt quad for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn makeSkirtQuad(params: SkirtParams, tile_id: u16, world_x: i32, world_z: i32) [4]Vertex {
     const p = params;
     const cr = unpackR(p.avg_c) * p.brightness;
@@ -93,7 +94,8 @@ pub fn makeSkirtQuad(params: SkirtParams, tile_id: u16, world_x: i32, world_z: i
     };
 }
 
-/// LOD geometry API `buildFullDetailHeightmapMesh` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes build full detail heightmap mesh from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn buildFullDetailHeightmapMesh(
     allocator: std.mem.Allocator,
     lod_level: LODLevel,
@@ -206,7 +208,8 @@ pub const SEA_LEVEL_WATER_EPSILON: f32 = 2.0;
 pub const SYNTHETIC_SEAFLOOR_SKIRT: f32 = 8.0;
 pub const LOD_TREE_COVERAGE_THRESHOLD: f32 = 0.08;
 
-/// LOD geometry API `isLODWaterCell` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether is l o d water cell for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn isLODWaterCell(data: *const LODSimplifiedData, gx: u32, gz: u32) bool {
     const stats = waterCoverageStats(data, gx, gz);
     const water_coverage = stats.average_coverage;
@@ -214,17 +217,20 @@ pub fn isLODWaterCell(data: *const LODSimplifiedData, gx: u32, gz: u32) bool {
     return stats.wet_samples >= 2 and water_coverage >= 0.25 and stats.representative_depth >= 1.5;
 }
 
-/// LOD geometry API `isFineSampleLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether is fine sample l o d for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn isFineSampleLOD(lod_level: LODLevel) bool {
     return @intFromEnum(lod_level) <= @intFromEnum(LODLevel.lod1);
 }
 
-/// LOD geometry API `cellIndex` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reads cell index from the clamped LOD sample grid.
+/// Coordinates are clamped to the simplified data width.
 pub fn cellIndex(data: *const LODSimplifiedData, gx: u32, gz: u32) u32 {
     return @min(gx, data.width - 1) + @min(gz, data.width - 1) * data.width;
 }
 
-/// LOD geometry API `cellColorForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes cell color for l o d for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn cellColorForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) u32 {
     if (isFineSampleLOD(lod_level)) return data.colors[cellIndex(data, gx, gz)];
     const c00 = data.colors[cellIndex(data, gx, gz)];
@@ -234,13 +240,15 @@ pub fn cellColorForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_lev
     return averageColor(c00, c10, c01, c11);
 }
 
-/// LOD geometry API `ambientOcclusionForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reads ambient occlusion for l o d from the clamped LOD sample grid.
+/// Coordinates are clamped to the simplified data width.
 pub fn ambientOcclusionForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
     if (isFineSampleLOD(lod_level)) return data.lighting[cellIndex(data, gx, gz)].ambient_occlusion;
     return averageAmbientOcclusion(data, gx, gz);
 }
 
-/// LOD geometry API `isLODWaterCellForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether is l o d water cell for l o d for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn isLODWaterCellForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) bool {
     if (isFineSampleLOD(lod_level)) {
         const water = data.water[cellIndex(data, gx, gz)];
@@ -249,12 +257,14 @@ pub fn isLODWaterCellForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lo
     return isLODWaterCell(data, gx, gz);
 }
 
-/// LOD geometry API `quantizedHeight` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized height from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedHeight(height: f32) f32 {
     return @round(height);
 }
 
-/// LOD geometry API `terrainHeightForPoint` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes terrain height for point from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn terrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
@@ -270,47 +280,55 @@ pub fn terrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f
     return @min(height, floor_height);
 }
 
-/// LOD geometry API `terrainSurfaceHeightForPoint` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes terrain surface height for point from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn terrainSurfaceHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
     return stitchedHeight(data, clamped_x, clamped_z);
 }
 
-/// LOD geometry API `quantizedTerrainHeightForPoint` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized terrain height for point from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedTerrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainHeightForPoint(data, gx, gz));
 }
 
-/// LOD geometry API `quantizedCellTerrainHeight` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized cell terrain height from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedCellTerrainHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainHeightForPoint(data, gx, gz));
 }
 
-/// LOD geometry API `quantizedCellSurfaceHeight` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized cell surface height from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedCellSurfaceHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
 }
 
-/// LOD geometry API `quantizedCellTerrainHeightForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized cell terrain height for l o d from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedCellTerrainHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
     if (isFineSampleLOD(lod_level)) return quantizedTerrainHeightForPoint(data, gx, gz);
     return quantizedCellTerrainHeight(data, gx, gz);
 }
 
-/// LOD geometry API `quantizedCellVisualTerrainHeightForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized cell visual terrain height for l o d from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedCellVisualTerrainHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, is_water_cell: bool) f32 {
     if (is_water_cell) return quantizedCellTerrainHeightForLOD(data, gx, gz, lod_level);
     if (isFineSampleLOD(lod_level)) return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
     return quantizedCellSurfaceHeight(data, gx, gz);
 }
 
-/// LOD geometry API `maxWaterSurfaceHeightForCell` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes max water surface height for cell from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn maxWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) ?f32 {
     return representativeWaterSurfaceHeightForCell(data, gx, gz, lod_level);
 }
 
-/// LOD geometry API `representativeWaterSurfaceHeightForCell` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes representative water surface height for cell from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn representativeWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) ?f32 {
     if (isFineSampleLOD(lod_level)) {
         const idx = cellIndex(data, gx, gz);
@@ -339,7 +357,8 @@ pub fn representativeWaterSurfaceHeightForCell(data: *const LODSimplifiedData, g
     return null;
 }
 
-/// LOD geometry API `normalizedWaterSurfaceHeight` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes normalized water surface height from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn normalizedWaterSurfaceHeight(data: *const LODSimplifiedData, idx: u32, water: world_core.LODWaterState) f32 {
     if (isOceanBiome(data.biomes[idx]) and @abs(water.surface_height - WORLDGEN_SEA_LEVEL) <= SEA_LEVEL_WATER_EPSILON) {
         return WORLDGEN_SEA_LEVEL;
@@ -347,7 +366,8 @@ pub fn normalizedWaterSurfaceHeight(data: *const LODSimplifiedData, idx: u32, wa
     return water.surface_height;
 }
 
-/// LOD geometry API `isOceanBiome` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether is ocean biome for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn isOceanBiome(biome: BiomeId) bool {
     return switch (biome) {
         .deep_ocean, .ocean, .warm_ocean, .frozen_ocean, .cold_ocean => true,
@@ -355,13 +375,15 @@ pub fn isOceanBiome(biome: BiomeId) bool {
     };
 }
 
-/// LOD geometry API `quantizedWaterSurfaceHeightForCell` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized water surface height for cell from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedWaterSurfaceHeightForCell(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
     if (maxWaterSurfaceHeightForCell(data, gx, gz, lod_level)) |height| return quantizedHeight(height);
     return quantizedCellTerrainHeightForLOD(data, gx, gz, lod_level);
 }
 
-/// LOD geometry API `quantizedWaterSurfaceHeightForSpan` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized water surface height for span from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedWaterSurfaceHeightForSpan(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, fallback_height: f32) f32 {
     if (maxWaterSurfaceHeightForCell(data, gx, gz, lod_level)) |height| return quantizedHeight(height);
     return quantizedHeight(fallback_height);
@@ -373,18 +395,21 @@ pub const FoldedCanopyColumn = struct {
     color: u32,
 };
 
-/// LOD geometry API `shouldFoldCanopyIntoTerrain` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether should fold canopy into terrain for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn shouldFoldCanopyIntoTerrain(lod_level: LODLevel) bool {
     _ = lod_level;
     return false;
 }
 
-/// LOD geometry API `shouldRenderLODTreeTrunk` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether should render l o d tree trunk for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn shouldRenderLODTreeTrunk(lod_level: LODLevel) bool {
     return @intFromEnum(lod_level) <= @intFromEnum(LODLevel.lod3);
 }
 
-/// LOD geometry API `foldedCanopyColumnForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes folded canopy column for l o d for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn foldedCanopyColumnForLOD(
     data: *const LODSimplifiedData,
     gx: u32,
@@ -409,7 +434,8 @@ pub fn foldedCanopyColumnForLOD(
     };
 }
 
-/// LOD geometry API `quantizedVisualColumnHeightForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes quantized visual column height for l o d from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn quantizedVisualColumnHeightForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) f32 {
     const is_water_cell = isLODWaterCellForLOD(data, gx, gz, lod_level);
     const terrain_block = terrainBlockForLODQuadForLOD(data, gx, gz, is_water_cell, lod_level);
@@ -420,7 +446,8 @@ pub fn quantizedVisualColumnHeightForLOD(data: *const LODSimplifiedData, gx: u32
     return base_height;
 }
 
-/// LOD geometry API `terrainBlockForLODQuad` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects terrain block for l o d quad for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn terrainBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, is_water_cell: bool) BlockType {
     if (!is_water_cell) return blockForLODQuad(data, gx, gz);
 
@@ -434,7 +461,8 @@ pub fn terrainBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, 
     return data.biomes[idx].getOceanFloorBlock(representativeWaterDepth(data, gx, gz));
 }
 
-/// LOD geometry API `terrainBlockForLODQuadForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects terrain block for l o d quad for l o d for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn terrainBlockForLODQuadForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, is_water_cell: bool, lod_level: LODLevel) BlockType {
     if (!isFineSampleLOD(lod_level)) return terrainBlockForLODQuad(data, gx, gz, is_water_cell);
     if (!is_water_cell) return blockForLODCell(data, gx, gz);
@@ -447,7 +475,8 @@ pub fn terrainBlockForLODQuadForLOD(data: *const LODSimplifiedData, gx: u32, gz:
     return data.biomes[idx].getOceanFloorBlock(data.water[idx].depth);
 }
 
-/// LOD geometry API `getLodSideTile` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes get lod side tile for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn getLodSideTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     if (block == .air) return Vertex.LOD_TILE_ID;
     if (isLeafBlock(block)) return Vertex.LOD_TILE_ID;
@@ -456,12 +485,14 @@ pub fn getLodSideTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     return tiles.side;
 }
 
-/// LOD geometry API `boundarySkirtDepth` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes boundary skirt depth for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn boundarySkirtDepth(size: f32) f32 {
     return std.math.clamp(size, 16.0, 32.0);
 }
 
-/// LOD geometry API `heightfieldSideBrightness` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes heightfield side brightness from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn heightfieldSideBrightness(dir: FaceDir) f32 {
     return switch (dir) {
         .west, .east => 0.8,
@@ -469,7 +500,8 @@ pub fn heightfieldSideBrightness(dir: FaceDir) f32 {
     };
 }
 
-/// LOD geometry API `addSteppedHeightfieldSides` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add stepped heightfield sides geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addSteppedHeightfieldSides(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -492,7 +524,8 @@ pub fn addSteppedHeightfieldSides(
     try addHeightfieldSide(allocator, vertices, wx, wz, size, column_height, if (gz + 1 >= data.width - 1) null else quantizedVisualColumnHeightForLOD(data, gx, gz + 1, lod_level), color, side_tile, .south, world_x, world_z);
 }
 
-/// LOD geometry API `addHeightfieldSide` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add heightfield side geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addHeightfieldSide(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -526,7 +559,8 @@ pub const HeightInterval = struct {
     max_height: f32,
 };
 
-/// LOD geometry API `collectColumnSpans` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes collect column spans for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan) usize {
     var count: usize = 0;
     var has_water_span = false;
@@ -604,7 +638,8 @@ pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_
     return count;
 }
 
-/// LOD geometry API `syntheticSeafloorMinHeight` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes synthetic seafloor min height from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn syntheticSeafloorMinHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const x_min = if (gx == 0) gx else gx - 1;
     const z_min = if (gz == 0) gz else gz - 1;
@@ -623,7 +658,8 @@ pub fn syntheticSeafloorMinHeight(data: *const LODSimplifiedData, gx: u32, gz: u
     return @max(0.0, min_height - SYNTHETIC_SEAFLOOR_SKIRT);
 }
 
-/// LOD geometry API `foldCanopyIntoSpansForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes fold canopy into spans for l o d for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn foldCanopyIntoSpansForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, spans: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan, count: *usize) void {
     if (!shouldFoldCanopyIntoTerrain(lod_level) or count.* == 0) return;
 
@@ -666,19 +702,22 @@ pub fn foldCanopyIntoSpansForLOD(data: *const LODSimplifiedData, gx: u32, gz: u3
     });
 }
 
-/// LOD geometry API `isDetachedCanopySpan` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether is detached canopy span for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn isDetachedCanopySpan(span: LODColumnSpan, base_height: f32) bool {
     return isLeafBlock(span.block) and span.min_height > base_height + 0.5;
 }
 
-/// LOD geometry API `representativeSpanBlock` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects representative span block for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn representativeSpanBlock(layers: world_core.LODMaterialLayers) BlockType {
     if (layers.surface != .air) return layers.surface;
     if (layers.subsurface != .air) return layers.subsurface;
     return layers.foundation;
 }
 
-/// LOD geometry API `insertColumnSpan` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends insert column span geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn insertColumnSpan(out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSpan, count: *usize, span: LODColumnSpan) void {
     if (count.* >= out.len) return;
     var dst = count.*;
@@ -689,7 +728,8 @@ pub fn insertColumnSpan(out: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]LODColumnSp
     out[dst] = span;
 }
 
-/// LOD geometry API `highestSolidSpanIndex` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes highest solid span index for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn highestSolidSpanIndex(spans: []const LODColumnSpan) ?usize {
     var i = spans.len;
     while (i > 0) {
@@ -699,7 +739,8 @@ pub fn highestSolidSpanIndex(spans: []const LODColumnSpan) ?usize {
     return null;
 }
 
-/// LOD geometry API `addExposedSpanFaces` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add exposed span faces geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addExposedSpanFaces(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -722,7 +763,8 @@ pub fn addExposedSpanFaces(
     try addExposedSpanFace(allocator, vertices, data, gx, gz, gx, if (gz + 1 >= data.width - 1) null else gz + 1, lod_level, span, wx, wz, size, color, tile_id, .south, world_x, world_z);
 }
 
-/// LOD geometry API `addExposedSpanFace` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add exposed span face geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addExposedSpanFace(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -775,7 +817,8 @@ pub fn addExposedSpanFace(
     }
 }
 
-/// LOD geometry API `subtractCoveredInterval` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes subtract covered interval for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn subtractCoveredInterval(intervals: *[world_core.MAX_LOD_VERTICAL_SPANS + 1]HeightInterval, count: *usize, cover_min: f32, cover_max: f32) void {
     var i: usize = 0;
     while (i < count.*) {
@@ -817,12 +860,14 @@ pub fn subtractCoveredInterval(intervals: *[world_core.MAX_LOD_VERTICAL_SPANS + 
 pub const LOD_UV_BLOCK_SCALE: f32 = 1.0;
 pub const LOD_UV_WRAP_BLOCKS: i32 = 256;
 
-/// LOD geometry API `lodUVOffset` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes lod u v offset for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn lodUVOffset(coord: i32) f32 {
     return @floatFromInt(@mod(coord, LOD_UV_WRAP_BLOCKS));
 }
 
-/// LOD geometry API `topFaceUV` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes top face u v for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn topFaceUV(pos: [3]f32, world_x: i32, world_z: i32) [2]f32 {
     return .{
         (lodUVOffset(world_x) + pos[0]) * LOD_UV_BLOCK_SCALE,
@@ -830,7 +875,8 @@ pub fn topFaceUV(pos: [3]f32, world_x: i32, world_z: i32) [2]f32 {
     };
 }
 
-/// LOD geometry API `sideFaceUV` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes side face u v for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn sideFaceUV(pos: [3]f32, dir: FaceDir, world_x: i32, world_z: i32) [2]f32 {
     const horizontal = switch (dir) {
         .north, .south => lodUVOffset(world_x) + pos[0],
@@ -839,7 +885,8 @@ pub fn sideFaceUV(pos: [3]f32, dir: FaceDir, world_x: i32, world_z: i32) [2]f32 
     return .{ horizontal * LOD_UV_BLOCK_SCALE, pos[1] * LOD_UV_BLOCK_SCALE };
 }
 
-/// LOD geometry API `skirtDirToFaceDir` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes skirt dir to face dir for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn skirtDirToFaceDir(dir: SkirtDir) FaceDir {
     return switch (dir) {
         .north => .north,
@@ -849,7 +896,8 @@ pub fn skirtDirToFaceDir(dir: SkirtDir) FaceDir {
     };
 }
 
-/// LOD geometry API `blockForLODCell` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects block for l o d cell for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
@@ -860,13 +908,15 @@ pub fn blockForLODCell(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockTy
     return data.biomes[idx].getSurfaceBlock();
 }
 
-/// LOD geometry API `blockForLODQuad` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects block for l o d quad for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn blockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     if (isLODWaterCell(data, gx, gz)) return .water;
     return representativeSurfaceBlock(data, gx, gz);
 }
 
-/// LOD geometry API `representativeSurfaceBlock` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects representative surface block for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn representativeSurfaceBlock(data: *const LODSimplifiedData, gx: u32, gz: u32) BlockType {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -900,7 +950,8 @@ pub fn representativeSurfaceBlock(data: *const LODSimplifiedData, gx: u32, gz: u
     return blockForLODCell(data, gx, gz);
 }
 
-/// LOD geometry API `representativeWaterDepth` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes representative water depth from water coverage samples.
+/// The function treats missing or dry samples as non-water and does not mutate source data.
 pub fn representativeWaterDepth(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -925,7 +976,8 @@ pub fn representativeWaterDepth(data: *const LODSimplifiedData, gx: u32, gz: u32
     return weighted_depth / coverage;
 }
 
-/// LOD geometry API `selectCellMaterial` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects select cell material for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureAtlas, gx: u32, gz: u32) TextureAtlas.BlockTiles {
     const top_block = blockForLODQuad(data, gx, gz);
     const side_block = sideBlockForLODQuad(data, gx, gz, top_block);
@@ -938,7 +990,8 @@ pub fn selectCellMaterial(data: *const LODSimplifiedData, atlas: *const TextureA
     };
 }
 
-/// LOD geometry API `sideBlockForLODQuad` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Selects side block for l o d quad for a representative LOD terrain cell.
+/// The selection folds fine terrain samples into stable coarse LOD material output.
 pub fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top_block: BlockType) BlockType {
     if (top_block != .water) return top_block;
 
@@ -962,12 +1015,14 @@ pub fn sideBlockForLODQuad(data: *const LODSimplifiedData, gx: u32, gz: u32, top
     return blockForLODCell(data, gx, gz);
 }
 
-/// LOD geometry API `shouldRenderLODTree` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether should render l o d tree for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn shouldRenderLODTree(top_block: BlockType) bool {
     return top_block != .water and top_block != .air;
 }
 
-/// LOD geometry API `isLeafBlock` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether is leaf block for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn isLeafBlock(block: BlockType) bool {
     return switch (block) {
         .leaves,
@@ -981,13 +1036,15 @@ pub fn isLeafBlock(block: BlockType) bool {
     };
 }
 
-/// LOD geometry API `representativeVegetationForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Derives representative vegetation for l o d for distant vegetation representation.
+/// The result is based on simplified vegetation hints and LOD level.
 pub fn representativeVegetationForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) world_core.LODVegetationHint {
     if (isFineSampleLOD(lod_level)) return data.vegetation[cellIndex(data, gx, gz)];
     return representativeVegetation(data, gx, gz);
 }
 
-/// LOD geometry API `representativeVegetation` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Derives representative vegetation for distant vegetation representation.
+/// The result is based on simplified vegetation hints and LOD level.
 pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32) world_core.LODVegetationHint {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -1016,7 +1073,8 @@ pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32
     return best;
 }
 
-/// LOD geometry API `averageWaterCoverage` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes average water coverage from water coverage samples.
+/// The function treats missing or dry samples as non-water and does not mutate source data.
 pub fn averageWaterCoverage(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return waterCoverageStats(data, gx, gz).average_coverage;
 }
@@ -1027,7 +1085,8 @@ pub const WaterCoverageStats = struct {
     representative_depth: f32,
 };
 
-/// LOD geometry API `waterCoverageStats` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes water coverage stats from water coverage samples.
+/// The function treats missing or dry samples as non-water and does not mutate source data.
 pub fn waterCoverageStats(data: *const LODSimplifiedData, gx: u32, gz: u32) WaterCoverageStats {
     if (data.width == 0) return .{ .average_coverage = 0.0, .wet_samples = 0, .representative_depth = 0.0 };
     const x0 = @min(gx, data.width - 1);
@@ -1061,7 +1120,8 @@ pub fn waterCoverageStats(data: *const LODSimplifiedData, gx: u32, gz: u32) Wate
     };
 }
 
-/// LOD geometry API `shouldEmitWaterSpanForLOD` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether should emit water span for l o d for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn shouldEmitWaterSpanForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, water: world_core.LODWaterState) bool {
     if (!water.is_surface or water.coverage <= 0.0 or water.depth <= 0.01) return false;
     if (isFineSampleLOD(lod_level)) return true;
@@ -1071,7 +1131,8 @@ pub fn shouldEmitWaterSpanForLOD(data: *const LODSimplifiedData, gx: u32, gz: u3
     return stats.wet_samples >= 2 and stats.average_coverage >= 0.25 and stats.representative_depth >= 1.5;
 }
 
-/// LOD geometry API `stitchedHeight` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes stitched height from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn stitchedHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const height = data.getHeight(gx, gz);
     if (data.width < 5) return height;
@@ -1089,7 +1150,8 @@ pub fn stitchedHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return height * (1.0 - blend) + coarse_height * blend;
 }
 
-/// LOD geometry API `maxStitchedHeightAdjustment` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes max stitched height adjustment from LOD terrain and water samples.
+/// Returned heights are in world/block units and may be quantized for seam stability.
 pub fn maxStitchedHeightAdjustment(data: *const LODSimplifiedData) f32 {
     if (data.width < 5) return 0.0;
 
@@ -1105,22 +1167,26 @@ pub fn maxStitchedHeightAdjustment(data: *const LODSimplifiedData) f32 {
 }
 
 // Helper functions for unpacking colors
-/// LOD geometry API `unpackR` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes unpack r for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn unpackR(color: u32) f32 {
     return @as(f32, @floatFromInt((color >> 16) & 0xFF)) / 255.0;
 }
 
-/// LOD geometry API `unpackG` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes unpack g for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn unpackG(color: u32) f32 {
     return @as(f32, @floatFromInt((color >> 8) & 0xFF)) / 255.0;
 }
 
-/// LOD geometry API `unpackB` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes unpack b for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn unpackB(color: u32) f32 {
     return @as(f32, @floatFromInt(color & 0xFF)) / 255.0;
 }
 
-/// LOD geometry API `averageColor` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes average color for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     const r = ((c00 >> 16) & 0xFF) + ((c10 >> 16) & 0xFF) + ((c01 >> 16) & 0xFF) + ((c11 >> 16) & 0xFF);
     const g = ((c00 >> 8) & 0xFF) + ((c10 >> 8) & 0xFF) + ((c01 >> 8) & 0xFF) + ((c11 >> 8) & 0xFF);
@@ -1131,7 +1197,8 @@ pub fn averageColor(c00: u32, c10: u32, c01: u32, c11: u32) u32 {
     return (r_avg << 16) | (g_avg << 8) | b_avg;
 }
 
-/// LOD geometry API `averageAmbientOcclusion` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes average ambient occlusion for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn averageAmbientOcclusion(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -1144,7 +1211,8 @@ pub fn averageAmbientOcclusion(data: *const LODSimplifiedData, gx: u32, gz: u32)
     return (a00 + a10 + a01 + a11) * 0.25;
 }
 
-/// LOD geometry API `applyColorBrightness` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes apply color brightness for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn applyColorBrightness(color: u32, brightness: f32) u32 {
     const clamped = std.math.clamp(brightness, 0.0, 1.0);
     const r: u32 = @intFromFloat(@round(@as(f32, @floatFromInt((color >> 16) & 0xFF)) * clamped));
@@ -1155,7 +1223,8 @@ pub fn applyColorBrightness(color: u32, brightness: f32) u32 {
 
 pub const LODTextureFace = enum { top, side, bottom };
 
-/// LOD geometry API `tintColorForLodFace` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes tint color for lod face for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn tintColorForLodFace(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, block: BlockType, face: LODTextureFace, fallback: u32) u32 {
     if (block == .grass and face == .top) return averageBiomeBlockTint(data, gx, gz, lod_level, block);
     if (block == .water) return averageBiomeBlockTint(data, gx, gz, lod_level, block);
@@ -1163,7 +1232,8 @@ pub fn tintColorForLodFace(data: *const LODSimplifiedData, gx: u32, gz: u32, lod
     return fallback;
 }
 
-/// LOD geometry API `averageBiomeBlockTint` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes average biome block tint for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn averageBiomeBlockTint(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, block: BlockType) u32 {
     if (isFineSampleLOD(lod_level)) {
         return biome_mod.getBlockTintColor(data.biomes[cellIndex(data, gx, gz)], block);
@@ -1176,7 +1246,8 @@ pub fn averageBiomeBlockTint(data: *const LODSimplifiedData, gx: u32, gz: u32, l
     return averageColor(c00, c10, c01, c11);
 }
 
-/// LOD geometry API `applyTextureLuminance` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes apply texture luminance for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn applyTextureLuminance(color: u32, block: BlockType, face: LODTextureFace, atlas: *const TextureAtlas) u32 {
     if (block == .air or block == .water) return color;
     const texture_color = averageTextureColorForFace(block, face, atlas) orelse {
@@ -1193,7 +1264,8 @@ pub fn applyTextureLuminance(color: u32, block: BlockType, face: LODTextureFace,
     return multiplyColors(texture_color, shaderLikeTintColor(color));
 }
 
-/// LOD geometry API `averageTextureColorForFace` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes average texture color for face for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn averageTextureColorForFace(block: BlockType, face: LODTextureFace, atlas: *const TextureAtlas) ?u32 {
     const tiles = atlas.getTilesForBlock(@intFromEnum(block));
     const tile_id = switch (face) {
@@ -1211,14 +1283,16 @@ pub fn averageTextureColorForFace(block: BlockType, face: LODTextureFace, atlas:
     };
 }
 
-/// LOD geometry API `shouldTintLodFace` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Reports whether should tint lod face for a sampled LOD cell or span.
+/// The query is deterministic and does not mutate the supplied simplified data.
 pub fn shouldTintLodFace(block: BlockType, face: LODTextureFace) bool {
     if (block == .grass) return face == .top;
     if (block == .water) return true;
     return isLeafBlock(block);
 }
 
-/// LOD geometry API `multiplyColors` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes multiply colors for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn multiplyColors(base: u32, tint: u32) u32 {
     const r: u32 = @intFromFloat(@round(unpackR(base) * unpackR(tint) * 255.0));
     const g: u32 = @intFromFloat(@round(unpackG(base) * unpackG(tint) * 255.0));
@@ -1229,7 +1303,8 @@ pub fn multiplyColors(base: u32, tint: u32) u32 {
     return (rr << 16) | (gg << 8) | bb;
 }
 
-/// LOD geometry API `shaderLikeTintColor` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes shader like tint color for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn shaderLikeTintColor(color: u32) u32 {
     const r: u32 = (color >> 16) & 0xFF;
     const g: u32 = (color >> 8) & 0xFF;
@@ -1254,13 +1329,15 @@ pub fn shaderLikeTintColor(color: u32) u32 {
     return (rr << 16) | (gg << 8) | bb;
 }
 
-/// LOD geometry API `smoothstep` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes smoothstep for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn smoothstep(edge0: f32, edge1: f32, x: f32) f32 {
     const t = std.math.clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
 }
 
-/// LOD geometry API `scaleColor` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes scale color for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn scaleColor(color: u32, factor: f32) u32 {
     const clamped = std.math.clamp(factor, 0.0, 2.0);
     const r: u32 = @intFromFloat(@round(std.math.clamp(@as(f32, @floatFromInt((color >> 16) & 0xFF)) * clamped, 0.0, 255.0)));
@@ -1269,7 +1346,8 @@ pub fn scaleColor(color: u32, factor: f32) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
-/// LOD geometry API `packBlockDefaultColor` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes pack block default color for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn packBlockDefaultColor(block: BlockType, fallback: u32) u32 {
     if (block == .air) return fallback;
     const color = world_core.block_registry.getBlockDefinition(block).default_color;
@@ -1279,7 +1357,8 @@ pub fn packBlockDefaultColor(block: BlockType, fallback: u32) u32 {
     return (r << 16) | (g << 8) | b;
 }
 
-/// LOD geometry API `getLodTopTile` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes get lod top tile for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     if (block == .air) return Vertex.LOD_TILE_ID;
     if (isLeafBlock(block)) return Vertex.LOD_TILE_ID;
@@ -1289,14 +1368,16 @@ pub fn getLodTopTile(block: BlockType, atlas: *const TextureAtlas) u16 {
     return tiles.top;
 }
 
-/// LOD geometry API `getLodTopColor` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes get lod top color for LOD material shading.
+/// Inputs are packed RGB or biome/material samples; the result is safe to store in mesh vertices.
 pub fn getLodTopColor(block: BlockType, tile_id: u16, fallback_color: u32) u32 {
     _ = block;
     if (tile_id == Vertex.LOD_TILE_ID) return fallback_color;
     return fallback_color;
 }
 
-/// LOD geometry API `makeLODVertex` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Computes make l o d vertex for LOD mesh generation.
+/// The function is pure with respect to caller-owned world data unless output buffers are explicit parameters.
 pub fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id: u16) Vertex {
     return Vertex{
         .pos = pos,
@@ -1386,7 +1467,8 @@ pub fn addSideFaceQuad(allocator: std.mem.Allocator, vertices: *std.ArrayListUnm
     try vertices.append(allocator, makeLODVertex(corners[3], color, normal, sideFaceUV(corners[3], dir, world_x, world_z), tile_id));
 }
 
-/// LOD geometry API `addTreeColumn` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add tree column geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addTreeColumn(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1409,7 +1491,8 @@ pub fn addTreeColumn(
     try addTreeCanopyColumn(allocator, vertices, data, gx, gz, lod_level, wx, wz, cell_size, base_height, canopy.min_height, canopy.max_height, vegetation, atlas, world_x, world_z);
 }
 
-/// LOD geometry API `addTreeCanopyColumn` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add tree canopy column geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addTreeCanopyColumn(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1448,7 +1531,8 @@ pub fn addTreeCanopyColumn(
     }
 }
 
-/// LOD geometry API `treeCanopyFootprint` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Derives tree canopy footprint for distant vegetation representation.
+/// The result is based on simplified vegetation hints and LOD level.
 pub fn treeCanopyFootprint(cell_size: f32, vegetation: world_core.LODVegetationHint) f32 {
     const coverage = std.math.clamp(vegetation.tree_coverage, LOD_TREE_COVERAGE_THRESHOLD, 1.0);
     const desired = @max(1.0, vegetation.avg_tree_height * (0.30 + coverage * 0.18));
@@ -1459,7 +1543,8 @@ pub fn treeCanopyFootprint(cell_size: f32, vegetation: world_core.LODVegetationH
 
 pub const TreeFootprintOrigin = struct { x: f32, z: f32 };
 
-/// LOD geometry API `treeFootprintOrigin` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Derives tree footprint origin for distant vegetation representation.
+/// The result is based on simplified vegetation hints and LOD level.
 pub fn treeFootprintOrigin(wx: f32, wz: f32, cell_size: f32, footprint: f32, vegetation: world_core.LODVegetationHint) TreeFootprintOrigin {
     const max_offset = @max(0.0, (cell_size - footprint) * 0.5 - 0.01);
     const offset_x = std.math.clamp(vegetation.offset_x, -max_offset, max_offset);
@@ -1470,7 +1555,8 @@ pub fn treeFootprintOrigin(wx: f32, wz: f32, cell_size: f32, footprint: f32, veg
     };
 }
 
-/// LOD geometry API `treeCanopyInterval` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Derives tree canopy interval for distant vegetation representation.
+/// The result is based on simplified vegetation hints and LOD level.
 pub fn treeCanopyInterval(base_height: f32, vegetation: world_core.LODVegetationHint) HeightInterval {
     const canopy_height = @max(3.0, vegetation.avg_tree_height);
     const top = base_height + canopy_height;
@@ -1481,7 +1567,8 @@ pub fn treeCanopyInterval(base_height: f32, vegetation: world_core.LODVegetation
     };
 }
 
-/// LOD geometry API `addTreeColumnSides` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add tree column sides geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addTreeColumnSides(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1504,7 +1591,8 @@ pub fn addTreeColumnSides(
     try addTreeColumnSide(allocator, vertices, data, gx, if (gz + 1 >= data.width - 1) null else gz + 1, lod_level, wx, wz, size, canopy, color, tile_id, .south, world_x, world_z);
 }
 
-/// LOD geometry API `addTreeColumnSide` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add tree column side geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addTreeColumnSide(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),
@@ -1547,7 +1635,8 @@ pub fn addTreeColumnSide(
     }
 }
 
-/// LOD geometry API `addBoxColumn` derives distant-terrain mesh data from simplified chunk samples without mutating caller-owned inputs.
+/// Appends add box column geometry to the provided mesh buffers.
+/// The caller owns the vertex/index lists and receives allocation errors from growth operations.
 pub fn addBoxColumn(
     allocator: std.mem.Allocator,
     vertices: *std.ArrayListUnmanaged(Vertex),

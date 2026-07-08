@@ -26,26 +26,38 @@ pub const IRenderSettings = struct {
         setMSAA: *const fn (ptr: *anyopaque, samples: u8) void,
     };
 
+    /// Enables or disables wireframe rendering in the active render settings backend.
+    /// The setting affects subsequent frames and is typically driven by debug UI or hotkeys.
     pub fn setWireframe(self: IRenderSettings, enabled: bool) void {
         self.vtable.setWireframe(self.ptr, enabled);
     }
 
+    /// Enables or disables vertical synchronization for presentation.
+    /// Backends may apply this on the next swapchain or presentation configuration update.
     pub fn setVSync(self: IRenderSettings, enabled: bool) void {
         self.vtable.setVSync(self.ptr, enabled);
     }
 
+    /// Enables or disables material texture sampling in terrain and world rendering.
+    /// Disabling textures leaves geometry active while forcing fallback material colors.
     pub fn setTexturesEnabled(self: IRenderSettings, enabled: bool) void {
         self.vtable.setTexturesEnabled(self.ptr, enabled);
     }
 
+    /// Sets the anisotropic filtering level requested for sampled textures.
+    /// The backend clamps unsupported levels to device capabilities.
     pub fn setAnisotropicFiltering(self: IRenderSettings, level: u8) void {
         self.vtable.setAnisotropicFiltering(self.ptr, level);
     }
 
+    /// Enables or disables FXAA post-processing.
+    /// The setting affects post-process pass selection for subsequent frames.
     pub fn setFXAA(self: IRenderSettings, enabled: bool) void {
         self.vtable.setFXAA(self.ptr, enabled);
     }
 
+    /// Enables or disables bloom post-processing.
+    /// When disabled, bloom extraction and composite work may be skipped by the renderer.
     pub fn setBloom(self: IRenderSettings, enabled: bool) void {
         self.vtable.setBloom(self.ptr, enabled);
     }
@@ -109,18 +121,26 @@ pub const IScreenManager = struct {
         drawParentScreen: *const fn (ptr: *anyopaque, current_ptr: *anyopaque, ui: *anyopaque) anyerror!void,
     };
 
+    /// Pushes a screen onto the navigation stack.
+    /// Ownership and lifetime of `screen` are defined by the concrete screen manager implementation.
     pub fn pushScreen(self: IScreenManager, screen: ScreenHandle) void {
         self.vtable.pushScreen(self.ptr, screen);
     }
 
+    /// Pops the current screen from the navigation stack.
+    /// Implementations decide how to handle an empty or root-only stack.
     pub fn popScreen(self: IScreenManager) void {
         self.vtable.popScreen(self.ptr);
     }
 
+    /// Replaces the active screen with `screen`.
+    /// This is used for hard navigation transitions such as leaving a modal flow.
     pub fn setScreen(self: IScreenManager, screen: ScreenHandle) void {
         self.vtable.setScreen(self.ptr, screen);
     }
 
+    /// Draws the parent screen behind the current screen when overlays need backdrop rendering.
+    /// Propagates drawing errors from the concrete UI implementation.
     pub fn drawParentScreen(self: IScreenManager, current_ptr: *anyopaque, ui: *anyopaque) !void {
         try self.vtable.drawParentScreen(self.ptr, current_ptr, ui);
     }
