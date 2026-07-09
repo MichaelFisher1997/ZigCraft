@@ -40,8 +40,8 @@ pub fn placeTrees(self: anytype, chunk: *Chunk, stop_flag: ?*const bool) void {
             if (surface != .grass and surface != .dirt and surface != .snow_block and surface != .sand) continue;
 
             const biome = chunk.biomes[local_x + local_z * CHUNK_SIZE_X];
-            const wx = world_x0 + @as(i32, @intCast(local_x));
-            const wz = world_z0 + @as(i32, @intCast(local_z));
+            const wx = util.addWorldOffset(world_x0, local_x);
+            const wz = util.addWorldOffset(world_z0, local_z);
             const tree = treeForColumn(self, biome, wx, wz) orelse continue;
             placeTreeShape(chunk, local_x, @intCast(surface_y + 1), local_z, tree);
         }

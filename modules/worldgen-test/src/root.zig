@@ -46,8 +46,8 @@ pub const ShadowTestWorldGenerator = struct {
             if (stop_flag) |sf| if (sf.*) return;
             var local_x: u32 = 0;
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
-                const wx = chunk.chunk_x * CHUNK_SIZE_X + @as(i32, @intCast(local_x));
-                const wz = chunk.chunk_z * CHUNK_SIZE_Z + @as(i32, @intCast(local_z));
+                const wx = chunkWorldOffset(chunk.chunk_x, local_x, CHUNK_SIZE_X);
+                const wz = chunkWorldOffset(chunk.chunk_z, local_z, CHUNK_SIZE_Z);
                 var y: i32 = 0;
                 while (y < CHUNK_SIZE_Y) : (y += 1) {
                     chunk.setBlock(local_x, @intCast(y), local_z, blockAt(wx, y, wz));
@@ -135,9 +135,9 @@ pub const ShadowTestWorldGenerator = struct {
 
     fn isTreeCanopy(wx: i32, y: i32, wz: i32) bool {
         if (y < GROUND_Y + 6 or y > GROUND_Y + 10) return false;
-        const dx: u32 = @abs(wx - 12);
-        const dz: u32 = @abs(wz - 20);
-        const radius: u32 = if (y == GROUND_Y + 10) 1 else 3;
+        const dx = absDiffI32(wx, 12);
+        const dz = absDiffI32(wz, 20);
+        const radius: u64 = if (y == GROUND_Y + 10) 1 else 3;
         return dx <= radius and dz <= radius and !(dx == 3 and dz == 3);
     }
 
@@ -261,6 +261,23 @@ pub const ShadowTestWorldGenerator = struct {
         allocator.destroy(self);
     }
 };
+
+fn chunkWorldOffset(chunk_coord: i32, local_offset: anytype, chunk_size: anytype) i32 {
+    return clampI32(@as(i64, chunk_coord) * @as(i64, @intCast(chunk_size)) + @as(i64, @intCast(local_offset)));
+}
+
+fn absDiffI32(a: i32, b: i32) u64 {
+    const diff = @as(i64, a) - @as(i64, b);
+    return @intCast(if (diff < 0) -diff else diff);
+}
+
+fn clampI32(value: i64) i32 {
+    return @intCast(std.math.clamp(
+        value,
+        @as(i64, std.math.minInt(i32)),
+        @as(i64, std.math.maxInt(i32)),
+    ));
+}
 
 pub fn create(context: worldgen_api.CreateContext) worldgen_api.RegistryError!Generator {
     const gen = context.allocator.create(ShadowTestWorldGenerator) catch return error.OutOfMemory;

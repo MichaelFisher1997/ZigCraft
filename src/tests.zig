@@ -56,7 +56,6 @@ test {
     _ = @import("engine-math").voxel_tests;
     _ = @import("engine-math").frustum_tests;
     _ = @import("engine-math").mat4_tests;
-    _ = @import("engine-math-ray-fuzz-tests");
     _ = @import("world-meshing").world_tests;
     _ = @import("world-worldgen").schematics;
     _ = @import("world-worldgen").tree_registry;
@@ -68,7 +67,6 @@ test {
     _ = @import("world-worldgen").height_sampler_tests;
     _ = @import("world-worldgen").terrain_modifier_tests;
     _ = @import("world-worldgen").terrain_shape_generator_tests;
-    _ = @import("world-worldgen-fuzz-tests");
     _ = @import("world-worldgen").terrain_report;
     _ = @import("world-lod").lod_manager_tests;
     _ = @import("world-lod").lod_manager_internal_tests;
@@ -90,7 +88,6 @@ test {
     _ = @import("game-core").settings_persistence_tests;
     _ = @import("world-persistence").region_file;
     _ = @import("world-persistence").chunk_serializer;
-    _ = @import("world-persistence-fuzz-tests");
     _ = @import("world-persistence").level_data;
     _ = @import("world-persistence").save_manager;
     _ = @import("world-meshing").meshing.quadric_simplifier;
@@ -106,7 +103,6 @@ test {
     _ = @import("world-meshing").chunk_mesh_tests;
     _ = @import("world-meshing").chunk_storage_interface_tests;
     _ = @import("world-core").biome_and_block_tests;
-    _ = @import("world-core-light-fuzz-tests");
     _ = @import("world-core").packed_light_tests;
     _ = @import("world-meshing").meshing.boundary_cross_tests;
     _ = @import("world-meshing").meshing.boundary_tests;

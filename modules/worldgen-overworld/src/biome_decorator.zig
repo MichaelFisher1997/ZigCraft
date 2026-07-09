@@ -68,8 +68,8 @@ pub const BiomeDecorator = struct {
             self.region_seed,
             world_x,
             world_z,
-            world_x + CHUNK_SIZE_X - 1,
-            world_z + CHUNK_SIZE_Z - 1,
+            addWorldOffset(world_x, CHUNK_SIZE_X - 1),
+            addWorldOffset(world_z, CHUNK_SIZE_Z - 1),
         );
 
         var local_z: u32 = 0;
@@ -80,8 +80,8 @@ pub const BiomeDecorator = struct {
                 if (surface_y <= 0 or surface_y >= CHUNK_SIZE_Y - 1) continue;
 
                 const biome = chunk.biomes[local_x + local_z * CHUNK_SIZE_X];
-                const wx_i = world_x + @as(i32, @intCast(local_x));
-                const wz_i = world_z + @as(i32, @intCast(local_z));
+                const wx_i = addWorldOffset(world_x, local_x);
+                const wz_i = addWorldOffset(world_z, local_z);
                 const wx: f32 = @floatFromInt(wx_i);
                 const wz: f32 = @floatFromInt(wz_i);
                 const variant_val = noise_sampler.variant_noise.get2D(wx, wz);
@@ -126,3 +126,15 @@ pub const BiomeDecorator = struct {
         };
     }
 };
+
+fn addWorldOffset(base: i32, offset: anytype) i32 {
+    return clampI32(@as(i64, base) + @as(i64, @intCast(offset)));
+}
+
+fn clampI32(value: i64) i32 {
+    return @intCast(std.math.clamp(
+        value,
+        @as(i64, std.math.minInt(i32)),
+        @as(i64, std.math.maxInt(i32)),
+    ));
+}

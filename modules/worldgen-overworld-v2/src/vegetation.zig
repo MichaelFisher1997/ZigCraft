@@ -33,8 +33,8 @@ pub fn placeVegetation(self: anytype, chunk: *Chunk, stop_flag: ?*const bool) vo
 
             const biome = chunk.biomes[local_x + local_z * CHUNK_SIZE_X];
             const surface = chunk.getBlock(local_x, @intCast(surface_y), local_z);
-            const wx = world_x0 + @as(i32, @intCast(local_x));
-            const wz = world_z0 + @as(i32, @intCast(local_z));
+            const wx = util.addWorldOffset(world_x0, local_x);
+            const wz = util.addWorldOffset(world_z0, local_z);
 
             if (surface_y < self.params.sea_level and chunk.getBlockSafe(@intCast(local_x), surface_y + 1, @intCast(local_z)) == .water) {
                 placeAquaticVegetation(self, chunk, local_x, @intCast(surface_y), local_z, biome, surface, wx, wz);

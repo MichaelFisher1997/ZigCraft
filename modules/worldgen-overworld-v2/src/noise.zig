@@ -142,6 +142,9 @@ fn noise3d(x: i32, y: i32, z: i32, seed: i32) f32 {
 }
 
 fn myFloor(v: f32) i32 {
+    if (!std.math.isFinite(v)) return 0;
+    if (v <= @as(f32, @floatFromInt(std.math.minInt(i32)))) return std.math.minInt(i32);
+    if (v >= @as(f32, @floatFromInt(std.math.maxInt(i32)))) return std.math.maxInt(i32);
     const truncated: i32 = @intFromFloat(v);
     return if (v < 0.0) truncated - 1 else truncated;
 }

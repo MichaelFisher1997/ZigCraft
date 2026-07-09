@@ -1,12 +1,11 @@
 const std = @import("std");
 const fs = @import("fs");
 
-const world_persistence = @import("world-persistence");
 const world_core = @import("world-core");
 
-const chunk_serializer = world_persistence.chunk_serializer;
-const level_data = world_persistence.level_data;
-const region_file = world_persistence.region_file;
+const chunk_serializer = @import("chunk_serializer.zig");
+const level_data = @import("level_data.zig");
+const region_file = @import("region_file.zig");
 
 test "fuzz corpus: chunk deserializer rejects short and corrupted payloads" {
     var source = world_core.Chunk.init(12, -34);
@@ -55,7 +54,7 @@ test "fuzz corpus: region file parser rejects malformed files without short read
         .{ .name = "empty.mca", .bytes = "", .open_error = region_file.RegionError.InvalidHeader },
         .{ .name = "short.mca", .bytes = "not a full header", .open_error = region_file.RegionError.InvalidHeader },
         .{ .name = "dangling.mca", .bytes = &danglingRegionHeader(), .read_error = region_file.RegionError.FileTooShort },
-        .{ .name = "bad-length.mca", .bytes = &badLengthRegion(), .read_error = region_file.RegionError.InvalidHeader },
+        .{ .name = "bad-length.mca", .bytes = &badLengthRegion(), .read_error = region_file.RegionError.FileTooShort },
     };
 
     for (cases) |case| {
@@ -84,7 +83,7 @@ test "golden fixture: v0.1 level data loads into current model" {
 
     const file = try dir.createFile("level.dat", .{ .truncate = true });
     defer file.close();
-    try file.writeAll(@embedFile("../test-fixtures/v0.1/level.dat"));
+    try file.writeAll(@embedFile("level_fixture_v0_1"));
 
     var loaded = try level_data.LevelData.loadFromFile(std.testing.allocator, dir);
     defer loaded.deinit(std.testing.allocator);

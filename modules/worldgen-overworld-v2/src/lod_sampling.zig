@@ -5,6 +5,7 @@ const block_colors = @import("block_colors.zig");
 const climate = @import("climate.zig");
 const terrain_shape = @import("terrain_shape.zig");
 const trees = @import("trees.zig");
+const util = @import("util.zig");
 
 const BlockType = world_core.BlockType;
 const BiomeId = world_core.BiomeId;
@@ -46,8 +47,8 @@ pub fn generateHeightmapOnly(self: anytype, data: *LODSimplifiedData, region_x: 
     const region_size_f: f32 = @floatFromInt(region_size_i);
     const grid_max: f32 = @floatFromInt(data.width - 1);
     const cell_span = region_size_f / grid_max;
-    const world_x = region_x * region_size_i;
-    const world_z = region_z * region_size_i;
+    const world_x = util.chunkWorldOffset(region_x, 0, region_size_i);
+    const world_z = util.chunkWorldOffset(region_z, 0, region_size_i);
 
     var gz: u32 = 0;
     while (gz < data.width) : (gz += 1) {
@@ -144,8 +145,8 @@ fn sampleRepresentativeLODColumn(self: anytype, wx: f32, wz: f32, cell_span: f32
 }
 
 fn classifyLODSample(self: anytype, wx: f32, wz: f32) ClassifiedLODSample {
-    const wx_i: i32 = @intFromFloat(@floor(wx));
-    const wz_i: i32 = @intFromFloat(@floor(wz));
+    const wx_i = util.floorToI32(wx);
+    const wz_i = util.floorToI32(wz);
     const sample = sampleLODColumn(self, wx_i, wz_i);
     const render_water_surface = sample.terrain_height < self.params.sea_level;
     const surface_block: BlockType = if (render_water_surface) .water else block_colors.surfaceBlock(sample.biome, sample.terrain_height, self.params.sea_level, false);
@@ -160,7 +161,7 @@ fn classifyLODSample(self: anytype, wx: f32, wz: f32) ClassifiedLODSample {
 }
 
 fn sampleLODColumn(self: anytype, wx: i32, wz: i32) ColumnSample {
-    const base_height = @import("util.zig").floorToI32(terrain_shape.baseTerrainLevelAtPoint(self, wx, wz));
+    const base_height = util.floorToI32(terrain_shape.baseTerrainLevelAtPoint(self, wx, wz));
     const terrain_height = terrain_shape.estimateGroundedTerrainHeight(self, wx, wz, base_height);
     const climate_sample = climate.sampleClimate(self, wx, wz);
     const river = terrain_shape.isRiverColumn(self, wx, wz) and terrain_height >= self.params.sea_level - 18 and terrain_height <= self.params.sea_level + 1;
@@ -190,8 +191,8 @@ fn lodVegetationHintInArea(self: anytype, center_wx: f32, center_wz: f32, radius
 
     for (sample_offsets) |oz| {
         for (sample_offsets) |ox| {
-            const wx: i32 = @intFromFloat(@floor(center_wx + ox * radius));
-            const wz: i32 = @intFromFloat(@floor(center_wz + oz * radius));
+            const wx = util.floorToI32(center_wx + ox * radius);
+            const wz = util.floorToI32(center_wz + oz * radius);
             total_columns += 1;
             const shape = trees.treeForColumn(self, dominant_biome, wx, wz) orelse continue;
             tree_count += 1;

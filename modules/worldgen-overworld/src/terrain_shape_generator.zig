@@ -184,8 +184,8 @@ pub const TerrainShapeGenerator = struct {
 
     pub fn sampleColumnData(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8) ColumnData {
         const region_seed = self.getRegionSeed();
-        const wx_i: i32 = @intFromFloat(@floor(wx));
-        const wz_i: i32 = @intFromFloat(@floor(wz));
+        const wx_i = floatToI32(@floor(wx));
+        const wz_i = floatToI32(@floor(wz));
         const controls = region_pkg.getBlendedControls(region_seed, wx_i, wz_i);
         return self.sampleColumnDataWithControls(wx, wz, reduction, controls);
     }
@@ -206,8 +206,8 @@ pub const TerrainShapeGenerator = struct {
         wz: f32,
         reduction: u8,
     ) biome_mod.TerrainModifier {
-        const wx_i: i32 = @intFromFloat(@floor(wx));
-        const wz_i: i32 = @intFromFloat(@floor(wz));
+        const wx_i = floatToI32(@floor(wx));
+        const wz_i = floatToI32(@floor(wz));
         const controls = region_pkg.getBlendedControls(self.getRegionSeed(), wx_i, wz_i);
         const base_column = self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, null);
         const biome_id = self.selectBiomeForColumn(base_column, 1);
@@ -309,8 +309,8 @@ pub const TerrainShapeGenerator = struct {
         noise.river_mask = self.noise_sampler.getRiverMask(noise.warped_x, noise.warped_z, reduction);
 
         const region_seed = self.getRegionSeed();
-        const wx_i: i32 = @intFromFloat(@floor(wx));
-        const wz_i: i32 = @intFromFloat(@floor(wz));
+        const wx_i = floatToI32(@floor(wx));
+        const wz_i = floatToI32(@floor(wz));
         const region = region_pkg.getRegion(region_seed, wx_i, wz_i);
         const path_info = region_pkg.getPathInfo(region_seed, wx_i, wz_i, region);
         const ridge_params = NoiseSampler.RidgeParams{
@@ -372,8 +372,8 @@ pub const TerrainShapeGenerator = struct {
             self.getRegionSeed(),
             world_x,
             world_z,
-            world_x + CHUNK_SIZE_X - 1,
-            world_z + CHUNK_SIZE_Z - 1,
+            addWorldOffset(world_x, CHUNK_SIZE_X - 1),
+            addWorldOffset(world_z, CHUNK_SIZE_Z - 1),
         );
 
         var local_z: u32 = 0;
@@ -382,8 +382,8 @@ pub const TerrainShapeGenerator = struct {
             var local_x: u32 = 0;
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
                 const idx = local_x + local_z * CHUNK_SIZE_X;
-                const wx_i = world_x + @as(i32, @intCast(local_x));
-                const wz_i = world_z + @as(i32, @intCast(local_z));
+                const wx_i = addWorldOffset(world_x, local_x);
+                const wz_i = addWorldOffset(world_z, local_z);
                 const wx: f32 = @floatFromInt(wx_i);
                 const wz: f32 = @floatFromInt(wz_i);
                 const column = self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, 0, controls.sample(wx_i, wz_i), null);
@@ -409,8 +409,8 @@ pub const TerrainShapeGenerator = struct {
             if (stop_flag) |sf| if (sf.*) return false;
             var terrain_cache_x: u32 = 0;
             while (terrain_cache_x < BIOME_TERRAIN_CACHE_SIZE) : (terrain_cache_x += 1) {
-                const sample_x = world_x + @as(i32, @intCast(terrain_cache_x)) - BIOME_INFLUENCE_SAMPLE_OFFSET_I;
-                const sample_z = world_z + @as(i32, @intCast(terrain_cache_z)) - BIOME_INFLUENCE_SAMPLE_OFFSET_I;
+                const sample_x = addWorldOffset(world_x, @as(i32, @intCast(terrain_cache_x)) - BIOME_INFLUENCE_SAMPLE_OFFSET_I);
+                const sample_z = addWorldOffset(world_z, @as(i32, @intCast(terrain_cache_z)) - BIOME_INFLUENCE_SAMPLE_OFFSET_I);
                 terrain_modifier_cache[terrain_cache_x + terrain_cache_z * BIOME_TERRAIN_CACHE_SIZE] = self.sampleTerrainModifierAt(
                     @floatFromInt(sample_x),
                     @floatFromInt(sample_z),
@@ -446,8 +446,8 @@ pub const TerrainShapeGenerator = struct {
                 phase_data.secondary_biome_ids[idx] = biome_id;
                 phase_data.biome_blends[idx] = 0.0;
 
-                const wx_i = world_x + @as(i32, @intCast(local_x));
-                const wz_i = world_z + @as(i32, @intCast(local_z));
+                const wx_i = addWorldOffset(world_x, local_x);
+                const wz_i = addWorldOffset(world_z, local_z);
                 const terrain_modifier = getCachedBlendedTerrainModifier(&terrain_modifier_cache, local_x, local_z);
                 const column = self.sampleColumnDataWithControlsAndTerrainModifier(
                     @floatFromInt(wx_i),
@@ -486,10 +486,8 @@ pub const TerrainShapeGenerator = struct {
         }
 
         const EDGE_GRID_SIZE = CHUNK_SIZE_X / biome_mod.EDGE_STEP;
-        const player_dist_sq = (world_x - cache_center_x) * (world_x - cache_center_x) +
-            (world_z - cache_center_z) * (world_z - cache_center_z);
 
-        if (player_dist_sq < 256 * 256) {
+        if (isNearCacheCenter(world_x, world_z, cache_center_x, cache_center_z)) {
             var gz: u32 = 0;
             while (gz < EDGE_GRID_SIZE) : (gz += 1) {
                 if (stop_flag) |sf| if (sf.*) return false;
@@ -499,8 +497,8 @@ pub const TerrainShapeGenerator = struct {
                     const sample_z = gz * biome_mod.EDGE_STEP + biome_mod.EDGE_STEP / 2;
                     const sample_idx = sample_x + sample_z * CHUNK_SIZE_X;
                     const base_biome = phase_data.biome_ids[sample_idx];
-                    const sample_wx = world_x + @as(i32, @intCast(sample_x));
-                    const sample_wz = world_z + @as(i32, @intCast(sample_z));
+                    const sample_wx = addWorldOffset(world_x, sample_x);
+                    const sample_wz = addWorldOffset(world_z, sample_z);
                     const edge_info = self.detectBiomeEdge(sample_wx, sample_wz, base_biome);
 
                     if (edge_info.edge_band != .none) {
@@ -549,8 +547,8 @@ pub const TerrainShapeGenerator = struct {
                     const idx = @as(u32, @intCast(local_sample_x)) + @as(u32, @intCast(local_sample_z)) * CHUNK_SIZE_X;
                     break :blk phase_data.is_ocean_water_flags[idx] and phase_data.is_underwater_flags[idx];
                 } else blk: {
-                    const sample_wx = world_x + local_sample_x;
-                    const sample_wz = world_z + local_sample_z;
+                    const sample_wx = addWorldOffset(world_x, local_sample_x);
+                    const sample_wz = addWorldOffset(world_z, local_sample_z);
                     const sample_controls = region_pkg.getBlendedControls(self.getRegionSeed(), sample_wx, sample_wz);
                     const column = self.sampleColumnDataWithControlsAndTerrainModifier(
                         @floatFromInt(sample_wx),
@@ -606,8 +604,8 @@ pub const TerrainShapeGenerator = struct {
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
                 const idx = local_x + local_z * CHUNK_SIZE_X;
                 const terrain_height_i = phase_data.surface_heights[idx];
-                const wx: f32 = @floatFromInt(world_x + @as(i32, @intCast(local_x)));
-                const wz: f32 = @floatFromInt(world_z + @as(i32, @intCast(local_z)));
+                const wx: f32 = @floatFromInt(addWorldOffset(world_x, local_x));
+                const wz: f32 = @floatFromInt(addWorldOffset(world_z, local_z));
                 const dither = self.noise_sampler.detail_noise.noise.perlin2D(wx * 0.02, wz * 0.02) * 0.5 + 0.5;
                 const use_secondary = dither < phase_data.biome_blends[idx];
                 const active_biome_id = if (use_secondary) phase_data.secondary_biome_ids[idx] else phase_data.biome_ids[idx];
@@ -674,7 +672,7 @@ pub const TerrainShapeGenerator = struct {
             const r: i32 = @intCast(radius);
             const offsets = [_][2]i32{ .{ r, 0 }, .{ -r, 0 }, .{ 0, r }, .{ 0, -r } };
             for (offsets) |off| {
-                const neighbor_biome = self.sampleBiomeAtWorld(wx + off[0], wz + off[1]);
+                const neighbor_biome = self.sampleBiomeAtWorld(addWorldOffset(wx, off[0]), addWorldOffset(wz, off[1]));
                 if (neighbor_biome != center_biome and biome_mod.needsTransition(center_biome, neighbor_biome)) {
                     detected_neighbor = neighbor_biome;
                     closest_band = @enumFromInt(3 - @as(u2, @intCast(band_idx)));
@@ -703,6 +701,33 @@ pub const TerrainShapeGenerator = struct {
         return self.coastal_generator.isInlandWater(&self.noise_sampler, wx, wz, height, self.params.sea_level);
     }
 };
+
+fn addWorldOffset(base: i32, offset: anytype) i32 {
+    return clampI32(@as(i64, base) + @as(i64, @intCast(offset)));
+}
+
+fn isNearCacheCenter(world_x: i32, world_z: i32, cache_center_x: i32, cache_center_z: i32) bool {
+    const dx = @as(i64, world_x) - @as(i64, cache_center_x);
+    const dz = @as(i64, world_z) - @as(i64, cache_center_z);
+    if (dx <= -256 or dx >= 256 or dz <= -256 or dz >= 256) return false;
+
+    return dx * dx + dz * dz < 256 * 256;
+}
+
+fn floatToI32(value: f32) i32 {
+    if (!std.math.isFinite(value)) return 0;
+    if (value <= @as(f32, @floatFromInt(std.math.minInt(i32)))) return std.math.minInt(i32);
+    if (value >= @as(f32, @floatFromInt(std.math.maxInt(i32)))) return std.math.maxInt(i32);
+    return @intFromFloat(value);
+}
+
+fn clampI32(value: i64) i32 {
+    return @intCast(std.math.clamp(
+        value,
+        @as(i64, std.math.minInt(i32)),
+        @as(i64, std.math.maxInt(i32)),
+    ));
+}
 
 fn carvedBlockReplacement(is_underwater_column: bool, y: i32, sea_level: i32) BlockType {
     return if (is_underwater_column and y < sea_level) .water else .air;

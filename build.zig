@@ -45,6 +45,12 @@ const BuildModules = struct {
     engine_lighting: *std.Build.Module,
     engine_ui: *std.Build.Module,
     world_core: *std.Build.Module,
+    worldgen_api: *std.Build.Module,
+    worldgen_common: *std.Build.Module,
+    worldgen_overworld: *std.Build.Module,
+    worldgen_overworld_v2: *std.Build.Module,
+    worldgen_flat: *std.Build.Module,
+    worldgen_test: *std.Build.Module,
     world_worldgen: *std.Build.Module,
     world_meshing: *std.Build.Module,
     world_lod: *std.Build.Module,
@@ -146,6 +152,7 @@ fn defineModules(
     const world_lod = b.createModule(.{ .root_source_file = b.path("modules/world-lod/src/root.zig"), .target = target, .optimize = optimize });
     const world_runtime = b.createModule(.{ .root_source_file = b.path("modules/world-runtime/src/root.zig"), .target = target, .optimize = optimize });
     const world_persistence = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/root.zig"), .target = target, .optimize = optimize });
+    world_persistence.addAnonymousImport("level_fixture_v0_1", .{ .root_source_file = b.path("modules/world-persistence/test-fixtures/v0.1/level.dat") });
     const game_core = b.createModule(.{ .root_source_file = b.path("modules/game-core/src/root.zig"), .target = target, .optimize = optimize });
     const game_ui = b.createModule(.{ .root_source_file = b.path("modules/game-ui/src/root.zig"), .target = target, .optimize = optimize });
 
@@ -214,6 +221,12 @@ fn defineModules(
         .engine_lighting = engine_lighting,
         .engine_ui = engine_ui,
         .world_core = world_core,
+        .worldgen_api = worldgen_api,
+        .worldgen_common = worldgen_common,
+        .worldgen_overworld = worldgen_overworld,
+        .worldgen_overworld_v2 = worldgen_overworld_v2,
+        .worldgen_flat = worldgen_flat,
+        .worldgen_test = worldgen_test,
         .world_worldgen = world_worldgen,
         .world_meshing = world_meshing,
         .world_lod = world_lod,
@@ -415,6 +428,12 @@ fn defineBuildSteps(
     const engine_core = modules.engine_core;
     const engine_graphics = modules.engine_graphics;
     const world_core = modules.world_core;
+    const worldgen_api = modules.worldgen_api;
+    const worldgen_common = modules.worldgen_common;
+    const worldgen_overworld = modules.worldgen_overworld;
+    const worldgen_overworld_v2 = modules.worldgen_overworld_v2;
+    const worldgen_flat = modules.worldgen_flat;
+    const worldgen_test = modules.worldgen_test;
     const world_worldgen = modules.world_worldgen;
     const game_core = modules.game_core;
     const game_ui = modules.game_ui;
@@ -616,22 +635,6 @@ fn defineBuildSteps(
     test_root_module.addImport("game-ui", game_ui);
     test_root_module.addOptions("build_options", options);
 
-    const engine_math_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
-    engine_math_fuzz_tests.addImport("engine-math", modules.engine_math);
-    const world_core_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/light_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
-    world_core_fuzz_tests.addImport("world-core", world_core);
-    const world_persistence_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
-    world_persistence_fuzz_tests.addImport("fs", fs_module);
-    world_persistence_fuzz_tests.addImport("world-core", world_core);
-    world_persistence_fuzz_tests.addImport("world-persistence", modules.world_persistence);
-    const world_worldgen_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
-    world_worldgen_fuzz_tests.addImport("world-core", world_core);
-    world_worldgen_fuzz_tests.addImport("world-worldgen", world_worldgen);
-    test_root_module.addImport("engine-math-ray-fuzz-tests", engine_math_fuzz_tests);
-    test_root_module.addImport("world-core-light-fuzz-tests", world_core_fuzz_tests);
-    test_root_module.addImport("world-persistence-fuzz-tests", world_persistence_fuzz_tests);
-    test_root_module.addImport("world-worldgen-fuzz-tests", world_worldgen_fuzz_tests);
-
     const test_filters: []const []const u8 = if (b.option([]const u8, "test-filter", "Only run unit tests whose name contains this filter")) |filter|
         &.{filter}
     else if (b.args) |args|
@@ -657,6 +660,35 @@ fn defineBuildSteps(
     run_exe_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     run_exe_tests.step.dependOn(&shader_cmd.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    const engine_math_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    engine_math_fuzz_root.addImport("zig-math", zig_math);
+    const engine_math_fuzz_tests = b.addTest(.{ .root_module = engine_math_fuzz_root, .filters = test_filters });
+    test_step.dependOn(&b.addRunArtifact(engine_math_fuzz_tests).step);
+
+    const world_core_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/light_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    const world_core_fuzz_tests = b.addTest(.{ .root_module = world_core_fuzz_root, .filters = test_filters });
+    test_step.dependOn(&b.addRunArtifact(world_core_fuzz_tests).step);
+
+    const world_persistence_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    world_persistence_fuzz_root.addAnonymousImport("level_fixture_v0_1", .{ .root_source_file = b.path("modules/world-persistence/test-fixtures/v0.1/level.dat") });
+    world_persistence_fuzz_root.addImport("fs", fs_module);
+    world_persistence_fuzz_root.addImport("world-core", world_core);
+    const world_persistence_fuzz_tests = b.addTest(.{ .root_module = world_persistence_fuzz_root, .filters = test_filters });
+    test_step.dependOn(&b.addRunArtifact(world_persistence_fuzz_tests).step);
+
+    const world_worldgen_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    world_worldgen_fuzz_root.addImport("engine-core", engine_core);
+    world_worldgen_fuzz_root.addImport("world-core", world_core);
+    world_worldgen_fuzz_root.addImport("worldgen-api", worldgen_api);
+    world_worldgen_fuzz_root.addImport("worldgen-common", worldgen_common);
+    world_worldgen_fuzz_root.addImport("worldgen-overworld", worldgen_overworld);
+    world_worldgen_fuzz_root.addImport("worldgen-overworld-v2", worldgen_overworld_v2);
+    world_worldgen_fuzz_root.addImport("worldgen-flat", worldgen_flat);
+    world_worldgen_fuzz_root.addImport("worldgen-test", worldgen_test);
+    const world_worldgen_fuzz_tests = b.addTest(.{ .root_module = world_worldgen_fuzz_root, .filters = test_filters });
+    world_worldgen_fuzz_tests.root_module.link_libc = true;
+    test_step.dependOn(&b.addRunArtifact(world_worldgen_fuzz_tests).step);
 
     const integration_root_module = b.createModule(.{
         .root_source_file = b.path("src/integration_test.zig"),

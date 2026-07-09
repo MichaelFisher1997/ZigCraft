@@ -1,8 +1,8 @@
 const std = @import("std");
-const engine_math = @import("engine-math");
+const ray = @import("ray.zig");
 
-const Vec3 = engine_math.Vec3;
-const AABB = engine_math.AABB;
+const Vec3 = @import("vec3.zig").Vec3;
+const AABB = @import("aabb.zig").AABB;
 
 test "fuzz corpus: AABB slab intersections handle boundary and parallel rays" {
     const box = AABB.init(Vec3.init(0, 0, 0), Vec3.init(1, 1, 1));
@@ -21,7 +21,7 @@ test "fuzz corpus: AABB slab intersections handle boundary and parallel rays" {
     };
 
     for (cases) |case| {
-        const hit = engine_math.intersectAABB(engine_math.Ray.init(case.origin, case.direction), box);
+        const hit = ray.intersectAABB(ray.Ray.init(case.origin, case.direction), box);
         try std.testing.expectEqual(case.should_hit, hit != null);
         if (hit) |h| {
             try std.testing.expect(std.math.isFinite(h.t));
@@ -51,7 +51,7 @@ test "fuzz corpus: voxel raycast edge cases stay bounded" {
     };
 
     for (cases) |case| {
-        const hit = engine_math.castThroughVoxels(case.origin, case.direction, case.max_distance, Context, .{}, Context.isSolid);
+        const hit = ray.castThroughVoxels(case.origin, case.direction, case.max_distance, Context, .{}, Context.isSolid);
         try std.testing.expectEqual(case.expect_hit, hit != null);
         if (hit) |h| try std.testing.expect(h.distance <= case.max_distance);
     }

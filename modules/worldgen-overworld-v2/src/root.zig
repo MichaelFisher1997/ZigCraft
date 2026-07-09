@@ -138,8 +138,8 @@ pub const OverworldV2Generator = struct {
             if (stop_flag) |sf| if (sf.*) return;
             var local_x: u32 = 0;
             while (local_x < CHUNK_SIZE_X) : (local_x += 1) {
-                const wx = world_x0 + @as(i32, @intCast(local_x));
-                const wz = world_z0 + @as(i32, @intCast(local_z));
+                const wx = util.addWorldOffset(world_x0, local_x);
+                const wz = util.addWorldOffset(world_z0, local_z);
                 const sample = self.sampleColumn(wx, wz);
                 self.fillRawTerrainColumn(chunk, local_x, local_z, wx, wz, sample.base_height);
                 self.applyBiomeSurfaceColumn(chunk, local_x, local_z, wx, wz, sample);
@@ -325,7 +325,7 @@ pub const OverworldV2Generator = struct {
     }
 
     pub fn getColumnInfo(self: *const OverworldV2Generator, wx: f32, wz: f32) ColumnInfo {
-        const sample = self.sampleColumn(@intFromFloat(@floor(wx)), @intFromFloat(@floor(wz)));
+        const sample = self.sampleColumn(util.floorToI32(wx), util.floorToI32(wz));
         return .{
             .height = sample.terrain_height,
             .biome = sample.biome,
