@@ -124,6 +124,19 @@ pub const WorldRenderer = struct {
     gpu_visible_indices: std.ArrayListUnmanaged(u32),
     use_gpu_culling: bool,
 
+    // CPU culling cache for repeated terrain/fluid passes with the same view in
+    // one frame. G-pass, opaque, and water can otherwise rescan the same RD area.
+    cpu_cull_cache: std.ArrayListUnmanaged(*ChunkData),
+    cpu_cull_cache_valid: bool,
+    cpu_cull_cache_frame: u64,
+    cpu_cull_cache_pc_x: i64,
+    cpu_cull_cache_pc_z: i64,
+    cpu_cull_cache_r_dist: i64,
+    cpu_cull_cache_camera_pos: Vec3,
+    cpu_cull_cache_view_proj: Mat4,
+    cpu_cull_cache_culled: u32,
+    frame_serial: u64,
+
     // GPU Block Buffer (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
 
@@ -196,9 +209,9 @@ pub const WorldRenderer = struct {
             log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }
 
-        const force_mdi_fallback = parseEnabledEnv(getenv("ZIGCRAFT_FORCE_MDI_FALLBACK"), false);
+        const force_mdi_fallback = parseEnabledEnv(getenv("ZIGCRAFT_FORCE_MDI_FALLBACK"), true);
         if (force_mdi_fallback) {
-            log.log.info("MDI chunk rendering forced off by ZIGCRAFT_FORCE_MDI_FALLBACK", .{});
+            log.log.info("MDI chunk rendering disabled by default; set ZIGCRAFT_FORCE_MDI_FALLBACK=0 to test indirect chunk batches", .{});
         }
 
         renderer.* = .{
@@ -222,6 +235,16 @@ pub const WorldRenderer = struct {
             .chunk_lookup = undefined,
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
+            .cpu_cull_cache = .empty,
+            .cpu_cull_cache_valid = false,
+            .cpu_cull_cache_frame = 0,
+            .cpu_cull_cache_pc_x = 0,
+            .cpu_cull_cache_pc_z = 0,
+            .cpu_cull_cache_r_dist = 0,
+            .cpu_cull_cache_camera_pos = Vec3.zero,
+            .cpu_cull_cache_view_proj = Mat4.identity,
+            .cpu_cull_cache_culled = 0,
+            .frame_serial = 0,
             .gpu_block_buffer = gpu_block_buffer,
             .gpu_mesher = gpu_mesher,
         };
@@ -234,6 +257,8 @@ pub const WorldRenderer = struct {
 
     pub fn beginFrame(self: *WorldRenderer) void {
         self.resetShadowStats();
+        self.frame_serial += 1;
+        self.cpu_cull_cache_valid = false;
         self.vertex_allocator.tick(self.query.getFrameIndex());
     }
 
@@ -264,6 +289,7 @@ pub const WorldRenderer = struct {
 
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
+        self.cpu_cull_cache.deinit(self.allocator);
         self.aabb_data.deinit(self.allocator);
         for (&self.chunk_lookup) |*lookup| lookup.deinit(self.allocator);
         self.gpu_visible_indices.deinit(self.allocator);
@@ -325,7 +351,7 @@ pub const WorldRenderer = struct {
         if (self.use_gpu_culling) {
             self.renderGpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
         } else {
-            self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
+            self.renderCpuCullCached(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
         }
 
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
@@ -523,6 +549,51 @@ pub const WorldRenderer = struct {
             }
         }
         diagnostics.logFrame(self.storage, self.visible_chunks.items.len, pc_x, pc_z, r_dist, self.render_frame_count, build_options.startup_diagnostic_seconds);
+    }
+
+    fn renderCpuCullCached(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64, count_stats: bool) void {
+        if (self.cpu_cull_cache_valid and
+            self.cpu_cull_cache_frame == self.frame_serial and
+            self.cpu_cull_cache_pc_x == pc_x and
+            self.cpu_cull_cache_pc_z == pc_z and
+            self.cpu_cull_cache_r_dist == r_dist and
+            vec3ExactEqual(self.cpu_cull_cache_camera_pos, camera_pos) and
+            mat4ExactEqual(self.cpu_cull_cache_view_proj, view_proj))
+        {
+            self.visible_chunks.appendSlice(self.allocator, self.cpu_cull_cache.items) catch return;
+            if (count_stats) self.last_render_stats.chunks_culled += self.cpu_cull_cache_culled;
+            return;
+        }
+
+        const culled_before = self.last_render_stats.chunks_culled;
+        self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
+
+        self.cpu_cull_cache.clearRetainingCapacity();
+        self.cpu_cull_cache.appendSlice(self.allocator, self.visible_chunks.items) catch {
+            self.cpu_cull_cache_valid = false;
+            return;
+        };
+        self.cpu_cull_cache_valid = true;
+        self.cpu_cull_cache_frame = self.frame_serial;
+        self.cpu_cull_cache_pc_x = pc_x;
+        self.cpu_cull_cache_pc_z = pc_z;
+        self.cpu_cull_cache_r_dist = r_dist;
+        self.cpu_cull_cache_camera_pos = camera_pos;
+        self.cpu_cull_cache_view_proj = view_proj;
+        self.cpu_cull_cache_culled = self.last_render_stats.chunks_culled - culled_before;
+    }
+
+    fn vec3ExactEqual(a: Vec3, b: Vec3) bool {
+        return a.x == b.x and a.y == b.y and a.z == b.z;
+    }
+
+    fn mat4ExactEqual(a: Mat4, b: Mat4) bool {
+        for (0..4) |col| {
+            for (0..4) |row| {
+                if (a.data[col][row] != b.data[col][row]) return false;
+            }
+        }
+        return true;
     }
 
     fn chunkAABB(chunk_x: i32, chunk_z: i32, camera_pos: Vec3) ChunkCullData {

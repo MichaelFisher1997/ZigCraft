@@ -245,8 +245,27 @@ pub fn thresholdsForPreset(preset: []const u8) SloThresholds {
     return .{ .fps_p1_min = 6, .max_frame_ms = 260, .draw_calls_max = 3600, .vertices_max = 8_500_000, .gpu_memory_mb_max = 2800 };
 }
 
+fn baselineRenderDistanceForPreset(preset: []const u8) i32 {
+    if (std.ascii.eqlIgnoreCase(preset, "low")) return 6;
+    if (std.ascii.eqlIgnoreCase(preset, "medium")) return 10;
+    if (std.ascii.eqlIgnoreCase(preset, "high")) return 12;
+    if (std.ascii.eqlIgnoreCase(preset, "ultra")) return 14;
+    if (std.ascii.eqlIgnoreCase(preset, "extreme")) return 16;
+    return 12;
+}
+
+fn thresholdsForResults(results: BenchmarkResults) SloThresholds {
+    var thresholds = thresholdsForPreset(results.preset);
+    const baseline = baselineRenderDistanceForPreset(results.preset);
+    if (results.render_distance > baseline) {
+        const extra_chunks: f64 = @floatFromInt(results.render_distance - baseline);
+        thresholds.draw_calls_max *= 1.0 + extra_chunks * 0.05;
+    }
+    return thresholds;
+}
+
 fn enforceSlo(results: BenchmarkResults) !void {
-    const thresholds = thresholdsForPreset(results.preset);
+    const thresholds = thresholdsForResults(results);
     var failed = false;
 
     if (results.fps.p1 < thresholds.fps_p1_min) {
@@ -271,6 +290,30 @@ fn enforceSlo(results: BenchmarkResults) !void {
     }
 
     if (failed) return error.BenchmarkSloBreach;
+}
+
+test "benchmark draw-call SLO scales for render-distance override" {
+    const base = thresholdsForPreset("medium");
+    const results = BenchmarkResults{
+        .preset = "medium",
+        .render_distance = 22,
+        .gpu_memory_mb_avg = 0,
+        .gpu_memory_mb_max = 0,
+        .frames = 0,
+        .duration_s = 0,
+        .fps = .{ .min = 0, .avg = 0, .max = 0, .p1 = 0, .p5 = 0, .p50 = 0, .p95 = 0, .p99 = 0 },
+        .max_frame_ms = 0,
+        .cpu_ms_avg = 0,
+        .gpu_ms = .{ .shadow_avg = 0, .opaque_avg = 0, .total_avg = 0 },
+        .draw_calls_avg = 0,
+        .vertices_avg = 0,
+        .chunks_rendered_avg = 0,
+    };
+    const adjusted = thresholdsForResults(results);
+
+    try std.testing.expect(adjusted.draw_calls_max > base.draw_calls_max);
+    try std.testing.expectEqual(base.gpu_memory_mb_max, adjusted.gpu_memory_mb_max);
+    try std.testing.expectEqual(base.fps_p1_min, adjusted.fps_p1_min);
 }
 
 fn fpsField(sample: FrameSample) f32 {

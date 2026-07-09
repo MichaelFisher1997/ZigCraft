@@ -645,6 +645,20 @@ pub const LODConfig = struct {
         return LODLevel.count;
     }
 
+    /// Returns the number of useful LOD bands in a radius ladder.
+    /// When a short horizon collapses several coarser levels to the same radius,
+    /// keeping them active only duplicates scheduling and draw work.
+    pub fn activeCountForRadii(radii: [LODLevel.count]i32) u32 {
+        var count: u32 = 1;
+        var last = radii[0];
+        for (radii[1..]) |radius| {
+            if (radius <= last) continue;
+            count += 1;
+            last = radius;
+        }
+        return std.math.clamp(count, 1, LODLevel.count);
+    }
+
     /// Returns the coarsest supported LOD level.
     /// Use as a fallback when a distance exceeds all configured active radii.
     pub fn coarsestLOD() LODLevel {
@@ -864,6 +878,8 @@ test "ILODConfig exposes clamped active LOD count" {
 test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(8));
     try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(32));
+    try std.testing.expectEqual(@as(u32, 1), LODConfig.activeCountForRadii(.{ 22, 22, 22, 22, 22 }));
+    try std.testing.expectEqual(@as(u32, 4), LODConfig.activeCountForRadii(.{ 30, 96, 256, 512, 512 }));
 
     const low_radii = LODConfig.radiiForRenderDistance(8);
     try std.testing.expectEqual(@as(i32, 24), low_radii[0]);

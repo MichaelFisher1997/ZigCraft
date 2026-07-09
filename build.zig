@@ -20,6 +20,7 @@ const BuildOptions = struct {
     benchmark_preset: []const u8,
     benchmark_duration: u32,
     benchmark_output: []const u8,
+    benchmark_render_distance: i32,
     sanitize_c: ?std.zig.SanitizeC,
 };
 
@@ -513,6 +514,7 @@ fn defineBuildSteps(
     benchmark_options.addOption([]const u8, "benchmark_preset", benchmark_preset);
     benchmark_options.addOption(u32, "benchmark_duration", benchmark_duration);
     benchmark_options.addOption([]const u8, "benchmark_output", benchmark_output);
+    benchmark_options.addOption(i32, "benchmark_render_distance", opts.benchmark_render_distance);
 
     const benchmark_root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -867,6 +869,9 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
     const benchmark_output = b.option([]const u8, "benchmark-output", "Benchmark JSON output path") orelse "benchmark_results.json";
     options.addOption([]const u8, "benchmark_output", benchmark_output);
 
+    const benchmark_render_distance = b.option(i32, "benchmark-render-distance", "Override benchmark render and LOD horizon distance; 0 uses selected preset") orelse 0;
+    options.addOption(i32, "benchmark_render_distance", benchmark_render_distance);
+
     const sanitize = b.option([]const u8, "sanitize", "Sanitizer profile for test builds (none, address)") orelse "none";
     const sanitize_c = resolveSanitizeC(b, sanitize);
 
@@ -890,6 +895,7 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
         .benchmark_preset = benchmark_preset,
         .benchmark_duration = benchmark_duration,
         .benchmark_output = benchmark_output,
+        .benchmark_render_distance = benchmark_render_distance,
         .sanitize_c = sanitize_c,
     };
 }

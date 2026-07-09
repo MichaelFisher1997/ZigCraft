@@ -17,6 +17,7 @@ benchmark_results*.json
 screenshot.ppm
 screenshot.png
 screenshots/
+zigcraft-minidumps/
 !assets/screenshots/
 !assets/screenshots/*.png
 .vscode/
