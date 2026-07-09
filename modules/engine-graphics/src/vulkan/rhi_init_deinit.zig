@@ -28,7 +28,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     ctx.vulkan_device.initDebugMessenger();
     ctx.resources = try ResourceManager.init(allocator, &ctx.vulkan_device);
     ctx.frames = try FrameManager.init(&ctx.vulkan_device);
-    ctx.swapchain = try SwapchainPresenter.init(allocator, &ctx.vulkan_device, ctx.window, ctx.options.msaa_samples);
+    ctx.swapchain = try SwapchainPresenter.init(allocator, &ctx.vulkan_device, ctx.window, ctx.options.msaa_samples, ctx.options.present_mode);
     ctx.descriptors = try DescriptorManager.init(allocator, &ctx.vulkan_device, &ctx.resources);
 
     if (!ctx.swapchain.skip_present) {

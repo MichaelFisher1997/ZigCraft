@@ -22,6 +22,22 @@ const GpuAccelerationCoordinator = @import("gpu_acceleration_coordinator.zig").G
 const LODManager = @import("world-lod").LODManager;
 const LODColumnProvenance = @import("world-core").LODColumnProvenance;
 
+/// A pending chunk transition reference captured by a worker when it flips a
+/// chunk into the `.generated` state. The main thread later drains the queue
+/// and pushes the mesh job. Carries the job_token so stale entries (chunk was
+/// reset to `.missing` in the meantime) can be discarded cheaply.
+const PendingMeshRef = struct {
+    x: i32,
+    z: i32,
+    job_token: u32,
+};
+
+/// How often (in frames) the slow recovery scan runs. The dominant transitions
+/// (.generated -> queued_for_mesh and .mesh_ready -> uploading) are handled
+/// every frame by the pending queues; the scan only catches stuck chunks and
+/// any state that was reset outside the worker path (e.g. resetPausedChunks).
+const RECOVERY_SCAN_PERIOD: u64 = 60;
+
 pub const ChunkQueueCoordinator = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
@@ -44,6 +60,16 @@ pub const ChunkQueueCoordinator = struct {
     last_pc_z: std.atomic.Value(i32) = .init(0),
     effective_render_dist: std.atomic.Value(i32) = .init(0),
 
+    // Pending transition queues. Workers append under the respective mutex
+    // when they flip a chunk into `.generated` or `.mesh_ready`; the main
+    // thread drains these each frame. This replaces the per-frame full-storage
+    // scan that previously held chunks_mutex exclusive while iterating every
+    // loaded chunk (often 1500+ at high render distance).
+    pending_mesh_mutex: engine_core.sync.Mutex = .{},
+    pending_mesh_incoming: std.ArrayListUnmanaged(PendingMeshRef) = .empty,
+    pending_upload_mutex: engine_core.sync.Mutex = .{},
+    pending_upload_incoming: std.ArrayListUnmanaged(ChunkKey) = .empty,
+
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, gen_queue: *JobQueue, mesh_queue: *JobQueue, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu: *GpuAccelerationCoordinator) !ChunkQueueCoordinator {
         return .{
             .allocator = allocator,
@@ -61,6 +87,8 @@ pub const ChunkQueueCoordinator = struct {
 
     pub fn deinit(self: *ChunkQueueCoordinator) void {
         self.upload_queue.deinit();
+        self.pending_mesh_incoming.deinit(self.allocator);
+        self.pending_upload_incoming.deinit(self.allocator);
     }
 
     pub fn setSaveManager(self: *ChunkQueueCoordinator, sm: ?*SaveManager) void {
@@ -121,14 +149,32 @@ pub const ChunkQueueCoordinator = struct {
     }
 
     pub fn processChunkStates(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32, frame_counter: u64) void {
+        // Fast path: drain the per-state transition queues that workers
+        // appended to. This is O(pending_count) and avoids holding the
+        // storage's exclusive lock while iterating every loaded chunk.
+        self.drainPendingMesh(pc_x, pc_z, render_dist);
+        self.drainPendingUpload();
+
+        // Slow path: a throttled recovery scan that catches stuck chunks and
+        // any state reset outside the worker path. Previously this ran every
+        // frame; now it runs every RECOVERY_SCAN_PERIOD frames.
+        if (frame_counter % RECOVERY_SCAN_PERIOD != 0) return;
+
+        // Fixed-size scratch for chunks the scan flips back to `.generated`
+        // (dirty / no-allocations recovery). Sized generously; overflow is
+        // silently dropped and picked up by the next scan.
+        var recovery_enqueue: [64]PendingMeshRef = undefined;
+        var recovery_count: usize = 0;
+
         self.storage.chunks_mutex.lock();
-        defer self.storage.chunks_mutex.unlock();
 
         var mesh_iter = self.storage.iteratorUnsafe();
         while (mesh_iter.next()) |entry| {
             const key = entry.key_ptr.*;
             const data = entry.value_ptr.*;
             if (data.chunk.state == .generated) {
+                // Safety net in case a worker's pending-mesh notification was
+                // lost (e.g. allocation failure on append).
                 const dx = data.chunk.chunk_x - pc_x;
                 const dz = data.chunk.chunk_z - pc_z;
                 if (dx * dx + dz * dz <= render_dist * render_dist) {
@@ -140,6 +186,7 @@ pub const ChunkQueueCoordinator = struct {
                     data.chunk.state = .queued_for_mesh;
                 }
             } else if (data.chunk.state == .mesh_ready) {
+                // Safety net for lost pending-upload notifications.
                 data.chunk.state = .uploading;
                 self.upload_queue.push(key) catch {
                     data.chunk.state = .mesh_ready;
@@ -149,10 +196,18 @@ pub const ChunkQueueCoordinator = struct {
                 if (data.chunk.dirty) {
                     data.chunk.dirty = false;
                     data.chunk.state = .generated;
+                    if (recovery_count < recovery_enqueue.len) {
+                        recovery_enqueue[recovery_count] = .{ .x = data.chunk.chunk_x, .z = data.chunk.chunk_z, .job_token = data.chunk.job_token };
+                        recovery_count += 1;
+                    }
                 } else if (data.render.mesh.solid_allocation == null and data.render.mesh.cutout_allocation == null and data.render.mesh.fluid_allocation == null and data.chunk.mesh_attempts < 3) {
                     data.chunk.mesh_attempts += 1;
                     log.log.warn("CHUNK_RECOVERY: ({},{}) renderable with no allocations, re-meshing (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
                     data.chunk.state = .generated;
+                    if (recovery_count < recovery_enqueue.len) {
+                        recovery_enqueue[recovery_count] = .{ .x = data.chunk.chunk_x, .z = data.chunk.chunk_z, .job_token = data.chunk.job_token };
+                        recovery_count += 1;
+                    }
                 }
             } else if (data.chunk.state == .generating and !data.chunk.isPinned() and frame_counter % 120 == 0) {
                 const dx = data.chunk.chunk_x - pc_x;
@@ -171,11 +226,101 @@ pub const ChunkQueueCoordinator = struct {
                     if (data.chunk.mesh_attempts < 3) {
                         log.log.warn("CHUNK_UPLOAD_STUCK: ({},{}) in uploading state too long, resetting to generated (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
                         data.chunk.state = .generated;
+                        if (recovery_count < recovery_enqueue.len) {
+                            recovery_enqueue[recovery_count] = .{ .x = data.chunk.chunk_x, .z = data.chunk.chunk_z, .job_token = data.chunk.job_token };
+                            recovery_count += 1;
+                        }
                     } else {
                         log.log.warn("CHUNK_UPLOAD_STUCK: ({},{}) exceeded max upload recovery attempts ({}), leaving as uploading", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
                     }
                 }
             }
+        }
+        self.storage.chunks_mutex.unlock();
+
+        // Enqueue recovery flips outside the storage lock to avoid a
+        // lock-order inversion with the pending mutexes (the drain path
+        // acquires pending_mutex first, then chunks_mutex).
+        for (recovery_enqueue[0..recovery_count]) |ref| {
+            self.enqueuePendingMesh(ref.x, ref.z, ref.job_token);
+        }
+    }
+
+    /// Worker-facing helper: notify the main thread that a chunk is now in the
+    /// `.generated` state and needs a mesh job. Safe to call from any thread;
+    /// takes a brief spinlock and never blocks on the storage mutex.
+    pub fn enqueuePendingMesh(self: *ChunkQueueCoordinator, cx: i32, cz: i32, job_token: u32) void {
+        self.pending_mesh_mutex.lock();
+        defer self.pending_mesh_mutex.unlock();
+        self.pending_mesh_incoming.append(self.allocator, .{ .x = cx, .z = cz, .job_token = job_token }) catch return;
+    }
+
+    /// Worker-facing helper: notify the main thread that a chunk is now in the
+    /// `.mesh_ready` state and needs to be uploaded.
+    pub fn enqueuePendingUpload(self: *ChunkQueueCoordinator, cx: i32, cz: i32) void {
+        self.pending_upload_mutex.lock();
+        defer self.pending_upload_mutex.unlock();
+        self.pending_upload_incoming.append(self.allocator, .{ .x = cx, .z = cz }) catch return;
+    }
+
+    fn drainPendingMesh(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32) void {
+        // Swap-and-clear under the pending mutex, then process outside it so
+        // worker appends are unblocked as quickly as possible.
+        var local: std.ArrayListUnmanaged(PendingMeshRef) = .empty;
+        self.pending_mesh_mutex.lock();
+        local.appendSlice(self.allocator, self.pending_mesh_incoming.items) catch {
+            self.pending_mesh_mutex.unlock();
+            return;
+        };
+        self.pending_mesh_incoming.clearRetainingCapacity();
+        self.pending_mesh_mutex.unlock();
+        defer local.deinit(self.allocator);
+
+        if (local.items.len == 0) return;
+
+        // Single exclusive-lock batch to validate state + flip to queued.
+        self.storage.chunks_mutex.lock();
+        defer self.storage.chunks_mutex.unlock();
+
+        for (local.items) |ref| {
+            const data = self.storage.chunks.get(.{ .x = ref.x, .z = ref.z }) orelse continue;
+            if (data.chunk.state != .generated or data.chunk.job_token != ref.job_token) continue;
+            const dx = ref.x - pc_x;
+            const dz = ref.z - pc_z;
+            const dist_sq = dx * dx + dz * dz;
+            if (dist_sq > render_dist * render_dist) continue;
+            self.mesh_queue.push(.{
+                .type = .chunk_meshing,
+                .dist_sq = dist_sq,
+                .data = .{ .chunk = .{ .x = ref.x, .z = ref.z, .job_token = ref.job_token } },
+            }) catch continue;
+            data.chunk.state = .queued_for_mesh;
+        }
+    }
+
+    fn drainPendingUpload(self: *ChunkQueueCoordinator) void {
+        var local: std.ArrayListUnmanaged(ChunkKey) = .empty;
+        self.pending_upload_mutex.lock();
+        local.appendSlice(self.allocator, self.pending_upload_incoming.items) catch {
+            self.pending_upload_mutex.unlock();
+            return;
+        };
+        self.pending_upload_incoming.clearRetainingCapacity();
+        self.pending_upload_mutex.unlock();
+        defer local.deinit(self.allocator);
+
+        if (local.items.len == 0) return;
+
+        self.storage.chunks_mutex.lock();
+        defer self.storage.chunks_mutex.unlock();
+
+        for (local.items) |key| {
+            const data = self.storage.chunks.get(key) orelse continue;
+            if (data.chunk.state != .mesh_ready) continue;
+            data.chunk.state = .uploading;
+            self.upload_queue.push(key) catch {
+                data.chunk.state = .mesh_ready;
+            };
         }
     }
 
@@ -209,6 +354,7 @@ pub const ChunkQueueCoordinator = struct {
                             data.render.mesh.fluid_allocation != null,
                         });
                         data.chunk.state = .mesh_ready;
+                        self.enqueuePendingUpload(key.x, key.z);
                     }
                 }
                 uploads += 1;
@@ -311,6 +457,7 @@ pub const ChunkQueueCoordinator = struct {
             }
             self.storage.chunks_mutex.unlock();
             if (chunk_data.chunk.generated) {
+                self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
                 self.markNeighborsForRemesh(cx, cz);
                 // Feed the real chunk into the LOD system so distant terrain is
                 // derived from actual blocks (chunk_derived provenance) instead
@@ -402,6 +549,7 @@ pub const ChunkQueueCoordinator = struct {
                 self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .mesh_ready;
                 self.storage.chunks_mutex.unlock();
+                self.enqueuePendingUpload(cx, cz);
                 _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
                 return;
             }
@@ -410,17 +558,20 @@ pub const ChunkQueueCoordinator = struct {
                 self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .generated;
                 self.storage.chunks_mutex.unlock();
+                self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
                 return;
             };
             if (self.mesh_queue.abort_worker) {
                 self.storage.chunks_mutex.lock();
                 chunk_data.chunk.state = .generated;
                 self.storage.chunks_mutex.unlock();
+                self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
                 return;
             }
             self.storage.chunks_mutex.lock();
             chunk_data.chunk.state = .mesh_ready;
             self.storage.chunks_mutex.unlock();
+            self.enqueuePendingUpload(cx, cz);
             _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
         }
     }
@@ -428,17 +579,29 @@ pub const ChunkQueueCoordinator = struct {
     fn markNeighborsForRemesh(self: *ChunkQueueCoordinator, cx: i32, cz: i32) void {
         const offsets = [_][2]i32{ .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
 
-        self.storage.chunks_mutex.lock();
-        defer self.storage.chunks_mutex.unlock();
+        var enqueue_refs: [4]PendingMeshRef = undefined;
+        var enqueue_count: usize = 0;
 
+        self.storage.chunks_mutex.lock();
         for (offsets) |off| {
             if (self.storage.chunks.get(ChunkKey{ .x = cx + off[0], .z = cz + off[1] })) |data| {
                 switch (data.chunk.state) {
-                    .renderable => data.chunk.state = .generated,
+                    .renderable => {
+                        data.chunk.state = .generated;
+                        enqueue_refs[enqueue_count] = .{ .x = data.chunk.chunk_x, .z = data.chunk.chunk_z, .job_token = data.chunk.job_token };
+                        enqueue_count += 1;
+                    },
                     .mesh_ready, .uploading, .meshing => data.chunk.dirty = true,
                     else => {},
                 }
             }
+        }
+        self.storage.chunks_mutex.unlock();
+
+        // Enqueue outside chunks_mutex to keep lock ordering consistent with
+        // drainPendingMesh (pending mutex first, then chunks_mutex).
+        for (enqueue_refs[0..enqueue_count]) |ref| {
+            self.enqueuePendingMesh(ref.x, ref.z, ref.job_token);
         }
     }
 };

@@ -463,6 +463,15 @@ pub const WorldRenderer = struct {
                 const cz = pc_z + dz;
                 const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse continue;
 
+                var already_drawn = false;
+                for (self.visible_chunks.items) |visible| {
+                    if (visible == data) {
+                        already_drawn = true;
+                        break;
+                    }
+                }
+                if (already_drawn) continue;
+
                 const chunk_world_x: f32 = @floatFromInt(cx * CHUNK_SIZE_X);
                 const chunk_world_z: f32 = @floatFromInt(cz * CHUNK_SIZE_Z);
                 const model = Mat4.translate(Vec3.init(chunk_world_x - camera_pos.x, -camera_pos.y, chunk_world_z - camera_pos.z));

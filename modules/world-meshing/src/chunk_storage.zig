@@ -65,7 +65,10 @@ pub const ChunkData = struct {
 };
 
 pub const ChunkStorage = struct {
+    const CHUNK_POOL_CAPACITY = 256;
+
     chunks: std.HashMap(ChunkKey, *ChunkData, ChunkKeyContext, 80),
+    free_list: std.ArrayListUnmanaged(*ChunkData),
     chunks_mutex: sync.RwLock,
     allocator: std.mem.Allocator,
     next_job_token: u32,
@@ -73,6 +76,7 @@ pub const ChunkStorage = struct {
     pub fn init(allocator: std.mem.Allocator) ChunkStorage {
         return .{
             .chunks = std.HashMap(ChunkKey, *ChunkData, ChunkKeyContext, 80).init(allocator),
+            .free_list = .empty,
             .chunks_mutex = .{},
             .allocator = allocator,
             .next_job_token = 1,
@@ -115,6 +119,10 @@ pub const ChunkStorage = struct {
             entry.value_ptr.*.render.mesh.deinit(vertex_allocator);
             self.allocator.destroy(entry.value_ptr.*);
         }
+        for (self.free_list.items) |data| {
+            self.allocator.destroy(data);
+        }
+        self.free_list.deinit(self.allocator);
         self.chunks.deinit();
     }
 
@@ -124,6 +132,10 @@ pub const ChunkStorage = struct {
             entry.value_ptr.*.render.mesh.deinitWithoutRHI();
             self.allocator.destroy(entry.value_ptr.*);
         }
+        for (self.free_list.items) |data| {
+            self.allocator.destroy(data);
+        }
+        self.free_list.deinit(self.allocator);
         self.chunks.deinit();
     }
 
@@ -169,7 +181,12 @@ pub const ChunkStorage = struct {
 
         if (self.chunks.get(key)) |data| return data;
 
-        const data = try self.allocator.create(ChunkData);
+        const data = if (self.free_list.items.len > 0) blk: {
+            const last_index = self.free_list.items.len - 1;
+            const pooled = self.free_list.items[last_index];
+            self.free_list.items.len = last_index;
+            break :blk pooled;
+        } else try self.allocator.create(ChunkData);
         data.* = .{
             .chunk = Chunk.init(cx, cz),
             .render = .{
@@ -194,7 +211,16 @@ pub const ChunkStorage = struct {
         const key = ChunkKey{ .x = cx, .z = cz };
         if (self.chunks.fetchRemove(key)) |entry| {
             entry.value.*.render.mesh.deinit(vertex_allocator);
-            self.allocator.destroy(entry.value);
+            // Retain the large ChunkData allocation for future chunks. The mesh
+            // has been fully deinitialized above; replace it with an empty mesh
+            // so pooled entries are safe to destroy directly during storage
+            // shutdown without double-freeing stale pointers.
+            entry.value.*.render.mesh = ChunkMesh.init(self.allocator);
+            if (self.free_list.items.len < CHUNK_POOL_CAPACITY) {
+                self.free_list.append(self.allocator, entry.value) catch self.allocator.destroy(entry.value);
+            } else {
+                self.allocator.destroy(entry.value);
+            }
             return true;
         }
         return false;

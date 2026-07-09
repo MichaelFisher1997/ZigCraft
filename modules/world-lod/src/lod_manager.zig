@@ -78,6 +78,9 @@ const ChunkCoordKeyContext = lod_manager_context.ChunkCoordKeyContext;
 const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std.hash_map.default_max_load_percentage);
 const PendingIngestion = lod_manager_context.PendingIngestion;
 const PlayerChunkPos = lod_manager_context.PlayerChunkPos;
+const GenerationCandidate = lod_manager_context.GenerationCandidate;
+const MeshCandidate = lod_manager_context.MeshCandidate;
+const UploadCandidate = lod_manager_context.UploadCandidate;
 pub const ChunkResolver = lod_manager_context.ChunkResolver;
 const MAX_LOD_REGIONS = lod_manager_context.MAX_LOD_REGIONS;
 
@@ -203,6 +206,13 @@ pub const LODManager = struct {
     // source data when the chunk finished generating/loading. Drained from
     // update() once the regions appear.
     ingestion_queue: LODIngestionQueue,
+
+    // Reused per-update scratch buffers for candidate sorting. These used to
+    // allocate/free on every LOD tick; retaining capacity removes steady-state
+    // allocator churn at high render distances.
+    generation_candidates_scratch: std.ArrayListUnmanaged(GenerationCandidate) = .empty,
+    mesh_candidates_scratch: std.ArrayListUnmanaged(MeshCandidate) = .empty,
+    upload_candidates_scratch: std.ArrayListUnmanaged(UploadCandidate) = .empty,
 
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;

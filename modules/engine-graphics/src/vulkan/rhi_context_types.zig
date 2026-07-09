@@ -174,6 +174,7 @@ const RuntimeState = struct {
     ssao_pass_active: bool = false,
     post_process_ran_this_frame: bool = false,
     fxaa_ran_this_frame: bool = false,
+    transfer_barrier_needed: bool = false,
     pipeline_rebuild_needed: bool = false,
     swapchain_recreate_failed: bool = false,
     frame_index: usize,

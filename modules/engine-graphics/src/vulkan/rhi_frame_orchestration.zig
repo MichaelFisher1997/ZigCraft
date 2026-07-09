@@ -191,22 +191,25 @@ pub fn prepareFrameState(ctx: anytype) void {
 
     const command_buffer = ctx.frames.getCurrentCommandBuffer();
 
-    var mem_barrier = std.mem.zeroes(c.VkMemoryBarrier);
-    mem_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    mem_barrier.srcAccessMask = c.VK_ACCESS_HOST_WRITE_BIT | c.VK_ACCESS_TRANSFER_WRITE_BIT;
-    mem_barrier.dstAccessMask = c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | c.VK_ACCESS_INDEX_READ_BIT | c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
-    c.vkCmdPipelineBarrier(
-        command_buffer,
-        c.VK_PIPELINE_STAGE_HOST_BIT | c.VK_PIPELINE_STAGE_TRANSFER_BIT,
-        c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
-        0,
-        1,
-        &mem_barrier,
-        0,
-        null,
-        0,
-        null,
-    );
+    if (ctx.runtime.transfer_barrier_needed) {
+        var mem_barrier = std.mem.zeroes(c.VkMemoryBarrier);
+        mem_barrier.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mem_barrier.srcAccessMask = c.VK_ACCESS_HOST_WRITE_BIT | c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        mem_barrier.dstAccessMask = c.VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | c.VK_ACCESS_INDEX_READ_BIT | c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+        c.vkCmdPipelineBarrier(
+            command_buffer,
+            c.VK_PIPELINE_STAGE_HOST_BIT | c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+            c.VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | c.VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+            0,
+            1,
+            &mem_barrier,
+            0,
+            null,
+            0,
+            null,
+        );
+        ctx.runtime.transfer_barrier_needed = false;
+    }
 
     ctx.ui.ui_vertex_offset = 0;
     ctx.ui.ui_flushed_vertex_count = 0;

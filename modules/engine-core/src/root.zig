@@ -26,6 +26,7 @@ pub const WindowManager = window.WindowManager;
 pub const initCrashHandler = crash_handler.init;
 pub const timestampMs = time.timestampMs;
 pub const envFlag = runtime_env.envFlag;
+pub const envInt = runtime_env.envInt;
 pub const getenv = runtime_env.getenv;
 pub const safeModeAutoEnabled = runtime_env.safeModeAutoEnabled;
 pub const safeModeEnabled = runtime_env.safeModeEnabled;

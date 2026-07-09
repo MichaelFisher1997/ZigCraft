@@ -103,16 +103,23 @@ pub const WorldStreamer = struct {
     last_diag_uploaded: u64 = 0,
 
     const MIN_GEN_WORKERS = 2;
-    const MAX_GEN_WORKERS = 4;
     const MIN_MESH_WORKERS = 2;
-    const MAX_MESH_WORKERS = 6;
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
         errdefer allocator.destroy(streamer);
 
+        // Worker pool sizing. The historical caps (gen<=4, mesh<=6) left most
+        // cores idle on modern multi-core CPUs during the chunk-load burst.
+        // We now size both pools against the CPU count so the gen+mesh pipeline
+        // can saturate the machine, while leaving at least one core for the
+        // main thread and the Vulkan driver. Defaults split the budget 50/50;
+        // ZIGCRAFT_GEN_WORKERS / ZIGCRAFT_MESH_WORKERS override either side.
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
-        const gen_worker_count = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
-        const mesh_worker_count = std.math.clamp(cpu_count / 2, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
+        const total_budget = @max(@as(usize, 4), cpu_count -| 1);
+        const default_gen = @max(MIN_GEN_WORKERS, total_budget / 2);
+        const default_mesh = @max(MIN_MESH_WORKERS, total_budget - default_gen);
+        const gen_worker_count = engine_core.envInt("ZIGCRAFT_GEN_WORKERS", default_gen);
+        const mesh_worker_count = engine_core.envInt("ZIGCRAFT_MESH_WORKERS", default_mesh);
 
         const gen_queue = try allocator.create(JobQueue);
         gen_queue.* = JobQueue.init(allocator);
