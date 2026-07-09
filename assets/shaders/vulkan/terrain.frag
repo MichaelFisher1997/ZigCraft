@@ -32,7 +32,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
     vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = reserved
     vec4 render_flags; // z = pbr_enabled, w = simple_lighting_enabled
-    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
+    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z = shadow strength, w = simple lighting
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
     vec4 viewport_size; // xy = width/height, z = terrain debug active, w = terrain debug channel
@@ -818,7 +818,7 @@ void main() {
             color = inBounds ? vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth) : vec3(1.0, 0.0, 1.0);
         } else if (debugChannel < DEBUG_SEAM_DIAG + 0.5) {
             float nextSplit = shadows.cascade_splits[layer];
-            float blendStart = nextSplit * 0.8;
+            float blendStart = layer < 3 ? shadows.overlap_starts[layer + 1] : nextSplit;
             float distToSplit = abs(cascadeDistance - nextSplit) / max(nextSplit, 0.01);
             float inBlend = (cascadeDistance > blendStart && layer < 3) ? (cascadeDistance - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
             float splitLine = 1.0 - smoothstep(0.0, 0.05, distToSplit);

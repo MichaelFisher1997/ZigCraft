@@ -39,9 +39,19 @@ pub const ShadowCascades = struct {
             if (self.cascade_splits[i] <= 0.0) return false;
             if (i > 0 and self.cascade_splits[i] <= self.cascade_splits[i - 1]) return false;
 
+            if (!std.math.isFinite(self.overlap_starts[i])) return false;
+            if (self.overlap_starts[i] < 0.0 or self.overlap_starts[i] > self.cascade_splits[i]) return false;
+
             // Check texel sizes are finite and positive
             if (!std.math.isFinite(self.texel_sizes[i])) return false;
             if (self.texel_sizes[i] <= 0.0) return false;
+
+            if (!std.math.isFinite(self.depth_spans[i])) return false;
+            if (self.depth_spans[i] <= 0.0) return false;
+
+            for (self.receiver_corners[i]) |corner| {
+                if (!std.math.isFinite(corner.x) or !std.math.isFinite(corner.y) or !std.math.isFinite(corner.z)) return false;
+            }
 
             // Check light space matrices are finite
             for (0..4) |row| {
@@ -127,8 +137,8 @@ fn sliceCorners(cam_pos: Vec3, right: Vec3, up: Vec3, forward: Vec3, tan_x: f32,
 /// - z_range_01: map depth to [0,1] for reverse-Z when true.
 ///
 /// Notes:
-/// - lambda=0.92 biases the split scheme toward logarithmic distribution.
-/// - min/max Z offsets are tuned to avoid clipping during camera motion.
+/// - lambda=0.75 biases the split scheme toward logarithmic distribution.
+/// - the positive light-space depth span includes the configured caster reach.
 pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, near: f32, far: f32, sun_dir: Vec3, cam_view: Mat4, cam_pos: Vec3, z_range_01: bool) ShadowCascades {
     // Validate inputs to prevent division by zero
     if (resolution == 0 or far <= near or near <= 0.0) {
@@ -329,4 +339,20 @@ test "sub-texel camera translation keeps cascade scale stable" {
         try std.testing.expectApproxEqAbs(first.light_space_matrices[cascade].data[0][0], second.light_space_matrices[cascade].data[0][0], 0.000001);
         try std.testing.expectApproxEqAbs(first.light_space_matrices[cascade].data[1][1], second.light_space_matrices[cascade].data[1][1], 0.000001);
     }
+}
+
+test "isValid rejects invalid cascade auxiliary data" {
+    var cascades = computeCascades(1024, std.math.degreesToRadians(60.0), 16.0 / 9.0, 0.1, 200.0, Vec3.init(0.3, -1.0, 0.2).normalize(), Mat4.identity, true);
+    try std.testing.expect(cascades.isValid());
+
+    cascades.overlap_starts[1] = std.math.nan(f32);
+    try std.testing.expect(!cascades.isValid());
+    cascades.overlap_starts[1] = 1.0;
+
+    cascades.depth_spans[2] = 0.0;
+    try std.testing.expect(!cascades.isValid());
+    cascades.depth_spans[2] = 1.0;
+
+    cascades.receiver_corners[3][0].x = std.math.nan(f32);
+    try std.testing.expect(!cascades.isValid());
 }

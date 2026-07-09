@@ -28,7 +28,9 @@ test "ShadowCascades isValid rejects NaN splits" {
     // Set up valid-looking data first
     for (0..CSM.CASCADE_COUNT) |i| {
         cascades.cascade_splits[i] = @as(f32, @floatFromInt(i + 1)) * 50.0;
+        cascades.overlap_starts[i] = if (i == 0) 0.1 else cascades.cascade_splits[i - 1];
         cascades.texel_sizes[i] = 0.1 * @as(f32, @floatFromInt(i + 1));
+        cascades.depth_spans[i] = @as(f32, @floatFromInt(i + 1));
         cascades.light_space_matrices[i] = Mat4.identity;
     }
     try testing.expect(cascades.isValid());
@@ -42,7 +44,9 @@ test "ShadowCascades isValid rejects non-monotonic splits" {
     var cascades = CSM.ShadowCascades.initZero();
     for (0..CSM.CASCADE_COUNT) |i| {
         cascades.cascade_splits[i] = @as(f32, @floatFromInt(i + 1)) * 50.0;
+        cascades.overlap_starts[i] = if (i == 0) 0.1 else cascades.cascade_splits[i - 1];
         cascades.texel_sizes[i] = 0.1 * @as(f32, @floatFromInt(i + 1));
+        cascades.depth_spans[i] = @as(f32, @floatFromInt(i + 1));
         cascades.light_space_matrices[i] = Mat4.identity;
     }
     try testing.expect(cascades.isValid());

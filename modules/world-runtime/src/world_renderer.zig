@@ -678,6 +678,8 @@ pub const WorldRenderer = struct {
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
+        // Candidate bounds already derive from the exact receiver volume; retaining
+        // the matrix preserves the shadow-scene interface for backend callers.
         _ = light_space_matrix;
         const margin: i64 = 1;
         const min_chunk = worldToChunkFromFloat(caster_min.x, caster_min.z);

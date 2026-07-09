@@ -996,9 +996,9 @@ pub const World = struct {
     }
 
     /// Renders world geometry into the active shadow pass.
-    /// Call from the shadow renderer with valid view-projection and shadow config.
+    /// The shadow renderer provides receiver-volume-derived caster bounds.
     pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
-        _ = shadow_config;
+        _ = shadow_config; // Bounds already encode the configured caster reach.
         self.renderer.renderShadowPass(light_space_matrix, camera_pos, caster_min, caster_max);
     }
 

@@ -6,6 +6,7 @@ const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 const ShadowSystem = @import("engine-shadows").ShadowSystem;
 const computeCascades = @import("engine-shadows").computeCascades;
+const practicalSplit = @import("engine-shadows").practicalSplit;
 const ShadowCascades = @import("engine-shadows").ShadowCascades;
 const CASCADE_COUNT = @import("engine-shadows").CASCADE_COUNT;
 const shadow_scene = @import("engine-shadows").shadow_scene;
@@ -69,7 +70,9 @@ test "ShadowCascades initZero sets identity matrices" {
 test "ShadowCascades isValid returns true for valid cascades" {
     var cascades = ShadowCascades.initZero();
     cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
+    cascades.overlap_starts = .{ 0.1, 9.0, 45.0, 140.0 };
     cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    cascades.depth_spans = .{ 10.0, 20.0, 40.0, 80.0 };
     cascades.light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT;
 
     try testing.expect(cascades.isValid());
@@ -195,7 +198,7 @@ test "computeCascades produces positive texel sizes" {
     }
 }
 
-test "computeCascades uses fixed splits for large shadow distance" {
+test "computeCascades uses practical splits for large shadow distance" {
     const cascades = computeCascades(
         1024,
         std.math.degreesToRadians(60.0),
@@ -207,13 +210,13 @@ test "computeCascades uses fixed splits for large shadow distance" {
         true,
     );
 
-    const expected_splits = [4]f32{ 250.0, 500.0, 750.0, 1000.0 };
     for (0..CASCADE_COUNT) |i| {
-        try testing.expectApproxEqAbs(expected_splits[i], cascades.cascade_splits[i], 0.001);
+        const expected = practicalSplit(0.1, 1000.0, i, 0.75);
+        try testing.expectApproxEqAbs(expected, cascades.cascade_splits[i], 0.001);
     }
 }
 
-test "computeCascades uses fixed splits for small shadow distance" {
+test "computeCascades uses practical splits for small shadow distance" {
     const cascades = computeCascades(
         1024,
         std.math.degreesToRadians(60.0),
@@ -225,9 +228,9 @@ test "computeCascades uses fixed splits for small shadow distance" {
         true,
     );
 
-    const expected_splits = [4]f32{ 50.0, 100.0, 150.0, 200.0 };
     for (0..CASCADE_COUNT) |i| {
-        try testing.expectApproxEqAbs(expected_splits[i], cascades.cascade_splits[i], 0.001);
+        const expected = practicalSplit(0.1, 200.0, i, 0.75);
+        try testing.expectApproxEqAbs(expected, cascades.cascade_splits[i], 0.001);
     }
 }
 
@@ -391,7 +394,9 @@ test "ShadowParams struct layout" {
 test "ShadowCascades isValid detects non-finite light space matrix" {
     var cascades = ShadowCascades.initZero();
     cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
+    cascades.overlap_starts = .{ 0.1, 9.0, 45.0, 140.0 };
     cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    cascades.depth_spans = .{ 10.0, 20.0, 40.0, 80.0 };
 
     var bad_matrix = Mat4.identity;
     bad_matrix.data[0][0] = std.math.nan(f32);
