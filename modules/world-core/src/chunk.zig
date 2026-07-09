@@ -43,10 +43,15 @@ pub const Chunk = struct {
     heightmap: [CHUNK_SIZE_X * CHUNK_SIZE_Z]i16,
     state: State = .missing,
     job_token: u32 = 0,
+    /// Monotonic mesh-input revisions. They are updated while storage owns the chunk.
+    content_revision: std.atomic.Value(u64) = .init(0),
+    light_revision: std.atomic.Value(u64) = .init(0),
     dirty: bool = true,
     mesh_attempts: u8 = 0,
     generated: bool = false,
     modified: bool = false,
+    /// Persisted with chunk format v3; v2 chunks are treated as stale lighting.
+    lighting_valid: bool = false,
     pin_count: std.atomic.Value(u32),
 
     /// Creates a new chunk at chunk coordinates `(chunk_x, chunk_z)` with default air, plains biome, and zero light.
@@ -84,9 +89,12 @@ pub const Chunk = struct {
     /// Writes a block at chunk-local coordinates and marks the chunk dirty and modified.
     /// Coordinates must be in bounds; callers are responsible for scheduling mesh/light updates.
     pub fn setBlock(self: *Chunk, x: u32, y: u32, z: u32, block: BlockType) void {
-        self.blocks[getIndex(x, y, z)] = block;
+        const index = getIndex(x, y, z);
+        if (self.blocks[index] == block) return;
+        self.blocks[index] = block;
         self.dirty = true;
         self.modified = true;
+        self.markContentChanged();
     }
 
     /// Safely reads a block for possibly out-of-bounds local coordinates.
@@ -105,8 +113,21 @@ pub const Chunk = struct {
     /// Writes the biome id for a horizontal chunk-local column and marks the chunk dirty.
     /// This affects tinting and terrain metadata but does not mark the chunk player-modified.
     pub fn setBiome(self: *Chunk, x: u32, z: u32, biome: BiomeId) void {
-        self.biomes[x + z * CHUNK_SIZE_X] = biome;
+        const index = x + z * CHUNK_SIZE_X;
+        if (self.biomes[index] == biome) return;
+        self.biomes[index] = biome;
         self.dirty = true;
+        self.markContentChanged();
+    }
+
+    /// Marks direct bulk writes to blocks, biomes, or heightmap as mesh-relevant.
+    pub fn markContentChanged(self: *Chunk) void {
+        _ = self.content_revision.fetchAdd(1, .release);
+    }
+
+    /// Marks a completed lighting batch as mesh-relevant.
+    pub fn markLightChanged(self: *Chunk) void {
+        _ = self.light_revision.fetchAdd(1, .release);
     }
 
     /// Reads packed sky/block light at chunk-local coordinates.
@@ -310,8 +331,9 @@ pub const Chunk = struct {
             self.setSkyLight(x, uy, z, sky_light);
             if (block_registry.getBlockDefinition(block).isOpaque()) {
                 sky_light = 0;
-            } else if (block == .water and sky_light > 0) {
-                sky_light -= 1;
+            } else {
+                const attenuation = block_registry.lightAttenuation(block);
+                if (attenuation > 1) sky_light = if (sky_light > attenuation) sky_light - attenuation else 0;
             }
         }
     }

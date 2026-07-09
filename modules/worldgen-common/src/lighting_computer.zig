@@ -88,8 +88,9 @@ pub const LightingComputer = struct {
                         });
                     }
 
-                    if (block == .water and sky_light > 0) {
-                        sky_light -= 1;
+                    const attenuation = block_registry.lightAttenuation(block);
+                    if (attenuation > 1) {
+                        sky_light = if (sky_light > attenuation) sky_light - attenuation else 0;
                     }
                 }
             }
@@ -121,7 +122,7 @@ pub const LightingComputer = struct {
                 const block = chunk.getBlock(ux, uy, uz);
                 if (block_registry.getBlockDefinition(block).isOpaque()) continue;
 
-                const attenuation: u4 = if (block == .water) 2 else 1;
+                const attenuation = block_registry.lightAttenuation(block);
                 const next_light: u4 = if (node.light > attenuation) node.light - attenuation else 0;
                 if (next_light <= chunk.getSkyLight(ux, uy, uz)) continue;
 

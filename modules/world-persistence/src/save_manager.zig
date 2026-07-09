@@ -45,6 +45,7 @@ const SAVE_FAILURE_COUNT_FILE = "save_failures.dat";
 
 pub const LoadResult = enum {
     success,
+    success_relight_required,
     not_found,
     read_error,
     corrupt_data,
@@ -57,6 +58,7 @@ pub const SaveQueueEntry = struct {
     light: [CHUNK_VOLUME]PackedLight,
     biomes: [CHUNK_SIZE_X * CHUNK_SIZE_Z]BiomeId,
     heightmap: [CHUNK_SIZE_X * CHUNK_SIZE_Z]i16,
+    lighting_valid: bool,
 };
 
 const RegionCacheEntry = struct {
@@ -125,10 +127,13 @@ pub const SaveManager = struct {
             .failed_save_count = std.atomic.Value(usize).init(0),
             .persisted_failed_save_count = std.atomic.Value(usize).init(persisted_failures),
             .persisted_failed_save_mutex = .{},
-            .level_data = blk: {
-                const generator_copy = try allocator.dupe(u8, generator_name);
-                errdefer allocator.free(generator_copy);
-                break :blk LevelData.init(seed, generator_copy);
+            .level_data = LevelData.loadFromFile(allocator, dir) catch |err| switch (err) {
+                error.FileNotFound => blk: {
+                    const generator_copy = try allocator.dupe(u8, generator_name);
+                    errdefer allocator.free(generator_copy);
+                    break :blk LevelData.init(seed, generator_copy);
+                },
+                else => return err,
             },
             .last_auto_save_ms = timestampMs(),
         };
@@ -179,6 +184,7 @@ pub const SaveManager = struct {
             .light = chunk.light,
             .biomes = chunk.biomes,
             .heightmap = chunk.heightmap,
+            .lighting_valid = chunk.lighting_valid,
         };
 
         self.queue_mutex.lock();
@@ -241,8 +247,28 @@ pub const SaveManager = struct {
         out_chunk.chunk_z = cz;
         out_chunk.generated = true;
 
+        if (!out_chunk.lighting_valid) {
+            for (&out_chunk.light) |*light| light.* = PackedLight.init(0, 0);
+            out_chunk.markLightChanged();
+            // The per-chunk marker remains false until reconciliation writes a
+            // v3 chunk, so world metadata cannot make an unloaded v2 chunk valid.
+            log.log.info("Discarded stale derived lighting while loading chunk ({}, {})", .{ cx, cz });
+            return .success_relight_required;
+        }
+
         log.log.debug("Loaded chunk ({}, {}) from save", .{ cx, cz });
         return .success;
+    }
+
+    /// Marks metadata current only after a reconciled v3 chunk is persisted.
+    /// Older chunks remain protected by their per-chunk lighting-validity marker.
+    pub fn markLightingMigrationComplete(self: *SaveManager) void {
+        if (self.level_data.lighting_algorithm_version == LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION) return;
+        self.level_data.lighting_algorithm_version = LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION;
+        self.level_data.saveToFile(self.allocator, self.save_dir) catch |err| {
+            log.log.err("Failed to persist lighting migration metadata: {}", .{err});
+            self.recordSaveFailure();
+        };
     }
 
     pub fn shouldAutoSave(self: *const SaveManager) bool {
@@ -385,6 +411,7 @@ pub const SaveManager = struct {
         chunk.light = entry.light;
         chunk.biomes = entry.biomes;
         chunk.heightmap = entry.heightmap;
+        chunk.lighting_valid = entry.lighting_valid;
         chunk.generated = true;
 
         const serialized = chunk_serializer.serializeChunk(&chunk, self.allocator) catch |err| {
@@ -408,6 +435,8 @@ pub const SaveManager = struct {
             log.log.err("Failed to write chunk ({}, {}) to region ({}, {}): {}", .{ entry.chunk_x, entry.chunk_z, rx, rz, err });
             return err;
         };
+
+        if (entry.lighting_valid) self.markLightingMigrationComplete();
 
         log.log.debug("Saved chunk ({}, {}) to region ({}, {})", .{ entry.chunk_x, entry.chunk_z, rx, rz });
     }
