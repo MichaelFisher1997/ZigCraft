@@ -120,12 +120,12 @@ pub const Chunk = struct {
 
     /// Marks direct bulk writes to blocks, biomes, or heightmap as mesh-relevant.
     pub fn markContentChanged(self: *Chunk) void {
-        _ = self.content_revision.fetchAdd(1, .monotonic);
+        _ = self.content_revision.fetchAdd(1, .release);
     }
 
     /// Marks a completed lighting batch as mesh-relevant.
     pub fn markLightChanged(self: *Chunk) void {
-        _ = self.light_revision.fetchAdd(1, .monotonic);
+        _ = self.light_revision.fetchAdd(1, .release);
     }
 
     /// Reads packed sky/block light at chunk-local coordinates.

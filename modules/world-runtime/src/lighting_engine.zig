@@ -46,6 +46,7 @@ pub const WorldLightingEngine = struct {
             if (storage_locked) self.storage.chunks_mutex.unlockShared();
         }
         const center = self.storage.chunks.get(.{ .x = center_cx, .z = center_cz }) orelse return;
+        if (!center.chunk.generated) return;
         try component.put(.{ .x = center_cx, .z = center_cz }, &center.chunk);
         center.chunk.pin();
 
@@ -60,6 +61,7 @@ pub const WorldLightingEngine = struct {
                 const key = ChunkKey{ .x = coords.cx + offset[0], .z = coords.cz + offset[1] };
                 if (component.contains(key)) continue;
                 const data = self.storage.chunks.get(key) orelse continue;
+                if (!data.chunk.generated) continue;
                 try component.put(key, &data.chunk);
                 data.chunk.pin();
                 try discovery.append(self.allocator, .{ .cx = key.x, .cz = key.z });
@@ -203,6 +205,8 @@ test "WorldLightingEngine propagates RGB light through loaded chunk boundaries" 
     defer storage.deinitWithoutRHI();
     const center = try storage.getOrCreate(0, 0);
     const east = try storage.getOrCreate(1, 0);
+    center.chunk.generated = true;
+    east.chunk.generated = true;
     center.chunk.setBlock(CHUNK_SIZE_X - 1, 4, 1, .torch);
     var lighting = WorldLightingEngine.init(&storage, testing.allocator);
     try lighting.reconcileChunkArrival(0, 0);
@@ -215,6 +219,8 @@ test "WorldLightingEngine removes stale light across the loaded component" {
     defer storage.deinitWithoutRHI();
     const center = try storage.getOrCreate(0, 0);
     const east = try storage.getOrCreate(1, 0);
+    center.chunk.generated = true;
+    east.chunk.generated = true;
     center.chunk.setBlock(CHUNK_SIZE_X - 1, 4, 1, .torch);
     east.chunk.setEntranceBounce(2, 4, 1, 7);
     east.chunk.setEntranceDir(2, 4, 1, world_core.packEntranceDir(1, -1));
