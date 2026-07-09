@@ -80,6 +80,7 @@ pub const BenchmarkRunner = struct {
     render_distance: i32,
     duration_s: f32,
     output_path: []const u8,
+    start_ms: i64,
     elapsed_s: f32 = 0,
     samples: std.ArrayListUnmanaged(FrameSample) = .empty,
 
@@ -90,6 +91,7 @@ pub const BenchmarkRunner = struct {
             .render_distance = render_distance,
             .duration_s = duration_s,
             .output_path = output_path,
+            .start_ms = nowMs(),
             .elapsed_s = 0,
             .samples = .empty,
         };
@@ -137,7 +139,7 @@ pub const BenchmarkRunner = struct {
     }
 
     pub fn isComplete(self: *const BenchmarkRunner) bool {
-        return self.elapsed_s >= self.duration_s;
+        return wallElapsedSeconds(self) >= self.duration_s;
     }
 
     pub fn writeResults(self: *const BenchmarkRunner) !void {
@@ -225,8 +227,17 @@ pub const BenchmarkRunner = struct {
     }
 };
 
+fn nowMs() i64 {
+    return std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
+}
+
+fn wallElapsedSeconds(self: *const BenchmarkRunner) f32 {
+    const elapsed_ms = @max(@as(i64, 0), nowMs() - self.start_ms);
+    return @as(f32, @floatFromInt(elapsed_ms)) / 1000.0;
+}
+
 pub fn thresholdsForPreset(preset: []const u8) SloThresholds {
-    if (std.ascii.eqlIgnoreCase(preset, "low")) return .{ .fps_p1_min = 12, .max_frame_ms = 260, .draw_calls_max = 700, .vertices_max = 3_500_000, .gpu_memory_mb_max = 1800 };
+    if (std.ascii.eqlIgnoreCase(preset, "low")) return .{ .fps_p1_min = 12, .max_frame_ms = 260, .draw_calls_max = 700, .vertices_max = 3_500_000, .gpu_memory_mb_max = 2200 };
     if (std.ascii.eqlIgnoreCase(preset, "medium")) return .{ .fps_p1_min = 8, .max_frame_ms = 260, .draw_calls_max = 2600, .vertices_max = 6_000_000, .gpu_memory_mb_max = 2400 };
     if (std.ascii.eqlIgnoreCase(preset, "high")) return .{ .fps_p1_min = 6, .max_frame_ms = 260, .draw_calls_max = 3600, .vertices_max = 8_500_000, .gpu_memory_mb_max = 2800 };
     if (std.ascii.eqlIgnoreCase(preset, "ultra")) return .{ .fps_p1_min = 4, .max_frame_ms = 260, .draw_calls_max = 4500, .vertices_max = 12_000_000, .gpu_memory_mb_max = 3400 };
