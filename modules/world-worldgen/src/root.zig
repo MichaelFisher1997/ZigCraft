@@ -50,6 +50,7 @@ pub const BiomeDecorator = biome_decorator.BiomeDecorator;
 pub const ColumnInfo = worldgen_api.ColumnInfo;
 pub const CoastalGenerator = coastal_generator.CoastalGenerator;
 pub const DecorationProvider = decoration_provider.DecorationProvider;
+pub const fuzz_tests = @import("fuzz_tests.zig");
 pub const GenRegion = gen_region.GenRegion;
 pub const TerrainShapeGenerator = terrain_shape_generator.TerrainShapeGenerator;
 pub const TerrainReport = terrain_report.TerrainReport;

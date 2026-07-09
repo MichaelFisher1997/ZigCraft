@@ -92,16 +92,19 @@ pub const RegionFile = struct {
 
         const byte_offset: u64 = @as(u64, entry.offset) * SECTOR_SIZE;
         const max_bytes: u64 = @as(u64, entry.sector_count) * SECTOR_SIZE;
+        const stat = try self.file.stat();
+        if (entry.sector_count == 0 or byte_offset + 5 > stat.size) return RegionError.FileTooShort;
 
         var len_buf: [4]u8 = undefined;
-        _ = try self.file.preadAll(&len_buf, byte_offset);
+        if (try self.file.preadAll(&len_buf, byte_offset) != len_buf.len) return RegionError.FileTooShort;
         const chunk_len = std.mem.readInt(u32, &len_buf, .big);
 
         if (chunk_len < 1 or chunk_len > max_bytes)
             return RegionError.InvalidHeader;
+        if (byte_offset + 4 + chunk_len > stat.size) return RegionError.FileTooShort;
 
         var comp_type_buf: [1]u8 = undefined;
-        _ = try self.file.preadAll(&comp_type_buf, byte_offset + 4);
+        if (try self.file.preadAll(&comp_type_buf, byte_offset + 4) != comp_type_buf.len) return RegionError.FileTooShort;
 
         if (comp_type_buf[0] != COMPRESSION_ZLIB)
             return RegionError.CompressionError;
@@ -109,7 +112,7 @@ pub const RegionFile = struct {
         const payload_len = chunk_len - 1;
         const compressed = try allocator.alloc(u8, payload_len);
         errdefer allocator.free(compressed);
-        _ = try self.file.preadAll(compressed, byte_offset + 5);
+        if (try self.file.preadAll(compressed, byte_offset + 5) != compressed.len) return RegionError.FileTooShort;
 
         const result = try decompressZlib(allocator, compressed);
         allocator.free(compressed);

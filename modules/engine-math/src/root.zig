@@ -14,5 +14,6 @@ pub const ALL_FACES = @import("voxel.zig").ALL_FACES;
 pub const utils = @import("utils.zig");
 pub const frustum_tests = @import("frustum_tests.zig");
 pub const mat4_tests = @import("mat4_tests.zig");
+pub const ray_fuzz_tests = @import("ray_fuzz_tests.zig");
 pub const utils_tests = @import("utils_tests.zig");
 pub const voxel_tests = @import("voxel_tests.zig");
