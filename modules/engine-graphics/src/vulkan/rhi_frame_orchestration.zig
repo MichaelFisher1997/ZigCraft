@@ -7,6 +7,50 @@ const bindings = @import("descriptor_bindings.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
 const setup = @import("rhi_resource_setup.zig");
 
+pub fn recreatePendingShadowResources(ctx: anytype) void {
+    const requested = ctx.shadow_runtime.pending_shadow_resolution orelse return;
+    ctx.shadow_runtime.pending_shadow_resolution = null;
+    if (requested == ctx.shadow_runtime.shadow_resolution) return;
+
+    _ = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
+    const previous = ctx.shadow_runtime.shadow_resolution;
+    var previous_system = ctx.shadow_system;
+    const previous_handles = ctx.shadow_runtime.shadow_map_handles;
+
+    ctx.shadow_system = @TypeOf(ctx.shadow_system).init(ctx.allocator, requested) catch return;
+    ctx.shadow_runtime.shadow_resolution = requested;
+    ctx.shadow_runtime.shadow_map_handles = .{0} ** rhi.SHADOW_CASCADE_COUNT;
+    setup.createShadowResources(ctx) catch |err| {
+        log.log.err("Failed to create {}px shadow resources: {}; retaining {}px resources", .{ requested, err, previous });
+        for (ctx.shadow_runtime.shadow_map_handles) |handle| if (handle != 0) ctx.resources.destroyTexture(handle);
+        ctx.shadow_system.deinit(ctx.vulkan_device.vk_device);
+        ctx.shadow_system = previous_system;
+        ctx.shadow_runtime.shadow_resolution = previous;
+        ctx.shadow_runtime.shadow_map_handles = previous_handles;
+        return;
+    };
+
+    if (ctx.shadow_system.shadow_image != null) {
+        lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true, rhi.SHADOW_CASCADE_COUNT) catch |err| {
+            log.log.err("Failed to transition recreated shadow array: {}", .{err});
+            for (ctx.shadow_runtime.shadow_map_handles) |handle| if (handle != 0) ctx.resources.destroyTexture(handle);
+            ctx.shadow_system.deinit(ctx.vulkan_device.vk_device);
+            ctx.shadow_system = previous_system;
+            ctx.shadow_runtime.shadow_resolution = previous;
+            ctx.shadow_runtime.shadow_map_handles = previous_handles;
+            return;
+        };
+        for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
+            ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            ctx.draw.bound_shadow_views[i] = null;
+        }
+    }
+
+    for (previous_handles) |handle| if (handle != 0) ctx.resources.destroyTexture(handle);
+    previous_system.deinit(ctx.vulkan_device.vk_device);
+    log.log.info("Shadow resources recreated at {}x{}", .{ ctx.shadow_runtime.shadow_resolution, ctx.shadow_runtime.shadow_resolution });
+}
+
 pub fn recreateSwapchainInternal(ctx: anytype) void {
     _ = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
 
@@ -137,11 +181,11 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         }
 
         if (count > 0) {
-            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.warn("Failed to transition images: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false, 1) catch |err| log.log.warn("Failed to transition images: {}", .{err});
         }
 
         if (ctx.shadow_system.shadow_image != null) {
-            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true) catch |err| log.log.warn("Failed to transition Shadow image: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true, rhi.SHADOW_CASCADE_COUNT) catch |err| log.log.warn("Failed to transition Shadow image: {}", .{err});
             for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
                 ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
             }

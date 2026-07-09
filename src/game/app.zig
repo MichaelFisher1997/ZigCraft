@@ -115,6 +115,7 @@ pub const App = struct {
     startup_world_delay_frames: u32 = 3,
     direct_launch_resize_guard_frames: u32 = 0,
     screenshot_delay_start: ?f32 = null,
+    screenshot_settle_frames: u32 = 0,
     frame_start_counter: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
@@ -223,6 +224,7 @@ pub const App = struct {
             .startup_world_delay_frames = 3,
             .direct_launch_resize_guard_frames = 0,
             .screenshot_delay_start = null,
+            .screenshot_settle_frames = 0,
             .frame_start_counter = 0,
         };
         errdefer app.screen_manager.deinit();
@@ -234,7 +236,7 @@ pub const App = struct {
         const engine_ctx = app.engineContext();
         if (build_options.shadow_test_scene) {
             log.log.info("SHADOW TEST SCENE: Deferring deterministic test world launch", .{});
-            app.pending_world_launch = .{ .seed = 12345, .generator_index = 2 };
+            app.pending_world_launch = .{ .seed = 12345, .generator_index = worldgen_registry.findGeneratorIndex("test") orelse 0 };
             if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
         } else if (build_options.screenshot_path.len > 0) {
             if (resolveAutoWorldGenerator()) |generator_index| {
@@ -468,6 +470,13 @@ pub const App = struct {
 
         if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
+            const requires_world_ready = build_options.shadow_test_scene or build_options.auto_world.len > 0;
+            const world_ready = self.pending_world_launch == null and world_stats.chunks_rendered > 0 and world_stats.gen_queue == 0 and world_stats.mesh_queue == 0 and world_stats.upload_queue == 0;
+            if (!requires_world_ready or world_ready) {
+                self.screenshot_settle_frames += 1;
+            } else {
+                self.screenshot_settle_frames = 0;
+            }
             var target_frames: u32 = 120;
             if (build_options.screenshot_path.len > 0) {
                 target_frames = build_options.screenshot_frame;
@@ -489,7 +498,11 @@ pub const App = struct {
                 };
                 const delay_s: f32 = @floatFromInt(build_options.screenshot_delay_seconds);
                 break :blk self.time.elapsed - start >= delay_s;
-            } else self.smoke_test_frames >= target_frames;
+            } else self.smoke_test_frames >= target_frames and self.screenshot_settle_frames >= 30;
+
+            if (build_options.screenshot_path.len > 0 and requires_world_ready and self.smoke_test_frames >= target_frames + 1800 and self.screenshot_settle_frames < 30) {
+                return error.ScreenshotWorldNotReady;
+            }
 
             if (should_finish) {
                 if (build_options.screenshot_path.len > 0) {

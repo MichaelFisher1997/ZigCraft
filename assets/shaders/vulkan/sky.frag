@@ -32,9 +32,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 } global;
 
 layout(set = 0, binding = 2) uniform ShadowUniforms {
-    mat4 light_space_matrices[3];
+    mat4 light_space_matrices[4];
     vec4 cascade_splits;
     vec4 shadow_texel_sizes;
+    vec4 shadow_params;
 } shadows;
 
 layout(set = 0, binding = 3) uniform sampler2DArrayShadow uShadowMaps;

@@ -22,7 +22,7 @@ const IRenderSettings = @import("engine-core").interfaces.IRenderSettings;
 ///
 /// | Setting                     | Consumed By                          | When Applied           |
 /// |-----------------------------|--------------------------------------|------------------------|
-/// | `shadow_quality`            | RenderGraph / ShadowPass             | Next frame / restart   |
+/// | `shadow_quality`            | RHI shadow resource manager          | Next frame boundary    |
 /// | `shadow_pcf_samples`        | Shadow shader uniforms               | Next frame             |
 /// | `shadow_cascade_blend`      | Shadow shader uniforms               | Next frame             |
 /// | `pbr_enabled`, `pbr_quality`| updateGlobalUniforms() in App        | Next frame             |
@@ -44,6 +44,7 @@ pub fn applyToRHI(settings: *const Settings, rhi: *RHI) void {
     options.setDebugShadowView(anyTerrainDebugActive(settings));
     options.setShadowDebugChannel(@intFromEnum(resolveShadowDebugChannel(settings)));
     options.setAnisotropicFiltering(settings.anisotropic_filtering);
+    options.setShadowResolution(settings.getShadowResolution());
     options.setMSAA(settings.msaa_samples);
     options.setFXAA(settings.fxaa_enabled and !settings.taa_enabled);
     options.setTAABlendFactor(settings.taa_blend_factor);

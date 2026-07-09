@@ -854,7 +854,7 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
     const shadow_test_scene = b.option(bool, "shadow-test-scene", "Launch the deterministic shadow/cave lighting test scene") orelse false;
     options.addOption(bool, "shadow_test_scene", shadow_test_scene);
 
-    const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Shadow test scene variant (dug-cave, bend)") orelse "dug-cave";
+    const shadow_test_variant = b.option([]const u8, "shadow-test-variant", "Lighting baseline scene (noon, low-sun, cave-entrance, sealed-cave, rgb-emitter, foliage-cutout, water, cross-chunk-corridor)") orelse "cave-entrance";
     options.addOption([]const u8, "shadow_test_variant", shadow_test_variant);
 
     const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
@@ -921,7 +921,9 @@ fn applySanitizeC(sanitize_c: ?std.zig.SanitizeC, modules: []const *std.Build.Mo
 
 fn defineShaderValidation(b: *std.Build, test_step: *std.Build.Step) void {
     const validate = b.addSystemCommand(&.{ "bash", "scripts/check_spirv_sizes.sh", "docs/shaders/spirv-sizes.json" });
+    const validate_shadow_abi = b.addSystemCommand(&.{ "bash", "scripts/check_shadow_abi.sh" });
     test_step.dependOn(&validate.step);
+    test_step.dependOn(&validate_shadow_abi.step);
 }
 
 fn addCimgui(_: *std.Build, compile: *std.Build.Step.Compile) void {

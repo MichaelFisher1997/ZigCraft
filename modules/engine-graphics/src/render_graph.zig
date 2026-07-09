@@ -257,12 +257,13 @@ pub const ShadowPass = struct {
         std.debug.assert(self.cascade_index < rhi_pkg.SHADOW_CASCADE_COUNT);
 
         const cascade_idx = self.cascade_index;
+        const shadow_resolution = ctx.shadow_ctx.getResolution();
 
         // Compute cascades once per frame and cache via shared pointer so all
         // cascade passes within the same frame use identical matrices.
         const cascades = if (ctx.cached_cascades.*) |cached| cached else blk: {
             const computed = CSM.computeCascadesWithCamera(
-                ctx.shadow.resolution,
+                shadow_resolution,
                 ctx.camera.fov,
                 ctx.aspect,
                 0.1,
@@ -289,7 +290,7 @@ pub const ShadowPass = struct {
                 .light_space_matrices = cascades.light_space_matrices,
                 .cascade_splits = cascades.cascade_splits,
                 .shadow_texel_sizes = cascades.texel_sizes,
-                .resolution = ctx.shadow.resolution,
+                .resolution = shadow_resolution,
             });
         }
 

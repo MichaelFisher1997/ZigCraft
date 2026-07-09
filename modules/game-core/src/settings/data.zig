@@ -14,6 +14,8 @@ pub const ShadowDebugChannel = enum(u32) {
     block_light = 9,
     outdoor_factor = 10,
     entrance_bounce = 11,
+    skylight = 12,
+    ambient_occlusion = 13,
 };
 
 pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {

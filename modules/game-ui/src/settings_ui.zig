@@ -47,6 +47,8 @@ pub fn applyChangedSetting(comptime name: []const u8, settings: *Settings, rs: a
         rs.setVSync(settings.vsync);
     } else if (comptime std.mem.eql(u8, name, "volumetric_density")) {
         rs.setVolumetricDensity(settings.volumetric_density);
+    } else if (comptime std.mem.eql(u8, name, "shadow_quality")) {
+        rs.setShadowResolution(settings.getShadowResolution());
     } else if (comptime std.mem.eql(u8, name, "taa_enabled")) {
         if (settings.taa_enabled) {
             settings.fxaa_enabled = false;
@@ -82,6 +84,7 @@ pub fn applyPresetSideEffects(settings: *Settings, rs: anytype) void {
     _ = settings_pkg.sanitizeRuntimeConflicts(settings);
     rs.setAnisotropicFiltering(settings.anisotropic_filtering);
     rs.setTexturesEnabled(settings.textures_enabled);
+    rs.setShadowResolution(settings.getShadowResolution());
     rs.setTAABlendFactor(settings.taa_blend_factor);
     rs.setTAAVelocityRejection(settings.taa_velocity_rejection);
     if (settings.taa_enabled) {

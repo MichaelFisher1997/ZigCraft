@@ -87,6 +87,7 @@ const MockRenderSettings = struct {
     film_grain_intensity: f32 = 0,
     volumetric_density: f32 = 0,
     debug_shadow_view: bool = false,
+    shadow_resolution: u32 = 0,
     msaa_samples: u8 = 0,
 
     pub fn interface(self: *MockRenderSettings) IRenderSettings {
@@ -109,12 +110,19 @@ const MockRenderSettings = struct {
         .setFilmGrainIntensity = setFilmGrainIntensity,
         .setVolumetricDensity = setVolumetricDensity,
         .setDebugShadowView = setDebugShadowView,
+        .setShadowResolution = setShadowResolution,
         .setMSAA = setMSAA,
     };
 
     fn setWireframe(ptr: *anyopaque, enabled: bool) void {
         const self: *MockRenderSettings = @ptrCast(@alignCast(ptr));
         self.wireframe = enabled;
+        self.call_count += 1;
+    }
+
+    fn setShadowResolution(ptr: *anyopaque, resolution: u32) void {
+        const self: *MockRenderSettings = @ptrCast(@alignCast(ptr));
+        self.shadow_resolution = resolution;
         self.call_count += 1;
     }
 

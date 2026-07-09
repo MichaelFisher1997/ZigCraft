@@ -68,8 +68,13 @@ pub const ShadowTestWorldGenerator = struct {
 
         if (y == 0) return .bedrock;
         if (y < GROUND_Y) return .stone;
+        if (isWaterPool(wx, y, wz)) return if (y == GROUND_Y) .sand else .water;
         if (y == GROUND_Y) return if (insideCaveFootprint(wx, wz)) .stone else .grass;
         if (isCaveShell(wx, y, wz)) return .stone;
+        if (isSealedCaveShell(wx, y, wz)) return .stone;
+        if (isEmitterRoomShell(wx, y, wz)) return .white_terracotta;
+        if (wx == -46 and wz == 0 and y == GROUND_Y + 3) return .glowstone;
+        if (isCrossChunkCorridorShell(wx, y, wz)) return .cobblestone;
         if (isBendOccluder(wx, y, wz)) return .stone;
         if (isStonePillar(wx, y, wz)) return .stone;
         if (isTreeTrunk(wx, y, wz)) return .wood;
@@ -139,6 +144,25 @@ pub const ShadowTestWorldGenerator = struct {
         const dz = absDiffI32(wz, 20);
         const radius: u64 = if (y == GROUND_Y + 10) 1 else 3;
         return dx <= radius and dz <= radius and !(dx == 3 and dz == 3);
+    }
+
+    fn isWaterPool(wx: i32, y: i32, wz: i32) bool {
+        return rect(wx, wz, 20, 30, -6, 6) and y >= GROUND_Y and y <= GROUND_Y + 2;
+    }
+
+    fn isSealedCaveShell(wx: i32, y: i32, wz: i32) bool {
+        if (!rect(wx, wz, -32, -18, -8, 8) or y < GROUND_Y + 1 or y > GROUND_Y + 8) return false;
+        return wx == -32 or wx == -18 or wz == -8 or wz == 8 or y == GROUND_Y + 8;
+    }
+
+    fn isEmitterRoomShell(wx: i32, y: i32, wz: i32) bool {
+        if (!rect(wx, wz, -54, -38, -8, 8) or y < GROUND_Y + 1 or y > GROUND_Y + 8) return false;
+        return wx == -54 or wx == -38 or wz == -8 or wz == 8 or y == GROUND_Y + 8;
+    }
+
+    fn isCrossChunkCorridorShell(wx: i32, y: i32, wz: i32) bool {
+        if (!rect(wx, wz, 8, 24, 28, 36) or y < GROUND_Y + 1 or y > GROUND_Y + 7) return false;
+        return wz == 28 or wz == 36 or y == GROUND_Y + 7;
     }
 
     fn rect(wx: i32, wz: i32, min_x: i32, max_x: i32, min_z: i32, max_z: i32) bool {
@@ -292,6 +316,18 @@ test "ShadowTestWorldGenerator propagates lighting allocation failure" {
 
     try std.testing.expectError(error.OutOfMemory, gen.generate(&chunk, null));
     try std.testing.expect(!chunk.generated);
+}
+
+test "lighting baseline corridor crosses the x chunk boundary" {
+    try std.testing.expectEqual(BlockType.air, ShadowTestWorldGenerator.blockAt(15, ShadowTestWorldGenerator.GROUND_Y + 2, 32));
+    try std.testing.expectEqual(BlockType.air, ShadowTestWorldGenerator.blockAt(16, ShadowTestWorldGenerator.GROUND_Y + 2, 32));
+    try std.testing.expectEqual(BlockType.cobblestone, ShadowTestWorldGenerator.blockAt(15, ShadowTestWorldGenerator.GROUND_Y + 2, 28));
+    try std.testing.expectEqual(BlockType.cobblestone, ShadowTestWorldGenerator.blockAt(16, ShadowTestWorldGenerator.GROUND_Y + 2, 28));
+}
+
+test "lighting baseline contains water and an RGB emitter" {
+    try std.testing.expectEqual(BlockType.water, ShadowTestWorldGenerator.blockAt(25, ShadowTestWorldGenerator.GROUND_Y + 1, 0));
+    try std.testing.expectEqual(BlockType.glowstone, ShadowTestWorldGenerator.blockAt(-46, ShadowTestWorldGenerator.GROUND_Y + 3, 0));
 }
 
 pub const descriptor = worldgen_api.GeneratorDescriptor{

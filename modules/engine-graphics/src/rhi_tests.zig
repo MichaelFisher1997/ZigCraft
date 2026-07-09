@@ -545,6 +545,7 @@ const MockContext = struct {
             .setVSync = undefined,
             .setAnisotropicFiltering = undefined,
             .setVolumetricDensity = undefined,
+            .setShadowResolution = undefined,
             .setMSAA = undefined,
             .setFXAA = undefined,
             .setBloom = undefined,

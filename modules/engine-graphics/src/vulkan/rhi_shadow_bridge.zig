@@ -1,12 +1,6 @@
 const rhi = @import("engine-rhi").rhi;
 const Mat4 = @import("engine-math").Mat4;
-
-const ShadowUniforms = extern struct {
-    light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
-    cascade_splits: [4]f32,
-    shadow_texel_sizes: [4]f32,
-    shadow_params: [4]f32, // x = light_size (PCSS), y = 1 / shadow resolution
-};
+const ShadowUniforms = @import("shadow_uniforms.zig").ShadowUniforms;
 
 pub fn beginShadowPassInternal(ctx: anytype, cascade_index: u32, light_space_matrix: Mat4) void {
     if (!ctx.frames.frame_in_progress) return;
@@ -22,6 +16,10 @@ pub fn endShadowPassInternal(ctx: anytype) void {
 pub fn getShadowMapHandle(ctx: anytype, cascade_index: u32) rhi.TextureHandle {
     if (cascade_index >= rhi.SHADOW_CASCADE_COUNT) return 0;
     return ctx.shadow_runtime.shadow_map_handles[cascade_index];
+}
+
+pub fn getShadowResolution(ctx: anytype) u32 {
+    return ctx.shadow_runtime.shadow_resolution;
 }
 
 pub fn updateShadowUniforms(ctx: anytype, params: rhi.ShadowParams) !void {

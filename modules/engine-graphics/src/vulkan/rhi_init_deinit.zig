@@ -148,7 +148,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
 
     if (!ctx.options.safe_mode) {
         if (ctx.shadow_system.shadow_image != null) {
-            try lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true);
+            try lifecycle.transitionImagesToShaderRead(ctx, &[_]c.VkImage{ctx.shadow_system.shadow_image}, true, rhi.SHADOW_CASCADE_COUNT);
             for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
                 ctx.shadow_system.shadow_image_layouts[i] = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
             }
@@ -170,7 +170,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
             }
         }
         if (count > 0) {
-            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false) catch |err| log.log.err("Failed to transition images during init: {}", .{err});
+            lifecycle.transitionImagesToShaderRead(ctx, list[0..count], false, 1) catch |err| log.log.err("Failed to transition images during init: {}", .{err});
         }
     }
 

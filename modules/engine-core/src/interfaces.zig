@@ -23,6 +23,7 @@ pub const IRenderSettings = struct {
         setFilmGrainIntensity: *const fn (ptr: *anyopaque, intensity: f32) void,
         setVolumetricDensity: *const fn (ptr: *anyopaque, density: f32) void,
         setDebugShadowView: *const fn (ptr: *anyopaque, enabled: bool) void,
+        setShadowResolution: *const fn (ptr: *anyopaque, resolution: u32) void,
         setMSAA: *const fn (ptr: *anyopaque, samples: u8) void,
     };
 
@@ -120,6 +121,11 @@ pub const IRenderSettings = struct {
     /// The backend may recreate render targets or clamp unsupported sample counts.
     pub fn setMSAA(self: IRenderSettings, samples: u8) void {
         self.vtable.setMSAA(self.ptr, samples);
+    }
+
+    /// Requests shadow-map recreation at the next render-frame boundary.
+    pub fn setShadowResolution(self: IRenderSettings, resolution: u32) void {
+        self.vtable.setShadowResolution(self.ptr, resolution);
     }
 };
 

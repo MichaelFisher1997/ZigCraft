@@ -181,7 +181,7 @@ pub fn destroyVelocityResources(ctx: anytype) void {
     }
 }
 
-pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_depth: bool) !void {
+pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_depth: bool, layer_count: u32) !void {
     if (ctx.runtime.recovering) return;
 
     const aspect_mask: c.VkImageAspectFlags = if (is_depth) c.VK_IMAGE_ASPECT_DEPTH_BIT else c.VK_IMAGE_ASPECT_COLOR_BIT;
@@ -211,7 +211,7 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
         barriers[i].srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
         barriers[i].dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
         barriers[i].image = images[i];
-        barriers[i].subresourceRange = .{ .aspectMask = aspect_mask, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+        barriers[i].subresourceRange = .{ .aspectMask = aspect_mask, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = layer_count };
         barriers[i].srcAccessMask = 0;
         barriers[i].dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT;
     }
