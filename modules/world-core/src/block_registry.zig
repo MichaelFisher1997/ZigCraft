@@ -43,6 +43,12 @@ pub const RenderShape = enum {
     custom_mesh,
 };
 
+/// Light lost when propagation enters this block. Air and cutout blocks use the
+/// normal one-level falloff; water is the current translucent exception.
+pub fn lightAttenuation(block: BlockType) u4 {
+    return if (block == .water) 2 else 1;
+}
+
 pub const AttachmentFaces = packed struct {
     top: bool = false,
     bottom: bool = false,
