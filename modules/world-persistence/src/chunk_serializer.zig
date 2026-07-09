@@ -3,10 +3,10 @@
 //! Converts between in-memory `Chunk` structs and a compact binary format
 //! suitable for storage in region files (`region_file.zig`).
 //!
-//! Wire format (version 2, little-endian):
+//! Wire format (version 3, little-endian):
 //!   [Header: 18 bytes]
 //!     magic:       u32  = 0x5A434B00 ("ZCK\0")
-//!     version:     u8   = 2
+//!     version:     u8   = 3
 //!     flags:       u8   (has_light | has_biome_data | has_heightmap)
 //!     crc32:       u32  (over all data after header)
 //!     chunk_x:     i32
@@ -40,14 +40,15 @@ const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 
 pub const CHUNK_MAGIC: u32 = 0x5A434B00;
-pub const CHUNK_DATA_VERSION: u8 = 2;
+pub const CHUNK_DATA_VERSION: u8 = 3;
 pub const BIOME_COUNT: usize = @typeInfo(BiomeId).@"enum".fields.len;
 
 pub const HeaderFlags = packed struct(u8) {
     has_light: bool = false,
     has_biome_data: bool = false,
     has_heightmap: bool = false,
-    _reserved: u5 = 0,
+    lighting_current: bool = false,
+    _reserved: u4 = 0,
 };
 
 pub const HEADER_SIZE: usize = 18;
@@ -66,7 +67,7 @@ const BiomeDataSize = CHUNK_SIZE_X * CHUNK_SIZE_Z;
 const HeightmapDataSize = (CHUNK_SIZE_X * CHUNK_SIZE_Z) * @sizeOf(i16);
 
 pub fn computeFlags(chunk: *const Chunk) HeaderFlags {
-    var flags = HeaderFlags{ .has_biome_data = true, .has_heightmap = true };
+    var flags = HeaderFlags{ .has_biome_data = true, .has_heightmap = true, .lighting_current = chunk.lighting_valid };
 
     const light_bytes = std.mem.sliceAsBytes(&chunk.light);
     for (light_bytes) |b| {
@@ -155,7 +156,7 @@ pub fn deserializeChunk(data: []const u8, chunk: *Chunk) !void {
 
     const version = data[off];
     off += 1;
-    if (version != CHUNK_DATA_VERSION) return SerializeError.UnsupportedVersion;
+    if (version != 2 and version != CHUNK_DATA_VERSION) return SerializeError.UnsupportedVersion;
 
     const flags_byte = data[off];
     off += 1;
@@ -204,6 +205,7 @@ pub fn deserializeChunk(data: []const u8, chunk: *Chunk) !void {
         @memset(&chunk.heightmap, 0);
     }
 
+    chunk.lighting_valid = version >= 3 and flags.lighting_current;
     chunk.dirty = true;
 }
 

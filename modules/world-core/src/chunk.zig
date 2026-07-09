@@ -50,6 +50,8 @@ pub const Chunk = struct {
     mesh_attempts: u8 = 0,
     generated: bool = false,
     modified: bool = false,
+    /// Persisted with chunk format v3; v2 chunks are treated as stale lighting.
+    lighting_valid: bool = false,
     pin_count: std.atomic.Value(u32),
 
     /// Creates a new chunk at chunk coordinates `(chunk_x, chunk_z)` with default air, plains biome, and zero light.

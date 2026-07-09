@@ -22,15 +22,15 @@ pub const WorldLightingEngine = struct {
         return .{ .storage = storage, .allocator = allocator };
     }
 
-    pub fn reconcileChunkArrival(self: *WorldLightingEngine, cx: i32, cz: i32) !void {
-        try self.relightLoadedComponent(cx, cz);
+    pub fn reconcileChunkArrival(self: *WorldLightingEngine, cx: i32, cz: i32) !bool {
+        return try self.relightLoadedComponent(cx, cz);
     }
 
     pub fn afterBlockMutation(self: *WorldLightingEngine, cx: i32, cz: i32) !void {
-        try self.relightLoadedComponent(cx, cz);
+        _ = try self.relightLoadedComponent(cx, cz);
     }
 
-    fn relightLoadedComponent(self: *WorldLightingEngine, center_cx: i32, center_cz: i32) !void {
+    fn relightLoadedComponent(self: *WorldLightingEngine, center_cx: i32, center_cz: i32) !bool {
         var component = ComponentChunks.init(self.allocator);
         defer component.deinit();
         defer {
@@ -45,8 +45,8 @@ pub const WorldLightingEngine = struct {
         defer {
             if (storage_locked) self.storage.chunks_mutex.unlockShared();
         }
-        const center = self.storage.chunks.get(.{ .x = center_cx, .z = center_cz }) orelse return;
-        if (!center.chunk.generated) return;
+        const center = self.storage.chunks.get(.{ .x = center_cx, .z = center_cz }) orelse return false;
+        if (!center.chunk.generated) return false;
         try component.put(.{ .x = center_cx, .z = center_cz }, &center.chunk);
         center.chunk.pin();
 
@@ -81,11 +81,14 @@ pub const WorldLightingEngine = struct {
             try seedChunkSunlight(chunk.*, self.allocator, &sky_queue);
             try seedChunkBlockLight(chunk.*, self.allocator, &rgb_queue);
             chunk.*.dirty = true;
+            chunk.*.modified = true;
+            chunk.*.lighting_valid = true;
             chunk.*.markLightChanged();
         }
 
         try spreadSkylight(&component, self.allocator, &sky_queue);
         try spreadBlockLight(&component, self.allocator, &rgb_queue);
+        return true;
     }
 };
 
@@ -209,7 +212,7 @@ test "WorldLightingEngine propagates RGB light through loaded chunk boundaries" 
     east.chunk.generated = true;
     center.chunk.setBlock(CHUNK_SIZE_X - 1, 4, 1, .torch);
     var lighting = WorldLightingEngine.init(&storage, testing.allocator);
-    try lighting.reconcileChunkArrival(0, 0);
+    _ = try lighting.reconcileChunkArrival(0, 0);
     try testing.expect(east.chunk.getLight(2, 4, 1).getBlockLightR() > 0);
 }
 

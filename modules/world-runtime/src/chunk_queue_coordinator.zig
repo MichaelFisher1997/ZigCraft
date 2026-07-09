@@ -500,9 +500,11 @@ pub const ChunkQueueCoordinator = struct {
             }
 
             var lighting = WorldLightingEngine.init(self.storage, self.allocator);
-            lighting.reconcileChunkArrival(cx, cz) catch |err| {
+            const relit = lighting.reconcileChunkArrival(cx, cz) catch |err| blk: {
                 log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) relight failed: {}", .{ cx, cz, err });
+                break :blk false;
             };
+            _ = relit;
 
             self.storage.chunks_mutex.lock();
             if (!chunk_data.chunk.generated) {
