@@ -22,6 +22,16 @@ fn mat4IsIdentity(m: Mat4) bool {
     return true;
 }
 
+fn validCascades() ShadowCascades {
+    var cascades = ShadowCascades.initZero();
+    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
+    cascades.overlap_starts = .{ 0.1, 9.0, 45.0, 140.0 };
+    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    cascades.depth_spans = .{ 10.0, 20.0, 40.0, 80.0 };
+    cascades.light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT;
+    return cascades;
+}
+
 test "ShadowSystem init rejects zero resolution" {
     try testing.expectError(error.InvalidResolution, ShadowSystem.init(testing.allocator, 0));
 }
@@ -62,42 +72,41 @@ test "ShadowCascades initZero sets identity matrices" {
 
     for (0..CASCADE_COUNT) |i| {
         try testing.expectEqual(@as(f32, 0.0), cascades.cascade_splits[i]);
+        try testing.expectEqual(@as(f32, 0.0), cascades.overlap_starts[i]);
         try testing.expectEqual(@as(f32, 0.0), cascades.texel_sizes[i]);
+        try testing.expectEqual(@as(f32, 0.0), cascades.depth_spans[i]);
         try testing.expect(mat4IsIdentity(cascades.light_space_matrices[i]));
+        for (cascades.receiver_corners[i]) |corner| {
+            try testing.expectEqual(Vec3.zero.x, corner.x);
+            try testing.expectEqual(Vec3.zero.y, corner.y);
+            try testing.expectEqual(Vec3.zero.z, corner.z);
+        }
     }
 }
 
 test "ShadowCascades isValid returns true for valid cascades" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
-    cascades.overlap_starts = .{ 0.1, 9.0, 45.0, 140.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
-    cascades.depth_spans = .{ 10.0, 20.0, 40.0, 80.0 };
-    cascades.light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT;
+    const cascades = validCascades();
 
     try testing.expect(cascades.isValid());
 }
 
 test "ShadowCascades isValid returns false for non-finite splits" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, std.math.nan(f32), 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.cascade_splits[1] = std.math.nan(f32);
 
     try testing.expect(!cascades.isValid());
 }
 
 test "ShadowCascades isValid returns false for zero texel size" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 0.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.texel_sizes[1] = 0.0;
 
     try testing.expect(!cascades.isValid());
 }
 
 test "ShadowCascades isValid returns false for non-increasing splits" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 40.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.cascade_splits[2] = cascades.cascade_splits[1];
 
     try testing.expect(!cascades.isValid());
 }
@@ -310,12 +319,14 @@ test "ShadowUniforms field offsets" {
     const texel_offset = @offsetOf(ShadowUniforms, "shadow_texel_sizes");
     const depth_span_offset = @offsetOf(ShadowUniforms, "shadow_depth_spans");
     const params_offset = @offsetOf(ShadowUniforms, "shadow_params");
+    const fade_params_offset = @offsetOf(ShadowUniforms, "fade_params");
 
     try testing.expectEqual(matrices_size, splits_offset);
     try testing.expectEqual(matrices_size + @sizeOf([4]f32), overlap_offset);
     try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 2, texel_offset);
     try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 3, depth_span_offset);
     try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 4, params_offset);
+    try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 5, fade_params_offset);
 }
 
 test "getShadowMapHandle returns 0 for out-of-bounds cascade" {
@@ -392,11 +403,7 @@ test "ShadowParams struct layout" {
 }
 
 test "ShadowCascades isValid detects non-finite light space matrix" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
-    cascades.overlap_starts = .{ 0.1, 9.0, 45.0, 140.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
-    cascades.depth_spans = .{ 10.0, 20.0, 40.0, 80.0 };
+    var cascades = validCascades();
 
     var bad_matrix = Mat4.identity;
     bad_matrix.data[0][0] = std.math.nan(f32);
@@ -406,9 +413,8 @@ test "ShadowCascades isValid detects non-finite light space matrix" {
 }
 
 test "ShadowCascades isValid returns false for zero split" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 0.0, 50.0, 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.cascade_splits[0] = 0.0;
 
     try testing.expect(!cascades.isValid());
 }
