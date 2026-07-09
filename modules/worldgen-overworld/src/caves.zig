@@ -188,11 +188,15 @@ pub const CaveSystem = struct {
         // Check this chunk and neighbors for worm spawns that might affect us
         // Worms can travel ~180 blocks, so check a 3-chunk radius
         const check_radius: i32 = 3;
+        const min_chunk_z = clampI32(@as(i64, chunk_z) - check_radius);
+        const max_chunk_z = clampI32(@as(i64, chunk_z) + check_radius);
+        const min_chunk_x = clampI32(@as(i64, chunk_x) - check_radius);
+        const max_chunk_x = clampI32(@as(i64, chunk_x) + check_radius);
 
-        var cz = chunk_z - check_radius;
-        while (cz <= chunk_z + check_radius) : (cz += 1) {
-            var cx = chunk_x - check_radius;
-            while (cx <= chunk_x + check_radius) : (cx += 1) {
+        var cz = min_chunk_z;
+        while (true) {
+            var cx = min_chunk_x;
+            while (true) {
                 // Deterministic worm spawning for this chunk
                 self.spawnWormsForChunk(
                     cx,
@@ -202,7 +206,11 @@ pub const CaveSystem = struct {
                     surface_heights,
                     &carve_map,
                 );
+                if (cx == max_chunk_x) break;
+                cx += 1;
             }
+            if (cz == max_chunk_z) break;
+            cz += 1;
         }
 
         return carve_map;
@@ -221,8 +229,8 @@ pub const CaveSystem = struct {
         const p = self.params;
 
         // Check if this source chunk is in a cave region
-        const source_center_x: f32 = @floatFromInt(source_chunk_x * 16 + 8);
-        const source_center_z: f32 = @floatFromInt(source_chunk_z * 16 + 8);
+        const source_center_x: f32 = @floatFromInt(chunkWorldOffset(source_chunk_x, 8, CHUNK_SIZE_X));
+        const source_center_z: f32 = @floatFromInt(chunkWorldOffset(source_chunk_z, 8, CHUNK_SIZE_Z));
         if (!self.isCaveRegion(source_center_x, source_center_z)) return;
 
         // Seeded RNG for this chunk's worms
@@ -265,9 +273,9 @@ pub const CaveSystem = struct {
         const p = self.params;
 
         // Starting position (random point within source chunk)
-        var pos_x: f32 = @floatFromInt(source_chunk_x * 16 + @as(i32, @intCast(random.uintLessThan(u32, 16))));
+        var pos_x: f32 = @floatFromInt(chunkWorldOffset(source_chunk_x, random.uintLessThan(u32, CHUNK_SIZE_X), CHUNK_SIZE_X));
         var pos_y: f32 = @floatFromInt(p.worm_y_min + @as(i32, @intCast(random.uintLessThan(u32, @intCast(p.worm_y_max - p.worm_y_min)))));
-        var pos_z: f32 = @floatFromInt(source_chunk_z * 16 + @as(i32, @intCast(random.uintLessThan(u32, 16))));
+        var pos_z: f32 = @floatFromInt(chunkWorldOffset(source_chunk_z, random.uintLessThan(u32, CHUNK_SIZE_Z), CHUNK_SIZE_Z));
 
         // Random initial direction vector
         // Y component scaled by 0.3 to bias toward horizontal movement
@@ -371,13 +379,13 @@ pub const CaveSystem = struct {
                     const dist_sq = @as(f32, @floatFromInt(dx * dx + dy * dy + dz * dz));
                     if (dist_sq > radius * radius) continue;
 
-                    const world_xi: i32 = @as(i32, @intFromFloat(center_x)) + dx;
-                    const world_yi: i32 = @as(i32, @intFromFloat(center_y)) + dy;
-                    const world_zi: i32 = @as(i32, @intFromFloat(center_z)) + dz;
+                    const world_xi = addWorldOffset(floatToI32(center_x), dx);
+                    const world_yi = addWorldOffset(floatToI32(center_y), dy);
+                    const world_zi = addWorldOffset(floatToI32(center_z), dz);
 
                     // Check if within target chunk
-                    const local_x = world_xi - target_world_x;
-                    const local_z = world_zi - target_world_z;
+                    const local_x = @as(i64, world_xi) - @as(i64, target_world_x);
+                    const local_z = @as(i64, world_zi) - @as(i64, target_world_z);
 
                     if (local_x < 0 or local_x >= CHUNK_SIZE_X) continue;
                     if (local_z < 0 or local_z >= CHUNK_SIZE_Z) continue;
@@ -464,3 +472,26 @@ pub const CaveSystem = struct {
         return n > threshold;
     }
 };
+
+fn chunkWorldOffset(chunk_coord: i32, local_offset: anytype, chunk_size: anytype) i32 {
+    return clampI32(@as(i64, chunk_coord) * @as(i64, @intCast(chunk_size)) + @as(i64, @intCast(local_offset)));
+}
+
+fn addWorldOffset(base: i32, offset: anytype) i32 {
+    return clampI32(@as(i64, base) + @as(i64, @intCast(offset)));
+}
+
+fn floatToI32(value: f32) i32 {
+    if (!std.math.isFinite(value)) return 0;
+    if (value <= @as(f32, @floatFromInt(std.math.minInt(i32)))) return std.math.minInt(i32);
+    if (value >= @as(f32, @floatFromInt(std.math.maxInt(i32)))) return std.math.maxInt(i32);
+    return @intFromFloat(value);
+}
+
+fn clampI32(value: i64) i32 {
+    return @intCast(std.math.clamp(
+        value,
+        @as(i64, std.math.minInt(i32)),
+        @as(i64, std.math.maxInt(i32)),
+    ));
+}

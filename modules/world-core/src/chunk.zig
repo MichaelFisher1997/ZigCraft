@@ -218,15 +218,15 @@ pub const Chunk = struct {
     }
 
     /// Returns the world-space block X coordinate of this chunk's minimum X edge.
-    /// This is `chunk_x * CHUNK_SIZE_X` and works for negative chunk coordinates.
+    /// Extreme chunk coordinates saturate to the nearest representable i32 edge.
     pub fn getWorldX(self: *const Chunk) i32 {
-        return self.chunk_x * CHUNK_SIZE_X;
+        return chunkCoordToWorldEdge(self.chunk_x, CHUNK_SIZE_X);
     }
 
     /// Returns the world-space block Z coordinate of this chunk's minimum Z edge.
-    /// This is `chunk_z * CHUNK_SIZE_Z` and works for negative chunk coordinates.
+    /// Extreme chunk coordinates saturate to the nearest representable i32 edge.
     pub fn getWorldZ(self: *const Chunk) i32 {
-        return self.chunk_z * CHUNK_SIZE_Z;
+        return chunkCoordToWorldEdge(self.chunk_z, CHUNK_SIZE_Z);
     }
 
     /// Scans a local column from top to bottom and returns the highest non-air, non-water block Y.
@@ -316,6 +316,13 @@ pub const Chunk = struct {
         }
     }
 };
+
+fn chunkCoordToWorldEdge(coord: i32, comptime chunk_size: comptime_int) i32 {
+    const max_edge = std.math.maxInt(i32) - chunk_size + 1;
+    const product = @as(i64, coord) * @as(i64, chunk_size);
+    const clamped = std.math.clamp(product, std.math.minInt(i32), max_edge);
+    return @intCast(clamped);
+}
 
 /// Converts floating world X/Z coordinates to chunk coordinates.
 /// Coordinates are floored to block coordinates first, then converted with negative-safe floor division.

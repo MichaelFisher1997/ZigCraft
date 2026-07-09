@@ -35,7 +35,7 @@ pub fn isBeachColumn(self: anytype, wx: i32, wz: i32, height: i32) bool {
     };
 
     for (offsets) |offset| {
-        const neighbor_base = util.floorToI32(terrain_shape.baseTerrainLevelAtPoint(self, wx + offset[0], wz + offset[1]));
+        const neighbor_base = util.floorToI32(terrain_shape.baseTerrainLevelAtPoint(self, util.addWorldOffset(wx, offset[0]), util.addWorldOffset(wz, offset[1])));
         if (neighbor_base < self.params.sea_level - 1) return true;
     }
 

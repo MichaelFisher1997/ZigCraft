@@ -117,8 +117,8 @@ pub const RegionControlCorners = struct {
         return .{
             .min_x = min_x,
             .min_z = min_z,
-            .span_x = @floatFromInt(@max(1, max_x - min_x)),
-            .span_z = @floatFromInt(@max(1, max_z - min_z)),
+            .span_x = positiveSpan(min_x, max_x),
+            .span_z = positiveSpan(min_z, max_z),
             .c00 = getBlendedControls(seed, min_x, min_z),
             .c10 = getBlendedControls(seed, max_x, min_z),
             .c01 = getBlendedControls(seed, min_x, max_z),
@@ -127,8 +127,8 @@ pub const RegionControlCorners = struct {
     }
 
     pub fn sample(self: RegionControlCorners, world_x: i32, world_z: i32) RegionControls {
-        const tx = std.math.clamp(@as(f32, @floatFromInt(world_x - self.min_x)) / self.span_x, 0.0, 1.0);
-        const tz = std.math.clamp(@as(f32, @floatFromInt(world_z - self.min_z)) / self.span_z, 0.0, 1.0);
+        const tx = std.math.clamp(@as(f32, @floatFromInt(@as(i64, world_x) - @as(i64, self.min_x))) / self.span_x, 0.0, 1.0);
+        const tz = std.math.clamp(@as(f32, @floatFromInt(@as(i64, world_z) - @as(i64, self.min_z))) / self.span_z, 0.0, 1.0);
         return lerpControls(self.c00, self.c10, self.c01, self.c11, tx, tz);
     }
 };
@@ -150,8 +150,12 @@ pub const PathInfo = struct {
 pub fn getRegion(seed: u64, world_x: i32, world_z: i32) RegionInfo {
     const rx = @divFloor(world_x, REGION_SIZE);
     const rz = @divFloor(world_z, REGION_SIZE);
-    const center_x = rx * REGION_SIZE + REGION_SIZE / 2;
-    const center_z = rz * REGION_SIZE + REGION_SIZE / 2;
+    return getRegionByIndex(seed, rx, rz);
+}
+
+fn getRegionByIndex(seed: u64, rx: i32, rz: i32) RegionInfo {
+    const center_x = clampI32(@as(i64, rx) * REGION_SIZE + REGION_SIZE / 2);
+    const center_z = clampI32(@as(i64, rz) * REGION_SIZE + REGION_SIZE / 2);
 
     var prng = std.Random.DefaultPrng.init(seed +%
         @as(u64, @bitCast(@as(i64, rx))) *% 0x9E3779B97F4A7C15 +%
@@ -215,10 +219,10 @@ pub fn getBlendedControls(seed: u64, world_x: i32, world_z: i32) RegionControls 
     const tx = smoothstep01(@as(f32, @floatFromInt(local_x)) / @as(f32, @floatFromInt(REGION_SIZE)));
     const tz = smoothstep01(@as(f32, @floatFromInt(local_z)) / @as(f32, @floatFromInt(REGION_SIZE)));
 
-    const c00 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, rz * REGION_SIZE));
-    const c10 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, rz * REGION_SIZE));
-    const c01 = controlsForRegion(getRegion(seed, rx * REGION_SIZE, (rz + 1) * REGION_SIZE));
-    const c11 = controlsForRegion(getRegion(seed, (rx + 1) * REGION_SIZE, (rz + 1) * REGION_SIZE));
+    const c00 = controlsForRegion(getRegionByIndex(seed, rx, rz));
+    const c10 = controlsForRegion(getRegionByIndex(seed, rx + 1, rz));
+    const c01 = controlsForRegion(getRegionByIndex(seed, rx, rz + 1));
+    const c11 = controlsForRegion(getRegionByIndex(seed, rx + 1, rz + 1));
 
     return .{
         .height_mult = bilerp(c00.height_mult, c10.height_mult, c01.height_mult, c11.height_mult, tx, tz),
@@ -283,7 +287,7 @@ pub fn getPathInfo(seed: u64, x: i32, z: i32, current: RegionInfo) PathInfo {
         const nx = rx + offset[0];
         const nz = rz + offset[1];
 
-        const neighbor_info = getRegion(seed, nx * REGION_SIZE, nz * REGION_SIZE);
+        const neighbor_info = getRegionByIndex(seed, nx, nz);
         const connection_type = shouldConnectRegions(current, neighbor_info);
 
         if (connection_type != .none) {
@@ -320,6 +324,19 @@ pub fn getPathInfo(seed: u64, x: i32, z: i32, current: RegionInfo) PathInfo {
         .influence = max_influence,
         .direction = direction,
     };
+}
+
+fn positiveSpan(min_value: i32, max_value: i32) f32 {
+    const diff = @as(i64, max_value) - @as(i64, min_value);
+    return @floatFromInt(@max(@as(i64, 1), diff));
+}
+
+fn clampI32(value: i64) i32 {
+    return @intCast(std.math.clamp(
+        value,
+        @as(i64, std.math.minInt(i32)),
+        @as(i64, std.math.maxInt(i32)),
+    ));
 }
 
 /// Determine if two regions should be connected by a path, and what type

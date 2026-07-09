@@ -37,11 +37,18 @@ jobs:
           mkdir -p coverage/kcov
           # kcov currently provides the stable line-coverage signal for Zig tests;
           # branch coverage and required thresholds are deferred until a baseline exists.
+          set +e
           nix develop .#ci-unit --command kcov \
             --include-path=src,modules,libs \
             --exclude-path=.zig-cache,zig-cache,assets,docs \
             coverage/kcov \
             zig build test
+          kcov_status=$?
+          set -e
+          if [ "$kcov_status" -ne 0 ]; then
+            echo "::warning::kcov exited with status $kcov_status; rerunning tests without instrumentation to distinguish coverage tooling failures from test failures"
+            nix develop .#ci-unit --command zig build test
+          fi
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7

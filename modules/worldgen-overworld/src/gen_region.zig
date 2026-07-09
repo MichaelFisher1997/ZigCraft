@@ -435,11 +435,12 @@ pub const ClassificationCache = struct {
     /// Recenter the cache grid around a new origin.
     /// Invalidates all cells.
     pub fn recenter(self: *ClassificationCache, center_x: i32, center_z: i32) void {
-        const half_size: i32 = @intCast((GRID_SIZE * CELL_SIZE) / 2);
-        const aligned_center_x = @divFloor(center_x, @as(i32, @intCast(CELL_SIZE))) * @as(i32, @intCast(CELL_SIZE));
-        const aligned_center_z = @divFloor(center_z, @as(i32, @intCast(CELL_SIZE))) * @as(i32, @intCast(CELL_SIZE));
-        self.origin_x = aligned_center_x - half_size;
-        self.origin_z = aligned_center_z - half_size;
+        const half_size: i64 = @intCast((GRID_SIZE * CELL_SIZE) / 2);
+        const cell_size: i64 = @intCast(CELL_SIZE);
+        const aligned_center_x = @divFloor(@as(i64, center_x), cell_size) * cell_size;
+        const aligned_center_z = @divFloor(@as(i64, center_z), cell_size) * cell_size;
+        self.origin_x = clampCacheOrigin(aligned_center_x - half_size);
+        self.origin_z = clampCacheOrigin(aligned_center_z - half_size);
 
         // Invalidate all cells
         for (&self.cells) |*cell| {
@@ -449,19 +450,23 @@ pub const ClassificationCache = struct {
 
     /// Check if a world position is within the cache grid
     pub fn contains(self: *const ClassificationCache, world_x: i32, world_z: i32) bool {
-        const grid_extent: i32 = @intCast(GRID_SIZE * CELL_SIZE);
-        return world_x >= self.origin_x and
-            world_x < self.origin_x + grid_extent and
-            world_z >= self.origin_z and
-            world_z < self.origin_z + grid_extent;
+        const grid_extent: i64 = @intCast(GRID_SIZE * CELL_SIZE);
+        const wx = @as(i64, world_x);
+        const wz = @as(i64, world_z);
+        const ox = @as(i64, self.origin_x);
+        const oz = @as(i64, self.origin_z);
+        return wx >= ox and
+            wx < ox + grid_extent and
+            wz >= oz and
+            wz < oz + grid_extent;
     }
 
     /// Get grid cell index for world position, or null if out of bounds
     fn getCellIndex(self: *const ClassificationCache, world_x: i32, world_z: i32) ?usize {
         if (!self.contains(world_x, world_z)) return null;
 
-        const local_x: u32 = @intCast(world_x - self.origin_x);
-        const local_z: u32 = @intCast(world_z - self.origin_z);
+        const local_x: u32 = @intCast(@as(i64, world_x) - @as(i64, self.origin_x));
+        const local_z: u32 = @intCast(@as(i64, world_z) - @as(i64, self.origin_z));
         const cell_x = local_x / CELL_SIZE;
         const cell_z = local_z / CELL_SIZE;
 
@@ -484,5 +489,12 @@ pub const ClassificationCache = struct {
     pub fn has(self: *const ClassificationCache, world_x: i32, world_z: i32) bool {
         const idx = self.getCellIndex(world_x, world_z) orelse return false;
         return self.cells[idx] != null;
+    }
+
+    fn clampCacheOrigin(origin: i64) i32 {
+        const grid_extent: i64 = @intCast(GRID_SIZE * CELL_SIZE);
+        const min_origin = @as(i64, std.math.minInt(i32));
+        const max_origin = @as(i64, std.math.maxInt(i32)) - grid_extent;
+        return @intCast(std.math.clamp(origin, min_origin, max_origin));
     }
 };
