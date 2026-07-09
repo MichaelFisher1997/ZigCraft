@@ -105,6 +105,11 @@ pub const ChunkQueueCoordinator = struct {
         self.effective_render_dist.store(render_dist, .release);
     }
 
+    fn weightedDistanceSq(dist_sq: i32, movement: anytype, dx: i32, dz: i32) i32 {
+        const weighted = @as(f32, @floatFromInt(dist_sq)) * movement.priorityWeight(dx, dz);
+        return @max(0, @as(i32, @intFromFloat(@min(weighted, @as(f32, @floatFromInt(std.math.maxInt(i32)))))));
+    }
+
     pub fn resetPausedChunks(self: *ChunkQueueCoordinator) void {
         self.storage.chunks_mutex.lock();
         defer self.storage.chunks_mutex.unlock();
@@ -120,7 +125,10 @@ pub const ChunkQueueCoordinator = struct {
         }
     }
 
-    pub fn scanForMissingChunks(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32) !void {
+    pub fn scanForMissingChunks(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32, movement: anytype) !void {
+        self.storage.chunks_mutex.lock();
+        defer self.storage.chunks_mutex.unlock();
+
         var cz: i32 = pc_z - render_dist;
         while (cz <= pc_z + render_dist) : (cz += 1) {
             var cx: i32 = pc_x - render_dist;
@@ -131,13 +139,19 @@ pub const ChunkQueueCoordinator = struct {
 
                 if (dist_sq > render_dist * render_dist) continue;
 
-                const data = try self.storage.getOrCreate(cx, cz);
+                const key = ChunkKey{ .x = cx, .z = cz };
+                const data = self.storage.chunks.get(key) orelse data: {
+                    const created = try self.storage.createChunkDataUnlocked(cx, cz);
+                    try self.storage.chunks.put(key, created);
+                    break :data created;
+                };
 
                 switch (data.chunk.state) {
                     .missing => {
+                        const priority_dist_sq = weightedDistanceSq(dist_sq, movement, dx, dz);
                         self.gen_queue.push(.{
                             .type = .chunk_generation,
-                            .dist_sq = dist_sq,
+                            .dist_sq = priority_dist_sq,
                             .data = .{ .chunk = .{ .x = cx, .z = cz, .job_token = data.chunk.job_token } },
                         }) catch continue;
                         data.chunk.state = .queued_for_generation;

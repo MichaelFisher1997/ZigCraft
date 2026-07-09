@@ -181,6 +181,15 @@ pub const ChunkStorage = struct {
 
         if (self.chunks.get(key)) |data| return data;
 
+        const data = try self.createChunkDataUnlocked(cx, cz);
+        try self.chunks.put(key, data);
+        return data;
+    }
+
+    /// Create a fresh or pooled chunk data object without acquiring the lock.
+    /// SAFETY: Caller must hold chunks_mutex (exclusive lock) and insert the
+    /// returned pointer or destroy/re-pool it on failure.
+    pub fn createChunkDataUnlocked(self: *ChunkStorage, cx: i32, cz: i32) !*ChunkData {
         const data = if (self.free_list.items.len > 0) blk: {
             const last_index = self.free_list.items.len - 1;
             const pooled = self.free_list.items[last_index];
@@ -195,7 +204,6 @@ pub const ChunkStorage = struct {
         };
         data.chunk.job_token = self.next_job_token;
         self.next_job_token += 1;
-        try self.chunks.put(key, data);
         return data;
     }
 

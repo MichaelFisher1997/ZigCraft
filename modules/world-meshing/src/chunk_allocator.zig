@@ -12,6 +12,12 @@ pub const VertexAllocation = struct {
     handle: rhi_mod.BufferHandle,
 };
 
+pub const PackedVertexAllocations = struct {
+    solid: ?VertexAllocation = null,
+    cutout: ?VertexAllocation = null,
+    fluid: ?VertexAllocation = null,
+};
+
 /// Manages a large GPU buffer ("Megabuffer") for chunk vertices.
 /// Implements a free-list allocator with improved coalescing.
 pub const GlobalVertexAllocator = struct {
@@ -80,63 +86,13 @@ pub const GlobalVertexAllocator = struct {
     /// Allocates space for vertices and uploads them.
     /// Returns allocation info, or error if full.
     pub fn allocate(self: *GlobalVertexAllocator, vertices: []const Vertex) !VertexAllocation {
-        const size_needed = vertices.len * @sizeOf(Vertex);
-        if (size_needed == 0) return error.InvalidSize;
+        const allocation = try self.reserve(@intCast(vertices.len));
+        errdefer self.free(allocation);
 
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        // Use Best-Fit strategy to minimize fragmentation
-        var best_fit_idx: ?usize = null;
-        var best_fit_size: usize = std.math.maxInt(usize);
-
-        for (self.free_blocks.items, 0..) |block, i| {
-            if (block.size >= size_needed and block.size < best_fit_size) {
-                best_fit_idx = i;
-                best_fit_size = block.size;
-                if (block.size == size_needed) break; // Perfect fit
-            }
-        }
-
-        if (best_fit_idx) |i| {
-            const block = self.free_blocks.items[i];
-            const allocation = VertexAllocation{
-                .offset = block.offset,
-                .count = @intCast(vertices.len),
-                .handle = self.buffer,
-            };
-
-            // Upload at the correct offset within the megabuffer
-            try self.resource_manager.updateBuffer(self.buffer, block.offset, std.mem.sliceAsBytes(vertices));
-
-            // Update free block
-            if (block.size > size_needed) {
-                self.free_blocks.items[i].offset += size_needed;
-                self.free_blocks.items[i].size -= size_needed;
-            } else {
-                _ = self.free_blocks.orderedRemove(i);
-            }
-
-            return allocation;
-        }
-
-        // Calculate actual largest block and total free for better debugging
-        var largest_block: usize = 0;
-        var total_free: usize = 0;
-        for (self.free_blocks.items) |block| {
-            if (block.size > largest_block) largest_block = block.size;
-            total_free += block.size;
-        }
-
-        log.log.err("GlobalVertexAllocator OOM: needed {} ({} vertices), capacity {}MB, total free: {} KB, free blocks: {}. Largest block: {} KB", .{
-            size_needed,
-            vertices.len,
-            self.capacity / (1024 * 1024),
-            total_free / 1024,
-            self.free_blocks.items.len,
-            largest_block / 1024,
-        });
-        return error.OutOfMemory;
+        // Upload outside the allocator mutex. Reserving only needs the free-list
+        // lock; the staging memcpy/copy scheduling can proceed independently.
+        try self.resource_manager.updateBuffer(self.buffer, allocation.offset, std.mem.sliceAsBytes(vertices));
+        return allocation;
     }
 
     /// Reserves space in the megabuffer without uploading data.
@@ -195,6 +151,35 @@ pub const GlobalVertexAllocator = struct {
         return error.OutOfMemory;
     }
 
+    /// Uploads all terrain passes as one contiguous megabuffer allocation and
+    /// one staging-buffer update, then returns per-pass allocation views. This
+    /// reduces chunk upload overhead from up to three staging allocations/copy
+    /// records to one.
+    pub fn allocatePacked(self: *GlobalVertexAllocator, solid_count: u32, cutout_count: u32, fluid_count: u32, vertices: []const Vertex) !PackedVertexAllocations {
+        const total_count = solid_count + cutout_count + fluid_count;
+        if (total_count == 0 or vertices.len != total_count) return error.InvalidSize;
+
+        const combined = try self.reserve(total_count);
+        errdefer self.free(combined);
+
+        try self.resource_manager.updateBuffer(self.buffer, combined.offset, std.mem.sliceAsBytes(vertices));
+
+        var result = PackedVertexAllocations{};
+        var offset = combined.offset;
+        if (solid_count > 0) {
+            result.solid = .{ .offset = offset, .count = solid_count, .handle = self.buffer };
+            offset += @as(usize, solid_count) * @sizeOf(Vertex);
+        }
+        if (cutout_count > 0) {
+            result.cutout = .{ .offset = offset, .count = cutout_count, .handle = self.buffer };
+            offset += @as(usize, cutout_count) * @sizeOf(Vertex);
+        }
+        if (fluid_count > 0) {
+            result.fluid = .{ .offset = offset, .count = fluid_count, .handle = self.buffer };
+        }
+        return result;
+    }
+
     /// Queues an allocation to be freed later.
     pub fn free(self: *GlobalVertexAllocator, allocation: VertexAllocation) void {
         if (allocation.count == 0) return;
@@ -233,13 +218,17 @@ pub const GlobalVertexAllocator = struct {
             .size = size,
         };
 
-        var insert_idx: usize = self.free_blocks.items.len;
-        for (self.free_blocks.items, 0..) |block, i| {
-            if (block.offset > allocation.offset) {
-                insert_idx = i;
-                break;
+        var low: usize = 0;
+        var high: usize = self.free_blocks.items.len;
+        while (low < high) {
+            const mid = low + (high - low) / 2;
+            if (self.free_blocks.items[mid].offset > allocation.offset) {
+                high = mid;
+            } else {
+                low = mid + 1;
             }
         }
+        var insert_idx = low;
 
         self.free_blocks.insert(self.allocator, insert_idx, new_block) catch {
             // Fallback: append to end (loses sort but prevents memory leak)

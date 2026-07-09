@@ -258,39 +258,44 @@ pub const ChunkMesh = struct {
         const old_fluid = self.fluid_allocation;
         const had_old_allocations = old_solid != null or old_cutout != null or old_fluid != null;
 
+        const solid_count: u32 = if (self.pending_solid) |v| @intCast(v.len) else 0;
+        const cutout_count: u32 = if (self.pending_cutout) |v| @intCast(v.len) else 0;
+        const fluid_count: u32 = if (self.pending_fluid) |v| @intCast(v.len) else 0;
+        const total_count = solid_count + cutout_count + fluid_count;
+
         var new_solid: ?VertexAllocation = null;
         var new_cutout: ?VertexAllocation = null;
         var new_fluid: ?VertexAllocation = null;
         var alloc_ok = true;
 
-        if (self.pending_solid) |v| {
-            if (v.len > 0) blk: {
-                new_solid = allocator.allocate(v) catch {
+        packed_upload: {
+            if (total_count > 0) {
+                const combined = self.allocator.alloc(Vertex, total_count) catch {
                     alloc_ok = false;
-                    break :blk;
+                    break :packed_upload;
                 };
-            }
-        }
+                defer self.allocator.free(combined);
 
-        if (alloc_ok) {
-            if (self.pending_cutout) |v| {
-                if (v.len > 0) blk: {
-                    new_cutout = allocator.allocate(v) catch {
-                        alloc_ok = false;
-                        break :blk;
-                    };
+                var offset: usize = 0;
+                if (self.pending_solid) |v| {
+                    @memcpy(combined[offset..][0..v.len], v);
+                    offset += v.len;
                 }
-            }
-        }
+                if (self.pending_cutout) |v| {
+                    @memcpy(combined[offset..][0..v.len], v);
+                    offset += v.len;
+                }
+                if (self.pending_fluid) |v| {
+                    @memcpy(combined[offset..][0..v.len], v);
+                }
 
-        if (alloc_ok) {
-            if (self.pending_fluid) |v| {
-                if (v.len > 0) blk: {
-                    new_fluid = allocator.allocate(v) catch {
-                        alloc_ok = false;
-                        break :blk;
-                    };
-                }
+                const packed_allocs = allocator.allocatePacked(solid_count, cutout_count, fluid_count, combined) catch {
+                    alloc_ok = false;
+                    break :packed_upload;
+                };
+                new_solid = packed_allocs.solid;
+                new_cutout = packed_allocs.cutout;
+                new_fluid = packed_allocs.fluid;
             }
         }
 

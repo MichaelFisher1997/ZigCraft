@@ -156,14 +156,15 @@ pub const WorldStreamer = struct {
         streamer.queue_coordinator = try ChunkQueueCoordinator.init(allocator, storage, generator, atlas, gen_queue, mesh_queue, vertex_allocator, max_uploads_per_frame, &streamer.gpu_acceleration);
         errdefer streamer.queue_coordinator.deinit();
 
-        try streamer.warmupInitialChunks();
-
         log.log.info("WorldStreamer workers: gen={} mesh={} (cpu={})", .{ gen_worker_count, mesh_worker_count, cpu_count });
 
         streamer.gen_pool = try WorkerPool.init(allocator, gen_worker_count, gen_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processGenJob);
         errdefer streamer.gen_pool.deinit();
 
         streamer.mesh_pool = try WorkerPool.init(allocator, mesh_worker_count, mesh_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processMeshJob);
+        errdefer streamer.mesh_pool.deinit();
+
+        try streamer.warmupInitialChunks();
 
         return streamer;
     }
@@ -209,7 +210,7 @@ pub const WorldStreamer = struct {
     }
 
     fn warmupInitialChunks(self: *WorldStreamer) !void {
-        const warmup_radius: i32 = 2;
+        const warmup_radius: i32 = 1;
 
         var cz: i32 = -warmup_radius;
         while (cz <= warmup_radius) : (cz += 1) {
@@ -397,7 +398,7 @@ pub const WorldStreamer = struct {
         // Keep the generation queue hot while moving or recovering stale jobs.
         // A full scan is cheap relative to chunk generation and avoids leaving
         // boundary chunks idle in `.missing` until the next periodic rescan.
-        self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist) catch |err| {
+        self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist, frame.movement) catch |err| {
             log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
         };
         self.queue_coordinator.processChunkStates(frame.pc_x, frame.pc_z, frame.render_dist, self.frame_counter);
