@@ -99,6 +99,7 @@ const ShadowRuntime = struct {
     shadow_map_handles: [rhi.SHADOW_CASCADE_COUNT]rhi.TextureHandle = .{0} ** rhi.SHADOW_CASCADE_COUNT,
     shadow_texel_sizes: [rhi.SHADOW_CASCADE_COUNT]f32 = .{0.0} ** rhi.SHADOW_CASCADE_COUNT,
     shadow_resolution: u32,
+    pending_shadow_resolution: ?u32 = null,
 };
 
 const PostProcessState = struct {

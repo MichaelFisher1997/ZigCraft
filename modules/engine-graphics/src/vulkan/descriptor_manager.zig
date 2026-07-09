@@ -7,6 +7,7 @@ const VulkanDevice = @import("../vulkan_device.zig").VulkanDevice;
 const ResourceManager = @import("resource_manager.zig").ResourceManager;
 const VulkanBuffer = @import("resource_manager.zig").VulkanBuffer;
 const Mat4 = @import("engine-math").Mat4;
+pub const ShadowUniforms = @import("shadow_uniforms.zig").ShadowUniforms;
 const Utils = @import("utils.zig");
 
 const GlobalUniforms = extern struct {
@@ -26,13 +27,6 @@ const GlobalUniforms = extern struct {
     viewport_size: [4]f32,
     lpv_params: [4]f32,
     lpv_origin: [4]f32,
-};
-
-pub const ShadowUniforms = extern struct {
-    light_space_matrices: [rhi.SHADOW_CASCADE_COUNT]Mat4,
-    cascade_splits: [4]f32,
-    shadow_texel_sizes: [4]f32,
-    shadow_params: [4]f32, // x = light_size (PCSS), y = 1 / shadow resolution
 };
 
 pub const DescriptorManager = struct {
@@ -326,13 +320,12 @@ pub const DescriptorManager = struct {
         @memcpy(@as([*]u8, @ptrCast(dest))[0..@sizeOf(GlobalUniforms)], src[0..@sizeOf(GlobalUniforms)]);
     }
 
-    pub fn updateShadowUniforms(self: *DescriptorManager, frame_index: usize, data: *const anyopaque) !void {
+    pub fn updateShadowUniforms(self: *DescriptorManager, frame_index: usize, data: *const ShadowUniforms) !void {
         const dest = self.shadow_ubos_mapped[frame_index] orelse {
             log.log.err("Failed to update shadow uniforms: memory not mapped", .{});
             return error.UnmappedBuffer;
         };
-        const src = @as([*]const u8, @ptrCast(data));
-        @memcpy(@as([*]u8, @ptrCast(dest))[0..@sizeOf(ShadowUniforms)], src[0..@sizeOf(ShadowUniforms)]);
+        @memcpy(@as([*]u8, @ptrCast(dest))[0..@sizeOf(ShadowUniforms)], std.mem.asBytes(data));
     }
 
     // Additional methods for binding textures would go here

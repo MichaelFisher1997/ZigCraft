@@ -230,6 +230,9 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
     defer allocator.free(raw);
 
     const is_bgra = format == c.VK_FORMAT_B8G8R8A8_UNORM or format == c.VK_FORMAT_B8G8R8A8_SRGB;
+    const needs_srgb_encode = format == c.VK_FORMAT_B8G8R8A8_UNORM or format == c.VK_FORMAT_R8G8B8A8_UNORM;
+    const red_index: usize = if (is_bgra) 2 else 0;
+    const blue_index: usize = if (is_bgra) 0 else 2;
 
     var y: u32 = 0;
     while (y < height) : (y += 1) {
@@ -239,15 +242,12 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
         while (x < width) : (x += 1) {
             const src_offset: usize = (@as(usize, y) * width + x) * 4;
             const dst_offset: usize = row_start + 1 + @as(usize, x) * 3;
-            if (is_bgra) {
-                raw[dst_offset] = data[src_offset + 2];
-                raw[dst_offset + 1] = data[src_offset + 1];
-                raw[dst_offset + 2] = data[src_offset];
-            } else {
-                raw[dst_offset] = data[src_offset];
-                raw[dst_offset + 1] = data[src_offset + 1];
-                raw[dst_offset + 2] = data[src_offset + 2];
-            }
+            const red = data[src_offset + red_index];
+            const green = data[src_offset + 1];
+            const blue = data[src_offset + blue_index];
+            raw[dst_offset] = if (needs_srgb_encode) linearByteToSrgb(red) else red;
+            raw[dst_offset + 1] = if (needs_srgb_encode) linearByteToSrgb(green) else green;
+            raw[dst_offset + 2] = if (needs_srgb_encode) linearByteToSrgb(blue) else blue;
         }
     }
 
@@ -279,11 +279,27 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
     ihdr[12] = 0;
 
     writePngChunk(file, "IHDR", &ihdr) catch return false;
+    writePngChunk(file, "sRGB", &.{0}) catch return false;
     writePngChunk(file, "IDAT", zlib[0..zlib_len]) catch return false;
     writePngChunk(file, "IEND", &.{}) catch return false;
 
     log.log.info("screenshot: saved {}x{} PNG to '{s}'", .{ width, height, path });
     return true;
+}
+
+fn linearByteToSrgb(value: u8) u8 {
+    const linear = @as(f32, @floatFromInt(value)) / 255.0;
+    const encoded = if (linear <= 0.0031308)
+        linear * 12.92
+    else
+        1.055 * std.math.pow(f32, linear, 1.0 / 2.4) - 0.055;
+    return @intFromFloat(@round(std.math.clamp(encoded, 0.0, 1.0) * 255.0));
+}
+
+test "linear screenshot bytes encode to sRGB" {
+    try std.testing.expectEqual(@as(u8, 0), linearByteToSrgb(0));
+    try std.testing.expectEqual(@as(u8, 255), linearByteToSrgb(255));
+    try std.testing.expectApproxEqAbs(@as(f32, 118.0), @as(f32, @floatFromInt(linearByteToSrgb(46))), 1.0);
 }
 
 fn writeStoredZlib(dest: []u8, raw: []const u8) usize {

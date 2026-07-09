@@ -163,6 +163,7 @@ pub const RenderSettingsAdapter = struct {
         .setFilmGrainIntensity = setFilmGrainIntensity,
         .setVolumetricDensity = setVolumetricDensity,
         .setDebugShadowView = setDebugShadowView,
+        .setShadowResolution = setShadowResolution,
         .setMSAA = setMSAA,
     };
 
@@ -239,6 +240,11 @@ pub const RenderSettingsAdapter = struct {
     fn setDebugShadowView(ptr: *anyopaque, enabled: bool) void {
         const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
         self.rhi.options().setDebugShadowView(enabled);
+    }
+
+    fn setShadowResolution(ptr: *anyopaque, resolution: u32) void {
+        const self: *RenderSettingsAdapter = @ptrCast(@alignCast(ptr));
+        self.rhi.options().setShadowResolution(resolution);
     }
 
     fn setMSAA(ptr: *anyopaque, samples: u8) void {

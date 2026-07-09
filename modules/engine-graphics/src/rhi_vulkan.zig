@@ -77,6 +77,8 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
     if (ctx.runtime.gpu_fault_detected) return;
     if (ctx.frames.frame_in_progress) return;
 
+    frame_orchestration.recreatePendingShadowResources(ctx);
+
     if ((ctx.runtime.framebuffer_resized or ctx.swapchain.framebuffer_resized) and !ctx.runtime.swapchain_recreate_failed) {
         log.log.info("beginFrame: triggering recreateSwapchainInternal (resize)", .{});
         frame_orchestration.recreateSwapchainInternal(ctx);
@@ -622,6 +624,11 @@ fn setVolumetricDensity(ctx_ptr: *anyopaque, density: f32) void {
     state_control.setVolumetricDensity(ctx, density);
 }
 
+fn setShadowResolution(ctx_ptr: *anyopaque, resolution: u32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    state_control.setShadowResolution(ctx, resolution);
+}
+
 fn setMSAA(ctx_ptr: *anyopaque, samples: u8) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     state_control.setMSAA(ctx, samples);
@@ -732,6 +739,7 @@ const VULKAN_SHADOW_CONTEXT_VTABLE = rhi.IShadowContext.VTable{
     .endPass = endShadowPass,
     .updateUniforms = updateShadowUniforms,
     .getShadowMapHandle = getShadowMapHandle,
+    .getResolution = getShadowResolution,
 };
 
 fn bindUIPipeline(ctx_ptr: *anyopaque, textured: bool) void {
@@ -790,6 +798,11 @@ fn endShadowPass(ctx_ptr: *anyopaque) void {
 fn getShadowMapHandle(ctx_ptr: *anyopaque, cascade_index: u32) rhi.TextureHandle {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return shadow_bridge.getShadowMapHandle(ctx, cascade_index);
+}
+
+fn getShadowResolution(ctx_ptr: *anyopaque) u32 {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return shadow_bridge.getShadowResolution(ctx);
 }
 
 fn updateShadowUniforms(ctx_ptr: *anyopaque, params: rhi.ShadowParams) anyerror!void {
@@ -1424,6 +1437,7 @@ const VULKAN_RENDER_QUALITY_OPTIONS_VTABLE = rhi.IRenderQualityOptions.VTable{
     .setVSync = setVSync,
     .setAnisotropicFiltering = setAnisotropicFiltering,
     .setVolumetricDensity = setVolumetricDensity,
+    .setShadowResolution = setShadowResolution,
     .setMSAA = setMSAA,
     .setFXAA = setFXAA,
     .setBloom = setBloom,

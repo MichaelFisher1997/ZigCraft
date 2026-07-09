@@ -44,8 +44,8 @@ pub fn createShadowResources(ctx: anytype) !void {
     shadow_rp_info.pSubpasses = &shadow_subpass;
 
     var shadow_dependencies = [_]c.VkSubpassDependency{
-        .{ .srcSubpass = c.VK_SUBPASS_EXTERNAL, .dstSubpass = 0, .srcStageMask = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, .dstStageMask = c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, .srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT, .dstAccessMask = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, .dependencyFlags = c.VK_DEPENDENCY_BY_REGION_BIT },
-        .{ .srcSubpass = 0, .dstSubpass = c.VK_SUBPASS_EXTERNAL, .srcStageMask = c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, .dstStageMask = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, .srcAccessMask = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, .dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT, .dependencyFlags = c.VK_DEPENDENCY_BY_REGION_BIT },
+        .{ .srcSubpass = c.VK_SUBPASS_EXTERNAL, .dstSubpass = 0, .srcStageMask = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, .dstStageMask = c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, .srcAccessMask = c.VK_ACCESS_SHADER_READ_BIT, .dstAccessMask = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, .dependencyFlags = c.VK_DEPENDENCY_BY_REGION_BIT },
+        .{ .srcSubpass = 0, .dstSubpass = c.VK_SUBPASS_EXTERNAL, .srcStageMask = c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, .dstStageMask = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, .srcAccessMask = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, .dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT, .dependencyFlags = c.VK_DEPENDENCY_BY_REGION_BIT },
     };
     shadow_rp_info.dependencyCount = 2;
     shadow_rp_info.pDependencies = &shadow_dependencies;
@@ -324,7 +324,7 @@ pub fn createGPassResources(ctx: anytype) !void {
     try ctx.render_pass_manager.createGPassFramebuffer(vk, extent, ctx.gpass.g_normal_view, ctx.velocity.velocity_view, ctx.gpass.g_depth_view);
 
     const g_images = [_]c.VkImage{ ctx.gpass.g_normal_image, ctx.velocity.velocity_image };
-    try lifecycle.transitionImagesToShaderRead(ctx, &g_images, false);
+    try lifecycle.transitionImagesToShaderRead(ctx, &g_images, false, 1);
     var depth_sampler_info = std.mem.zeroes(c.VkSamplerCreateInfo);
     depth_sampler_info.sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     depth_sampler_info.magFilter = c.VK_FILTER_NEAREST;
@@ -408,7 +408,7 @@ pub fn createSSAOResources(ctx: anytype) !void {
     }
 
     const ssao_images = [_]c.VkImage{ ctx.ssao_system.image, ctx.ssao_system.blur_image };
-    try lifecycle.transitionImagesToShaderRead(ctx, &ssao_images, false);
+    try lifecycle.transitionImagesToShaderRead(ctx, &ssao_images, false, 1);
 }
 
 pub fn createTAAResources(ctx: anytype) !void {
@@ -510,7 +510,7 @@ pub fn createUpscaleResources(ctx: anytype) !void {
     dr.upscale_extent = extent;
 
     const images = [_]c.VkImage{dr.upscale_image};
-    try lifecycle.transitionImagesToShaderRead(ctx, &images, false);
+    try lifecycle.transitionImagesToShaderRead(ctx, &images, false, 1);
 }
 
 /// Generate a 32x32x32 identity LUT where each texel maps to itself: color(r,g,b) = (r,g,b).

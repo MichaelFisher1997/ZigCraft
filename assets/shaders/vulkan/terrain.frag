@@ -59,6 +59,8 @@ const int DEBUG_SKY_FILL = 8;
 const int DEBUG_BLOCK_LIGHT = 9;
 const int DEBUG_OUTDOOR_FACTOR = 10;
 const int DEBUG_ENTRANCE_BOUNCE = 11;
+const int DEBUG_SKYLIGHT = 12;
+const int DEBUG_AMBIENT_OCCLUSION = 13;
 
 // World-space hash for LOD transition masking.
 // Using world-space noise avoids a fixed screen-space dot pattern.
@@ -807,12 +809,7 @@ void main() {
     float debugChannel = global.viewport_size.w;
     if (global.viewport_size.z > 0.5 && debugChannel > 0.5) {
         if (debugChannel < DEBUG_SHADOW_FACTOR + 0.5) {
-            float caveEntranceMask = smoothstep(0.015, 0.10, vEntranceBounce) * (1.0 - debugOutdoor);
-            float debugShadowGate = smoothstep(0.82, 1.0, vSkyLight) * debugOutdoor * (1.0 - caveEntranceMask);
-            float effectiveShadow = clamp(smoothstep(0.04, 0.68, shadowFactor) * global.shadow_params.z * 2.175 * debugShadowGate, 0.0, 1.0);
-            vec3 debugShadow = mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), effectiveShadow);
-            float debugVisibility = max(atmosphericVisibility, max(smoothstep(0.001, 0.08, vEntranceBounce), smoothstep(0.001, 0.08, max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)))));
-            color = mix(vec3(0.02, 0.02, 0.02), debugShadow, max(debugVisibility, 0.20));
+            color = vec3(clamp(shadowFactor, 0.0, 1.0));
         } else if (debugChannel < DEBUG_CASCADE_INDEX + 0.5) {
             color = (layer == 0) ? vec3(1.0, 0.2, 0.2)
                   : (layer == 1) ? vec3(0.2, 1.0, 0.2)
@@ -820,11 +817,12 @@ void main() {
                   : vec3(0.8, 0.3, 1.0);
         } else if (debugChannel < DEBUG_CASTER_COVERAGE + 0.5) {
             vec3 projCoords = shadowProjCoords(vFragPosWorld, layer);
-            float mapDepth = fetchShadowDepthNearest(projCoords.xy, layer);
+            bool inBounds = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;
+            float mapDepth = inBounds ? fetchShadowDepthNearest(projCoords.xy, layer) : 0.0;
             float fragDepth = projCoords.z;
             float hasCaster = (mapDepth > 0.001) ? 1.0 : 0.0;
             float isInShadow = (mapDepth > fragDepth + 0.0001) ? 1.0 : 0.0;
-            color = vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth);
+            color = inBounds ? vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth) : vec3(1.0, 0.0, 1.0);
         } else if (debugChannel < DEBUG_SEAM_DIAG + 0.5) {
             float nextSplit = shadows.cascade_splits[layer];
             float blendStart = nextSplit * 0.8;
@@ -849,11 +847,15 @@ void main() {
         } else if (debugChannel < DEBUG_SKY_FILL + 0.5) {
             color = mix(vec3(0.02, 0.02, 0.02), vec3(0.30, 0.70, 1.0), debugSkyFill);
         } else if (debugChannel < DEBUG_BLOCK_LIGHT + 0.5) {
-            color = mix(vec3(0.02, 0.02, 0.02), vec3(1.0, 0.45, 0.12), debugBlockLight);
+            color = clamp(vBlockLight, 0.0, 1.0);
         } else if (debugChannel < DEBUG_OUTDOOR_FACTOR + 0.5) {
             color = vec3(debugOutdoor);
         } else if (debugChannel < DEBUG_ENTRANCE_BOUNCE + 0.5) {
             color = mix(vec3(0.02, 0.02, 0.02), vec3(0.18, 0.85, 1.0), clamp(vEntranceBounce, 0.0, 1.0));
+        } else if (debugChannel < DEBUG_SKYLIGHT + 0.5) {
+            color = vec3(clamp(vSkyLight, 0.0, 1.0));
+        } else if (debugChannel < DEBUG_AMBIENT_OCCLUSION + 0.5) {
+            color = vec3(clamp(vAO, 0.0, 1.0));
         }
     }
 

@@ -185,6 +185,16 @@ pub fn setMSAA(ctx: anytype, samples: u8) void {
     log.log.info("Vulkan MSAA set to {}x (pending swapchain recreation)", .{clamped});
 }
 
+pub fn setShadowResolution(ctx: anytype, requested: u32) void {
+    if (requested == 0) return;
+
+    var properties: c.VkPhysicalDeviceProperties = undefined;
+    c.vkGetPhysicalDeviceProperties(ctx.vulkan_device.physical_device, &properties);
+    const resolution = @min(requested, properties.limits.maxImageDimension2D);
+    if (resolution == ctx.shadow_runtime.shadow_resolution and ctx.shadow_runtime.pending_shadow_resolution == null) return;
+    ctx.shadow_runtime.pending_shadow_resolution = resolution;
+}
+
 pub fn getMaxAnisotropy(ctx: anytype) u8 {
     return @intFromFloat(@min(ctx.vulkan_device.max_anisotropy, 16.0));
 }

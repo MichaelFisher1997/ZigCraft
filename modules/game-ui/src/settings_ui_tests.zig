@@ -18,6 +18,7 @@ const MockRenderSettings = struct {
     vignette_intensity: f32 = 0.0,
     film_grain_enabled: bool = false,
     film_grain_intensity: f32 = 0.0,
+    shadow_resolution: u32 = 0,
 
     pub fn setAnisotropicFiltering(self: *@This(), value: u8) void {
         self.anisotropic_filtering = value;
@@ -69,6 +70,10 @@ const MockRenderSettings = struct {
 
     pub fn setFilmGrainIntensity(self: *@This(), value: f32) void {
         self.film_grain_intensity = value;
+    }
+
+    pub fn setShadowResolution(self: *@This(), value: u32) void {
+        self.shadow_resolution = value;
     }
 };
 

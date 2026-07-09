@@ -45,7 +45,7 @@ pub const BuildConfig = struct {
     chunk_debug_mode: bool = false,
     screenshot_path: []const u8 = "",
     shadow_test_scene: bool = false,
-    shadow_test_variant: []const u8 = "dug-cave",
+    shadow_test_variant: []const u8 = "cave-entrance",
     startup_diagnostic_seconds: u32 = 0,
 };
 
@@ -212,13 +212,12 @@ pub const GameSession = struct {
         var atmosphere = Atmosphere.init();
         atmosphere.setTimeOfDay(0.5);
         if (build_config.shadow_test_scene) {
+            const scene = lightingBaselineScene(build_config.shadow_test_variant);
+            atmosphere.setTimeOfDay(scene.time_of_day);
             atmosphere.time.time_scale = 0.0;
-            player.position = if (std.ascii.eqlIgnoreCase(build_config.shadow_test_variant, "bend"))
-                Vec3.init(5.5, 65.0, -14.0)
-            else
-                Vec3.init(0.0, 65.0, -16.0);
+            player.position = scene.position;
             player.camera.position = player.getEyePosition();
-            player.camera.setYawPitch(std.math.pi / 2.0, if (std.ascii.eqlIgnoreCase(build_config.shadow_test_variant, "bend")) -std.math.degreesToRadians(8.0) else -std.math.degreesToRadians(5.0));
+            player.camera.setYawPitch(scene.yaw, scene.pitch);
         }
 
         session.* = .{
@@ -361,6 +360,28 @@ pub const GameSession = struct {
         try session_hud.draw(self, ui, atlas, active_pack, fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
     }
 };
+
+const LightingBaselineScene = struct {
+    position: Vec3,
+    yaw: f32,
+    pitch: f32,
+    time_of_day: f32,
+};
+
+fn lightingBaselineScene(name: []const u8) LightingBaselineScene {
+    const forward_z = std.math.pi / 2.0;
+    const slight_down = -std.math.degreesToRadians(8.0);
+
+    if (std.ascii.eqlIgnoreCase(name, "low-sun")) return .{ .position = Vec3.init(0.0, 68.0, 18.0), .yaw = forward_z, .pitch = slight_down, .time_of_day = 0.30 };
+    if (std.ascii.eqlIgnoreCase(name, "sealed-cave")) return .{ .position = Vec3.init(-25.0, 65.0, -4.0), .yaw = forward_z, .pitch = 0.0, .time_of_day = 0.5 };
+    if (std.ascii.eqlIgnoreCase(name, "rgb-emitter")) return .{ .position = Vec3.init(-46.0, 65.0, -5.0), .yaw = forward_z, .pitch = 0.0, .time_of_day = 0.5 };
+    if (std.ascii.eqlIgnoreCase(name, "foliage-cutout")) return .{ .position = Vec3.init(12.0, 67.0, 10.0), .yaw = forward_z, .pitch = slight_down, .time_of_day = 0.5 };
+    if (std.ascii.eqlIgnoreCase(name, "water")) return .{ .position = Vec3.init(25.0, 68.0, -12.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(18.0), .time_of_day = 0.5 };
+    if (std.ascii.eqlIgnoreCase(name, "cross-chunk-corridor")) return .{ .position = Vec3.init(10.0, 65.0, 32.0), .yaw = 0.0, .pitch = 0.0, .time_of_day = 0.5 };
+    if (std.ascii.eqlIgnoreCase(name, "bend")) return .{ .position = Vec3.init(5.5, 65.0, -14.0), .yaw = forward_z, .pitch = slight_down, .time_of_day = 0.5 };
+    if (std.ascii.eqlIgnoreCase(name, "noon")) return .{ .position = Vec3.init(0.0, 68.0, 18.0), .yaw = forward_z, .pitch = slight_down, .time_of_day = 0.5 };
+    return .{ .position = Vec3.init(0.0, 65.0, -16.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(5.0), .time_of_day = 0.5 };
+}
 
 fn chunkDebugRestoreEnabled(build_config: BuildConfig, name: []const u8) bool {
     if (!build_config.chunk_debug_mode) return false;

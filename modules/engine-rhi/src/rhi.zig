@@ -491,6 +491,7 @@ pub const IShadowContext = struct {
         endPass: *const fn (ptr: *anyopaque) void,
         updateUniforms: *const fn (ptr: *anyopaque, params: ShadowParams) anyerror!void,
         getShadowMapHandle: *const fn (ptr: *anyopaque, cascade_index: u32) TextureHandle,
+        getResolution: *const fn (ptr: *anyopaque) u32 = defaultShadowResolution,
     };
 
     /// Begins rendering one shadow cascade using the supplied light-space transform.
@@ -513,7 +514,15 @@ pub const IShadowContext = struct {
     pub fn getShadowMapHandle(self: IShadowContext, cascade_index: u32) TextureHandle {
         return self.vtable.getShadowMapHandle(self.ptr, cascade_index);
     }
+    /// Returns the physical shadow-map width allocated by the backend.
+    pub fn getResolution(self: IShadowContext) u32 {
+        return self.vtable.getResolution(self.ptr);
+    }
 };
+
+fn defaultShadowResolution(_: *anyopaque) u32 {
+    return 4096;
+}
 
 /// Concrete wrapper around `IShadowContext` for shadow mapping operations.
 ///
@@ -550,6 +559,10 @@ pub const ShadowSystemWrapper = struct {
     /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
     pub fn getShadowMapHandle(self: ShadowSystemWrapper, cascade_index: u32) TextureHandle {
         return self.ctx.getShadowMapHandle(cascade_index);
+    }
+    /// Returns the physical shadow-map width allocated by the backend.
+    pub fn getResolution(self: ShadowSystemWrapper) u32 {
+        return self.ctx.getResolution();
     }
 };
 
@@ -1374,6 +1387,7 @@ pub const IRenderQualityOptions = struct {
         setVSync: *const fn (ctx: *anyopaque, enabled: bool) void,
         setAnisotropicFiltering: *const fn (ctx: *anyopaque, level: u8) void,
         setVolumetricDensity: *const fn (ctx: *anyopaque, density: f32) void,
+        setShadowResolution: *const fn (ctx: *anyopaque, resolution: u32) void,
         setMSAA: *const fn (ctx: *anyopaque, samples: u8) void,
         setFXAA: *const fn (ctx: *anyopaque, enabled: bool) void,
         setBloom: *const fn (ctx: *anyopaque, enabled: bool) void,
@@ -1424,6 +1438,10 @@ pub const IRenderQualityOptions = struct {
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setVolumetricDensity(self: IRenderQualityOptions, density: f32) void {
         self.vtable.setVolumetricDensity(self.ptr, density);
+    }
+    /// Requests shadow-map recreation at the next frame boundary.
+    pub fn setShadowResolution(self: IRenderQualityOptions, resolution: u32) void {
+        self.vtable.setShadowResolution(self.ptr, resolution);
     }
     /// Sets the requested MSAA sample count on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
