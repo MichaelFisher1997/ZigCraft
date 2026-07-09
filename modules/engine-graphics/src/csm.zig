@@ -2,8 +2,14 @@ const std = @import("std");
 const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 const rhi = @import("engine-rhi");
+const runtime_env = @import("engine-core").runtime_env;
 
 pub const CASCADE_COUNT = rhi.SHADOW_CASCADE_COUNT;
+
+fn envFloat(name: [:0]const u8, default: f32) f32 {
+    const value = runtime_env.getenv(name) orelse return default;
+    return std.fmt.parseFloat(f32, value) catch default;
+}
 
 pub const ShadowCascades = struct {
     light_space_matrices: [CASCADE_COUNT]Mat4,
@@ -68,22 +74,25 @@ pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, 
 
     var cascades = ShadowCascades.initZero();
 
-    // Practical fixed splits avoid the old logarithmic layout's huge final
-    // cascade, which made medium-distance voxel shadows visibly stair-step and
-    // pulse as soon as they crossed out of the tiny near cascades.
-    const split_ratios = [4]f32{ 0.25, 0.50, 0.75, 1.0 };
+    const split_ratios = [4]f32{
+        envFloat("ZIGCRAFT_CSM_SPLIT0", 0.25),
+        envFloat("ZIGCRAFT_CSM_SPLIT1", 0.50),
+        envFloat("ZIGCRAFT_CSM_SPLIT2", 0.75),
+        1.0,
+    };
     for (0..CASCADE_COUNT) |i| {
         cascades.cascade_splits[i] = shadow_dist * split_ratios[i];
     }
 
-    // Calculate matrices for each cascade.
-    // Keep cascade centers tied to camera position rather than camera forward.
-    // Frustum-slice centering has better texel density, but it makes the entire
-    // shadow projection slide during yaw/pitch-only camera rotation, which causes
-    // shadows to visibly morph even when caster and receiver are stationary.
-    _ = cam_view;
+    const inv_view = cam_view.inverse();
+    const camera_forward = inv_view.transformDirection(Vec3.init(0, 0, -1)).normalize();
+    const depth_padding_front = envFloat("ZIGCRAFT_CSM_DEPTH_PAD_FRONT", 120.0);
+    const depth_padding_back = envFloat("ZIGCRAFT_CSM_DEPTH_PAD_BACK", 80.0);
+
     for (0..CASCADE_COUNT) |i| {
         const split = cascades.cascade_splits[i];
+        const prev_split: f32 = if (i == 0) near else cascades.cascade_splits[i - 1];
+        const slice_mid = (prev_split + split) * 0.5;
 
         // 1. Compute a rotation-invariant bounding sphere from the camera origin
         // to the far plane of this cascade.
@@ -96,9 +105,9 @@ pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, 
         var radius = std.math.sqrt(xf * xf + yf * yf + far_v * far_v);
         radius = @ceil(radius * 16.0) / 16.0;
 
-        // 2. Use camera world position as the cascade center. This intentionally
-        // sacrifices some texel density for rotation stability.
-        const center_world = cam_pos;
+        // 2. Center each cascade on its camera-frustum slice. This improves texel
+        // density versus camera-origin centered cascades and reduces caster load.
+        const center_world = cam_pos.add(camera_forward.scale(slice_mid));
 
         // 3. Build Light Rotation Matrix (Looking FROM sun TO scene)
         var up = Vec3.init(0, 1, 0);
@@ -128,9 +137,8 @@ pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, 
         const minY = center_snapped.y - radius;
         const maxY = center_snapped.y + radius;
 
-        // Use fixed large depth range to avoid clipping during camera motion
-        const maxZ = center_ls.z + radius + 400.0;
-        const minZ = center_ls.z - radius - 200.0;
+        const maxZ = center_ls.z + radius + depth_padding_front;
+        const minZ = center_ls.z - radius - depth_padding_back;
 
         var light_ortho = Mat4.identity;
         light_ortho.data[0][0] = 2.0 / (maxX - minX);
@@ -161,10 +169,10 @@ pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, 
         cascades.light_space_matrices[i] = world_to_shadow.multiply(relative_to_world);
     }
 
-    // Validate results before returning - use runtime check instead of
-    // debug.assert so invalid data is caught in ReleaseFast builds too.
-    if (!cascades.isValid()) {
-        return ShadowCascades.initZero();
+    if (std.debug.runtime_safety) {
+        if (!cascades.isValid()) {
+            return ShadowCascades.initZero();
+        }
     }
 
     return cascades;

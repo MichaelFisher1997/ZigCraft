@@ -20,7 +20,7 @@ const CullingPushConstants = extern struct {
     view_proj: [4][4]f32,
     screen_size: [2]f32,
     previous_frame_valid: f32,
-    _pad: f32,
+    chunk_count: u32,
 };
 
 pub const CullingSystem = struct {
@@ -183,6 +183,7 @@ pub const CullingSystem = struct {
 
         self.cached_planes.screen_size = .{ screen_width, screen_height };
         self.cached_planes.previous_frame_valid = if (previous_frame_valid) 1.0 else 0.0;
+        self.cached_planes.chunk_count = @min(chunk_count, @as(u32, @intCast(self.max_chunks)));
 
         if (!self.planes_cached or !mat4Equal(self.cached_view_proj, view_proj)) {
             self.cached_planes.planes = extractPlanes(view_proj);

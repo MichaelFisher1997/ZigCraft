@@ -140,13 +140,13 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .indirect_buffers = indirect_buffers,
                 .vertex_pools = vertex_pools,
                 .frame_index = 0,
-                .enable_mdi = engine_core.envFlag("ZIGCRAFT_ENABLE_LOD_MDI", false),
+                .enable_mdi = engine_core.envFlag("ZIGCRAFT_ENABLE_LOD_MDI", true),
                 .gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false),
                 .gpu_culling_fallback_logged = false,
             };
 
             if (!renderer.enable_mdi) {
-                log.log.info("LOD MDI disabled by default; set ZIGCRAFT_ENABLE_LOD_MDI=1 to enable indirect LOD batches", .{});
+                log.log.info("LOD MDI disabled by ZIGCRAFT_ENABLE_LOD_MDI=0", .{});
             }
 
             return renderer;
