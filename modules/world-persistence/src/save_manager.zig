@@ -248,7 +248,9 @@ pub const SaveManager = struct {
         if (self.level_data.lighting_algorithm_version != LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION) {
             for (&out_chunk.light) |*light| light.* = PackedLight.init(0, 0);
             out_chunk.markLightChanged();
-            self.level_data.lighting_algorithm_version = LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION;
+            // A level.dat version covers every saved chunk. Keep this world
+            // marked legacy until a complete migration is explicitly persisted;
+            // loading one chunk cannot prove that unloaded chunks were relit.
             log.log.info("Discarded stale derived lighting while loading chunk ({}, {})", .{ cx, cz });
             return .success_relight_required;
         }
