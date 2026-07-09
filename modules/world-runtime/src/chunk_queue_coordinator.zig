@@ -19,6 +19,7 @@ const log = @import("engine-core").log;
 const SaveManager = @import("world-persistence").SaveManager;
 const LoadResult = @import("world-persistence").LoadResult;
 const GpuAccelerationCoordinator = @import("gpu_acceleration_coordinator.zig").GpuAccelerationCoordinator;
+const WorldLightingEngine = @import("lighting_engine.zig").WorldLightingEngine;
 const LODManager = @import("world-lod").LODManager;
 const LODColumnProvenance = @import("world-core").LODColumnProvenance;
 
@@ -450,6 +451,11 @@ pub const ChunkQueueCoordinator = struct {
                     return;
                 }
             }
+
+            var lighting = WorldLightingEngine.init(self.storage, self.allocator);
+            lighting.reconcileChunkArrival(cx, cz) catch |err| {
+                log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) relight failed: {}", .{ cx, cz, err });
+            };
 
             self.storage.chunks_mutex.lock();
             if (!chunk_data.chunk.generated) {

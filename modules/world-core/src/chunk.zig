@@ -43,6 +43,9 @@ pub const Chunk = struct {
     heightmap: [CHUNK_SIZE_X * CHUNK_SIZE_Z]i16,
     state: State = .missing,
     job_token: u32 = 0,
+    /// Monotonic mesh-input revisions. They are updated while storage owns the chunk.
+    content_revision: u64 = 0,
+    light_revision: u64 = 0,
     dirty: bool = true,
     mesh_attempts: u8 = 0,
     generated: bool = false,
@@ -84,9 +87,12 @@ pub const Chunk = struct {
     /// Writes a block at chunk-local coordinates and marks the chunk dirty and modified.
     /// Coordinates must be in bounds; callers are responsible for scheduling mesh/light updates.
     pub fn setBlock(self: *Chunk, x: u32, y: u32, z: u32, block: BlockType) void {
-        self.blocks[getIndex(x, y, z)] = block;
+        const index = getIndex(x, y, z);
+        if (self.blocks[index] == block) return;
+        self.blocks[index] = block;
         self.dirty = true;
         self.modified = true;
+        self.markContentChanged();
     }
 
     /// Safely reads a block for possibly out-of-bounds local coordinates.
@@ -105,8 +111,21 @@ pub const Chunk = struct {
     /// Writes the biome id for a horizontal chunk-local column and marks the chunk dirty.
     /// This affects tinting and terrain metadata but does not mark the chunk player-modified.
     pub fn setBiome(self: *Chunk, x: u32, z: u32, biome: BiomeId) void {
-        self.biomes[x + z * CHUNK_SIZE_X] = biome;
+        const index = x + z * CHUNK_SIZE_X;
+        if (self.biomes[index] == biome) return;
+        self.biomes[index] = biome;
         self.dirty = true;
+        self.markContentChanged();
+    }
+
+    /// Marks direct bulk writes to blocks, biomes, or heightmap as mesh-relevant.
+    pub fn markContentChanged(self: *Chunk) void {
+        self.content_revision +%= 1;
+    }
+
+    /// Marks a completed lighting batch as mesh-relevant.
+    pub fn markLightChanged(self: *Chunk) void {
+        self.light_revision +%= 1;
     }
 
     /// Reads packed sky/block light at chunk-local coordinates.

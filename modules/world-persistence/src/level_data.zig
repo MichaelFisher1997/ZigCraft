@@ -12,12 +12,16 @@ fn timestampMs() i64 {
 }
 
 pub const LevelData = struct {
+    pub const CURRENT_LIGHTING_ALGORITHM_VERSION: u32 = 1;
+
     seed: u64,
     generator_name: []const u8,
     created_timestamp: i64,
     last_played_timestamp: i64,
     spawn_x: i32,
     spawn_z: i32,
+    /// Zero is the legacy value used when an existing level.dat has no field.
+    lighting_algorithm_version: u32,
 
     pub fn init(seed: u64, generator_name: []const u8) LevelData {
         const now = timestampMs();
@@ -28,6 +32,7 @@ pub const LevelData = struct {
             .last_played_timestamp = now,
             .spawn_x = 8,
             .spawn_z = 8,
+            .lighting_algorithm_version = CURRENT_LIGHTING_ALGORITHM_VERSION,
         };
     }
 
@@ -48,7 +53,8 @@ pub const LevelData = struct {
         try writer.print("  \"created_timestamp\": {},\n", .{self.created_timestamp});
         try writer.print("  \"last_played_timestamp\": {},\n", .{self.last_played_timestamp});
         try writer.print("  \"spawn_x\": {},\n", .{self.spawn_x});
-        try writer.print("  \"spawn_z\": {}\n", .{self.spawn_z});
+        try writer.print("  \"spawn_z\": {},\n", .{self.spawn_z});
+        try writer.print("  \"lighting_algorithm_version\": {}\n", .{self.lighting_algorithm_version});
         try writer.writeAll("}");
 
         const file = try dir.createFile("level.dat", .{ .truncate = true });
@@ -74,6 +80,7 @@ pub const LevelData = struct {
             .last_played_timestamp = 0,
             .spawn_x = 8,
             .spawn_z = 8,
+            .lighting_algorithm_version = 0,
         };
 
         var lines = std.mem.splitSequence(u8, contents, "\n");
@@ -97,6 +104,8 @@ pub const LevelData = struct {
                     result.spawn_x = std.fmt.parseInt(i32, val, 10) catch 8;
                 } else if (std.mem.eql(u8, key, "spawn_z")) {
                     result.spawn_z = std.fmt.parseInt(i32, val, 10) catch 8;
+                } else if (std.mem.eql(u8, key, "lighting_algorithm_version")) {
+                    result.lighting_algorithm_version = std.fmt.parseInt(u32, val, 10) catch 0;
                 }
             }
         }
@@ -126,6 +135,20 @@ test "LevelData save and load round-trip" {
     try testing.expectEqualStrings("overworld", loaded.generator_name);
     try testing.expectEqual(@as(i32, 8), loaded.spawn_x);
     try testing.expectEqual(@as(i32, 8), loaded.spawn_z);
+    try testing.expectEqual(LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION, loaded.lighting_algorithm_version);
+}
+
+test "LevelData treats metadata without a lighting version as legacy" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    const file = try dir.createFile("level.dat", .{ .truncate = true });
+    defer file.close();
+    try file.writeAll("{\n  \"seed\": 7,\n  \"generator_name\": \"flat\"\n}");
+
+    var loaded = try LevelData.loadFromFile(testing.allocator, dir);
+    defer loaded.deinit(testing.allocator);
+    try testing.expectEqual(@as(u32, 0), loaded.lighting_algorithm_version);
 }
 
 test "LevelData touchLastPlayed updates timestamp" {

@@ -17,12 +17,10 @@ const worldToChunk = world_core.worldToChunk;
 const worldToLocal = world_core.worldToLocal;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
-const MAX_LIGHT = world_core.MAX_LIGHT;
-const block_registry = world_core.block_registry;
 const ChunkStorage = @import("world-meshing").ChunkStorage;
 const ChunkData = @import("world-meshing").ChunkData;
 const GpuBlockBuffer = @import("world-meshing").GpuBlockBuffer;
-const LightingEngine = @import("lighting_engine.zig").LightingEngine;
+const WorldLightingEngine = @import("lighting_engine.zig").WorldLightingEngine;
 
 pub const WorldMutationCoordinator = struct {
     storage: *ChunkStorage,
@@ -56,7 +54,6 @@ pub const WorldMutationCoordinator = struct {
         const local = worldToLocal(world_x, world_z);
 
         const local_y: u32 = @intCast(world_y);
-        const old_block = data.chunk.getBlock(local.x, local_y, local.z);
         data.chunk.setBlock(local.x, local_y, local.z, block);
 
         if (self.gpu_mesher_active) {
@@ -67,16 +64,8 @@ pub const WorldMutationCoordinator = struct {
             }
         }
 
-        const old_def = block_registry.getBlockDefinition(old_block);
-        const new_def = block_registry.getBlockDefinition(block);
-        const old_emission = old_def.getLightEmissionLevel();
-        const new_emission = new_def.getLightEmissionLevel();
-        var lighting = LightingEngine.init(self.storage, self.allocator);
-        if (block == .air and old_def.isOpaque() and old_emission == 0) {
-            try lighting.afterBlockRemoval(cp.chunk_x, cp.chunk_z, local.x, local_y, local.z);
-        } else if (old_block != block or old_emission != new_emission) {
-            try lighting.recomputeArea(cp.chunk_x, cp.chunk_z, local.x, local.z);
-        }
+        var lighting = WorldLightingEngine.init(self.storage, self.allocator);
+        try lighting.afterBlockMutation(cp.chunk_x, cp.chunk_z);
 
         self.invalidateNeighbors(cp.chunk_x, cp.chunk_z, local.x, local.z);
 
@@ -202,7 +191,7 @@ test "WorldMutationCoordinator relights dug tunnel from skylight shaft" {
     var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
     _ = try mutation.applyBlockMutation(5, 4, 1, .air);
 
-    try testing.expectEqual(@as(u4, MAX_LIGHT), data.chunk.getSkyLight(1, 4, 1));
+    try testing.expectEqual(@as(u4, world_core.MAX_LIGHT), data.chunk.getSkyLight(1, 4, 1));
     try testing.expect(data.chunk.getSkyLight(5, 4, 1) > 0);
 
     _ = try mutation.applyBlockMutation(1, 5, 1, .stone);
