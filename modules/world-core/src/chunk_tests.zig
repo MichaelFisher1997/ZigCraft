@@ -96,10 +96,10 @@ test "Chunk.updateSkylightColumn water reduces light below water" {
     chunk.setBlock(8, 65, 8, .air);
     chunk.setBlock(8, 66, 8, .air);
     chunk.updateSkylightColumn(8, 8);
-    // Water block itself gets full light (15), then sky_light is reduced to 14 for next block
+    // Water block itself gets full light (15), then the shared water rule reduces it by two.
     try testing.expectEqual(@as(u4, MAX_LIGHT), chunk.getSkyLight(8, 64, 8));
     // Block below water gets reduced light
-    try testing.expectEqual(@as(u4, MAX_LIGHT - 1), chunk.getSkyLight(8, 63, 8));
+    try testing.expectEqual(@as(u4, MAX_LIGHT - 2), chunk.getSkyLight(8, 63, 8));
 }
 
 test "Chunk.updateSkylightColumn light propagates through air" {

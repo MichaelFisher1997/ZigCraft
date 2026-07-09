@@ -33,6 +33,53 @@ const PendingMeshRef = struct {
     job_token: u32,
 };
 
+const ChunkRevisions = struct {
+    content: u64,
+    light: u64,
+
+    fn capture(chunk: *const Chunk) ChunkRevisions {
+        return .{
+            .content = chunk.content_revision.load(.acquire),
+            .light = chunk.light_revision.load(.acquire),
+        };
+    }
+
+    fn matches(self: ChunkRevisions, chunk: *const Chunk) bool {
+        return self.content == chunk.content_revision.load(.acquire) and self.light == chunk.light_revision.load(.acquire);
+    }
+};
+
+const MeshInputRevisions = struct {
+    target: ChunkRevisions,
+    north: ?ChunkRevisions,
+    south: ?ChunkRevisions,
+    east: ?ChunkRevisions,
+    west: ?ChunkRevisions,
+
+    fn capture(target: *const Chunk, neighbors: NeighborChunks) MeshInputRevisions {
+        return .{
+            .target = .capture(target),
+            .north = if (neighbors.north) |chunk| .capture(chunk) else null,
+            .south = if (neighbors.south) |chunk| .capture(chunk) else null,
+            .east = if (neighbors.east) |chunk| .capture(chunk) else null,
+            .west = if (neighbors.west) |chunk| .capture(chunk) else null,
+        };
+    }
+
+    fn matches(self: MeshInputRevisions, target: *const Chunk, neighbors: NeighborChunks) bool {
+        return self.target.matches(target) and
+            matchesOptional(self.north, neighbors.north) and
+            matchesOptional(self.south, neighbors.south) and
+            matchesOptional(self.east, neighbors.east) and
+            matchesOptional(self.west, neighbors.west);
+    }
+
+    fn matchesOptional(captured: ?ChunkRevisions, current: ?*const Chunk) bool {
+        if (captured) |revisions| return if (current) |chunk| revisions.matches(chunk) else false;
+        return current == null;
+    }
+};
+
 /// How often (in frames) the slow recovery scan runs. The dominant transitions
 /// (.generated -> queued_for_mesh and .mesh_ready -> uploading) are handled
 /// every frame by the pending queues; the scan only catches stuck chunks and
@@ -432,7 +479,7 @@ pub const ChunkQueueCoordinator = struct {
                 break :blk sm.loadChunk(cx, cz, &chunk_data.chunk);
             };
 
-            if (load_result != .success) {
+            if (load_result != .success and load_result != .success_relight_required) {
                 if (load_result == .read_error or load_result == .corrupt_data) {
                     log.log.warn("Save load failed for chunk ({}, {}): {}, regenerating", .{ cx, cz, load_result });
                 }
@@ -550,6 +597,8 @@ pub const ChunkQueueCoordinator = struct {
             if (neighbors.west) |w| @as(*Chunk, @constCast(w)).unpin();
         }
 
+        const mesh_revisions = MeshInputRevisions.capture(&chunk_data.chunk, neighbors);
+
         self.storage.chunks_mutex.lock();
         if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data| {
             if (data.chunk.state == .queued_for_mesh and data.chunk.job_token == job.data.chunk.job_token) {
@@ -567,8 +616,16 @@ pub const ChunkQueueCoordinator = struct {
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
             if (self.gpu.shouldUseGpuMeshReadyPath()) {
                 self.storage.chunks_mutex.lock();
-                chunk_data.chunk.state = .mesh_ready;
+                const publishable = if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data|
+                    data.chunk.state == .meshing and data.chunk.job_token == job.data.chunk.job_token and mesh_revisions.matches(&data.chunk, neighbors)
+                else
+                    false;
+                chunk_data.chunk.state = if (publishable) .mesh_ready else .generated;
                 self.storage.chunks_mutex.unlock();
+                if (!publishable) {
+                    self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
+                    return;
+                }
                 self.enqueuePendingUpload(cx, cz);
                 _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
                 return;
@@ -589,8 +646,16 @@ pub const ChunkQueueCoordinator = struct {
                 return;
             }
             self.storage.chunks_mutex.lock();
-            chunk_data.chunk.state = .mesh_ready;
+            const publishable = if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data|
+                data.chunk.state == .meshing and data.chunk.job_token == job.data.chunk.job_token and mesh_revisions.matches(&data.chunk, neighbors)
+            else
+                false;
+            chunk_data.chunk.state = if (publishable) .mesh_ready else .generated;
             self.storage.chunks_mutex.unlock();
+            if (!publishable) {
+                self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
+                return;
+            }
             self.enqueuePendingUpload(cx, cz);
             _ = self.chunks_meshed_total.fetchAdd(1, .monotonic);
         }

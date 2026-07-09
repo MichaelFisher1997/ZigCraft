@@ -44,8 +44,8 @@ pub const Chunk = struct {
     state: State = .missing,
     job_token: u32 = 0,
     /// Monotonic mesh-input revisions. They are updated while storage owns the chunk.
-    content_revision: u64 = 0,
-    light_revision: u64 = 0,
+    content_revision: std.atomic.Value(u64) = .init(0),
+    light_revision: std.atomic.Value(u64) = .init(0),
     dirty: bool = true,
     mesh_attempts: u8 = 0,
     generated: bool = false,
@@ -120,12 +120,12 @@ pub const Chunk = struct {
 
     /// Marks direct bulk writes to blocks, biomes, or heightmap as mesh-relevant.
     pub fn markContentChanged(self: *Chunk) void {
-        self.content_revision +%= 1;
+        _ = self.content_revision.fetchAdd(1, .monotonic);
     }
 
     /// Marks a completed lighting batch as mesh-relevant.
     pub fn markLightChanged(self: *Chunk) void {
-        self.light_revision +%= 1;
+        _ = self.light_revision.fetchAdd(1, .monotonic);
     }
 
     /// Reads packed sky/block light at chunk-local coordinates.
@@ -329,8 +329,9 @@ pub const Chunk = struct {
             self.setSkyLight(x, uy, z, sky_light);
             if (block_registry.getBlockDefinition(block).isOpaque()) {
                 sky_light = 0;
-            } else if (block == .water and sky_light > 0) {
-                sky_light -= 1;
+            } else {
+                const attenuation = block_registry.lightAttenuation(block);
+                if (attenuation > 1) sky_light = if (sky_light > attenuation) sky_light - attenuation else 0;
             }
         }
     }

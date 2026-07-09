@@ -45,6 +45,7 @@ const SAVE_FAILURE_COUNT_FILE = "save_failures.dat";
 
 pub const LoadResult = enum {
     success,
+    success_relight_required,
     not_found,
     read_error,
     corrupt_data,
@@ -125,10 +126,13 @@ pub const SaveManager = struct {
             .failed_save_count = std.atomic.Value(usize).init(0),
             .persisted_failed_save_count = std.atomic.Value(usize).init(persisted_failures),
             .persisted_failed_save_mutex = .{},
-            .level_data = blk: {
-                const generator_copy = try allocator.dupe(u8, generator_name);
-                errdefer allocator.free(generator_copy);
-                break :blk LevelData.init(seed, generator_copy);
+            .level_data = LevelData.loadFromFile(allocator, dir) catch |err| switch (err) {
+                error.FileNotFound => blk: {
+                    const generator_copy = try allocator.dupe(u8, generator_name);
+                    errdefer allocator.free(generator_copy);
+                    break :blk LevelData.init(seed, generator_copy);
+                },
+                else => return err,
             },
             .last_auto_save_ms = timestampMs(),
         };
@@ -240,6 +244,14 @@ pub const SaveManager = struct {
         out_chunk.chunk_x = cx;
         out_chunk.chunk_z = cz;
         out_chunk.generated = true;
+
+        if (self.level_data.lighting_algorithm_version != LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION) {
+            for (&out_chunk.light) |*light| light.* = PackedLight.init(0, 0);
+            out_chunk.markLightChanged();
+            self.level_data.lighting_algorithm_version = LevelData.CURRENT_LIGHTING_ALGORITHM_VERSION;
+            log.log.info("Discarded stale derived lighting while loading chunk ({}, {})", .{ cx, cz });
+            return .success_relight_required;
+        }
 
         log.log.debug("Loaded chunk ({}, {}) from save", .{ cx, cz });
         return .success;
