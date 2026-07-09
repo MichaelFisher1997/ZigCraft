@@ -7,7 +7,6 @@ layout(location = 3) in uint aPackedMeta;
 
 layout(location = 0) out vec2 vTexCoord;
 layout(location = 1) flat out int vTileID;
-layout(location = 2) flat out int vSkipShadow;
 
 layout(push_constant) uniform ShadowModelUniforms {
     mat4 mvp;
@@ -47,10 +46,6 @@ void main() {
 
     vTexCoord = aTexCoord;
     vTileID = (tile_id_u16 == 0xFFFFu) ? -1 : int(tile_id_u16);
-    // Skip diagonal billboard vegetation that creates unstable shadow acne.
-    bool diagonalBillboard = abs(worldNormal.y) < 0.001 && abs(worldNormal.x) > 0.1 && abs(worldNormal.z) > 0.1;
-    vSkipShadow = diagonalBillboard ? 1 : 0;
-    
     mat4 model = (pc.bias_params.y < 0.0) ? instance_buf.instances[gl_InstanceIndex].model : mat4(1.0);
     gl_Position = pc.mvp * model * vec4(biasedPos, 1.0);
 }

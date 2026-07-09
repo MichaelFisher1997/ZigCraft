@@ -289,8 +289,11 @@ pub const ShadowPass = struct {
             try ctx.shadow_ctx.updateUniforms(.{
                 .light_space_matrices = cascades.light_space_matrices,
                 .cascade_splits = cascades.cascade_splits,
+                .overlap_starts = cascades.overlap_starts,
                 .shadow_texel_sizes = cascades.texel_sizes,
+                .shadow_depth_spans = cascades.depth_spans,
                 .resolution = shadow_resolution,
+                .distance = ctx.shadow.distance,
             });
         }
 
@@ -302,7 +305,8 @@ pub const ShadowPass = struct {
 
         ctx.shadow_ctx.beginPass(cascade_idx, light_space_matrix);
         errdefer ctx.shadow_ctx.endPass();
-        ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position, ctx.shadow);
+        const caster_bounds = CSM.computeCasterBounds(cascades.receiver_corners[cascade_idx], ctx.shadow_sun_dir, ctx.shadow.caster_distance);
+        ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position, caster_bounds.min, caster_bounds.max, ctx.shadow);
         if (ctx.cloud_system) |clouds| {
             try clouds.renderShadow(ctx.render_ctx, ctx.camera.position);
         }

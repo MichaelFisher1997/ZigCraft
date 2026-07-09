@@ -12,11 +12,11 @@ pub const IShadowScene = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        renderShadowPass: *const fn (ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void,
+        renderShadowPass: *const fn (ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void,
     };
 
-    pub fn renderShadowPass(self: IShadowScene, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
-        self.vtable.renderShadowPass(self.ptr, light_space_matrix, camera_pos, shadow_config);
+    pub fn renderShadowPass(self: IShadowScene, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
+        self.vtable.renderShadowPass(self.ptr, light_space_matrix, camera_pos, caster_min, caster_max, shadow_config);
     }
 };
 

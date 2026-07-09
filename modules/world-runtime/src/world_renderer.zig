@@ -672,35 +672,32 @@ pub const WorldRenderer = struct {
         });
     }
 
-    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
+    pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3) void {
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
 
         if (!std.math.isFinite(camera_pos.x) or !std.math.isFinite(camera_pos.z)) return;
 
-        const pc = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
-        const pc_x: i64 = pc.chunk_x;
-        const pc_z: i64 = pc.chunk_z;
-
-        const r_dist: i64 = @as(i64, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
-        const shadow_frustum = Frustum.fromViewProj(light_space_matrix);
-        const supports_shadow_mdi = self.query.supportsIndirectFirstInstance() and !self.force_mdi_fallback and parseEnabledEnv(getenv("ZIGCRAFT_ENABLE_SHADOW_MDI"), false);
+        _ = light_space_matrix;
+        const margin: i64 = 1;
+        const min_chunk = worldToChunkFromFloat(caster_min.x, caster_min.z);
+        const max_chunk = worldToChunkFromFloat(caster_max.x, caster_max.z);
+        const min_x: i64 = @as(i64, min_chunk.chunk_x) - margin;
+        const min_z: i64 = @as(i64, min_chunk.chunk_z) - margin;
+        const max_x: i64 = @as(i64, max_chunk.chunk_x) + margin;
+        const max_z: i64 = @as(i64, max_chunk.chunk_z) + margin;
+        const supports_shadow_mdi = self.query.supportsIndirectFirstInstance() and parseEnabledEnv(getenv("ZIGCRAFT_ENABLE_SHADOW_MDI"), true);
         const vertex_size = @sizeOf(rhi_mod.Vertex);
 
         self.instance_data.clearRetainingCapacity();
         self.draw_commands.clearRetainingCapacity();
 
-        var cz = pc_z - r_dist;
-        while (cz <= pc_z + r_dist) : (cz += 1) {
-            var cx = pc_x - r_dist;
-            while (cx <= pc_x + r_dist) : (cx += 1) {
+        var cz = min_z;
+        while (cz <= max_z) : (cz += 1) {
+            var cx = min_x;
+            while (cx <= max_x) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
-                        if (!shadow_frustum.intersectsChunkRelative(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            self.last_shadow_stats.chunks_culled += 1;
-                            continue;
-                        }
-
                         const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
 

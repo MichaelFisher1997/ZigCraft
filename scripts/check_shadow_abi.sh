@@ -11,10 +11,13 @@ for shader in assets/shaders/vulkan/sky.frag assets/shaders/vulkan/terrain.frag;
     expected=(
         "ShadowUniforms.light_space_matrices: offset 0, type 8b5c, size 4"
         "ShadowUniforms.cascade_splits: offset 256"
-        "ShadowUniforms.shadow_texel_sizes: offset 272"
-        "ShadowUniforms.shadow_params: offset 288"
-        "ShadowUniforms: offset -1, type ffffffff, size 304"
-        "binding 2, stages 16, numMembers 4"
+        "ShadowUniforms.overlap_starts: offset 272"
+        "ShadowUniforms.shadow_texel_sizes: offset 288"
+        "ShadowUniforms.shadow_depth_spans: offset 304"
+        "ShadowUniforms.shadow_params: offset 320"
+        "ShadowUniforms.fade_params: offset 336"
+        "ShadowUniforms: offset -1, type ffffffff, size 352"
+        "binding 2, stages 16, numMembers 7"
     )
 
     for contract in "${expected[@]}"; do
@@ -30,4 +33,4 @@ for shader in assets/shaders/vulkan/sky.frag assets/shaders/vulkan/terrain.frag;
     fi
 done
 
-printf 'Shadow ABI reflection: 4 matrices, 304-byte block, offsets 0/256/272/288\n'
+printf 'Shadow ABI reflection: 4 matrices, 352-byte block, offsets 0/256/272/288/304/320/336\n'
