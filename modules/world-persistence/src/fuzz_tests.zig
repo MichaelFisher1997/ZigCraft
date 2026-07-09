@@ -1,10 +1,12 @@
 const std = @import("std");
 const fs = @import("fs");
 
-const chunk_serializer = @import("chunk_serializer.zig");
-const level_data = @import("level_data.zig");
-const region_file = @import("region_file.zig");
+const world_persistence = @import("world-persistence");
 const world_core = @import("world-core");
+
+const chunk_serializer = world_persistence.chunk_serializer;
+const level_data = world_persistence.level_data;
+const region_file = world_persistence.region_file;
 
 test "fuzz corpus: chunk deserializer rejects short and corrupted payloads" {
     var source = world_core.Chunk.init(12, -34);

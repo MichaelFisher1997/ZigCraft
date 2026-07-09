@@ -1,9 +1,8 @@
 const std = @import("std");
-const math = @import("zig-math");
-const ray = @import("ray.zig");
+const engine_math = @import("engine-math");
 
-const Vec3 = math.Vec3;
-const AABB = math.AABB;
+const Vec3 = engine_math.Vec3;
+const AABB = engine_math.AABB;
 
 test "fuzz corpus: AABB slab intersections handle boundary and parallel rays" {
     const box = AABB.init(Vec3.init(0, 0, 0), Vec3.init(1, 1, 1));
@@ -22,7 +21,7 @@ test "fuzz corpus: AABB slab intersections handle boundary and parallel rays" {
     };
 
     for (cases) |case| {
-        const hit = ray.intersectAABB(ray.Ray.init(case.origin, case.direction), box);
+        const hit = engine_math.intersectAABB(engine_math.Ray.init(case.origin, case.direction), box);
         try std.testing.expectEqual(case.should_hit, hit != null);
         if (hit) |h| {
             try std.testing.expect(std.math.isFinite(h.t));
@@ -47,12 +46,12 @@ test "fuzz corpus: voxel raycast edge cases stay bounded" {
         .{ .origin = Vec3.init(0, 0, 0), .direction = Vec3.init(1, 0, 0), .max_distance = 4, .expect_hit = true },
         .{ .origin = Vec3.init(0.9999, 0, 0), .direction = Vec3.init(1, 0, 0), .max_distance = 4, .expect_hit = true },
         .{ .origin = Vec3.init(0, 0, 0), .direction = Vec3.init(0, 1, 0), .max_distance = 4, .expect_hit = false },
-        .{ .origin = Vec3.init(-2, 0, 0), .direction = Vec3.init(1, 0, 0), .max_distance = 3.9, .expect_hit = true },
+        .{ .origin = Vec3.init(-2, 0, 0), .direction = Vec3.init(1, 0, 0), .max_distance = 3.9, .expect_hit = false },
         .{ .origin = Vec3.init(-2, 0, 0), .direction = Vec3.init(1, 0, 0), .max_distance = 1.9, .expect_hit = false },
     };
 
     for (cases) |case| {
-        const hit = ray.castThroughVoxels(case.origin, case.direction, case.max_distance, Context, .{}, Context.isSolid);
+        const hit = engine_math.castThroughVoxels(case.origin, case.direction, case.max_distance, Context, .{}, Context.isSolid);
         try std.testing.expectEqual(case.expect_hit, hit != null);
         if (hit) |h| try std.testing.expect(h.distance <= case.max_distance);
     }

@@ -1,6 +1,6 @@
 const std = @import("std");
 const world_core = @import("world-core");
-const registry = @import("registry.zig");
+const registry = @import("world-worldgen");
 
 test "fuzz corpus: generators handle extreme chunk coordinates" {
     const coords = [_]i32{

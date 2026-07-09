@@ -1,5 +1,5 @@
 const std = @import("std");
-const light = @import("light.zig");
+const world_core = @import("world-core");
 
 test "fuzz corpus: PackedLight round-trips all channel nibbles" {
     var sky: u8 = 0;
@@ -10,7 +10,7 @@ test "fuzz corpus: PackedLight round-trips all channel nibbles" {
             while (green <= 15) : (green += 1) {
                 var blue: u8 = 0;
                 while (blue <= 15) : (blue += 1) {
-                    const value = light.PackedLight.initRGB(
+                    const value = world_core.PackedLight.initRGB(
                         @intCast(sky),
                         @intCast(red),
                         @intCast(green),
@@ -34,9 +34,9 @@ test "fuzz corpus: entrance direction nibble packing preserves signed range" {
     while (x <= 7) : (x += 1) {
         var z: i8 = -8;
         while (z <= 7) : (z += 1) {
-            const encoded = light.packEntranceDir(@intCast(x), @intCast(z));
-            try std.testing.expectEqual(@as(i4, @intCast(x)), light.unpackEntranceDirX(encoded));
-            try std.testing.expectEqual(@as(i4, @intCast(z)), light.unpackEntranceDirZ(encoded));
+            const encoded = world_core.packEntranceDir(@intCast(x), @intCast(z));
+            try std.testing.expectEqual(@as(i4, @intCast(x)), world_core.unpackEntranceDirX(encoded));
+            try std.testing.expectEqual(@as(i4, @intCast(z)), world_core.unpackEntranceDirZ(encoded));
         }
     }
 }

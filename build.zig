@@ -616,6 +616,22 @@ fn defineBuildSteps(
     test_root_module.addImport("game-ui", game_ui);
     test_root_module.addOptions("build_options", options);
 
+    const engine_math_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    engine_math_fuzz_tests.addImport("engine-math", modules.engine_math);
+    const world_core_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/light_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    world_core_fuzz_tests.addImport("world-core", world_core);
+    const world_persistence_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    world_persistence_fuzz_tests.addImport("fs", fs_module);
+    world_persistence_fuzz_tests.addImport("world-core", world_core);
+    world_persistence_fuzz_tests.addImport("world-persistence", modules.world_persistence);
+    const world_worldgen_fuzz_tests = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
+    world_worldgen_fuzz_tests.addImport("world-core", world_core);
+    world_worldgen_fuzz_tests.addImport("world-worldgen", world_worldgen);
+    test_root_module.addImport("engine-math-ray-fuzz-tests", engine_math_fuzz_tests);
+    test_root_module.addImport("world-core-light-fuzz-tests", world_core_fuzz_tests);
+    test_root_module.addImport("world-persistence-fuzz-tests", world_persistence_fuzz_tests);
+    test_root_module.addImport("world-worldgen-fuzz-tests", world_worldgen_fuzz_tests);
+
     const test_filters: []const []const u8 = if (b.option([]const u8, "test-filter", "Only run unit tests whose name contains this filter")) |filter|
         &.{filter}
     else if (b.args) |args|
