@@ -24,6 +24,20 @@ const CHUNK_VOLUME = world_core.CHUNK_VOLUME;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 
+const ChunkKeyContext = struct {
+    pub fn hash(self: @This(), key: ChunkKey) u64 {
+        _ = self;
+        return key.hash();
+    }
+
+    pub fn eql(self: @This(), a: ChunkKey, b: ChunkKey) bool {
+        _ = self;
+        return a.eql(b);
+    }
+};
+
+const QueueIndexMap = std.HashMap(ChunkKey, usize, ChunkKeyContext, std.hash_map.default_max_load_percentage);
+
 const SAVE_THREAD_INTERVAL_NS: u64 = 25 * std.time.ns_per_ms;
 const AUTO_SAVE_INTERVAL_MS: i64 = 60_000;
 const MAX_OPEN_REGIONS: usize = 16;
@@ -60,6 +74,7 @@ pub const SaveManager = struct {
 
     queue_mutex: sync.Mutex,
     queue: std.ArrayListUnmanaged(SaveQueueEntry),
+    queue_index: QueueIndexMap,
     running: std.atomic.Value(bool),
     pending_saves: std.atomic.Value(usize),
 
@@ -99,6 +114,7 @@ pub const SaveManager = struct {
             .world_name = name_copy,
             .queue_mutex = .{},
             .queue = .empty,
+            .queue_index = QueueIndexMap.init(allocator),
             .running = std.atomic.Value(bool).init(true),
             .pending_saves = std.atomic.Value(usize).init(0),
             .thread = undefined,
@@ -142,6 +158,7 @@ pub const SaveManager = struct {
         };
 
         self.queue.deinit(self.allocator);
+        self.queue_index.deinit();
         self.failed_chunks.deinit(self.allocator);
 
         self.save_dir.close();
@@ -167,15 +184,23 @@ pub const SaveManager = struct {
         self.queue_mutex.lock();
         defer self.queue_mutex.unlock();
 
-        for (self.queue.items) |*entry| {
-            if (entry.chunk_x == snapshot.chunk_x and entry.chunk_z == snapshot.chunk_z) {
-                entry.* = snapshot;
+        const key = ChunkKey{ .x = snapshot.chunk_x, .z = snapshot.chunk_z };
+        if (self.queue_index.get(key)) |idx| {
+            if (idx < self.queue.items.len) {
+                self.queue.items[idx] = snapshot;
                 return;
             }
+            _ = self.queue_index.remove(key);
         }
 
         self.queue.append(self.allocator, snapshot) catch |err| {
             log.log.err("Failed to enqueue chunk ({}, {}) for save: {}", .{ snapshot.chunk_x, snapshot.chunk_z, err });
+            self.recordSaveFailure();
+            return;
+        };
+        self.queue_index.put(key, self.queue.items.len - 1) catch |err| {
+            log.log.err("Failed to index queued chunk ({}, {}) for save: {}", .{ snapshot.chunk_x, snapshot.chunk_z, err });
+            _ = self.queue.pop();
             self.recordSaveFailure();
         };
     }
@@ -185,9 +210,8 @@ pub const SaveManager = struct {
         const rz: i32 = @divFloor(cz, 32);
 
         self.region_cache_mutex.lock();
-        defer self.region_cache_mutex.unlock();
-
         var region = self.getOrOpenRegion(rx, rz) catch |err| {
+            self.region_cache_mutex.unlock();
             log.log.debug("No saved chunk at ({}, {}): region error: {}", .{ cx, cz, err });
             return .not_found;
         };
@@ -195,12 +219,17 @@ pub const SaveManager = struct {
         const local_x: u5 = @intCast(@mod(cx, 32));
         const local_z: u5 = @intCast(@mod(cz, 32));
 
-        if (!region.hasChunk(local_x, local_z)) return .not_found;
+        if (!region.hasChunk(local_x, local_z)) {
+            self.region_cache_mutex.unlock();
+            return .not_found;
+        }
 
         const data = region.readChunk(local_x, local_z, self.allocator) catch |err| {
+            self.region_cache_mutex.unlock();
             log.log.err("Failed to read chunk ({}, {}) from region: {}", .{ cx, cz, err });
             return .read_error;
         };
+        self.region_cache_mutex.unlock();
         defer self.allocator.free(data);
 
         chunk_serializer.deserializeChunk(data, out_chunk) catch |err| {
@@ -311,13 +340,19 @@ pub const SaveManager = struct {
         }
         log.log.debug("Save thread processing {} chunks", .{count});
         @memcpy(batch[0..count], self.queue.items[0..count]);
+
+        const remaining_count = self.queue.items.len - count;
+        try self.queue_index.ensureTotalCapacity(@intCast(remaining_count));
+
         var remaining = std.ArrayListUnmanaged(SaveQueueEntry).empty;
-        defer remaining.deinit(self.allocator);
-        if (self.queue.items.len > count) {
+        errdefer remaining.deinit(self.allocator);
+        if (remaining_count > 0) {
             try remaining.appendSlice(self.allocator, self.queue.items[count..]);
         }
         self.queue.deinit(self.allocator);
         self.queue = remaining;
+        remaining = .empty;
+        self.rebuildQueueIndexLocked();
         self.pending_saves.store(count, .release);
         self.queue_mutex.unlock();
 
@@ -335,6 +370,13 @@ pub const SaveManager = struct {
         }
         self.pending_saves.store(0, .release);
         return true;
+    }
+
+    fn rebuildQueueIndexLocked(self: *SaveManager) void {
+        self.queue_index.clearRetainingCapacity();
+        for (self.queue.items, 0..) |entry, idx| {
+            self.queue_index.putAssumeCapacity(.{ .x = entry.chunk_x, .z = entry.chunk_z }, idx);
+        }
     }
 
     fn saveOneChunk(self: *SaveManager, entry: *const SaveQueueEntry) !void {

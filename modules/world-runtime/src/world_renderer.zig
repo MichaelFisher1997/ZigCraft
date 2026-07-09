@@ -124,6 +124,19 @@ pub const WorldRenderer = struct {
     gpu_visible_indices: std.ArrayListUnmanaged(u32),
     use_gpu_culling: bool,
 
+    // CPU culling cache for repeated terrain/fluid passes with the same view in
+    // one frame. G-pass, opaque, and water can otherwise rescan the same RD area.
+    cpu_cull_cache: std.ArrayListUnmanaged(*ChunkData),
+    cpu_cull_cache_valid: bool,
+    cpu_cull_cache_frame: u64,
+    cpu_cull_cache_pc_x: i64,
+    cpu_cull_cache_pc_z: i64,
+    cpu_cull_cache_r_dist: i64,
+    cpu_cull_cache_camera_pos: Vec3,
+    cpu_cull_cache_view_proj: Mat4,
+    cpu_cull_cache_culled: u32,
+    frame_serial: u64,
+
     // GPU Block Buffer (Batch 5 - Issue #389)
     gpu_block_buffer: ?*GpuBlockBuffer,
 
@@ -164,10 +177,12 @@ pub const WorldRenderer = struct {
             indirect_buffers[i] = try rm.createBuffer(max_chunks * @sizeOf(rhi_mod.DrawIndirectCommand) * 3, .indirect);
         }
 
-        const use_gpu = false;
         const owned_culling_system = culling_system.*;
-        if (!safe_mode_enabled and owned_culling_system != null) {
-            log.log.info("GPU chunk culling initialized but kept disabled due unstable visibility", .{});
+        const use_gpu = !safe_mode_enabled and owned_culling_system != null and parseEnabledEnv(getenv("ZIGCRAFT_ENABLE_GPU_CULLING"), false);
+        if (use_gpu) {
+            log.log.info("GPU chunk frustum culling enabled; temporal depth-pyramid occlusion remains disabled", .{});
+        } else if (!safe_mode_enabled and owned_culling_system != null) {
+            log.log.info("GPU chunk culling available but disabled by default; set ZIGCRAFT_ENABLE_GPU_CULLING=1 to test compute frustum culling", .{});
         } else if (safe_mode_enabled) {
             log.log.info("Safe mode: GPU frustum culling disabled, using CPU culling", .{});
         }
@@ -196,7 +211,7 @@ pub const WorldRenderer = struct {
 
         const force_mdi_fallback = parseEnabledEnv(getenv("ZIGCRAFT_FORCE_MDI_FALLBACK"), true);
         if (force_mdi_fallback) {
-            log.log.info("MDI chunk rendering disabled by default due missing-near-chunk artifacts; set ZIGCRAFT_FORCE_MDI_FALLBACK=0 to test indirect draws", .{});
+            log.log.info("MDI chunk rendering disabled by default; set ZIGCRAFT_FORCE_MDI_FALLBACK=0 to test indirect chunk batches", .{});
         }
 
         renderer.* = .{
@@ -220,6 +235,16 @@ pub const WorldRenderer = struct {
             .chunk_lookup = undefined,
             .gpu_visible_indices = .empty,
             .use_gpu_culling = use_gpu,
+            .cpu_cull_cache = .empty,
+            .cpu_cull_cache_valid = false,
+            .cpu_cull_cache_frame = 0,
+            .cpu_cull_cache_pc_x = 0,
+            .cpu_cull_cache_pc_z = 0,
+            .cpu_cull_cache_r_dist = 0,
+            .cpu_cull_cache_camera_pos = Vec3.zero,
+            .cpu_cull_cache_view_proj = Mat4.identity,
+            .cpu_cull_cache_culled = 0,
+            .frame_serial = 0,
             .gpu_block_buffer = gpu_block_buffer,
             .gpu_mesher = gpu_mesher,
         };
@@ -232,6 +257,8 @@ pub const WorldRenderer = struct {
 
     pub fn beginFrame(self: *WorldRenderer) void {
         self.resetShadowStats();
+        self.frame_serial += 1;
+        self.cpu_cull_cache_valid = false;
         self.vertex_allocator.tick(self.query.getFrameIndex());
     }
 
@@ -262,6 +289,7 @@ pub const WorldRenderer = struct {
 
     pub fn deinit(self: *WorldRenderer) void {
         self.visible_chunks.deinit(self.allocator);
+        self.cpu_cull_cache.deinit(self.allocator);
         self.aabb_data.deinit(self.allocator);
         for (&self.chunk_lookup) |*lookup| lookup.deinit(self.allocator);
         self.gpu_visible_indices.deinit(self.allocator);
@@ -323,7 +351,7 @@ pub const WorldRenderer = struct {
         if (self.use_gpu_culling) {
             self.renderGpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
         } else {
-            self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
+            self.renderCpuCullCached(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
         }
 
         self.last_render_stats.chunks_total = @intCast(self.storage.chunks.count());
@@ -345,26 +373,9 @@ pub const WorldRenderer = struct {
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
-            if (!supports_indirect_first_instance or force_mdi_fallback) {
-                self.render_ctx.setModelMatrix(model, Vec3.one, 0);
-
-                if (layer != .fluid) {
-                    if (data.render.mesh.solid_allocation) |alloc| {
-                        total_vertices += alloc.count;
-                        self.last_render_stats.vertices_rendered += alloc.count;
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                    if (data.render.mesh.cutout_allocation) |alloc| {
-                        self.last_render_stats.vertices_rendered += alloc.count;
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                }
-                if (layer != .terrain) {
-                    if (data.render.mesh.fluid_allocation) |alloc| {
-                        self.last_render_stats.vertices_rendered += alloc.count;
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                }
+            const is_camera_neighborhood = @abs(data.chunk.chunk_x - @as(i32, @intCast(pc_x))) <= 1 and @abs(data.chunk.chunk_z - @as(i32, @intCast(pc_z))) <= 1;
+            if (!supports_indirect_first_instance or force_mdi_fallback or is_camera_neighborhood) {
+                total_vertices += self.drawChunkDirect(data, model, layer, true);
                 continue;
             }
 
@@ -454,6 +465,32 @@ pub const WorldRenderer = struct {
         self.drawGuaranteedNearChunks(@intCast(pc_x), @intCast(pc_z), camera_pos, layer);
     }
 
+    fn drawChunkDirect(self: *WorldRenderer, data: *ChunkData, model: Mat4, layer: RenderLayer, count_vertices: bool) u64 {
+        self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+        var total_vertices: u64 = 0;
+
+        if (layer != .fluid) {
+            if (data.render.mesh.solid_allocation) |alloc| {
+                total_vertices += alloc.count;
+                if (count_vertices) self.last_render_stats.vertices_rendered += alloc.count;
+                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+            }
+            if (data.render.mesh.cutout_allocation) |alloc| {
+                total_vertices += alloc.count;
+                if (count_vertices) self.last_render_stats.vertices_rendered += alloc.count;
+                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+            }
+        }
+        if (layer != .terrain) {
+            if (data.render.mesh.fluid_allocation) |alloc| {
+                total_vertices += alloc.count;
+                if (count_vertices) self.last_render_stats.vertices_rendered += alloc.count;
+                self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+            }
+        }
+        return total_vertices;
+    }
+
     fn drawGuaranteedNearChunks(self: *WorldRenderer, pc_x: i32, pc_z: i32, camera_pos: Vec3, layer: RenderLayer) void {
         var dz: i32 = -1;
         while (dz <= 1) : (dz += 1) {
@@ -463,24 +500,19 @@ pub const WorldRenderer = struct {
                 const cz = pc_z + dz;
                 const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse continue;
 
+                var already_drawn = false;
+                for (self.visible_chunks.items) |visible| {
+                    if (visible == data) {
+                        already_drawn = true;
+                        break;
+                    }
+                }
+                if (already_drawn) continue;
+
                 const chunk_world_x: f32 = @floatFromInt(cx * CHUNK_SIZE_X);
                 const chunk_world_z: f32 = @floatFromInt(cz * CHUNK_SIZE_Z);
                 const model = Mat4.translate(Vec3.init(chunk_world_x - camera_pos.x, -camera_pos.y, chunk_world_z - camera_pos.z));
-                self.render_ctx.setModelMatrix(model, Vec3.one, 0);
-
-                if (layer != .fluid) {
-                    if (data.render.mesh.solid_allocation) |alloc| {
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                    if (data.render.mesh.cutout_allocation) |alloc| {
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                }
-                if (layer != .terrain) {
-                    if (data.render.mesh.fluid_allocation) |alloc| {
-                        self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
-                    }
-                }
+                _ = self.drawChunkDirect(data, model, layer, false);
             }
         }
     }
@@ -517,6 +549,51 @@ pub const WorldRenderer = struct {
             }
         }
         diagnostics.logFrame(self.storage, self.visible_chunks.items.len, pc_x, pc_z, r_dist, self.render_frame_count, build_options.startup_diagnostic_seconds);
+    }
+
+    fn renderCpuCullCached(self: *WorldRenderer, view_proj: Mat4, camera_pos: Vec3, pc_x: i64, pc_z: i64, r_dist: i64, count_stats: bool) void {
+        if (self.cpu_cull_cache_valid and
+            self.cpu_cull_cache_frame == self.frame_serial and
+            self.cpu_cull_cache_pc_x == pc_x and
+            self.cpu_cull_cache_pc_z == pc_z and
+            self.cpu_cull_cache_r_dist == r_dist and
+            vec3ExactEqual(self.cpu_cull_cache_camera_pos, camera_pos) and
+            mat4ExactEqual(self.cpu_cull_cache_view_proj, view_proj))
+        {
+            self.visible_chunks.appendSlice(self.allocator, self.cpu_cull_cache.items) catch return;
+            if (count_stats) self.last_render_stats.chunks_culled += self.cpu_cull_cache_culled;
+            return;
+        }
+
+        const culled_before = self.last_render_stats.chunks_culled;
+        self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
+
+        self.cpu_cull_cache.clearRetainingCapacity();
+        self.cpu_cull_cache.appendSlice(self.allocator, self.visible_chunks.items) catch {
+            self.cpu_cull_cache_valid = false;
+            return;
+        };
+        self.cpu_cull_cache_valid = true;
+        self.cpu_cull_cache_frame = self.frame_serial;
+        self.cpu_cull_cache_pc_x = pc_x;
+        self.cpu_cull_cache_pc_z = pc_z;
+        self.cpu_cull_cache_r_dist = r_dist;
+        self.cpu_cull_cache_camera_pos = camera_pos;
+        self.cpu_cull_cache_view_proj = view_proj;
+        self.cpu_cull_cache_culled = self.last_render_stats.chunks_culled - culled_before;
+    }
+
+    fn vec3ExactEqual(a: Vec3, b: Vec3) bool {
+        return a.x == b.x and a.y == b.y and a.z == b.z;
+    }
+
+    fn mat4ExactEqual(a: Mat4, b: Mat4) bool {
+        for (0..4) |col| {
+            for (0..4) |row| {
+                if (a.data[col][row] != b.data[col][row]) return false;
+            }
+        }
+        return true;
     }
 
     fn chunkAABB(chunk_x: i32, chunk_z: i32, camera_pos: Vec3) ChunkCullData {
@@ -596,8 +673,6 @@ pub const WorldRenderer = struct {
     }
 
     pub fn renderShadowPass(self: *WorldRenderer, light_space_matrix: Mat4, camera_pos: Vec3, shadow_caster_distance: f32) void {
-        _ = light_space_matrix;
-
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
 
@@ -608,6 +683,12 @@ pub const WorldRenderer = struct {
         const pc_z: i64 = pc.chunk_z;
 
         const r_dist: i64 = @as(i64, @intFromFloat(shadow_caster_distance / CHUNK_SIZE_X));
+        const shadow_frustum = Frustum.fromViewProj(light_space_matrix);
+        const supports_shadow_mdi = self.query.supportsIndirectFirstInstance() and !self.force_mdi_fallback and parseEnabledEnv(getenv("ZIGCRAFT_ENABLE_SHADOW_MDI"), false);
+        const vertex_size = @sizeOf(rhi_mod.Vertex);
+
+        self.instance_data.clearRetainingCapacity();
+        self.draw_commands.clearRetainingCapacity();
 
         var cz = pc_z - r_dist;
         while (cz <= pc_z + r_dist) : (cz += 1) {
@@ -615,6 +696,11 @@ pub const WorldRenderer = struct {
             while (cx <= pc_x + r_dist) : (cx += 1) {
                 if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
                     if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
+                        if (!shadow_frustum.intersectsChunkRelative(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos.x, camera_pos.y, camera_pos.z)) {
+                            self.last_shadow_stats.chunks_culled += 1;
+                            continue;
+                        }
+
                         const chunk_world_x: f32 = @floatFromInt(data.chunk.chunk_x * CHUNK_SIZE_X);
                         const chunk_world_z: f32 = @floatFromInt(data.chunk.chunk_z * CHUNK_SIZE_Z);
 
@@ -625,9 +711,51 @@ pub const WorldRenderer = struct {
                         const rel_y = -camera_pos.y;
                         const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
+                        if (supports_shadow_mdi) {
+                            const command_count: usize = @as(usize, if (data.render.mesh.solid_allocation != null) 1 else 0) + @as(usize, if (data.render.mesh.cutout_allocation != null) 1 else 0);
+                            if (command_count == 0) continue;
+                            if (self.instance_data.items.len >= MAX_MDI_CHUNKS or self.draw_commands.items.len + command_count > MAX_MDI_CHUNKS * 3) {
+                                log.log.warn("Shadow MDI: batch capacity reached, drawing overflow chunk directly", .{});
+                                if (data.render.mesh.solid_allocation) |alloc| {
+                                    self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+                                    self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                                }
+                                if (data.render.mesh.cutout_allocation) |alloc| {
+                                    self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+                                    self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                                }
+                                continue;
+                            }
+
+                            const instance_idx: u32 = @intCast(self.instance_data.items.len);
+                            self.instance_data.append(self.allocator, .{
+                                .model = model,
+                                .mask_radius = 0,
+                                .lod_fade = 1.0,
+                                .padding = .{ 0, 0 },
+                            }) catch continue;
+
+                            if (data.render.mesh.solid_allocation) |alloc| {
+                                self.draw_commands.append(self.allocator, .{
+                                    .vertexCount = alloc.count,
+                                    .instanceCount = 1,
+                                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                                    .firstInstance = instance_idx,
+                                }) catch {};
+                            }
+                            if (data.render.mesh.cutout_allocation) |alloc| {
+                                self.draw_commands.append(self.allocator, .{
+                                    .vertexCount = alloc.count,
+                                    .instanceCount = 1,
+                                    .firstVertex = @intCast(alloc.offset / vertex_size),
+                                    .firstInstance = instance_idx,
+                                }) catch {};
+                            }
+                            continue;
+                        }
+
                         if (data.render.mesh.solid_allocation) |alloc| {
                             self.render_ctx.setModelMatrix(model, Vec3.one, 0);
-
                             self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
                         }
                         if (data.render.mesh.cutout_allocation) |alloc| {
@@ -637,6 +765,22 @@ pub const WorldRenderer = struct {
                     }
                 }
             }
+        }
+
+        if (supports_shadow_mdi and self.instance_data.items.len > 0 and self.draw_commands.items.len > 0) {
+            const fi = self.query.getFrameIndex();
+            std.debug.assert(self.instance_data.items.len <= MAX_MDI_CHUNKS);
+            std.debug.assert(self.draw_commands.items.len <= MAX_MDI_CHUNKS * 3);
+            self.rm.updateBuffer(self.instance_buffers[fi], 0, std.mem.sliceAsBytes(self.instance_data.items)) catch |err| {
+                log.log.err("Shadow MDI: failed to update instance buffer: {}", .{err});
+                return;
+            };
+            self.rm.updateBuffer(self.indirect_buffers[fi], 0, std.mem.sliceAsBytes(self.draw_commands.items)) catch |err| {
+                log.log.err("Shadow MDI: failed to update indirect buffer: {}", .{err});
+                return;
+            };
+            self.render_ctx.setInstanceBuffer(self.instance_buffers[fi]);
+            self.render_ctx.drawIndirect(self.vertex_allocator.buffer, self.indirect_buffers[fi], 0, @intCast(self.draw_commands.items.len), @sizeOf(rhi_mod.DrawIndirectCommand));
         }
     }
 };

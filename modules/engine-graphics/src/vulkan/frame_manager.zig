@@ -13,6 +13,7 @@ pub const FrameManager = struct {
     vulkan_device: *VulkanDevice,
 
     command_pool: c.VkCommandPool,
+    frame_command_pools: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandPool,
     command_buffers: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkCommandBuffer,
 
     image_available_semaphores: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkSemaphore,
@@ -28,6 +29,7 @@ pub const FrameManager = struct {
         var self = FrameManager{
             .vulkan_device = vulkan_device,
             .command_pool = null,
+            .frame_command_pools = [_]c.VkCommandPool{null} ** rhi.MAX_FRAMES_IN_FLIGHT,
             .command_buffers = undefined,
             .image_available_semaphores = undefined,
             .render_finished_semaphores = undefined,
@@ -41,12 +43,18 @@ pub const FrameManager = struct {
         pool_info.flags = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         try Utils.checkVk(c.vkCreateCommandPool(vulkan_device.vk_device, &pool_info, null, &self.command_pool));
 
-        var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
-        alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        alloc_info.commandPool = self.command_pool;
-        alloc_info.level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc_info.commandBufferCount = rhi.MAX_FRAMES_IN_FLIGHT;
-        try Utils.checkVk(c.vkAllocateCommandBuffers(vulkan_device.vk_device, &alloc_info, &self.command_buffers));
+        var frame_pool_info = pool_info;
+        frame_pool_info.flags = c.VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        for (0..rhi.MAX_FRAMES_IN_FLIGHT) |i| {
+            try Utils.checkVk(c.vkCreateCommandPool(vulkan_device.vk_device, &frame_pool_info, null, &self.frame_command_pools[i]));
+
+            var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
+            alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            alloc_info.commandPool = self.frame_command_pools[i];
+            alloc_info.level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            alloc_info.commandBufferCount = 1;
+            try Utils.checkVk(c.vkAllocateCommandBuffers(vulkan_device.vk_device, &alloc_info, &self.command_buffers[i]));
+        }
 
         var semaphore_info = std.mem.zeroes(c.VkSemaphoreCreateInfo);
         semaphore_info.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -83,6 +91,9 @@ pub const FrameManager = struct {
         if (self.command_pool != null) {
             c.vkDestroyCommandPool(device, self.command_pool, null);
         }
+        for (self.frame_command_pools) |pool| {
+            if (pool != null) c.vkDestroyCommandPool(device, pool, null);
+        }
     }
 
     pub fn beginFrame(self: *FrameManager, swapchain: *SwapchainPresenter) !bool {
@@ -117,9 +128,10 @@ pub const FrameManager = struct {
         // Reset fence before submitting the next frame.
         _ = c.vkResetFences(device, 1, &self.in_flight_fences[self.current_frame]);
 
-        // Begin command buffer
+        // Reset the per-frame pool after its fence signals. This lets the driver
+        // recycle all transient command-buffer storage for the frame at once.
         const cb = self.command_buffers[self.current_frame];
-        try Utils.checkVk(c.vkResetCommandBuffer(cb, 0));
+        try Utils.checkVk(c.vkResetCommandPool(device, self.frame_command_pools[self.current_frame], 0));
 
         var begin_info = std.mem.zeroes(c.VkCommandBufferBeginInfo);
         begin_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;

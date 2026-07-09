@@ -14,6 +14,18 @@ layout(push_constant) uniform ShadowModelUniforms {
     vec4 bias_params;
 } pc;
 
+struct InstanceData {
+    mat4 model;
+    float mask_radius;
+    float lod_fade;
+    float _pad1;
+    float _pad2;
+};
+
+layout(set = 0, binding = 5) readonly buffer InstanceBuffer {
+    InstanceData instances[];
+} instance_buf;
+
 vec3 decodeNormal(uint packed) {
     vec2 oct = unpackSnorm2x16(packed);
     float px = oct.x;
@@ -39,5 +51,6 @@ void main() {
     bool diagonalBillboard = abs(worldNormal.y) < 0.001 && abs(worldNormal.x) > 0.1 && abs(worldNormal.z) > 0.1;
     vSkipShadow = diagonalBillboard ? 1 : 0;
     
-    gl_Position = pc.mvp * vec4(biasedPos, 1.0);
+    mat4 model = (pc.bias_params.y < 0.0) ? instance_buf.instances[gl_InstanceIndex].model : mat4(1.0);
+    gl_Position = pc.mvp * model * vec4(biasedPos, 1.0);
 }

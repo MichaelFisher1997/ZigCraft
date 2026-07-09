@@ -120,15 +120,19 @@ pub const GameSession = struct {
         const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0] or effective_horizon_distance != preset_cfg.horizon_radius;
         const chunk_render_radius = if (strict_safe_mode)
             @min(effective_render_distance, 8)
+        else if (effective_lod_enabled and manual_distance_expanded)
+            @min(effective_render_distance, preset_cfg.lod_radii[0])
         else
             effective_render_distance;
         var preset_radii = if (strict_safe_mode)
             LODConfig.radiiForDistances(chunk_render_radius, @max(effective_horizon_distance, 64))
+        else if (effective_lod_enabled and manual_distance_expanded)
+            LODConfig.radiiForDistances(chunk_render_radius, effective_horizon_distance)
         else
             LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance);
 
         const active_count = if (!strict_safe_mode and manual_distance_expanded)
-            LODConfig.activeCountForRenderDistance(effective_render_distance)
+            LODConfig.activeCountForRadii(preset_radii)
         else
             preset_cfg.active_lod_count;
         if (active_count < LODLevel.count) {
@@ -142,6 +146,8 @@ pub const GameSession = struct {
             LODConfig{
                 .chunk_render_radius = chunk_render_radius,
                 .radii = preset_radii,
+                .memory_budget_mb = @min(preset_cfg.memory_budget_mb, 256),
+                .max_uploads_per_frame = @min(preset_cfg.max_uploads_per_frame, 8),
             }
         else
             LODConfig{

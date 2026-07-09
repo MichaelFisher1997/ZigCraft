@@ -103,16 +103,23 @@ pub const WorldStreamer = struct {
     last_diag_uploaded: u64 = 0,
 
     const MIN_GEN_WORKERS = 2;
-    const MAX_GEN_WORKERS = 4;
     const MIN_MESH_WORKERS = 2;
-    const MAX_MESH_WORKERS = 6;
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
         errdefer allocator.destroy(streamer);
 
+        // Worker pool sizing. The historical caps (gen<=4, mesh<=6) left most
+        // cores idle on modern multi-core CPUs during the chunk-load burst.
+        // We now size both pools against the CPU count so the gen+mesh pipeline
+        // can saturate the machine, while leaving at least one core for the
+        // main thread and the Vulkan driver. Defaults split the budget 50/50;
+        // ZIGCRAFT_GEN_WORKERS / ZIGCRAFT_MESH_WORKERS override either side.
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
-        const gen_worker_count = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
-        const mesh_worker_count = std.math.clamp(cpu_count / 2, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
+        const total_budget = @max(@as(usize, 4), cpu_count -| 1);
+        const default_gen = @max(MIN_GEN_WORKERS, total_budget / 2);
+        const default_mesh = @max(MIN_MESH_WORKERS, total_budget - default_gen);
+        const gen_worker_count = engine_core.envInt("ZIGCRAFT_GEN_WORKERS", default_gen);
+        const mesh_worker_count = engine_core.envInt("ZIGCRAFT_MESH_WORKERS", default_mesh);
 
         const gen_queue = try allocator.create(JobQueue);
         gen_queue.* = JobQueue.init(allocator);
@@ -149,14 +156,15 @@ pub const WorldStreamer = struct {
         streamer.queue_coordinator = try ChunkQueueCoordinator.init(allocator, storage, generator, atlas, gen_queue, mesh_queue, vertex_allocator, max_uploads_per_frame, &streamer.gpu_acceleration);
         errdefer streamer.queue_coordinator.deinit();
 
-        try streamer.warmupInitialChunks();
-
         log.log.info("WorldStreamer workers: gen={} mesh={} (cpu={})", .{ gen_worker_count, mesh_worker_count, cpu_count });
 
         streamer.gen_pool = try WorkerPool.init(allocator, gen_worker_count, gen_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processGenJob);
         errdefer streamer.gen_pool.deinit();
 
         streamer.mesh_pool = try WorkerPool.init(allocator, mesh_worker_count, mesh_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processMeshJob);
+        errdefer streamer.mesh_pool.deinit();
+
+        try streamer.warmupInitialChunks();
 
         return streamer;
     }
@@ -202,7 +210,7 @@ pub const WorldStreamer = struct {
     }
 
     fn warmupInitialChunks(self: *WorldStreamer) !void {
-        const warmup_radius: i32 = 2;
+        const warmup_radius: i32 = 1;
 
         var cz: i32 = -warmup_radius;
         while (cz <= warmup_radius) : (cz += 1) {
@@ -390,7 +398,7 @@ pub const WorldStreamer = struct {
         // Keep the generation queue hot while moving or recovering stale jobs.
         // A full scan is cheap relative to chunk generation and avoids leaving
         // boundary chunks idle in `.missing` until the next periodic rescan.
-        self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist) catch |err| {
+        self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist, frame.movement) catch |err| {
             log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
         };
         self.queue_coordinator.processChunkStates(frame.pc_x, frame.pc_z, frame.render_dist, self.frame_counter);

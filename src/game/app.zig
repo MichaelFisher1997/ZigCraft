@@ -115,6 +115,7 @@ pub const App = struct {
     startup_world_delay_frames: u32 = 3,
     direct_launch_resize_guard_frames: u32 = 0,
     screenshot_delay_start: ?f32 = null,
+    frame_start_counter: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -125,6 +126,10 @@ pub const App = struct {
 
         if (build_options.benchmark) {
             applyBenchmarkPreset(settings_manager.ptr(), build_options.benchmark_preset);
+            if (build_options.benchmark_render_distance > 0) {
+                settings_manager.settings.render_distance = build_options.benchmark_render_distance;
+                settings_manager.settings.horizon_distance = build_options.benchmark_render_distance;
+            }
         }
         if (build_options.auto_preset.len > 0) {
             _ = applyNamedPreset(settings_manager.ptr(), build_options.auto_preset, "AUTO PRESET");
@@ -218,6 +223,7 @@ pub const App = struct {
             .startup_world_delay_frames = 3,
             .direct_launch_resize_guard_frames = 0,
             .screenshot_delay_start = null,
+            .frame_start_counter = 0,
         };
         errdefer app.screen_manager.deinit();
 
@@ -351,6 +357,7 @@ pub const App = struct {
     }
 
     pub fn runSingleFrame(self: *App) !void {
+        self.frame_start_counter = c.SDL_GetPerformanceCounter();
         self.time.update();
         if (!build_options.benchmark) {
             self.audio_manager.update();
@@ -495,6 +502,26 @@ pub const App = struct {
                 self.input.should_quit = true;
             }
         }
+
+        self.limitFrameRateIfNeeded();
+    }
+
+    fn limitFrameRateIfNeeded(self: *App) void {
+        if (build_options.benchmark or build_options.skip_present) return;
+
+        const settings = self.settings_manager.settings;
+        if (settings.vsync or settings.target_fps == 0) return;
+
+        const target_ns = @divFloor(std.time.ns_per_s, @as(u64, settings.target_fps));
+        const now = c.SDL_GetPerformanceCounter();
+        if (now <= self.frame_start_counter) return;
+
+        const freq = c.SDL_GetPerformanceFrequency();
+        const elapsed_counts = now - self.frame_start_counter;
+        const elapsed_ns = @divFloor(elapsed_counts * std.time.ns_per_s, freq);
+        if (elapsed_ns >= target_ns) return;
+
+        std.Options.debug_io.sleep(.fromNanoseconds(target_ns - elapsed_ns), .boot) catch {};
     }
 
     pub fn run(self: *App) !void {

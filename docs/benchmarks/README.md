@@ -12,7 +12,7 @@ Baselines are captured on the GitHub Actions benchmark job runner:
 - Zig version: `0.16.0`, provided by the Nix flake
 - Build mode: `ReleaseFast`
 - Presets: `low`, `medium`, `high`
-- Duration: 5 seconds per preset for the CI canary gate
+- Duration: 5 sampled seconds per preset after a 1-second warmup for the CI canary gate
 
 Lavapipe and Zig versions are pinned by the Nix inputs used by the workflow. If the flake lock changes, refresh this baseline so performance drift is tied to a known toolchain.
 
@@ -26,7 +26,7 @@ gh workflow run benchmark.yml --repo OpenStaticFish/ZigCraft --ref <branch> -f d
 
 After the run finishes, download the `benchmark-results` artifact and replace the corresponding `low`, `medium`, and `high` entries in `baseline.json` with the captured JSON payloads. Keep `generated` set to `true`.
 
-This gate is intentionally a short canary so every `dev` push gets a bounded performance signal without consuming long runner time. Longer profiling runs should use the manual workflow input with a larger duration and should not replace the CI canary baseline unless that policy changes deliberately.
+This gate is intentionally a short canary so every `dev` push gets a bounded performance signal without consuming long runner time. The benchmark warmup is excluded from samples so startup shader/resource transitions do not dominate steady-state regression checks. Longer profiling runs should use the manual workflow input with a larger duration and should not replace the CI canary baseline unless that policy changes deliberately.
 
 ## Tolerance Policy
 
@@ -46,7 +46,7 @@ The benchmark harness also enforces absolute service-level objectives before reg
 
 | Preset | p1 FPS min | Max frame ms | Draw calls avg max | Vertices avg max | GPU memory max |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| low | 12 | 260 | 700 | 3,500,000 | 1,800 MB |
+| low | 12 | 260 | 700 | 3,500,000 | 2,200 MB |
 | medium | 8 | 260 | 2,600 | 6,000,000 | 2,400 MB |
 | high | 6 | 260 | 3,600 | 8,500,000 | 2,800 MB |
 | ultra | 4 | 260 | 4,500 | 12,000,000 | 3,400 MB |

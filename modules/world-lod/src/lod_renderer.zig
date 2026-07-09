@@ -146,7 +146,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             };
 
             if (!renderer.enable_mdi) {
-                log.log.info("LOD MDI disabled by default; set ZIGCRAFT_ENABLE_LOD_MDI=1 to enable indirect LOD batches", .{});
+                log.log.info("LOD MDI disabled by default; set ZIGCRAFT_ENABLE_LOD_MDI=1 to test indirect LOD batches", .{});
             }
 
             return renderer;

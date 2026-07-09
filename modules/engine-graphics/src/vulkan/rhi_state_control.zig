@@ -148,6 +148,11 @@ pub fn setVSync(ctx: anytype, enabled: bool) void {
     ctx.runtime.framebuffer_resized = true;
     ctx.runtime.swapchain_recreate_failed = false;
 
+    // Propagate the chosen mode into the swapchain so the next recreate honors
+    // it. Without this, VulkanSwapchain.createSwapchain() would keep using the
+    // mode captured at init time (the bug that made setVSync a no-op).
+    ctx.swapchain.setPresentMode(ctx.options.present_mode);
+
     const mode_name: []const u8 = switch (ctx.options.present_mode) {
         c.VK_PRESENT_MODE_IMMEDIATE_KHR => "IMMEDIATE (VSync OFF)",
         c.VK_PRESENT_MODE_MAILBOX_KHR => "MAILBOX (Triple Buffer)",

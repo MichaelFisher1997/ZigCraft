@@ -67,6 +67,7 @@ pub const StreamingFrame = struct {
     moved: bool,
     target_render_dist: i32,
     render_dist: i32,
+    movement: PlayerMovement,
 };
 
 pub const QueueStats = struct {
@@ -148,6 +149,7 @@ pub const LODStreamingCoordinator = struct {
             .moved = moved,
             .target_render_dist = target_render_dist,
             .render_dist = render_dist,
+            .movement = self.player_movement,
         };
     }
 

@@ -652,6 +652,10 @@ pub const World = struct {
         const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
         const safe_render_distance: i32 = options.render_distance;
+        const streamer_render_distance: i32 = if (options.lod_config) |lod_config|
+            @min(safe_render_distance, lod_config.getChunkRenderRadius())
+        else
+            safe_render_distance;
         const max_uploads: usize = if (strict_safe_mode)
             @as(usize, 4)
         else if (safe_mode)
@@ -707,8 +711,8 @@ pub const World = struct {
             world.renderer.getGpuMesher() != null,
         );
 
-        log.log.info("World.init: initializing WorldStreamer (render_distance={})", .{safe_render_distance});
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, world.render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
+        log.log.info("World.init: initializing WorldStreamer (render_distance={}, requested={})", .{ streamer_render_distance, safe_render_distance });
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, streamer_render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
         errdefer world.streamer.deinit();
 
         if (options.lod_config) |lod_config| {

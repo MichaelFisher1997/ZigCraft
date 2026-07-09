@@ -2,6 +2,8 @@ const std = @import("std");
 const engine_core = @import("engine-core");
 const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
+const LODChunk = lod_chunk.LODChunk;
+const LODRegionKey = lod_chunk.LODRegionKey;
 const world_core = @import("world-core");
 const Chunk = world_core.Chunk;
 const LODColumnProvenance = world_core.LODColumnProvenance;
@@ -37,6 +39,32 @@ pub const PendingIngestion = struct {
     provenance: LODColumnProvenance,
     pending_levels: u8,
     ttl: u16,
+};
+
+pub const GenerationCandidate = struct {
+    key: LODRegionKey,
+    chunk: *LODChunk,
+    encoded_priority: i32,
+    level: u3,
+    coord_scale: i32,
+    job_token: u32,
+    lod_radius: i32,
+    want_spans: bool,
+};
+
+pub const MeshCandidate = struct {
+    chunk: *LODChunk,
+    encoded_priority: i32,
+    level: u3,
+    coord_scale: i32,
+    job_token: u32,
+    lod_radius: i32,
+};
+
+pub const UploadCandidate = struct {
+    chunk: *LODChunk,
+    encoded_priority: i32,
+    level: u3,
 };
 
 pub const PlayerChunkPos = struct {

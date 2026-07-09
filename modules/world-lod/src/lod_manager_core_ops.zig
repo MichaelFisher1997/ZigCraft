@@ -216,6 +216,9 @@ pub fn deinit(self: *Self) void {
     }
 
     self.ingestion_queue.deinit(self.allocator);
+    self.generation_candidates_scratch.deinit(self.allocator);
+    self.mesh_candidates_scratch.deinit(self.allocator);
+    self.upload_candidates_scratch.deinit(self.allocator);
 
     // NOTE: LODManager does NOT own the renderer lifetime.
     // The renderer is owned by World and deinit'd there.

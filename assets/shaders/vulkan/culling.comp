@@ -31,7 +31,7 @@ layout(push_constant) uniform CullingData {
     mat4 view_proj;
     vec2 screen_size;
     float previous_frame_valid;
-    float _pad;
+    uint chunk_count;
 } cull;
 
 layout(binding = 3) uniform sampler2D depth_pyramid;
@@ -122,7 +122,7 @@ bool occlusionTest(vec3 aabb_min, vec3 aabb_max) {
 void main() {
     uint idx = gl_GlobalInvocationID.x;
 
-    if (idx >= aabb_buffer.chunks.length()) {
+    if (idx >= cull.chunk_count) {
         return;
     }
 

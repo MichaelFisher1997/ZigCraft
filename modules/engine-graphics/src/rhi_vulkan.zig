@@ -82,6 +82,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
         frame_orchestration.recreateSwapchainInternal(ctx);
     }
 
+    var flushed_inter_frame_transfer = false;
     if (ctx.resources.transfer.transfer_ready[ctx.resources.transfer.current_frame]) {
         ctx.resources.flushTransfer() catch |err| {
             log.log.errWithTrace("Failed to flush inter-frame transfers: {}", .{err});
@@ -90,6 +91,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
                 return;
             }
         };
+        flushed_inter_frame_transfer = true;
     }
 
     // Begin frame (acquire image, reset fences/CBs)
@@ -123,6 +125,7 @@ fn beginFrame(ctx_ptr: *anyopaque) void {
         return;
     }
 
+    ctx.runtime.transfer_barrier_needed = flushed_inter_frame_transfer;
     render_state.applyPendingDescriptorUpdates(ctx, ctx.frames.current_frame);
     frame_orchestration.prepareFrameState(ctx);
 }

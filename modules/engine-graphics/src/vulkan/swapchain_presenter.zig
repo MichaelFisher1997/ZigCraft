@@ -17,6 +17,10 @@ pub const SwapchainPresenter = struct {
     msaa_samples: u8 = 1,
     clear_color: [4]f32 = .{ 0.0, 0.0, 0.0, 1.0 },
 
+    // Requested present mode (mirrored on the inner VulkanSwapchain). Honored
+    // at the next swapchain recreation.
+    present_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_FIFO_KHR,
+
     // State
     framebuffer_resized: bool = false,
 
@@ -24,8 +28,8 @@ pub const SwapchainPresenter = struct {
     fp_vkQueuePresentKHR: c.PFN_vkQueuePresentKHR = null,
     skip_present: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, vulkan_device: *VulkanDevice, window: *c.SDL_Window, msaa_samples: u8) !SwapchainPresenter {
-        const swapchain = try VulkanSwapchain.init(allocator, vulkan_device, window, msaa_samples);
+    pub fn init(allocator: std.mem.Allocator, vulkan_device: *VulkanDevice, window: *c.SDL_Window, msaa_samples: u8, present_mode: c.VkPresentModeKHR) !SwapchainPresenter {
+        const swapchain = try VulkanSwapchain.init(allocator, vulkan_device, window, msaa_samples, present_mode);
 
         // Load vkQueuePresentKHR dynamically to avoid linking issues or NULL symbols
         const fp_present = c.vkGetDeviceProcAddr(vulkan_device.vk_device, "vkQueuePresentKHR");
@@ -45,6 +49,7 @@ pub const SwapchainPresenter = struct {
             .window = window,
             .swapchain = swapchain,
             .msaa_samples = msaa_samples,
+            .present_mode = present_mode,
             .fp_vkQueuePresentKHR = @ptrCast(fp_present),
             .skip_present = skip,
         };
@@ -65,6 +70,18 @@ pub const SwapchainPresenter = struct {
             // Trigger recreation on next frame via resize flag or immediate
             self.framebuffer_resized = true; // Simple way to force recreation
         }
+    }
+
+    /// Sets the desired present mode. The actual mode used is resolved against
+    /// the supported surface modes at the next swapchain recreation. Use this
+    /// instead of `setVSync` when a specific mode (MAILBOX, IMMEDIATE, FIFO) is
+    /// required.
+    pub fn setPresentMode(self: *SwapchainPresenter, mode: c.VkPresentModeKHR) void {
+        if (self.present_mode == mode) return;
+        self.present_mode = mode;
+        self.swapchain.present_mode = mode;
+        // Force recreate so the new mode takes effect on the next present.
+        self.framebuffer_resized = true;
     }
 
     pub fn setClearColor(self: *SwapchainPresenter, color: rhi_types.Vec3) void {

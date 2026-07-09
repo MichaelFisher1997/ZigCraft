@@ -18,7 +18,7 @@
     "assets/shaders/vulkan/post_process.frag": 12308,
     "assets/shaders/vulkan/post_process.vert": 1160,
     "assets/shaders/vulkan/shadow.frag": 552,
-    "assets/shaders/vulkan/shadow.vert": 4128,
+    "assets/shaders/vulkan/shadow.vert": 5236,
     "assets/shaders/vulkan/sky.frag": 18756,
     "assets/shaders/vulkan/sky.vert": 2696,
     "assets/shaders/vulkan/ssao_blur.frag": 1760,

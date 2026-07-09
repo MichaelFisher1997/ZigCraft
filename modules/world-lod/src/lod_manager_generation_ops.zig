@@ -46,6 +46,9 @@ const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std
 const ChunkResolver = manager_ctx.ChunkResolver;
 const PendingIngestion = manager_ctx.PendingIngestion;
 const PlayerChunkPos = manager_ctx.PlayerChunkPos;
+const GenerationCandidate = manager_ctx.GenerationCandidate;
+const MeshCandidate = manager_ctx.MeshCandidate;
+const UploadCandidate = manager_ctx.UploadCandidate;
 const MAX_CACHE_LOADS_PER_UPDATE = manager_ctx.MAX_CACHE_LOADS_PER_UPDATE;
 const MAX_MEMORY_EVICTIONS_PER_UPDATE = manager_ctx.MAX_MEMORY_EVICTIONS_PER_UPDATE;
 const MAX_MESH_DELETIONS_PER_SWEEP = manager_ctx.MAX_MESH_DELETIONS_PER_SWEEP;
@@ -99,19 +102,9 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
 }
 
 pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
-    const Candidate = struct {
-        key: LODRegionKey,
-        chunk: *LODChunk,
-        encoded_priority: i32,
-        level: u3,
-        coord_scale: i32,
-        job_token: u32,
-        lod_radius: i32,
-        want_spans: bool,
-    };
-
-    var candidates = std.ArrayListUnmanaged(Candidate).empty;
-    defer candidates.deinit(self.allocator);
+    const Candidate = GenerationCandidate;
+    var candidates = &self.generation_candidates_scratch;
+    candidates.clearRetainingCapacity();
 
     const player = self.loadPlayerChunkPos();
     const cache_enabled = self.cacheEnabled();
@@ -226,13 +219,11 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
     // before enqueueing. The regions HashMap iterates in arbitrary
     // (hash-bucket) order, so without sorting the meshing/upload order is
     // effectively random — far chunks can be processed before near ones.
-    const MeshCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3, coord_scale: i32, job_token: u32, lod_radius: i32 };
-    var mesh_candidates = std.ArrayListUnmanaged(MeshCandidate).empty;
-    defer mesh_candidates.deinit(self.allocator);
+    var mesh_candidates = &self.mesh_candidates_scratch;
+    mesh_candidates.clearRetainingCapacity();
 
-    const UploadCandidate = struct { chunk: *LODChunk, encoded_priority: i32, level: u3 };
-    var upload_candidates = std.ArrayListUnmanaged(UploadCandidate).empty;
-    defer upload_candidates.deinit(self.allocator);
+    var upload_candidates = &self.upload_candidates_scratch;
+    upload_candidates.clearRetainingCapacity();
 
     const player = self.loadPlayerChunkPos();
     var active_lod_count: usize = 0;

@@ -82,6 +82,8 @@ pub const BenchmarkRunner = struct {
     output_path: []const u8,
     start_ms: i64,
     elapsed_s: f32 = 0,
+    sampled_s: f32 = 0,
+    warmup_s: f32 = 1.0,
     samples: std.ArrayListUnmanaged(FrameSample) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, preset: []const u8, render_distance: i32, duration_s: f32, output_path: []const u8) !BenchmarkRunner {
@@ -93,6 +95,8 @@ pub const BenchmarkRunner = struct {
             .output_path = output_path,
             .start_ms = nowMs(),
             .elapsed_s = 0,
+            .sampled_s = 0,
+            .warmup_s = 1.0,
             .samples = .empty,
         };
 
@@ -106,7 +110,7 @@ pub const BenchmarkRunner = struct {
     }
 
     pub fn applyPose(self: *const BenchmarkRunner, player: *Player) void {
-        const pose = poseAtTime(self.elapsed_s);
+        const pose = poseAtTime(@max(self.elapsed_s - self.warmup_s, 0.0));
         player.fly_mode = true;
         player.can_fly = true;
         player.noclip = true;
@@ -119,6 +123,9 @@ pub const BenchmarkRunner = struct {
     }
 
     pub fn recordFrame(self: *BenchmarkRunner, dt: f32, fps: f32, gpu: GpuTimingResults, world_stats: ?WorldStats, draw_calls: u32, gpu_memory_mb: f32) !void {
+        self.elapsed_s += dt;
+        if (self.elapsed_s < self.warmup_s) return;
+
         const shadow_avg = averageArray(&gpu.shadow_pass_ms);
         const chunks_rendered = if (world_stats) |ws| ws.chunks_rendered else 0;
         const vertices = if (world_stats) |ws| ws.vertices_rendered else 0;
@@ -135,11 +142,11 @@ pub const BenchmarkRunner = struct {
             .chunks_rendered = chunks_rendered,
             .gpu_memory_mb = gpu_memory_mb,
         });
-        self.elapsed_s += dt;
+        self.sampled_s += dt;
     }
 
     pub fn isComplete(self: *const BenchmarkRunner) bool {
-        return wallElapsedSeconds(self) >= self.duration_s;
+        return self.sampled_s >= self.duration_s or wallElapsedSeconds(self) >= self.duration_s + self.warmup_s + 30.0;
     }
 
     pub fn writeResults(self: *const BenchmarkRunner) !void {
@@ -245,8 +252,27 @@ pub fn thresholdsForPreset(preset: []const u8) SloThresholds {
     return .{ .fps_p1_min = 6, .max_frame_ms = 260, .draw_calls_max = 3600, .vertices_max = 8_500_000, .gpu_memory_mb_max = 2800 };
 }
 
+fn baselineRenderDistanceForPreset(preset: []const u8) i32 {
+    if (std.ascii.eqlIgnoreCase(preset, "low")) return 6;
+    if (std.ascii.eqlIgnoreCase(preset, "medium")) return 10;
+    if (std.ascii.eqlIgnoreCase(preset, "high")) return 12;
+    if (std.ascii.eqlIgnoreCase(preset, "ultra")) return 14;
+    if (std.ascii.eqlIgnoreCase(preset, "extreme")) return 16;
+    return 12;
+}
+
+fn thresholdsForResults(results: BenchmarkResults) SloThresholds {
+    var thresholds = thresholdsForPreset(results.preset);
+    const baseline = baselineRenderDistanceForPreset(results.preset);
+    if (results.render_distance > baseline) {
+        const extra_chunks: f64 = @floatFromInt(results.render_distance - baseline);
+        thresholds.draw_calls_max *= 1.0 + extra_chunks * 0.05;
+    }
+    return thresholds;
+}
+
 fn enforceSlo(results: BenchmarkResults) !void {
-    const thresholds = thresholdsForPreset(results.preset);
+    const thresholds = thresholdsForResults(results);
     var failed = false;
 
     if (results.fps.p1 < thresholds.fps_p1_min) {
@@ -271,6 +297,30 @@ fn enforceSlo(results: BenchmarkResults) !void {
     }
 
     if (failed) return error.BenchmarkSloBreach;
+}
+
+test "benchmark draw-call SLO scales for render-distance override" {
+    const base = thresholdsForPreset("medium");
+    const results = BenchmarkResults{
+        .preset = "medium",
+        .render_distance = 22,
+        .gpu_memory_mb_avg = 0,
+        .gpu_memory_mb_max = 0,
+        .frames = 0,
+        .duration_s = 0,
+        .fps = .{ .min = 0, .avg = 0, .max = 0, .p1 = 0, .p5 = 0, .p50 = 0, .p95 = 0, .p99 = 0 },
+        .max_frame_ms = 0,
+        .cpu_ms_avg = 0,
+        .gpu_ms = .{ .shadow_avg = 0, .opaque_avg = 0, .total_avg = 0 },
+        .draw_calls_avg = 0,
+        .vertices_avg = 0,
+        .chunks_rendered_avg = 0,
+    };
+    const adjusted = thresholdsForResults(results);
+
+    try std.testing.expect(adjusted.draw_calls_max > base.draw_calls_max);
+    try std.testing.expectEqual(base.gpu_memory_mb_max, adjusted.gpu_memory_mb_max);
+    try std.testing.expectEqual(base.fps_p1_min, adjusted.fps_p1_min);
 }
 
 fn fpsField(sample: FrameSample) f32 {

@@ -149,16 +149,21 @@ pub const ChunkMesh = struct {
         const mask = try self.allocator.alloc(?greedy_mesher.FaceKey, 16 * 16);
         defer self.allocator.free(mask);
 
-        // Build each subchunk separately (greedy meshing works per Y slice)
+        // Conservative starting points to avoid repeated growth during the
+        // common chunk-build burst. These are retained only for this build; the
+        // final pending buffers are committed once below.
+        try solid_verts.ensureTotalCapacity(self.allocator, 8192);
+        try cutout_verts.ensureTotalCapacity(self.allocator, 2048);
+        try fluid_verts.ensureTotalCapacity(self.allocator, 1024);
+
+        // Build each subchunk separately for slicing, but append all vertices
+        // directly into chunk-wide buffers. This removes the old per-subchunk
+        // dupes and merge pass (~96 heap ops and several large memcpys/chunk).
         for (0..NUM_SUBCHUNKS) |i| {
-            solid_verts.clearRetainingCapacity();
-            cutout_verts.clearRetainingCapacity();
-            fluid_verts.clearRetainingCapacity();
             try self.buildSubchunk(chunk, neighbors, @intCast(i), atlas, mask, &solid_verts, &cutout_verts, &fluid_verts);
         }
 
-        // Merge all subchunk vertices into single buffers
-        try self.mergeSubchunks();
+        try self.commitPendingVertices(solid_verts.items, cutout_verts.items, fluid_verts.items);
     }
 
     fn buildSubchunk(
@@ -212,100 +217,22 @@ pub const ChunkMesh = struct {
             };
             try entry.mesh(self.allocator, chunk, neighbors, si, verts, atlas);
         }
-
-        // Store subchunk data temporarily (will be merged later)
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        if (self.subchunk_solid[si]) |p| self.allocator.free(p);
-        if (self.subchunk_cutout[si]) |p| self.allocator.free(p);
-        if (self.subchunk_fluid[si]) |p| self.allocator.free(p);
-
-        self.subchunk_solid[si] = if (solid_verts.items.len > 0)
-            try self.allocator.dupe(Vertex, solid_verts.items)
-        else
-            null;
-        self.subchunk_cutout[si] = if (cutout_verts.items.len > 0)
-            try self.allocator.dupe(Vertex, cutout_verts.items)
-        else
-            null;
-        self.subchunk_fluid[si] = if (fluid_verts.items.len > 0)
-            try self.allocator.dupe(Vertex, fluid_verts.items)
-        else
-            null;
     }
 
-    /// Merge all subchunk vertices into single solid/fluid arrays.
-    /// Called after all subchunks are built.
-    fn mergeSubchunks(self: *ChunkMesh) !void {
+    /// Commit chunk-wide meshing output to pending buffers consumed by upload().
+    /// Called once after all subchunks have appended into the shared lists.
+    fn commitPendingVertices(self: *ChunkMesh, solid: []const Vertex, cutout: []const Vertex, fluid: []const Vertex) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
-
-        // Count total vertices
-        var total_solid: usize = 0;
-        var total_cutout: usize = 0;
-        var total_fluid: usize = 0;
-        for (0..NUM_SUBCHUNKS) |i| {
-            if (self.subchunk_solid[i]) |v| total_solid += v.len;
-            if (self.subchunk_cutout[i]) |v| total_cutout += v.len;
-            if (self.subchunk_fluid[i]) |v| total_fluid += v.len;
-        }
 
         // Free old pending data
         if (self.pending_solid) |p| self.allocator.free(p);
         if (self.pending_cutout) |p| self.allocator.free(p);
         if (self.pending_fluid) |p| self.allocator.free(p);
 
-        // Merge solid vertices
-        if (total_solid > 0) {
-            var merged = try self.allocator.alloc(Vertex, total_solid);
-            var offset: usize = 0;
-            for (0..NUM_SUBCHUNKS) |i| {
-                if (self.subchunk_solid[i]) |v_slice| {
-                    @memcpy(merged[offset..][0..v_slice.len], v_slice);
-                    offset += v_slice.len;
-                    self.allocator.free(v_slice);
-                    self.subchunk_solid[i] = null;
-                }
-            }
-            self.pending_solid = merged;
-        } else {
-            self.pending_solid = null;
-        }
-
-        // Merge cutout vertices
-        if (total_cutout > 0) {
-            var merged = try self.allocator.alloc(Vertex, total_cutout);
-            var offset: usize = 0;
-            for (0..NUM_SUBCHUNKS) |i| {
-                if (self.subchunk_cutout[i]) |v_slice| {
-                    @memcpy(merged[offset..][0..v_slice.len], v_slice);
-                    offset += v_slice.len;
-                    self.allocator.free(v_slice);
-                    self.subchunk_cutout[i] = null;
-                }
-            }
-            self.pending_cutout = merged;
-        } else {
-            self.pending_cutout = null;
-        }
-
-        // Merge fluid vertices
-        if (total_fluid > 0) {
-            var merged = try self.allocator.alloc(Vertex, total_fluid);
-            var offset: usize = 0;
-            for (0..NUM_SUBCHUNKS) |i| {
-                if (self.subchunk_fluid[i]) |v_slice| {
-                    @memcpy(merged[offset..][0..v_slice.len], v_slice);
-                    offset += v_slice.len;
-                    self.allocator.free(v_slice);
-                    self.subchunk_fluid[i] = null;
-                }
-            }
-            self.pending_fluid = merged;
-        } else {
-            self.pending_fluid = null;
-        }
+        self.pending_solid = if (solid.len > 0) try self.allocator.dupe(Vertex, solid) else null;
+        self.pending_cutout = if (cutout.len > 0) try self.allocator.dupe(Vertex, cutout) else null;
+        self.pending_fluid = if (fluid.len > 0) try self.allocator.dupe(Vertex, fluid) else null;
 
         var tile0: u32 = 0;
         var total: u32 = 0;
@@ -331,39 +258,73 @@ pub const ChunkMesh = struct {
         const old_fluid = self.fluid_allocation;
         const had_old_allocations = old_solid != null or old_cutout != null or old_fluid != null;
 
+        const solid_count: u32 = if (self.pending_solid) |v| @intCast(v.len) else 0;
+        const cutout_count: u32 = if (self.pending_cutout) |v| @intCast(v.len) else 0;
+        const fluid_count: u32 = if (self.pending_fluid) |v| @intCast(v.len) else 0;
+        const total_count = solid_count + cutout_count + fluid_count;
+
         var new_solid: ?VertexAllocation = null;
         var new_cutout: ?VertexAllocation = null;
         var new_fluid: ?VertexAllocation = null;
         var alloc_ok = true;
 
-        if (self.pending_solid) |v| {
-            if (v.len > 0) blk: {
+        packed_upload: {
+            if (total_count > 0) {
+                const combined = self.allocator.alloc(Vertex, total_count) catch {
+                    alloc_ok = false;
+                    break :packed_upload;
+                };
+                defer self.allocator.free(combined);
+
+                var offset: usize = 0;
+                if (self.pending_solid) |v| {
+                    @memcpy(combined[offset..][0..v.len], v);
+                    offset += v.len;
+                }
+                if (self.pending_cutout) |v| {
+                    @memcpy(combined[offset..][0..v.len], v);
+                    offset += v.len;
+                }
+                if (self.pending_fluid) |v| {
+                    @memcpy(combined[offset..][0..v.len], v);
+                }
+
+                const packed_allocs = allocator.allocatePacked(solid_count, cutout_count, fluid_count, combined) catch {
+                    alloc_ok = false;
+                    break :packed_upload;
+                };
+                new_solid = packed_allocs.solid;
+                new_cutout = packed_allocs.cutout;
+                new_fluid = packed_allocs.fluid;
+            }
+        }
+
+        if (!alloc_ok) fallback_upload: {
+            if (new_solid) |a| allocator.free(a);
+            if (new_cutout) |a| allocator.free(a);
+            if (new_fluid) |a| allocator.free(a);
+            new_solid = null;
+            new_cutout = null;
+            new_fluid = null;
+            alloc_ok = true;
+
+            if (self.pending_solid) |v| {
                 new_solid = allocator.allocate(v) catch {
                     alloc_ok = false;
-                    break :blk;
+                    break :fallback_upload;
                 };
             }
-        }
-
-        if (alloc_ok) {
             if (self.pending_cutout) |v| {
-                if (v.len > 0) blk: {
-                    new_cutout = allocator.allocate(v) catch {
-                        alloc_ok = false;
-                        break :blk;
-                    };
-                }
+                new_cutout = allocator.allocate(v) catch {
+                    alloc_ok = false;
+                    break :fallback_upload;
+                };
             }
-        }
-
-        if (alloc_ok) {
             if (self.pending_fluid) |v| {
-                if (v.len > 0) blk: {
-                    new_fluid = allocator.allocate(v) catch {
-                        alloc_ok = false;
-                        break :blk;
-                    };
-                }
+                new_fluid = allocator.allocate(v) catch {
+                    alloc_ok = false;
+                    break :fallback_upload;
+                };
             }
         }
 

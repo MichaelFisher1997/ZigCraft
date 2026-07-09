@@ -38,7 +38,11 @@ pub const VulkanSwapchain = struct {
     logical_height: u32 = 0,
     scale: f32 = 1.0,
 
-    pub fn init(allocator: std.mem.Allocator, device: *const VulkanDevice, window: *c.SDL_Window, msaa_samples: u8) !VulkanSwapchain {
+    // Present mode requested by the app; honored at createSwapchain() time.
+    // Defaults to FIFO (VSync ON) which is guaranteed by the Vulkan spec.
+    present_mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_FIFO_KHR,
+
+    pub fn init(allocator: std.mem.Allocator, device: *const VulkanDevice, window: *c.SDL_Window, msaa_samples: u8, present_mode: c.VkPresentModeKHR) !VulkanSwapchain {
         const build_options = @import("engine_graphics_options");
         const headless = if (@hasDecl(build_options, "skip_present")) build_options.skip_present else false;
 
@@ -47,6 +51,7 @@ pub const VulkanSwapchain = struct {
             .device = device,
             .window = window,
             .headless_mode = headless,
+            .present_mode = present_mode,
         };
         try self.create(msaa_samples);
         return self;
@@ -246,7 +251,7 @@ pub const VulkanSwapchain = struct {
             // Fallback (shouldn't happen, but be safe)
             break :blk c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         };
-        swapchain_info.presentMode = c.VK_PRESENT_MODE_FIFO_KHR; // Should be configurable
+        swapchain_info.presentMode = self.selectPresentMode();
         swapchain_info.clipped = c.VK_TRUE;
         try checkVk(c.vkCreateSwapchainKHR(self.device.vk_device, &swapchain_info, null, &self.handle));
 
@@ -483,7 +488,53 @@ pub const VulkanSwapchain = struct {
             try self.framebuffers.append(self.allocator, fb);
         }
     }
+
+    /// Picks a Vulkan present mode for the current surface that matches the
+    /// requested `present_mode` when supported, falling back to FIFO (which is
+    /// mandated by the spec to always be available). In headless mode FIFO is
+    /// used unconditionally because no surface exists.
+    fn selectPresentMode(self: *VulkanSwapchain) c.VkPresentModeKHR {
+        // FIFO is always supported per the Vulkan spec; skip the query when it
+        // is what we want anyway.
+        if (self.headless_mode) return c.VK_PRESENT_MODE_FIFO_KHR;
+        if (self.present_mode == c.VK_PRESENT_MODE_FIFO_KHR) return c.VK_PRESENT_MODE_FIFO_KHR;
+
+        const surface = self.device.surface;
+        const physical_device = self.device.physical_device;
+
+        var mode_count: u32 = 0;
+        _ = c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &mode_count, null);
+        if (mode_count == 0) {
+            log.log.warn("Surface reports zero present modes; falling back to FIFO", .{});
+            return c.VK_PRESENT_MODE_FIFO_KHR;
+        }
+
+        // Typical drivers expose <= 4 modes; cap at 8 to stay on the stack.
+        var modes_buf: [8]c.VkPresentModeKHR = undefined;
+        const count = @min(mode_count, modes_buf.len);
+        var actual: u32 = count;
+        _ = c.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &actual, &modes_buf);
+        const modes = modes_buf[0..@min(count, actual)];
+
+        for (modes) |m| {
+            if (m == self.present_mode) return self.present_mode;
+        }
+
+        const requested_name = presentModeName(self.present_mode);
+        log.log.warn("Requested present mode {s} unsupported on this surface; falling back to FIFO", .{requested_name});
+        return c.VK_PRESENT_MODE_FIFO_KHR;
+    }
 };
+
+fn presentModeName(mode: c.VkPresentModeKHR) []const u8 {
+    return switch (mode) {
+        c.VK_PRESENT_MODE_IMMEDIATE_KHR => "IMMEDIATE",
+        c.VK_PRESENT_MODE_MAILBOX_KHR => "MAILBOX",
+        c.VK_PRESENT_MODE_FIFO_KHR => "FIFO",
+        c.VK_PRESENT_MODE_FIFO_RELAXED_KHR => "FIFO_RELAXED",
+        else => "UNKNOWN",
+    };
+}
 
 fn checkVk(result: c.VkResult) !void {
     if (result != c.VK_SUCCESS) return error.BackendError;

@@ -64,6 +64,10 @@ const MockSwapchain = struct {
     pub fn getExtent(_: MockSwapchain) c.VkExtent2D {
         return .{ .width = 1920, .height = 1080 };
     }
+
+    pub fn setPresentMode(_: *MockSwapchain, _: c.VkPresentModeKHR) void {
+        // No-op for testing
+    }
 };
 
 const MockVulkanDevice = struct {

@@ -106,6 +106,7 @@ pub fn createRHI(
     }
 
     ctx.frames.command_pool = null;
+    ctx.frames.frame_command_pools = [_]c.VkCommandPool{null} ** rhi.MAX_FRAMES_IN_FLIGHT;
     ctx.swapchain.swapchain.main_render_pass = null;
     ctx.swapchain.swapchain.handle = null;
     ctx.swapchain.swapchain.depth_image = null;
