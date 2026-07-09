@@ -82,6 +82,8 @@ pub const BenchmarkRunner = struct {
     output_path: []const u8,
     start_ms: i64,
     elapsed_s: f32 = 0,
+    sampled_s: f32 = 0,
+    warmup_s: f32 = 1.0,
     samples: std.ArrayListUnmanaged(FrameSample) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, preset: []const u8, render_distance: i32, duration_s: f32, output_path: []const u8) !BenchmarkRunner {
@@ -93,6 +95,8 @@ pub const BenchmarkRunner = struct {
             .output_path = output_path,
             .start_ms = nowMs(),
             .elapsed_s = 0,
+            .sampled_s = 0,
+            .warmup_s = 1.0,
             .samples = .empty,
         };
 
@@ -106,7 +110,7 @@ pub const BenchmarkRunner = struct {
     }
 
     pub fn applyPose(self: *const BenchmarkRunner, player: *Player) void {
-        const pose = poseAtTime(self.elapsed_s);
+        const pose = poseAtTime(@max(self.elapsed_s - self.warmup_s, 0.0));
         player.fly_mode = true;
         player.can_fly = true;
         player.noclip = true;
@@ -119,6 +123,9 @@ pub const BenchmarkRunner = struct {
     }
 
     pub fn recordFrame(self: *BenchmarkRunner, dt: f32, fps: f32, gpu: GpuTimingResults, world_stats: ?WorldStats, draw_calls: u32, gpu_memory_mb: f32) !void {
+        self.elapsed_s += dt;
+        if (self.elapsed_s < self.warmup_s) return;
+
         const shadow_avg = averageArray(&gpu.shadow_pass_ms);
         const chunks_rendered = if (world_stats) |ws| ws.chunks_rendered else 0;
         const vertices = if (world_stats) |ws| ws.vertices_rendered else 0;
@@ -135,11 +142,11 @@ pub const BenchmarkRunner = struct {
             .chunks_rendered = chunks_rendered,
             .gpu_memory_mb = gpu_memory_mb,
         });
-        self.elapsed_s += dt;
+        self.sampled_s += dt;
     }
 
     pub fn isComplete(self: *const BenchmarkRunner) bool {
-        return wallElapsedSeconds(self) >= self.duration_s;
+        return self.sampled_s >= self.duration_s or wallElapsedSeconds(self) >= self.duration_s + self.warmup_s + 30.0;
     }
 
     pub fn writeResults(self: *const BenchmarkRunner) !void {

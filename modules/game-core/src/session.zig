@@ -146,6 +146,8 @@ pub const GameSession = struct {
             LODConfig{
                 .chunk_render_radius = chunk_render_radius,
                 .radii = preset_radii,
+                .memory_budget_mb = @min(preset_cfg.memory_budget_mb, 256),
+                .max_uploads_per_frame = @min(preset_cfg.max_uploads_per_frame, 8),
             }
         else
             LODConfig{

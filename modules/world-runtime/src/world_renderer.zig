@@ -712,6 +712,21 @@ pub const WorldRenderer = struct {
                         const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
 
                         if (supports_shadow_mdi) {
+                            const command_count: usize = @as(usize, if (data.render.mesh.solid_allocation != null) 1 else 0) + @as(usize, if (data.render.mesh.cutout_allocation != null) 1 else 0);
+                            if (command_count == 0) continue;
+                            if (self.instance_data.items.len >= MAX_MDI_CHUNKS or self.draw_commands.items.len + command_count > MAX_MDI_CHUNKS * 3) {
+                                log.log.warn("Shadow MDI: batch capacity reached, drawing overflow chunk directly", .{});
+                                if (data.render.mesh.solid_allocation) |alloc| {
+                                    self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+                                    self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                                }
+                                if (data.render.mesh.cutout_allocation) |alloc| {
+                                    self.render_ctx.setModelMatrix(model, Vec3.one, 0);
+                                    self.render_ctx.drawOffset(self.vertex_allocator.buffer, alloc.count, .triangles, alloc.offset);
+                                }
+                                continue;
+                            }
+
                             const instance_idx: u32 = @intCast(self.instance_data.items.len);
                             self.instance_data.append(self.allocator, .{
                                 .model = model,
@@ -754,6 +769,8 @@ pub const WorldRenderer = struct {
 
         if (supports_shadow_mdi and self.instance_data.items.len > 0 and self.draw_commands.items.len > 0) {
             const fi = self.query.getFrameIndex();
+            std.debug.assert(self.instance_data.items.len <= MAX_MDI_CHUNKS);
+            std.debug.assert(self.draw_commands.items.len <= MAX_MDI_CHUNKS * 3);
             self.rm.updateBuffer(self.instance_buffers[fi], 0, std.mem.sliceAsBytes(self.instance_data.items)) catch |err| {
                 log.log.err("Shadow MDI: failed to update instance buffer: {}", .{err});
                 return;

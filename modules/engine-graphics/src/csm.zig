@@ -169,10 +169,8 @@ pub fn computeCascadesWithCamera(resolution: u32, camera_fov: f32, aspect: f32, 
         cascades.light_space_matrices[i] = world_to_shadow.multiply(relative_to_world);
     }
 
-    if (std.debug.runtime_safety) {
-        if (!cascades.isValid()) {
-            return ShadowCascades.initZero();
-        }
+    if (!cascades.isValid()) {
+        return ShadowCascades.initZero();
     }
 
     return cascades;

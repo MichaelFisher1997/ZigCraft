@@ -340,20 +340,19 @@ pub const SaveManager = struct {
         }
         log.log.debug("Save thread processing {} chunks", .{count});
         @memcpy(batch[0..count], self.queue.items[0..count]);
-        for (batch[0..count]) |entry| {
-            _ = self.queue_index.remove(.{ .x = entry.chunk_x, .z = entry.chunk_z });
-        }
+
+        const remaining_count = self.queue.items.len - count;
+        try self.queue_index.ensureTotalCapacity(@intCast(remaining_count));
+
         var remaining = std.ArrayListUnmanaged(SaveQueueEntry).empty;
-        defer remaining.deinit(self.allocator);
-        if (self.queue.items.len > count) {
+        errdefer remaining.deinit(self.allocator);
+        if (remaining_count > 0) {
             try remaining.appendSlice(self.allocator, self.queue.items[count..]);
         }
         self.queue.deinit(self.allocator);
         self.queue = remaining;
-        self.rebuildQueueIndexLocked() catch |err| {
-            self.queue_mutex.unlock();
-            return err;
-        };
+        remaining = .empty;
+        self.rebuildQueueIndexLocked();
         self.pending_saves.store(count, .release);
         self.queue_mutex.unlock();
 
@@ -373,10 +372,10 @@ pub const SaveManager = struct {
         return true;
     }
 
-    fn rebuildQueueIndexLocked(self: *SaveManager) !void {
+    fn rebuildQueueIndexLocked(self: *SaveManager) void {
         self.queue_index.clearRetainingCapacity();
         for (self.queue.items, 0..) |entry, idx| {
-            try self.queue_index.put(.{ .x = entry.chunk_x, .z = entry.chunk_z }, idx);
+            self.queue_index.putAssumeCapacity(.{ .x = entry.chunk_x, .z = entry.chunk_z }, idx);
         }
     }
 

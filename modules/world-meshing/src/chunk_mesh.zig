@@ -299,6 +299,35 @@ pub const ChunkMesh = struct {
             }
         }
 
+        if (!alloc_ok) fallback_upload: {
+            if (new_solid) |a| allocator.free(a);
+            if (new_cutout) |a| allocator.free(a);
+            if (new_fluid) |a| allocator.free(a);
+            new_solid = null;
+            new_cutout = null;
+            new_fluid = null;
+            alloc_ok = true;
+
+            if (self.pending_solid) |v| {
+                new_solid = allocator.allocate(v) catch {
+                    alloc_ok = false;
+                    break :fallback_upload;
+                };
+            }
+            if (self.pending_cutout) |v| {
+                new_cutout = allocator.allocate(v) catch {
+                    alloc_ok = false;
+                    break :fallback_upload;
+                };
+            }
+            if (self.pending_fluid) |v| {
+                new_fluid = allocator.allocate(v) catch {
+                    alloc_ok = false;
+                    break :fallback_upload;
+                };
+            }
+        }
+
         if (alloc_ok) {
             if (self.pending_solid) |v| self.allocator.free(v);
             if (self.pending_cutout) |v| self.allocator.free(v);
