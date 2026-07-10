@@ -7,7 +7,7 @@
     "shadow_cascade_blend": false,
     "shadow_caster_distance": 100.0,
     "shadows_enabled": false,
-    "pbr_enabled": false,
+    "pbr_enabled": true,
     "pbr_quality": 0,
     "msaa_samples": 1,
     "taa_enabled": false,
