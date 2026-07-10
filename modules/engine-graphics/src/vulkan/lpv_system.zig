@@ -579,6 +579,7 @@ pub const LPVSystem = struct {
     fn createGridTextures(self: *LPVSystem) !void {
         const resources = try self.createGridResources(self.grid_size);
         self.applyGridResources(resources);
+        errdefer self.destroyGridTextures();
 
         self.buildDebugOverlay(&.{}, 0);
         try self.uploadDebugOverlay();
