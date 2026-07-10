@@ -57,9 +57,7 @@ pub fn meshCustomMeshBlocks(
                 const xi: i32 = @intCast(x);
                 const zi: i32 = @intCast(z);
                 const light = sampleCustomLight(chunk, neighbors, xi, y, zi);
-                const entrance_bounce = sampleCustomEntranceBounce(chunk, neighbors, xi, y, zi);
-                const entrance_dir = boundary.getEntranceDirCross(chunk, neighbors, xi, y, zi);
-                const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
+                const norm_light = lighting_sampler.normalizeLightValues(light);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, .top, .top, y + 1, x, z, block);
 
                 const xf: f32 = @floatFromInt(x);
@@ -93,21 +91,6 @@ fn sampleCustomLight(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: 
                 result.block_light_r = @max(result.block_light_r, light.getBlockLightR());
                 result.block_light_g = @max(result.block_light_g, light.getBlockLightG());
                 result.block_light_b = @max(result.block_light_b, light.getBlockLightB());
-            }
-        }
-    }
-    return result;
-}
-
-fn sampleCustomEntranceBounce(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) u4 {
-    var result: u4 = 0;
-    var oy: i32 = 0;
-    while (oy <= 1) : (oy += 1) {
-        var ox: i32 = -1;
-        while (ox <= 1) : (ox += 1) {
-            var oz: i32 = -1;
-            while (oz <= 1) : (oz += 1) {
-                result = @max(result, boundary.getEntranceBounceCross(chunk, neighbors, x + ox, y + oy, z + oz));
             }
         }
     }
@@ -155,6 +138,6 @@ fn emitQuad(
     const ao: f32 = 1.0;
 
     for (idx) |i| {
-        try verts.append(allocator, Vertex.initWithEntrance(quad.positions[i], color, quad.normal, uv[i], quad.tile_id, light.skylight, light.blocklight, ao, light.entrance_bounce, light.entrance_dir));
+        try verts.append(allocator, Vertex.init(quad.positions[i], color, quad.normal, uv[i], quad.tile_id, light.skylight, light.blocklight, ao));
     }
 }

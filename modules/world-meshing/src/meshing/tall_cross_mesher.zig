@@ -53,9 +53,7 @@ pub fn meshTallCrossBlocks(
                 const xi: i32 = @intCast(x);
                 const zi: i32 = @intCast(z);
                 const light = sampleTallCrossLight(chunk, neighbors, xi, y, zi);
-                const entrance_bounce = sampleTallCrossEntranceBounce(chunk, neighbors, xi, y, zi);
-                const entrance_dir = boundary.getEntranceDirCross(chunk, neighbors, xi, y, zi);
-                const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
+                const norm_light = lighting_sampler.normalizeLightValues(light);
                 const col = getTallCrossColor(chunk, neighbors, xi, zi, def);
 
                 const tiles = atlas.getTilesForBlock(@intFromEnum(block));
@@ -85,21 +83,6 @@ fn sampleTallCrossLight(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, 
                 result.block_light_r = @max(result.block_light_r, light.getBlockLightR());
                 result.block_light_g = @max(result.block_light_g, light.getBlockLightG());
                 result.block_light_b = @max(result.block_light_b, light.getBlockLightB());
-            }
-        }
-    }
-    return result;
-}
-
-fn sampleTallCrossEntranceBounce(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) u4 {
-    var result: u4 = 0;
-    var oy: i32 = 0;
-    while (oy <= 1) : (oy += 1) {
-        var ox: i32 = -1;
-        while (ox <= 1) : (ox += 1) {
-            var oz: i32 = -1;
-            while (oz <= 1) : (oz += 1) {
-                result = @max(result, boundary.getEntranceBounceCross(chunk, neighbors, x + ox, y + oy, z + oz));
             }
         }
     }
@@ -161,6 +144,6 @@ fn emitTallCrossQuad(
     const u = [6][2]f32{ uv[0], uv[1], uv[2], uv[0], uv[2], uv[3] };
 
     for (0..6) |i| {
-        try verts.append(allocator, Vertex.initWithEntrance(v[i], col, normal, u[i], tile_id, light.skylight, light.blocklight, ao, light.entrance_bounce, light.entrance_dir));
+        try verts.append(allocator, Vertex.init(v[i], col, normal, u[i], tile_id, light.skylight, light.blocklight, ao));
     }
 }

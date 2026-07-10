@@ -97,7 +97,6 @@ pub const Vertex = extern struct {
     uv: [2]f16,
     packed_meta: u32,
     blocklight: u32,
-    entrance_dir: u32,
 
     pub const LOD_TILE_ID: u16 = 0xFFFF;
 
@@ -110,7 +109,6 @@ pub const Vertex = extern struct {
         skylight: f32,
         blocklight: [3]f32,
         ao: f32,
-        entrance_bounce: f32,
     ) Vertex {
         return .{
             .pos = pos,
@@ -118,12 +116,11 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(tile_id, skylight, ao),
-            .blocklight = encodeBlocklight(blocklight, entrance_bounce),
-            .entrance_dir = encodeEntranceDirection(.{ 0.0, 0.0 }),
+            .blocklight = encodeBlocklight(blocklight, false),
         };
     }
 
-    pub fn initWithEntrance(
+    pub fn initCloud(
         pos: [3]f32,
         color: [3]f32,
         normal: [3]f32,
@@ -132,8 +129,6 @@ pub const Vertex = extern struct {
         skylight: f32,
         blocklight: [3]f32,
         ao: f32,
-        entrance_bounce: f32,
-        entrance_dir: [2]f32,
     ) Vertex {
         return .{
             .pos = pos,
@@ -141,8 +136,7 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(tile_id, skylight, ao),
-            .blocklight = encodeBlocklight(blocklight, entrance_bounce),
-            .entrance_dir = encodeEntranceDirection(entrance_dir),
+            .blocklight = encodeBlocklight(blocklight, true),
         };
     }
 
@@ -158,8 +152,7 @@ pub const Vertex = extern struct {
             .normal = encodeNormal(normal),
             .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
             .packed_meta = encodeMeta(LOD_TILE_ID, 1.0, 1.0),
-            .blocklight = encodeBlocklight(.{ 0.0, 0.0, 0.0 }, 0.0),
-            .entrance_dir = encodeEntranceDirection(.{ 0.0, 0.0 }),
+            .blocklight = encodeBlocklight(.{ 0.0, 0.0, 0.0 }, false),
         };
     }
 };
@@ -206,22 +199,24 @@ pub fn encodeMeta(tile_id: u16, skylight: f32, ao: f32) u32 {
     return @as(u32, tile_id) | (@as(u32, sl) << 16) | (@as(u32, ao_u8) << 24);
 }
 
-/// Encode RGB blocklight plus entrance bounce float values to RGBA8 u32.
+/// Encode RGB blocklight with a cloud marker in alpha.
 /// Precision: 1/255 per channel. Sufficient for per-vertex lighting where values blend smoothly.
-pub fn encodeBlocklight(bl: [3]f32, entrance_bounce: f32) u32 {
+pub fn encodeBlocklight(bl: [3]f32, is_cloud: bool) u32 {
     const r: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[0])) * 255.0));
     const g: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[1])) * 255.0));
     const b: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, bl[2])) * 255.0));
-    const a: u8 = @intFromFloat(@round(@max(0.0, @min(1.0, entrance_bounce)) * 255.0));
+    const a: u8 = if (is_cloud) 255 else 0;
     return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16) | (@as(u32, a) << 24);
 }
 
-/// Encode horizontal entrance direction to two UNORM8 channels in a u32.
-/// Decoded in shaders back to [-1, 1]. Remaining bytes are reserved.
-pub fn encodeEntranceDirection(dir: [2]f32) u32 {
-    const x: u8 = @intFromFloat(@round((@max(-1.0, @min(1.0, dir[0])) * 0.5 + 0.5) * 255.0));
-    const z: u8 = @intFromFloat(@round((@max(-1.0, @min(1.0, dir[1])) * 0.5 + 0.5) * 255.0));
-    return @as(u32, x) | (@as(u32, z) << 8);
+test "terrain vertex ABI remains tightly packed" {
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(Vertex));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(Vertex, "pos"));
+    try std.testing.expectEqual(@as(usize, 12), @offsetOf(Vertex, "color"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(Vertex, "normal"));
+    try std.testing.expectEqual(@as(usize, 20), @offsetOf(Vertex, "uv"));
+    try std.testing.expectEqual(@as(usize, 24), @offsetOf(Vertex, "packed_meta"));
+    try std.testing.expectEqual(@as(usize, 28), @offsetOf(Vertex, "blocklight"));
 }
 
 pub const DrawMode = enum {
@@ -283,7 +278,6 @@ pub const ShadowConfig = struct {
     pcf_samples: u8 = 9,
     cascade_blend: bool = true,
     strength: f32 = 0.35,
-    light_size: f32 = 3.0,
     caster_distance: f32 = 250.0,
 };
 
@@ -293,7 +287,6 @@ pub const ShadowParams = struct {
     overlap_starts: [SHADOW_CASCADE_COUNT]f32 = .{0.0} ** SHADOW_CASCADE_COUNT,
     shadow_texel_sizes: [SHADOW_CASCADE_COUNT]f32,
     shadow_depth_spans: [SHADOW_CASCADE_COUNT]f32 = .{1.0} ** SHADOW_CASCADE_COUNT,
-    light_size: f32 = 3.0, // PCSS light source size for penumbra estimation
     resolution: u32 = 4096,
     distance: f32 = 250.0,
 };
@@ -310,8 +303,6 @@ pub const FrameRenderParams = struct {
     shadow: ShadowConfig = .{},
     pbr_quality: u8 = 0,
     volumetric_enabled: bool = false,
-    sun_shafts_enabled: bool = false,
-    sun_shafts_intensity: f32 = 0.0,
     volumetric_density: f32 = 0.05,
     volumetric_steps: u32 = 16,
     volumetric_scattering: f32 = 0.8,

@@ -43,7 +43,7 @@ pub fn updateGlobalUniforms(ctx: anytype, uniforms: rhi.GlobalUniforms, frame_pa
         .render_flags = .{ 0.0, 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, 0.0 },
         .shadow_params = .{ @floatFromInt(frame_params.shadow.pcf_samples), if (frame_params.shadow.cascade_blend) 1.0 else 0.0, frame_params.shadow.strength, if (frame_params.shadow_apply_to_beauty) 1.0 else 0.0 },
         .pbr_params = .{ @floatFromInt(frame_params.pbr_quality), frame_params.exposure, frame_params.saturation, if (frame_params.ssao_enabled) 1.0 else 0.0 },
-        .volumetric_params = .{ if (frame_params.volumetric_enabled or frame_params.sun_shafts_enabled) 1.0 else 0.0, if (frame_params.sun_shafts_enabled) frame_params.sun_shafts_intensity else frame_params.volumetric_density, @floatFromInt(frame_params.volumetric_steps), frame_params.volumetric_scattering },
+        .volumetric_params = .{ if (frame_params.volumetric_enabled) 1.0 else 0.0, frame_params.volumetric_density, @floatFromInt(frame_params.volumetric_steps), frame_params.volumetric_scattering },
         .viewport_size = .{ @floatFromInt(ctx.swapchain.swapchain.extent.width), @floatFromInt(ctx.swapchain.swapchain.extent.height), if (ctx.options.debug_shadows_active) 1.0 else 0.0, @floatFromInt(ctx.options.shadow_debug_channel) },
         .lpv_params = .{ if (frame_params.lpv_enabled) 1.0 else 0.0, frame_params.lpv_intensity, frame_params.lpv_cell_size, @floatFromInt(frame_params.lpv_grid_size) },
         .lpv_origin = .{ frame_params.lpv_origin.x, frame_params.lpv_origin.y, frame_params.lpv_origin.z, 0.0 },

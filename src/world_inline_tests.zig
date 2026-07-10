@@ -4,7 +4,6 @@ const Vec3 = @import("zig-math").Vec3;
 const world_core = @import("world-core");
 const Chunk = world_core.Chunk;
 const PackedLight = world_core.PackedLight;
-const packEntranceDir = world_core.packEntranceDir;
 const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
 const CHUNK_SIZE_Y = world_core.CHUNK_SIZE_Y;
 const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
@@ -386,35 +385,27 @@ test "calculateVertexAO corner only occlusion" {
 
 test "normalizeLightValues zero light" {
     const light = PackedLight.init(0, 0);
-    const norm = lighting_sampler.normalizeLightValues(light, 0, packEntranceDir(0, 0));
+    const norm = lighting_sampler.normalizeLightValues(light);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.skylight, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.blocklight[0], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.blocklight[1], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 0.0), norm.blocklight[2], 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 0.0), norm.entrance_dir[0], 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 0.0), norm.entrance_dir[1], 0.001);
 }
 
 test "normalizeLightValues max light" {
     const light = PackedLight.init(15, 15);
-    const norm = lighting_sampler.normalizeLightValues(light, 15, packEntranceDir(1, 0));
+    const norm = lighting_sampler.normalizeLightValues(light);
     try testing.expectApproxEqAbs(@as(f32, 1.0), norm.skylight, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 1.0), norm.blocklight[0], 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 1.0), norm.entrance_bounce, 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 1.0), norm.entrance_dir[0], 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 0.0), norm.entrance_dir[1], 0.001);
 }
 
 test "normalizeLightValues RGB channels" {
     const light = PackedLight.initRGB(8, 4, 8, 12);
-    const norm = lighting_sampler.normalizeLightValues(light, 6, packEntranceDir(-1, 1));
+    const norm = lighting_sampler.normalizeLightValues(light);
     try testing.expectApproxEqAbs(@as(f32, 8.0 / 15.0), norm.skylight, 0.001);
     try testing.expectApproxEqAbs(@as(f32, 4.0 / 15.0), norm.blocklight[0], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 8.0 / 15.0), norm.blocklight[1], 0.001);
     try testing.expectApproxEqAbs(@as(f32, 12.0 / 15.0), norm.blocklight[2], 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 6.0 / 15.0), norm.entrance_bounce, 0.001);
-    try testing.expectApproxEqAbs(@as(f32, -1.0), norm.entrance_dir[0], 0.001);
-    try testing.expectApproxEqAbs(@as(f32, 1.0), norm.entrance_dir[1], 0.001);
 }
 
 test "getBlockColor returns no tint for stone" {

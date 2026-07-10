@@ -41,7 +41,7 @@ pub fn updateShadowUniforms(ctx: anytype, params: rhi.ShadowParams) !void {
         .overlap_starts = overlap_starts,
         .shadow_texel_sizes = sizes,
         .shadow_depth_spans = depth_spans,
-        .shadow_params = .{ params.light_size, inv_resolution, 0.0, 0.0 },
+        .shadow_params = .{ 0.0, inv_resolution, 0.0, 0.0 },
         .fade_params = .{ params.distance * 0.9, params.distance, 0.0, 0.0 },
     };
 

@@ -47,9 +47,7 @@ pub fn meshCrossBlocks(
                 const xi: i32 = @intCast(x);
                 const zi: i32 = @intCast(z);
                 const light = sampleCrossLight(chunk, neighbors, xi, y, zi);
-                const entrance_bounce = sampleCrossEntranceBounce(chunk, neighbors, xi, y, zi);
-                const entrance_dir = boundary.getEntranceDirCross(chunk, neighbors, xi, y, zi);
-                const norm_light = lighting_sampler.normalizeLightValues(light, entrance_bounce, entrance_dir);
+                const norm_light = lighting_sampler.normalizeLightValues(light);
 
                 const tint: [3]f32 = if (def.is_tintable) blk: {
                     var r: f32 = 0;
@@ -108,18 +106,6 @@ fn sampleCrossLight(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i
     return result;
 }
 
-fn sampleCrossEntranceBounce(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) u4 {
-    var result: u4 = 0;
-    var ox: i32 = -1;
-    while (ox <= 1) : (ox += 1) {
-        var oz: i32 = -1;
-        while (oz <= 1) : (oz += 1) {
-            result = @max(result, boundary.getEntranceBounceCross(chunk, neighbors, x + ox, y, z + oz));
-        }
-    }
-    return result;
-}
-
 fn emitCrossQuad(
     allocator: std.mem.Allocator,
     verts: *std.ArrayListUnmanaged(Vertex),
@@ -149,6 +135,6 @@ fn emitCrossQuad(
     const n_front = [6][3]f32{ nf_front, nf_front, nf_front, nf_front, nf_front, nf_front };
 
     for (0..6) |i| {
-        try verts.append(allocator, Vertex.initWithEntrance(v[i], col, n_front[i], u[i], tile_id, light.skylight, light.blocklight, ao, light.entrance_bounce, light.entrance_dir));
+        try verts.append(allocator, Vertex.init(v[i], col, n_front[i], u[i], tile_id, light.skylight, light.blocklight, ao));
     }
 }

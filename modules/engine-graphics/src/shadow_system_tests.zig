@@ -89,7 +89,6 @@ test "ShadowConfig default field values" {
     try testing.expectEqual(@as(u8, 12), cfg.pcf_samples);
     try testing.expect(cfg.cascade_blend);
     try testing.expectEqual(@as(f32, 0.35), cfg.strength);
-    try testing.expectEqual(@as(f32, 3.0), cfg.light_size);
     try testing.expectEqual(@as(f32, 250.0), cfg.caster_distance);
 }
 
@@ -100,7 +99,6 @@ test "ShadowConfig custom field values" {
         .pcf_samples = 16,
         .cascade_blend = false,
         .strength = 0.5,
-        .light_size = 5.0,
         .caster_distance = 400.0,
     };
 
@@ -109,29 +107,7 @@ test "ShadowConfig custom field values" {
     try testing.expectEqual(@as(u8, 16), cfg.pcf_samples);
     try testing.expect(!cfg.cascade_blend);
     try testing.expectEqual(@as(f32, 0.5), cfg.strength);
-    try testing.expectEqual(@as(f32, 5.0), cfg.light_size);
     try testing.expectEqual(@as(f32, 400.0), cfg.caster_distance);
-}
-
-test "ShadowParams default light_size" {
-    const params = ShadowParams{
-        .light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT,
-        .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
-        .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
-    };
-
-    try testing.expectEqual(@as(f32, 3.0), params.light_size);
-}
-
-test "ShadowParams custom light_size" {
-    const params = ShadowParams{
-        .light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT,
-        .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
-        .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
-        .light_size = 8.0,
-    };
-
-    try testing.expectEqual(@as(f32, 8.0), params.light_size);
 }
 
 test "ShadowParams all cascade splits set correctly" {
@@ -265,14 +241,12 @@ test "IShadowContext wrapper delegates updateUniforms" {
         .light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT,
         .cascade_splits = .{ 20.0, 80.0, 250.0, 600.0 },
         .shadow_texel_sizes = .{ 0.1, 0.2, 0.4, 0.8 },
-        .light_size = 6.0,
     };
 
     try shadow_ctx.updateUniforms(params);
 
     try testing.expectEqual(@as(u32, 1), call_count);
     try testing.expect(received_params != null);
-    try testing.expectEqual(@as(f32, 6.0), received_params.?.light_size);
 }
 
 test "ShadowSystemWrapper forwards all operations" {
@@ -333,7 +307,6 @@ test "ShadowSystemWrapper forwards all operations" {
         .light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT,
         .cascade_splits = .{ 5.0, 25.0, 100.0, 300.0 },
         .shadow_texel_sizes = .{ 0.3, 0.6, 1.2, 2.4 },
-        .light_size = 4.0,
     };
     try wrapper.updateUniforms(params);
     try testing.expectEqual(@as(u32, 1), update_calls);

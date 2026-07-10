@@ -98,4 +98,3 @@ pub const encodeColor = rhi_types.encodeColor;
 pub const encodeNormal = rhi_types.encodeNormal;
 pub const encodeMeta = rhi_types.encodeMeta;
 pub const encodeBlocklight = rhi_types.encodeBlocklight;
-pub const encodeEntranceDirection = rhi_types.encodeEntranceDirection;

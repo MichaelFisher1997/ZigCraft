@@ -791,7 +791,6 @@ pub const WorldScreen = struct {
         states[@intFromEnum(DebugFeature.shadow_seam_diag)] = ctx.settings.debug_shadow_seam_diag;
         states[@intFromEnum(DebugFeature.direct_key_debug)] = ctx.settings.debug_direct_key_active;
         states[@intFromEnum(DebugFeature.sky_fill_debug)] = ctx.settings.debug_sky_fill_active;
-        states[@intFromEnum(DebugFeature.entrance_bounce_debug)] = ctx.settings.debug_entrance_bounce_active;
         states[@intFromEnum(DebugFeature.block_light_debug)] = ctx.settings.debug_block_light_active;
         states[@intFromEnum(DebugFeature.outdoor_factor_debug)] = ctx.settings.debug_outdoor_factor_active;
         states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
@@ -903,13 +902,6 @@ pub const WorldScreen = struct {
                 const enable = !ctx.settings.debug_sky_fill_active;
                 settings_data.clearTerrainDebugViews(ctx.settings);
                 ctx.settings.debug_sky_fill_active = enable;
-                options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
-                options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
-            },
-            .entrance_bounce_debug => {
-                const enable = !ctx.settings.debug_entrance_bounce_active;
-                settings_data.clearTerrainDebugViews(ctx.settings);
-                ctx.settings.debug_entrance_bounce_active = enable;
                 options.setDebugShadowView(settings_data.anyTerrainDebugActive(ctx.settings));
                 options.setShadowDebugChannel(resolveShadowDebugChannel(ctx.settings));
             },

@@ -70,17 +70,3 @@ pub const PackedLight = packed struct {
         return @as(f32, @floatFromInt(self.getMaxLight())) / 15.0;
     }
 };
-
-pub fn packEntranceDir(x: i4, z: i4) u8 {
-    const ux: u8 = @as(u4, @bitCast(x));
-    const uz: u8 = @as(u4, @bitCast(z));
-    return ux | (uz << 4);
-}
-
-pub fn unpackEntranceDirX(encoded: u8) i4 {
-    return @bitCast(@as(u4, @intCast(encoded & 0x0F)));
-}
-
-pub fn unpackEntranceDirZ(encoded: u8) i4 {
-    return @bitCast(@as(u4, @intCast((encoded >> 4) & 0x0F)));
-}

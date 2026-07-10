@@ -171,13 +171,12 @@ pub const CloudSystem = struct {
     }
 
     fn emitQuad(self: *CloudSystem, vertices: *std.ArrayListUnmanaged(rhi.Vertex), a: [3]f32, b: [3]f32, c: [3]f32, d: [3]f32, color: [3]f32, normal: [3]f32) !void {
-        const cloud_marker = [_]f32{ 1.0, -1.0 };
-        try vertices.append(self.allocator, rhi.Vertex.initWithEntrance(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0, cloud_marker));
-        try vertices.append(self.allocator, rhi.Vertex.initWithEntrance(b, color, normal, .{ 1.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0, cloud_marker));
-        try vertices.append(self.allocator, rhi.Vertex.initWithEntrance(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0, cloud_marker));
-        try vertices.append(self.allocator, rhi.Vertex.initWithEntrance(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0, cloud_marker));
-        try vertices.append(self.allocator, rhi.Vertex.initWithEntrance(d, color, normal, .{ 0.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0, cloud_marker));
-        try vertices.append(self.allocator, rhi.Vertex.initWithEntrance(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0, 0.0, cloud_marker));
+        try vertices.append(self.allocator, rhi.Vertex.initCloud(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0));
+        try vertices.append(self.allocator, rhi.Vertex.initCloud(b, color, normal, .{ 1.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0));
+        try vertices.append(self.allocator, rhi.Vertex.initCloud(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0));
+        try vertices.append(self.allocator, rhi.Vertex.initCloud(c, color, normal, .{ 1.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0));
+        try vertices.append(self.allocator, rhi.Vertex.initCloud(d, color, normal, .{ 0.0, 0.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0));
+        try vertices.append(self.allocator, rhi.Vertex.initCloud(a, color, normal, .{ 0.0, 1.0 }, rhi.Vertex.LOD_TILE_ID, 1.0, .{ 0.0, 0.0, 0.0 }, 1.0));
     }
 
     fn uploadMesh(self: *CloudSystem) !void {

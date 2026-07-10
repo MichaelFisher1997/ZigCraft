@@ -7,26 +7,18 @@ const std = @import("std");
 const world_core = @import("world-core");
 const Chunk = world_core.Chunk;
 const PackedLight = world_core.PackedLight;
-const unpackEntranceDirX = world_core.unpackEntranceDirX;
-const unpackEntranceDirZ = world_core.unpackEntranceDirZ;
 const Face = world_core.Face;
 const block_registry = world_core.block_registry;
 const boundary = @import("boundary.zig");
 const NeighborChunks = boundary.NeighborChunks;
 const SUBCHUNK_SIZE = boundary.SUBCHUNK_SIZE;
 
-const SmoothLightSample = struct {
-    light: PackedLight,
-    entrance_bounce: u4,
-    entrance_dir: u8,
-};
+const SmoothLightSample = struct { light: PackedLight };
 
 /// Normalized light values ready for vertex emission.
 pub const NormalizedLight = struct {
     skylight: f32,
     blocklight: [3]f32,
-    entrance_bounce: f32,
-    entrance_dir: [2]f32,
 };
 
 /// Sample light from the exposed air side of a face boundary.
@@ -41,30 +33,8 @@ pub inline fn sampleLightAtBoundary(chunk: *const Chunk, neighbors: NeighborChun
     };
 }
 
-pub inline fn sampleEntranceBounceAtBoundary(chunk: *const Chunk, neighbors: NeighborChunks, axis: Face, s: i32, u: u32, v: u32, si: u32, positive_side: bool) u4 {
-    const y_off: i32 = @intCast(si * SUBCHUNK_SIZE);
-    return switch (axis) {
-        .top => chunk.getEntranceBounceSafe(@intCast(u), if (positive_side) s else s - 1, @intCast(v)),
-        .east => boundary.getEntranceBounceCross(chunk, neighbors, if (positive_side) s else s - 1, y_off + @as(i32, @intCast(u)), @intCast(v)),
-        .south => boundary.getEntranceBounceCross(chunk, neighbors, @intCast(u), y_off + @as(i32, @intCast(v)), if (positive_side) s else s - 1),
-        else => unreachable,
-    };
-}
-
-pub inline fn sampleEntranceDirAtBoundary(chunk: *const Chunk, neighbors: NeighborChunks, axis: Face, s: i32, u: u32, v: u32, si: u32, positive_side: bool) u8 {
-    const y_off: i32 = @intCast(si * SUBCHUNK_SIZE);
-    return switch (axis) {
-        .top => chunk.getEntranceDirSafe(@intCast(u), if (positive_side) s else s - 1, @intCast(v)),
-        .east => boundary.getEntranceDirCross(chunk, neighbors, if (positive_side) s else s - 1, y_off + @as(i32, @intCast(u)), @intCast(v)),
-        .south => boundary.getEntranceDirCross(chunk, neighbors, @intCast(u), y_off + @as(i32, @intCast(v)), if (positive_side) s else s - 1),
-        else => unreachable,
-    };
-}
-
 /// Convert a PackedLight into normalized [0.0, 1.0] values for vertex attributes.
-pub inline fn normalizeLightValues(light: PackedLight, entrance_bounce: u4, entrance_dir: u8) NormalizedLight {
-    const dir_x = unpackEntranceDirX(entrance_dir);
-    const dir_z = unpackEntranceDirZ(entrance_dir);
+pub inline fn normalizeLightValues(light: PackedLight) NormalizedLight {
     return .{
         .skylight = @as(f32, @floatFromInt(light.getSkyLight())) / 15.0,
         .blocklight = .{
@@ -72,17 +42,12 @@ pub inline fn normalizeLightValues(light: PackedLight, entrance_bounce: u4, entr
             @as(f32, @floatFromInt(light.getBlockLightG())) / 15.0,
             @as(f32, @floatFromInt(light.getBlockLightB())) / 15.0,
         },
-        .entrance_bounce = @as(f32, @floatFromInt(entrance_bounce)) / 15.0,
-        .entrance_dir = .{
-            @as(f32, @floatFromInt(dir_x)),
-            @as(f32, @floatFromInt(dir_z)),
-        },
     };
 }
 
 pub fn sampleSmoothLightAtVertex(chunk: *const Chunk, neighbors: NeighborChunks, pos: [3]f32, normal: [3]f32) NormalizedLight {
     const sample = sampleSmoothRawAtVertex(chunk, neighbors, pos, normal);
-    return normalizeLightValues(sample.light, sample.entrance_bounce, sample.entrance_dir);
+    return normalizeLightValues(sample.light);
 }
 
 fn sampleSmoothRawAtVertex(chunk: *const Chunk, neighbors: NeighborChunks, pos: [3]f32, normal: [3]f32) SmoothLightSample {
@@ -104,8 +69,6 @@ fn sampleSmoothRawAtVertex(chunk: *const Chunk, neighbors: NeighborChunks, pos: 
     var b_sum: u32 = 0;
     var count: u32 = 0;
     var has_direct_sun = false;
-    var max_bounce: u4 = 0;
-    var max_bounce_dir: u8 = 0;
 
     for (xs) |x| {
         for (ys) |y| {
@@ -122,18 +85,12 @@ fn sampleSmoothRawAtVertex(chunk: *const Chunk, neighbors: NeighborChunks, pos: 
                 g_sum += light.getBlockLightG();
                 b_sum += light.getBlockLightB();
                 count += 1;
-
-                const bounce = boundary.getEntranceBounceCross(chunk, neighbors, x, y, z);
-                if (bounce > max_bounce) {
-                    max_bounce = bounce;
-                    max_bounce_dir = boundary.getEntranceDirCross(chunk, neighbors, x, y, z);
-                }
             }
         }
     }
 
     const denom = @max(count, 1);
-    if (count == 0 or (sky_sum == 0 and r_sum == 0 and g_sum == 0 and b_sum == 0 and max_bounce == 0)) {
+    if (count == 0 or (sky_sum == 0 and r_sum == 0 and g_sum == 0 and b_sum == 0)) {
         return sampleExposedCell(chunk, neighbors, pos, normal);
     }
 
@@ -145,8 +102,6 @@ fn sampleSmoothRawAtVertex(chunk: *const Chunk, neighbors: NeighborChunks, pos: 
             @intCast(@min(15, (g_sum + denom / 2) / denom)),
             @intCast(@min(15, (b_sum + denom / 2) / denom)),
         ),
-        .entrance_bounce = max_bounce,
-        .entrance_dir = max_bounce_dir,
     };
 }
 
@@ -154,11 +109,7 @@ fn sampleExposedCell(chunk: *const Chunk, neighbors: NeighborChunks, pos: [3]f32
     const cell = exposedCellFromVertex(pos, normal);
 
     const light = boundary.getLightCross(chunk, neighbors, cell[0], cell[1], cell[2]);
-    return .{
-        .light = light,
-        .entrance_bounce = boundary.getEntranceBounceCross(chunk, neighbors, cell[0], cell[1], cell[2]),
-        .entrance_dir = boundary.getEntranceDirCross(chunk, neighbors, cell[0], cell[1], cell[2]),
-    };
+    return .{ .light = light };
 }
 
 fn exposedCellFromVertex(pos: [3]f32, normal: [3]f32) [3]i32 {
@@ -198,15 +149,4 @@ test "sampleLightAtBoundary samples negative side for opposite faces" {
 
     const light = sampleLightAtBoundary(&chunk, .empty, .south, 11, 8, 9, 0, false);
     try std.testing.expectEqual(@as(u4, 11), light.getSkyLight());
-}
-
-test "sampleSmoothLightAtVertex uses lit air in front of terminal tunnel wall" {
-    var chunk = Chunk.init(0, 0);
-
-    chunk.setEntranceBounce(8, 4, 7, 12);
-    chunk.setEntranceDir(8, 4, 7, world_core.packEntranceDir(0, -1));
-
-    const sample = sampleSmoothLightAtVertex(&chunk, .empty, .{ 8.0, 4.0, 8.0 }, .{ 0.0, 0.0, -1.0 });
-    try std.testing.expect(sample.entrance_bounce > 0.0);
-    try std.testing.expect(sample.entrance_dir[1] < 0.0);
 }

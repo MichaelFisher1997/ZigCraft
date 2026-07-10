@@ -31,7 +31,6 @@ pub fn collectStates(screen: ScreenDebugState, ctx: WorldContext, render_system:
     states[@intFromEnum(DebugFeature.shadow_seam_diag)] = ctx.settings.debug_shadow_seam_diag;
     states[@intFromEnum(DebugFeature.direct_key_debug)] = ctx.settings.debug_direct_key_active;
     states[@intFromEnum(DebugFeature.sky_fill_debug)] = ctx.settings.debug_sky_fill_active;
-    states[@intFromEnum(DebugFeature.entrance_bounce_debug)] = ctx.settings.debug_entrance_bounce_active;
     states[@intFromEnum(DebugFeature.block_light_debug)] = ctx.settings.debug_block_light_active;
     states[@intFromEnum(DebugFeature.outdoor_factor_debug)] = ctx.settings.debug_outdoor_factor_active;
     states[@intFromEnum(DebugFeature.timing_overlay)] = ctx.ui_manager.timing_overlay.enabled;
@@ -86,7 +85,7 @@ pub fn applyToggle(screen: ScreenDebugState, feature: DebugFeature, ctx: WorldCo
             if (ctx.settings.shadow_probe_enabled and !render_system.getDisableShadowDraw()) ctx.settings.shadow_sandbox_enabled = true;
         },
         .shadow_debug, .shadow_cascade_index, .shadow_caster_coverage, .shadow_seam_diag => applyShadowDebugToggle(feature, ctx, render_system, rhi),
-        .direct_key_debug, .sky_fill_debug, .entrance_bounce_debug, .block_light_debug, .outdoor_factor_debug => applyTerrainDebugToggle(feature, ctx, rhi),
+        .direct_key_debug, .sky_fill_debug, .block_light_debug, .outdoor_factor_debug => applyTerrainDebugToggle(feature, ctx, rhi),
         .timing_overlay => {
             ctx.ui_manager.timing_overlay.toggle();
             rhi.timing().setTimingEnabled(ctx.ui_manager.timing_overlay.enabled);
@@ -140,7 +139,6 @@ fn applyTerrainDebugToggle(feature: DebugFeature, ctx: WorldContext, rhi: *rhi_p
     const enable = switch (feature) {
         .direct_key_debug => !ctx.settings.debug_direct_key_active,
         .sky_fill_debug => !ctx.settings.debug_sky_fill_active,
-        .entrance_bounce_debug => !ctx.settings.debug_entrance_bounce_active,
         .block_light_debug => !ctx.settings.debug_block_light_active,
         .outdoor_factor_debug => !ctx.settings.debug_outdoor_factor_active,
         else => unreachable,
@@ -149,7 +147,6 @@ fn applyTerrainDebugToggle(feature: DebugFeature, ctx: WorldContext, rhi: *rhi_p
     switch (feature) {
         .direct_key_debug => ctx.settings.debug_direct_key_active = enable,
         .sky_fill_debug => ctx.settings.debug_sky_fill_active = enable,
-        .entrance_bounce_debug => ctx.settings.debug_entrance_bounce_active = enable,
         .block_light_debug => ctx.settings.debug_block_light_active = enable,
         .outdoor_factor_debug => ctx.settings.debug_outdoor_factor_active = enable,
         else => unreachable,

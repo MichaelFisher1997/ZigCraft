@@ -13,7 +13,6 @@ pub const ShadowDebugChannel = enum(u32) {
     sky_fill = 8,
     block_light = 9,
     outdoor_factor = 10,
-    entrance_bounce = 11,
     skylight = 12,
     ambient_occlusion = 13,
 };
@@ -21,7 +20,6 @@ pub const ShadowDebugChannel = enum(u32) {
 pub fn resolveShadowDebugChannel(settings: *const @This().Settings) ShadowDebugChannel {
     if (settings.debug_direct_key_active) return .direct_key;
     if (settings.debug_sky_fill_active) return .sky_fill;
-    if (settings.debug_entrance_bounce_active) return .entrance_bounce;
     if (settings.debug_block_light_active) return .block_light;
     if (settings.debug_outdoor_factor_active) return .outdoor_factor;
     if (settings.debug_shadow_seam_diag) return .seam_diagnostics;
@@ -46,7 +44,6 @@ pub fn clearTerrainDebugViews(settings: *@This().Settings) void {
     settings.debug_shadow_seam_diag = false;
     settings.debug_direct_key_active = false;
     settings.debug_sky_fill_active = false;
-    settings.debug_entrance_bounce_active = false;
     settings.debug_block_light_active = false;
     settings.debug_outdoor_factor_active = false;
 }
@@ -105,7 +102,6 @@ pub const Settings = struct {
     shadow_probe_enabled: bool = false,
     debug_direct_key_active: bool = false,
     debug_sky_fill_active: bool = false,
-    debug_entrance_bounce_active: bool = false,
     debug_block_light_active: bool = false,
     debug_outdoor_factor_active: bool = false,
     debug_lpv_overlay_active: bool = false,
@@ -139,8 +135,6 @@ pub const Settings = struct {
 
     // Volumetric Lighting Settings (Phase 4)
     volumetric_lighting_enabled: bool = false,
-    sun_shafts_enabled: bool = false,
-    sun_shafts_intensity: f32 = 0.45,
     volumetric_density: f32 = 0.05, // Fog density
     volumetric_steps: u32 = 16, // Raymarching steps
     volumetric_scattering: f32 = 0.8, // Mie scattering anisotropy (G)

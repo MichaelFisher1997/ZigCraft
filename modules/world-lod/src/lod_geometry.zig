@@ -1384,7 +1384,6 @@ pub fn makeLODVertex(pos: [3]f32, col: [3]f32, norm: [3]f32, uv: [2]f32, tile_id
         .uv = .{ @floatCast(uv[0]), @floatCast(uv[1]) },
         .packed_meta = encodeMeta(tile_id, 1.0, 1.0),
         .blocklight = 0,
-        .entrance_dir = 0,
     };
 }
 
