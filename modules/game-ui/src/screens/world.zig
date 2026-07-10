@@ -462,6 +462,8 @@ pub const WorldScreen = struct {
                 .resolution_scale = resolution_scale,
                 .overlay_renderer = if (clean_capture) null else renderOverlay,
                 .overlay_ctx = if (clean_capture) null else self,
+                .shadow_caster_renderer = renderEntityShadowCasters,
+                .shadow_caster_ctx = self,
                 .cached_cascades = &frame_cascades,
                 .lpv_textures = render_graph_pkg.LPVTextureHandles.fromSystem(lpv_system),
                 .gpu_mesh_dispatch_fn = gpu_mesh_dispatch.dispatch_fn,
@@ -977,6 +979,11 @@ pub const WorldScreen = struct {
         if (self.session.player.target_block) |target| self.session.block_outline.draw(scene_ctx.render_ctx, target.x, target.y, target.z, scene_ctx.camera.position);
         self.session.renderEntities(scene_ctx.render_ctx, scene_ctx.camera.position);
         self.session.hand_renderer.draw(scene_ctx.render_ctx, scene_ctx.camera.position, scene_ctx.camera.yaw, scene_ctx.camera.pitch);
+    }
+
+    fn renderEntityShadowCasters(opaque_ptr: *anyopaque, render_ctx: rhi_pkg.RenderContext, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3) void {
+        const self: *WorldScreen = @ptrCast(@alignCast(opaque_ptr));
+        self.session.renderEntityShadowCasters(render_ctx, camera_pos, caster_min, caster_max);
     }
 };
 

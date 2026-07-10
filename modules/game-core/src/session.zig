@@ -356,6 +356,10 @@ pub const GameSession = struct {
         self.ecs_render_system.render(ctx, &self.ecs_registry, camera_pos);
     }
 
+    pub fn renderEntityShadowCasters(self: *GameSession, ctx: RenderContext, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3) void {
+        self.ecs_render_system.renderShadowCasters(ctx, &self.ecs_registry, camera_pos, caster_min, caster_max);
+    }
+
     pub fn drawHUD(self: *GameSession, ui: *UISystem, atlas: *const TextureAtlas, active_pack: ?[]const u8, fps: f32, screen_w: f32, screen_h: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) !void {
         try session_hud.draw(self, ui, atlas, active_pack, fps, screen_w, screen_h, mouse_x, mouse_y, mouse_clicked);
     }

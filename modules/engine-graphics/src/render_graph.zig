@@ -105,6 +105,8 @@ pub const SceneContext = struct {
     resolution_scale: f32 = 1.0,
     overlay_renderer: ?*const fn (ctx: SceneContext) void = null,
     overlay_ctx: ?*anyopaque = null,
+    shadow_caster_renderer: ?*const fn (ctx: *anyopaque, render_ctx: RenderContext, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3) void = null,
+    shadow_caster_ctx: ?*anyopaque = null,
     lpv_textures: LPVTextureHandles = .{},
     cached_cascades: *?CSM.ShadowCascades,
     gpu_mesh_dispatch_fn: ?*const fn (*anyopaque) void = null,
@@ -307,6 +309,9 @@ pub const ShadowPass = struct {
         errdefer ctx.shadow_ctx.endPass();
         const caster_bounds = CSM.computeCasterBounds(cascades.receiver_corners[cascade_idx], ctx.shadow_sun_dir, ctx.shadow.caster_distance);
         ctx.shadow_scene.renderShadowPass(light_space_matrix, ctx.camera.position, caster_bounds.min, caster_bounds.max, ctx.shadow);
+        if (ctx.shadow_caster_renderer) |render| {
+            render(ctx.shadow_caster_ctx orelse return error.InvalidShadowCasterContext, ctx.render_ctx, ctx.camera.position, caster_bounds.min, caster_bounds.max);
+        }
         if (ctx.cloud_system) |clouds| {
             try clouds.renderShadow(ctx.render_ctx, ctx.camera.position);
         }
