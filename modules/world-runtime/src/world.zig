@@ -996,9 +996,10 @@ pub const World = struct {
     }
 
     /// Renders world geometry into the active shadow pass.
-    /// Call from the shadow renderer with valid view-projection and shadow config.
-    pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
-        self.renderer.renderShadowPass(light_space_matrix, camera_pos, shadow_config.caster_distance);
+    /// The shadow renderer provides receiver-volume-derived caster bounds.
+    pub fn renderShadowPass(self: *World, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
+        _ = shadow_config; // Bounds already encode the configured caster reach.
+        self.renderer.renderShadowPass(light_space_matrix, camera_pos, caster_min, caster_max);
     }
 
     /// Returns the world shadow-scene interface used by the shadow renderer.
@@ -1012,9 +1013,9 @@ pub const World = struct {
         };
     }
 
-    fn renderShadowPassWrapper(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+    fn renderShadowPassWrapper(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
         const self: *World = @ptrCast(@alignCast(ptr));
-        self.renderShadowPass(light_space_matrix, camera_pos, shadow_config);
+        self.renderShadowPass(light_space_matrix, camera_pos, caster_min, caster_max, shadow_config);
     }
 
     /// Returns renderer counters for the latest world render work.

@@ -336,9 +336,11 @@ const MockWorld = struct {
         return .{ .ptr = self, .vtable = &SHADOW_VTABLE };
     }
 
-    fn renderShadowPass(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+    fn renderShadowPass(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
         _ = light_space_matrix;
         _ = camera_pos;
+        _ = caster_min;
+        _ = caster_max;
         _ = shadow_config;
         const self: *MockWorld = @ptrCast(@alignCast(ptr));
         self.shadow_pass_calls += 1;
@@ -551,7 +553,7 @@ test "IWorld mock dispatch" {
     try testing.expect(!world_if.isLODEnabled());
 
     const shadow = world_if.shadowScene();
-    shadow.renderShadowPass(Mat4.identity, Vec3.zero, .{});
+    shadow.renderShadowPass(Mat4.identity, Vec3.zero, Vec3.zero, Vec3.zero, .{});
     world_if.deinit();
 
     try testing.expectEqual(@as(usize, 1), world.update_calls);

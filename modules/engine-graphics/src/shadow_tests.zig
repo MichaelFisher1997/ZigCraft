@@ -6,6 +6,7 @@ const Mat4 = @import("engine-math").Mat4;
 const Vec3 = @import("engine-math").Vec3;
 const ShadowSystem = @import("engine-shadows").ShadowSystem;
 const computeCascades = @import("engine-shadows").computeCascades;
+const practicalSplit = @import("engine-shadows").practicalSplit;
 const ShadowCascades = @import("engine-shadows").ShadowCascades;
 const CASCADE_COUNT = @import("engine-shadows").CASCADE_COUNT;
 const shadow_scene = @import("engine-shadows").shadow_scene;
@@ -19,6 +20,16 @@ fn mat4IsIdentity(m: Mat4) bool {
         }
     }
     return true;
+}
+
+fn validCascades() ShadowCascades {
+    var cascades = ShadowCascades.initZero();
+    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
+    cascades.overlap_starts = .{ 0.1, 9.0, 45.0, 140.0 };
+    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    cascades.depth_spans = .{ 10.0, 20.0, 40.0, 80.0 };
+    cascades.light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT;
+    return cascades;
 }
 
 test "ShadowSystem init rejects zero resolution" {
@@ -61,40 +72,41 @@ test "ShadowCascades initZero sets identity matrices" {
 
     for (0..CASCADE_COUNT) |i| {
         try testing.expectEqual(@as(f32, 0.0), cascades.cascade_splits[i]);
+        try testing.expectEqual(@as(f32, 0.0), cascades.overlap_starts[i]);
         try testing.expectEqual(@as(f32, 0.0), cascades.texel_sizes[i]);
+        try testing.expectEqual(@as(f32, 0.0), cascades.depth_spans[i]);
         try testing.expect(mat4IsIdentity(cascades.light_space_matrices[i]));
+        for (cascades.receiver_corners[i]) |corner| {
+            try testing.expectEqual(Vec3.zero.x, corner.x);
+            try testing.expectEqual(Vec3.zero.y, corner.y);
+            try testing.expectEqual(Vec3.zero.z, corner.z);
+        }
     }
 }
 
 test "ShadowCascades isValid returns true for valid cascades" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
-    cascades.light_space_matrices = .{Mat4.identity} ** CASCADE_COUNT;
+    const cascades = validCascades();
 
     try testing.expect(cascades.isValid());
 }
 
 test "ShadowCascades isValid returns false for non-finite splits" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, std.math.nan(f32), 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.cascade_splits[1] = std.math.nan(f32);
 
     try testing.expect(!cascades.isValid());
 }
 
 test "ShadowCascades isValid returns false for zero texel size" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 0.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.texel_sizes[1] = 0.0;
 
     try testing.expect(!cascades.isValid());
 }
 
 test "ShadowCascades isValid returns false for non-increasing splits" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 40.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.cascade_splits[2] = cascades.cascade_splits[1];
 
     try testing.expect(!cascades.isValid());
 }
@@ -195,7 +207,7 @@ test "computeCascades produces positive texel sizes" {
     }
 }
 
-test "computeCascades uses fixed splits for large shadow distance" {
+test "computeCascades uses practical splits for large shadow distance" {
     const cascades = computeCascades(
         1024,
         std.math.degreesToRadians(60.0),
@@ -207,13 +219,13 @@ test "computeCascades uses fixed splits for large shadow distance" {
         true,
     );
 
-    const expected_splits = [4]f32{ 250.0, 500.0, 750.0, 1000.0 };
     for (0..CASCADE_COUNT) |i| {
-        try testing.expectApproxEqAbs(expected_splits[i], cascades.cascade_splits[i], 0.001);
+        const expected = practicalSplit(0.1, 1000.0, i, 0.75);
+        try testing.expectApproxEqAbs(expected, cascades.cascade_splits[i], 0.001);
     }
 }
 
-test "computeCascades uses fixed splits for small shadow distance" {
+test "computeCascades uses practical splits for small shadow distance" {
     const cascades = computeCascades(
         1024,
         std.math.degreesToRadians(60.0),
@@ -225,9 +237,9 @@ test "computeCascades uses fixed splits for small shadow distance" {
         true,
     );
 
-    const expected_splits = [4]f32{ 50.0, 100.0, 150.0, 200.0 };
     for (0..CASCADE_COUNT) |i| {
-        try testing.expectApproxEqAbs(expected_splits[i], cascades.cascade_splits[i], 0.001);
+        const expected = practicalSplit(0.1, 200.0, i, 0.75);
+        try testing.expectApproxEqAbs(expected, cascades.cascade_splits[i], 0.001);
     }
 }
 
@@ -294,7 +306,7 @@ test "computeCascades handles extreme sun direction (near-horizontal)" {
 test "ShadowUniforms extern struct has correct size" {
     const ShadowUniforms = @import("vulkan/descriptor_manager.zig").ShadowUniforms;
 
-    const expected_size = @sizeOf([rhi.SHADOW_CASCADE_COUNT]Mat4) + (@sizeOf(f32) * 12);
+    const expected_size = @sizeOf([rhi.SHADOW_CASCADE_COUNT]Mat4) + (@sizeOf(f32) * 24);
     try testing.expectEqual(@as(usize, expected_size), @sizeOf(ShadowUniforms));
 }
 
@@ -303,12 +315,18 @@ test "ShadowUniforms field offsets" {
 
     const matrices_size = @sizeOf([rhi.SHADOW_CASCADE_COUNT]Mat4);
     const splits_offset = @offsetOf(ShadowUniforms, "cascade_splits");
+    const overlap_offset = @offsetOf(ShadowUniforms, "overlap_starts");
     const texel_offset = @offsetOf(ShadowUniforms, "shadow_texel_sizes");
+    const depth_span_offset = @offsetOf(ShadowUniforms, "shadow_depth_spans");
     const params_offset = @offsetOf(ShadowUniforms, "shadow_params");
+    const fade_params_offset = @offsetOf(ShadowUniforms, "fade_params");
 
     try testing.expectEqual(matrices_size, splits_offset);
-    try testing.expectEqual(matrices_size + @sizeOf([4]f32), texel_offset);
-    try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 2, params_offset);
+    try testing.expectEqual(matrices_size + @sizeOf([4]f32), overlap_offset);
+    try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 2, texel_offset);
+    try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 3, depth_span_offset);
+    try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 4, params_offset);
+    try testing.expectEqual(matrices_size + @sizeOf([4]f32) * 5, fade_params_offset);
 }
 
 test "getShadowMapHandle returns 0 for out-of-bounds cascade" {
@@ -363,7 +381,7 @@ test "ShadowConfig default values" {
     const config = rhi.ShadowConfig{};
     try testing.expectEqual(@as(f32, 250.0), config.distance);
     try testing.expectEqual(@as(u32, 4096), config.resolution);
-    try testing.expectEqual(@as(u8, 12), config.pcf_samples);
+    try testing.expectEqual(@as(u8, 9), config.pcf_samples);
     try testing.expect(config.cascade_blend);
     try testing.expectEqual(@as(f32, 0.35), config.strength);
     try testing.expectEqual(@as(f32, 3.0), config.light_size);
@@ -375,6 +393,7 @@ test "ShadowParams struct layout" {
         .light_space_matrices = .{Mat4.identity} ** rhi.SHADOW_CASCADE_COUNT,
         .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
         .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
+        .shadow_depth_spans = .{ 100.0, 200.0, 400.0, 800.0 },
         .light_size = 3.0,
     };
 
@@ -384,9 +403,7 @@ test "ShadowParams struct layout" {
 }
 
 test "ShadowCascades isValid detects non-finite light space matrix" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
 
     var bad_matrix = Mat4.identity;
     bad_matrix.data[0][0] = std.math.nan(f32);
@@ -396,9 +413,8 @@ test "ShadowCascades isValid detects non-finite light space matrix" {
 }
 
 test "ShadowCascades isValid returns false for zero split" {
-    var cascades = ShadowCascades.initZero();
-    cascades.cascade_splits = .{ 0.0, 50.0, 150.0, 500.0 };
-    cascades.texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 };
+    var cascades = validCascades();
+    cascades.cascade_splits[0] = 0.0;
 
     try testing.expect(!cascades.isValid());
 }
@@ -410,7 +426,9 @@ test "IShadowScene renderShadowPass delegates to vtable" {
         last_camera: Vec3 = Vec3.zero,
         last_config: ShadowConfig = .{},
 
-        fn render(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+        fn render(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
+            _ = caster_min;
+            _ = caster_max;
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
             self.last_matrix = light_space_matrix;
@@ -432,7 +450,7 @@ test "IShadowScene renderShadowPass delegates to vtable" {
     const camera = Vec3.init(1.0, 2.0, 3.0);
     const config = ShadowConfig{ .distance = 500.0, .resolution = 2048 };
 
-    scene.renderShadowPass(matrix, camera, config);
+    scene.renderShadowPass(matrix, camera, Vec3.zero, Vec3.zero, config);
 
     try testing.expectEqual(@as(u32, 1), tracker.calls);
     try testing.expectEqual(@as(f32, 1.0), tracker.last_camera.x);
@@ -446,6 +464,7 @@ test "ShadowParams default light_size is 3.0" {
         .light_space_matrices = .{Mat4.identity} ** rhi.SHADOW_CASCADE_COUNT,
         .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
         .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
+        .shadow_depth_spans = .{ 100.0, 200.0, 400.0, 800.0 },
     };
 
     try testing.expectEqual(@as(f32, 3.0), params.light_size);
@@ -487,7 +506,9 @@ test "IShadowScene vtable renderShadowPass is called with correct parameters" {
         camera_received: Vec3 = Vec3.zero,
         config_received: ShadowConfig = .{},
 
-        fn render(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, shadow_config: ShadowConfig) void {
+        fn render(ptr: *anyopaque, light_space_matrix: Mat4, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3, shadow_config: ShadowConfig) void {
+            _ = caster_min;
+            _ = caster_max;
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.called = true;
             self.matrix_received = light_space_matrix;
@@ -510,7 +531,7 @@ test "IShadowScene vtable renderShadowPass is called with correct parameters" {
     const custom_camera = Vec3.init(100.0, -50.0, 200.0);
     const custom_config = ShadowConfig{ .strength = 0.5, .light_size = 10.0 };
 
-    scene.renderShadowPass(custom_matrix, custom_camera, custom_config);
+    scene.renderShadowPass(custom_matrix, custom_camera, Vec3.zero, Vec3.zero, custom_config);
 
     try testing.expect(verify.called);
     try testing.expectEqual(@as(f32, 5.0), verify.matrix_received.data[0][0]);

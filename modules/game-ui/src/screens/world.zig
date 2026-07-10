@@ -337,8 +337,8 @@ pub const WorldScreen = struct {
         const shadow_sandbox_active = ctx.settings.shadow_sandbox_enabled and !render_system.getDisableShadowDraw() and !startup_light_render;
         const shadow_beauty_active = ctx.settings.shadow_beauty_enabled and shadow_sandbox_active;
         const clean_capture = ctx.build_config.shadow_test_scene and ctx.build_config.screenshot_path.len > 0;
-        const shadow_distance_active = if (shadow_sandbox_active) @min(ctx.settings.shadow_distance, 160.0) else ctx.settings.shadow_distance;
-        const shadow_caster_distance_active = if (shadow_sandbox_active) @min(ctx.settings.shadow_caster_distance, shadow_distance_active) else ctx.settings.shadow_caster_distance;
+        const shadow_distance_active = ctx.settings.shadow_distance;
+        const shadow_caster_distance_active = ctx.settings.shadow_caster_distance;
         const render_sun_dir = self.session.atmosphere.celestial.sun_dir;
         const shadow_sun_dir = if (shadow_sandbox_active) self.resolveStableShadowSunDir(render_sun_dir) else render_sun_dir;
         if (!shadow_sandbox_active) self.stable_shadow_sun_initialized = false;
@@ -462,6 +462,8 @@ pub const WorldScreen = struct {
                 .resolution_scale = resolution_scale,
                 .overlay_renderer = if (clean_capture) null else renderOverlay,
                 .overlay_ctx = if (clean_capture) null else self,
+                .shadow_caster_renderer = renderEntityShadowCasters,
+                .shadow_caster_ctx = self,
                 .cached_cascades = &frame_cascades,
                 .lpv_textures = render_graph_pkg.LPVTextureHandles.fromSystem(lpv_system),
                 .gpu_mesh_dispatch_fn = gpu_mesh_dispatch.dispatch_fn,
@@ -977,6 +979,11 @@ pub const WorldScreen = struct {
         if (self.session.player.target_block) |target| self.session.block_outline.draw(scene_ctx.render_ctx, target.x, target.y, target.z, scene_ctx.camera.position);
         self.session.renderEntities(scene_ctx.render_ctx, scene_ctx.camera.position);
         self.session.hand_renderer.draw(scene_ctx.render_ctx, scene_ctx.camera.position, scene_ctx.camera.yaw, scene_ctx.camera.pitch);
+    }
+
+    fn renderEntityShadowCasters(opaque_ptr: *anyopaque, render_ctx: rhi_pkg.RenderContext, camera_pos: Vec3, caster_min: Vec3, caster_max: Vec3) void {
+        const self: *WorldScreen = @ptrCast(@alignCast(opaque_ptr));
+        self.session.renderEntityShadowCasters(render_ctx, camera_pos, caster_min, caster_max);
     }
 };
 

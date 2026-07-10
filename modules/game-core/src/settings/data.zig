@@ -133,7 +133,7 @@ pub const Settings = struct {
     saturation: f32 = 1.08,
 
     // Shadow Settings
-    shadow_pcf_samples: u8 = 4, // 4, 8, 12, 16
+    shadow_pcf_samples: u8 = 4, // hard, 4, 9, or 16 taps
     shadow_cascade_blend: bool = true,
     shadow_caster_distance: f32 = 250.0,
 
@@ -240,8 +240,8 @@ pub const Settings = struct {
         pub const shadow_pcf_samples = SettingMetadata{
             .label = "SHADOW SOFTNESS",
             .kind = .{ .choice = .{
-                .labels = &[_][]const u8{ "4 SAMPLES", "8 SAMPLES", "12 SAMPLES", "16 SAMPLES" },
-                .values = &[_]u32{ 4, 8, 12, 16 },
+                .labels = &[_][]const u8{ "HARD", "4 TAPS", "9 TAPS", "16 TAPS" },
+                .values = &[_]u32{ 1, 4, 9, 16 },
             } },
         };
         pub const shadow_cascade_blend = SettingMetadata{

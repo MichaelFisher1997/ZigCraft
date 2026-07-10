@@ -32,7 +32,7 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 params; // x = time, y = fog_density, z = fog_enabled, w = sun_intensity
     vec4 lighting; // x = ambient, y = use_texture, z = pbr_enabled, w = reserved
     vec4 render_flags; // z = pbr_enabled, w = simple_lighting_enabled
-    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z/w reserved
+    vec4 shadow_params; // x = pcf_samples, y = cascade_blend, z = shadow strength, w = simple lighting
     vec4 pbr_params; // x = pbr_quality, y = exposure, z = saturation, w = ssao_strength
     vec4 volumetric_params; // x = enabled, y = density, z = steps, w = scattering
     vec4 viewport_size; // xy = width/height, z = terrain debug active, w = terrain debug channel
@@ -113,8 +113,11 @@ vec3 sampleTileAverage(vec2 tileBase) {
 layout(set = 0, binding = 2) uniform ShadowUniforms {
     mat4 light_space_matrices[4];
     vec4 cascade_splits;
+    vec4 overlap_starts;
     vec4 shadow_texel_sizes;
-    vec4 shadow_params; // x = light_size (PCSS), y/z/w reserved
+    vec4 shadow_depth_spans;
+    vec4 shadow_params; // x = light size, y = inverse resolution
+    vec4 fade_params; // x = fade start, y = configured shadow distance
 } shadows;
 
 layout(set = 0, binding = 3) uniform sampler2DArrayShadow uShadowMaps;
@@ -245,7 +248,9 @@ int selectShadowCascade(vec3 fragPosWorld, float cascadeDistance) {
     int preferred = cascadeDistance < shadows.cascade_splits[0] ? 0
                   : (cascadeDistance < shadows.cascade_splits[1] ? 1
                   : (cascadeDistance < shadows.cascade_splits[2] ? 2 : 3));
-    float margin = max(shadows.shadow_params.y * 2.0, 2.0 / 4096.0);
+    int tier = int(global.shadow_params.x);
+    float kernelRadius = tier <= 1 ? 0.5 : (tier <= 4 ? 1.5 : (tier <= 9 ? 2.0 : 2.5));
+    float margin = shadows.shadow_params.y * kernelRadius;
 
     if (shadowProjInBounds(shadowProjCoords(fragPosWorld, preferred), margin)) return preferred;
 
@@ -263,13 +268,13 @@ int selectShadowCascade(vec3 fragPosWorld, float cascadeDistance) {
 float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     vec3 projCoords = shadowProjCoords(fragPosWorld, layer);
     
-    // Bounds check: if outside current cascade, return lit (0.0 shadow factor)
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0 || projCoords.z < 0.0 || projCoords.z > 1.0) return 0.0;
+    int pcfSamples = int(global.shadow_params.x);
+    float kernelRadius = pcfSamples <= 1 ? 0.5 : (pcfSamples <= 4 ? 1.5 : (pcfSamples <= 9 ? 2.0 : 2.5));
+    if (!shadowProjInBounds(projCoords, shadows.shadow_params.y * kernelRadius)) return 0.0;
 
     float currentDepth = projCoords.z;
     float worldTexelSize = shadows.shadow_texel_sizes[layer];
-    float baseWorldTexelSize = shadows.shadow_texel_sizes[0];
-    float cascadeScale = worldTexelSize / max(baseWorldTexelSize, 0.0001);
+    float depthSpan = max(shadows.shadow_depth_spans[layer], 0.0001);
     float uvTexelSize = max(shadows.shadow_params.y, 1.0 / 4096.0);
     
     float NdotL = max(dot(N, L), 0.001);
@@ -279,41 +284,31 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     // Reverse-Z receiver bias. The shadow sampler uses GREATER_OR_EQUAL, so the
     // receiver reference moves slightly closer to the light (higher depth) to
     // avoid self-shadowing on coplanar surfaces.
-    const float BASE_BIAS = 0.00035;
-    const float SLOPE_BIAS = 0.00020;
-    const float MAX_BIAS = 0.0012;
-    
-    float bias = BASE_BIAS * cascadeScale + SLOPE_BIAS * min(tanTheta, 5.0) * cascadeScale;
-    bias = min(bias, MAX_BIAS);
-    if (vTileID < 0 || vMaskRadius > 0.0) bias = max(bias, 0.00045 * cascadeScale);
+    float biasTexels = 0.35 + 0.2 * min(tanTheta, 5.0);
+    if (vTileID < 0 || vMaskRadius > 0.0) biasTexels = max(biasTexels, 0.45);
+    float bias = worldTexelSize * biasTexels / depthSpan;
     float compareDepth = min(currentDepth + bias, 1.0);
 
-    int pcfSamples = int(global.shadow_params.x);
-
     if (pcfSamples <= 1) {
-        return manualShadowPcfStable(projCoords.xy, layer, compareDepth);
+        return hardShadowCompare(projCoords.xy, layer, compareDepth);
     }
 
-    float receiverSlope = clamp(1.0 - NdotL, 0.0, 1.0);
-    float softness = 1.0 + receiverSlope * 0.85 + clamp(cascadeScale - 1.0, 0.0, 3.0) * 0.18;
-
     if (pcfSamples <= 4) {
-        float shadow = texture(uShadowMaps, vec4(projCoords.xy, float(layer), compareDepth));
-        float radius = uvTexelSize * 1.75 * softness;
+        float shadow = 0.0;
+        float radius = uvTexelSize * 1.5;
         for (int i = 0; i < 4; i++) {
             shadow += texture(uShadowMaps, vec4(projCoords.xy + pcfCross4[i] * radius, float(layer), compareDepth));
         }
-        return 1.0 - (shadow / 5.0);
+        return 1.0 - (shadow / 4.0);
     }
 
-    // Fixed-radius PCF while stabilizing shadows. PCSS blocker search made voxel
-    // shadow edges breathe/smear during motion and hid real projection bugs.
-    float radius = uvTexelSize * 2.35 * softness;
-    float shadow = texture(uShadowMaps, vec4(projCoords.xy, float(layer), compareDepth));
-    for (int i = 0; i < 16; i++) {
+    int tapCount = pcfSamples <= 9 ? 9 : 16;
+    float radius = uvTexelSize * (tapCount == 9 ? 2.0 : 2.5);
+    float shadow = 0.0;
+    for (int i = 0; i < tapCount; i++) {
         shadow += texture(uShadowMaps, vec4(projCoords.xy + poissonDisk16[i] * radius, float(layer), compareDepth));
     }
-    return 1.0 - (shadow / 17.0);
+    return 1.0 - (shadow / float(tapCount));
 }
 
 float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float cascadeDistance, int layer) {
@@ -325,7 +320,7 @@ float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float cascadeDist
     // shadow_params.y is packed as 1.0 (on) or 0.0 (off) from ShadowConfig.cascade_blend.
     if (global.shadow_params.y > 0.0 && layer < 3) {
         float nextSplit = shadows.cascade_splits[layer];
-        float blendThreshold = nextSplit * 0.8;
+        float blendThreshold = shadows.overlap_starts[layer + 1];
         if (cascadeDistance > blendThreshold) {
             float blend = (cascadeDistance - blendThreshold) / (nextSplit - blendThreshold);
             float nextShadow = computeShadowFactor(fragPosWorld, N, L, layer + 1);
@@ -679,8 +674,6 @@ void main() {
     const float AO_FADE_DISTANCE = 128.0;
     const float TEXTURE_FADE_START = 32.0;
     const float TEXTURE_FADE_END = 128.0;
-    const float SHADOW_FADE_START = 72.0;
-    const float SHADOW_FADE_END = 128.0;
     float viewDistance = length(vFragPosWorld);
     bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
     float textureDetail = 1.0 - smoothstep(TEXTURE_FADE_START, TEXTURE_FADE_END, viewDistance);
@@ -721,12 +714,12 @@ void main() {
     float skyVisibility = clamp(vSkyLight, 0.0, 1.0);
     float atmosphericVisibility = skyVisibilityFactor(skyVisibility);
     bool isCloud = vTileID < 0 && vEntranceDir.x > 0.9 && vEntranceDir.y < -0.9;
-    float cascadeDistance = length(vFragPosWorld);
+    float cascadeDistance = max(vViewDepth, 0.0);
     int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
     float shadowFactor = 0.0;
     if (!isLOD) {
         shadowFactor = computeShadowCascades(vFragPosWorld, N, L, cascadeDistance, layer);
-        shadowFactor *= 1.0 - smoothstep(SHADOW_FADE_START, SHADOW_FADE_END, cascadeDistance);
+        shadowFactor *= 1.0 - smoothstep(shadows.fade_params.x, shadows.fade_params.y, cascadeDistance);
     }
     if (isCloud) shadowFactor = 0.0;
     
@@ -825,7 +818,7 @@ void main() {
             color = inBounds ? vec3(hasCaster * 0.3, isInShadow * 0.5 + 0.2, mapDepth) : vec3(1.0, 0.0, 1.0);
         } else if (debugChannel < DEBUG_SEAM_DIAG + 0.5) {
             float nextSplit = shadows.cascade_splits[layer];
-            float blendStart = nextSplit * 0.8;
+            float blendStart = layer < 3 ? shadows.overlap_starts[layer + 1] : nextSplit;
             float distToSplit = abs(cascadeDistance - nextSplit) / max(nextSplit, 0.01);
             float inBlend = (cascadeDistance > blendStart && layer < 3) ? (cascadeDistance - blendStart) / max(nextSplit - blendStart, 0.01) : 0.0;
             float splitLine = 1.0 - smoothstep(0.0, 0.05, distToSplit);

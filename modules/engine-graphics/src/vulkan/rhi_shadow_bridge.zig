@@ -24,9 +24,13 @@ pub fn getShadowResolution(ctx: anytype) u32 {
 
 pub fn updateShadowUniforms(ctx: anytype, params: rhi.ShadowParams) !void {
     var splits = [_]f32{ 0, 0, 0, 0 };
+    var overlap_starts = [_]f32{ 0, 0, 0, 0 };
     var sizes = [_]f32{ 0, 0, 0, 0 };
+    var depth_spans = [_]f32{ 0, 0, 0, 0 };
     @memcpy(splits[0..rhi.SHADOW_CASCADE_COUNT], &params.cascade_splits);
+    @memcpy(overlap_starts[0..rhi.SHADOW_CASCADE_COUNT], &params.overlap_starts);
     @memcpy(sizes[0..rhi.SHADOW_CASCADE_COUNT], &params.shadow_texel_sizes);
+    @memcpy(depth_spans[0..rhi.SHADOW_CASCADE_COUNT], &params.shadow_depth_spans);
 
     @memcpy(&ctx.shadow_runtime.shadow_texel_sizes, &params.shadow_texel_sizes);
 
@@ -34,8 +38,11 @@ pub fn updateShadowUniforms(ctx: anytype, params: rhi.ShadowParams) !void {
     const shadow_uniforms = ShadowUniforms{
         .light_space_matrices = params.light_space_matrices,
         .cascade_splits = splits,
+        .overlap_starts = overlap_starts,
         .shadow_texel_sizes = sizes,
+        .shadow_depth_spans = depth_spans,
         .shadow_params = .{ params.light_size, inv_resolution, 0.0, 0.0 },
+        .fade_params = .{ params.distance * 0.9, params.distance, 0.0, 0.0 },
     };
 
     try ctx.descriptors.updateShadowUniforms(ctx.frames.current_frame, &shadow_uniforms);

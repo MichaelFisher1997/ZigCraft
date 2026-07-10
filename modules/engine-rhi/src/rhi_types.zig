@@ -280,7 +280,7 @@ pub const SkyPushConstants = extern struct {
 pub const ShadowConfig = struct {
     distance: f32 = 250.0,
     resolution: u32 = 4096,
-    pcf_samples: u8 = 12,
+    pcf_samples: u8 = 9,
     cascade_blend: bool = true,
     strength: f32 = 0.35,
     light_size: f32 = 3.0,
@@ -290,9 +290,12 @@ pub const ShadowConfig = struct {
 pub const ShadowParams = struct {
     light_space_matrices: [SHADOW_CASCADE_COUNT]Mat4,
     cascade_splits: [SHADOW_CASCADE_COUNT]f32,
+    overlap_starts: [SHADOW_CASCADE_COUNT]f32 = .{0.0} ** SHADOW_CASCADE_COUNT,
     shadow_texel_sizes: [SHADOW_CASCADE_COUNT]f32,
+    shadow_depth_spans: [SHADOW_CASCADE_COUNT]f32 = .{1.0} ** SHADOW_CASCADE_COUNT,
     light_size: f32 = 3.0, // PCSS light source size for penumbra estimation
     resolution: u32 = 4096,
+    distance: f32 = 250.0,
 };
 
 pub const FrameRenderParams = struct {
