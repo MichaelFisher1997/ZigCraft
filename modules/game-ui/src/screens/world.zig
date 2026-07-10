@@ -362,7 +362,7 @@ pub const WorldScreen = struct {
             lpv_quality.grid_size,
             lpv_quality.update_interval_frames,
         );
-        if (!safe_mode and !startup_light_render) {
+        if (lpv_system.isEnabled()) {
             rhi.timing().beginPassTiming("LPVPass");
             try lpv_system.update(world_render_view.lpvWorld(), camera.position, ctx.settings.debug_lpv_overlay_active);
             rhi.timing().endPassTiming("LPVPass");
@@ -392,6 +392,7 @@ pub const WorldScreen = struct {
             .lpv_cell_size = lpv_system.getCellSize(),
             .lpv_grid_size = lpv_system.getGridSize(),
             .lpv_origin = lpv_origin,
+            .lpv_available = lpv_system.isEnabled(),
         });
         const aspect = built_params.aspect;
         const taa_enabled = built_params.taa_enabled;

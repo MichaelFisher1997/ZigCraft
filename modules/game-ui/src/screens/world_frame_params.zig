@@ -27,6 +27,7 @@ pub const BuildInput = struct {
     lpv_cell_size: f32,
     lpv_grid_size: u32,
     lpv_origin: Vec3,
+    lpv_available: bool,
 };
 
 pub const BuiltParams = struct {
@@ -89,7 +90,7 @@ pub fn build(input: BuildInput) BuiltParams {
             .volumetric_steps = input.settings.volumetric_steps,
             .volumetric_scattering = input.settings.volumetric_scattering,
             .ssao_enabled = ssao_enabled,
-            .lpv_enabled = input.settings.lpv_enabled and !input.safe_mode and !input.startup_light_render,
+            .lpv_enabled = input.lpv_available,
             .lpv_intensity = input.settings.lpv_intensity,
             .lpv_cell_size = input.lpv_cell_size,
             .lpv_grid_size = input.lpv_grid_size,
