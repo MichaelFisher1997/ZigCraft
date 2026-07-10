@@ -167,7 +167,8 @@ pub const WorldRenderer = struct {
         const vertex_allocator = try allocator.create(GlobalVertexAllocator);
         vertex_allocator.* = try GlobalVertexAllocator.init(allocator, rm, query, vertex_capacity_mb);
 
-        const gpu_meshing_enabled = parseEnabledEnv(getenv("ZIGCRAFT_ENABLE_GPU_MESHING"), false);
+        // The compute mesher does not yet match the production vertex/light contract.
+        const gpu_meshing_enabled = false;
 
         const max_chunks = MAX_MDI_CHUNKS;
         var instance_buffers: [rhi_mod.MAX_FRAMES_IN_FLIGHT]rhi_mod.BufferHandle = undefined;
@@ -204,7 +205,7 @@ pub const WorldRenderer = struct {
                 };
             }
         } else if (!safe_mode_enabled) {
-            log.log.info("GPU meshing disabled by default due stale block-upload sync causing incorrect chunk texturing; set ZIGCRAFT_ENABLE_GPU_MESHING=1 to re-enable for testing", .{});
+            log.log.info("GPU meshing disabled until its vertex, light, and AO output matches CPU meshing", .{});
         } else {
             log.log.info("Safe mode: GPU meshing disabled, using CPU meshing fallback", .{});
         }

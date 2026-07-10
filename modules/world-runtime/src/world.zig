@@ -49,7 +49,6 @@ const LpvGridBuilder = @import("lpv_grid_builder.zig").LpvGridBuilder;
 pub const DebugLightInfo = struct {
     sky: u4,
     block: u4,
-    entrance_bounce: u4,
 };
 const WorldStateData = world_core.WorldStateData;
 pub const GpuMeshDispatch = struct {
@@ -932,7 +931,6 @@ pub const World = struct {
         return .{
             .sky = light.getSkyLight(),
             .block = light.getBlockLight(),
-            .entrance_bounce = data.chunk.getEntranceBounce(local.x, @intCast(world_y), local.z),
         };
     }
 

@@ -384,7 +384,6 @@ test "ShadowConfig default values" {
     try testing.expectEqual(@as(u8, 9), config.pcf_samples);
     try testing.expect(config.cascade_blend);
     try testing.expectEqual(@as(f32, 0.35), config.strength);
-    try testing.expectEqual(@as(f32, 3.0), config.light_size);
     try testing.expectEqual(@as(f32, 250.0), config.caster_distance);
 }
 
@@ -394,12 +393,10 @@ test "ShadowParams struct layout" {
         .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
         .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
         .shadow_depth_spans = .{ 100.0, 200.0, 400.0, 800.0 },
-        .light_size = 3.0,
     };
 
     try testing.expectEqual(@as(f32, 10.0), params.cascade_splits[0]);
     try testing.expectEqual(@as(f32, 500.0), params.cascade_splits[3]);
-    try testing.expectEqual(@as(f32, 3.0), params.light_size);
 }
 
 test "ShadowCascades isValid detects non-finite light space matrix" {
@@ -457,17 +454,6 @@ test "IShadowScene renderShadowPass delegates to vtable" {
     try testing.expectEqual(@as(f32, 2.0), tracker.last_camera.y);
     try testing.expectEqual(@as(f32, 3.0), tracker.last_camera.z);
     try testing.expectEqual(@as(f32, 500.0), tracker.last_config.distance);
-}
-
-test "ShadowParams default light_size is 3.0" {
-    const params = rhi.ShadowParams{
-        .light_space_matrices = .{Mat4.identity} ** rhi.SHADOW_CASCADE_COUNT,
-        .cascade_splits = .{ 10.0, 50.0, 150.0, 500.0 },
-        .shadow_texel_sizes = .{ 0.5, 1.0, 2.0, 4.0 },
-        .shadow_depth_spans = .{ 100.0, 200.0, 400.0, 800.0 },
-    };
-
-    try testing.expectEqual(@as(f32, 3.0), params.light_size);
 }
 
 test "ShadowSystem endPass is safe when pass not active" {
@@ -529,7 +515,7 @@ test "IShadowScene vtable renderShadowPass is called with correct parameters" {
     var custom_matrix = Mat4.identity;
     custom_matrix.data[0][0] = 5.0;
     const custom_camera = Vec3.init(100.0, -50.0, 200.0);
-    const custom_config = ShadowConfig{ .strength = 0.5, .light_size = 10.0 };
+    const custom_config = ShadowConfig{ .strength = 0.5 };
 
     scene.renderShadowPass(custom_matrix, custom_camera, Vec3.zero, Vec3.zero, custom_config);
 
@@ -539,5 +525,4 @@ test "IShadowScene vtable renderShadowPass is called with correct parameters" {
     try testing.expectEqual(@as(f32, -50.0), verify.camera_received.y);
     try testing.expectEqual(@as(f32, 200.0), verify.camera_received.z);
     try testing.expectEqual(@as(f32, 0.5), verify.config_received.strength);
-    try testing.expectEqual(@as(f32, 10.0), verify.config_received.light_size);
 }

@@ -15,9 +15,8 @@ layout(location = 11) in float vAO;
 layout(location = 12) in vec4 vClipPosCurrent;
 layout(location = 13) in vec4 vClipPosPrev;
 layout(location = 14) in float vMaskRadius;
-layout(location = 15) in float vEntranceBounce;
-layout(location = 16) in vec2 vEntranceDir;
-layout(location = 17) in float vLODFade;
+layout(location = 15) in float vCloud;
+layout(location = 16) in float vLODFade;
 
 layout(location = 0) out vec4 FragColor;
 
@@ -58,7 +57,6 @@ const int DEBUG_DIRECT_KEY = 7;
 const int DEBUG_SKY_FILL = 8;
 const int DEBUG_BLOCK_LIGHT = 9;
 const int DEBUG_OUTDOOR_FACTOR = 10;
-const int DEBUG_ENTRANCE_BOUNCE = 11;
 const int DEBUG_SKYLIGHT = 12;
 const int DEBUG_AMBIENT_OCCLUSION = 13;
 
@@ -116,7 +114,7 @@ layout(set = 0, binding = 2) uniform ShadowUniforms {
     vec4 overlap_starts;
     vec4 shadow_texel_sizes;
     vec4 shadow_depth_spans;
-    vec4 shadow_params; // x = light size, y = inverse resolution
+    vec4 shadow_params; // y = inverse resolution
     vec4 fade_params; // x = fade start, y = configured shadow distance
 } shadows;
 
@@ -160,25 +158,6 @@ const vec2 pcfCross4[4] = vec2[](
 float interleavedGradientNoise(vec2 fragCoord) {
     vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
     return fract(magic.z * fract(dot(fragCoord.xy, magic.xy)));
-}
-
-// PCSS blocker search using Poisson disk for better spatial distribution.
-// searchRadius is derived from light size and receiver depth in light-space.
-float findBlocker(vec2 uv, float zReceiver, int layer, float searchRadius, mat2 rot) {
-    float blockerDepthSum = 0.0;
-    int numBlockers = 0;
-    // Use first 8 Poisson samples for blocker search (cheaper than full 16)
-    for (int i = 0; i < 8; i++) {
-        vec2 offset = (rot * poissonDisk16[i]) * searchRadius;
-        float depth = texture(uShadowMapsRegular, vec3(uv + offset, float(layer))).r;
-        // Reverse-Z: blockers have GREATER depth than receiver
-        if (depth > zReceiver + 0.0002) {
-            blockerDepthSum += depth;
-            numBlockers++;
-        }
-    }
-    if (numBlockers == 0) return -1.0;
-    return blockerDepthSum / float(numBlockers);
 }
 
 vec3 shadowProjCoords(vec3 fragPosWorld, int layer) {
@@ -334,9 +313,6 @@ float computeShadowCascades(vec3 fragPosWorld, vec3 N, vec3 L, float cascadeDist
 const float MAX_ENV_MIP_LEVEL = 8.0; 
 const float SUN_RADIANCE_TO_IRRADIANCE = 4.0;
 const float SUN_VOLUMETRIC_INTENSITY = 3.0;   
-const float LEGACY_LIGHTING_INTENSITY = 2.5;  
-const float LOD_LIGHTING_INTENSITY = 1.5;     
-const float NON_PBR_ROUGHNESS = 0.5;          
 const vec3 IBL_CLAMP = vec3(3.0);             
 const float VOLUMETRIC_DENSITY_FACTOR = 0.1;  
 const float DIELECTRIC_F0 = 0.04;             
@@ -448,12 +424,6 @@ float debugOutdoorFactor(float skyLight) {
     return baselineOutdoorFactor(skyLight);
 }
 
-float classicLightCurve(float lightLevel) {
-    float l = clamp(lightLevel, 0.0, 1.0);
-    if (l <= 0.0) return 0.0;
-    return 0.075 + 0.925 * pow(l, 1.35);
-}
-
 vec3 computeTerrainLighting(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness, float totalShadow, float skyLight, float skyVisibility, vec3 blockLight, float ao, float ssao, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
     float atmosphere = skyVisibilityFactor(skyVisibility);
     float nDotL = max(dot(N, L), 0.0);
@@ -525,62 +495,6 @@ vec4 computeVolumetric(vec3 rayStart, vec3 rayEnd, float dither) {
     return vec4(accumulatedScattering, transmittance);
 }
 
-vec3 computeSunShafts(vec3 rayStart, vec3 rayEnd, vec3 receiverNormal, float receiverSkyLight, float receiverShadow, float dither) {
-    if (global.volumetric_params.x < 0.5 || global.shadow_params.w < 0.5 || global.params.w <= 0.02) return vec3(0.0);
-
-    vec3 rayDir = rayEnd - rayStart;
-    float totalDist = length(rayDir);
-    if (totalDist <= 0.001) return vec3(0.0);
-    rayDir /= totalDist;
-
-    vec3 L = normalize(global.sun_dir.xyz);
-    float viewScatter = pow(clamp(dot(rayDir, L) * 0.5 + 0.5, 0.0, 1.0), 2.0);
-    float caveGate = 1.0 - smoothstep(0.08, 0.55, clamp(receiverSkyLight, 0.0, 1.0));
-    float shadowGate = smoothstep(0.06, 0.70, receiverShadow);
-    float visibilityGate = caveGate * mix(0.70, 1.0, shadowGate);
-    float receiverGate = smoothstep(-0.10, 0.55, receiverNormal.y);
-    visibilityGate *= receiverGate;
-    if (visibilityGate <= 0.001) return vec3(0.0);
-
-    const int steps = 8;
-    float maxDist = min(totalDist, 80.0);
-    float stepSize = maxDist / float(steps);
-    float litAccum = 0.0;
-    float weightAccum = 0.0;
-
-    for (int i = 0; i < steps; i++) {
-        float t = (float(i) + dither) * stepSize;
-        vec3 p = rayStart + rayDir * t;
-        float depth = length(p);
-        float lit = getVolShadow(p, depth);
-        float distanceFade = 1.0 - smoothstep(0.0, maxDist, t);
-        float weight = mix(0.35, 1.0, distanceFade);
-        litAccum += lit * weight;
-        weightAccum += weight;
-    }
-
-    float viewBeam = litAccum / max(weightAccum, 0.001);
-    viewBeam *= mix(0.45, 1.0, viewScatter);
-
-    float sunSpill = 0.0;
-    const int spillSteps = 6;
-    for (int i = 0; i < spillSteps; i++) {
-        float t = (float(i) + 0.5 + dither * 0.25) * 2.25;
-        vec3 p = rayEnd + L * t;
-        float lit = getVolShadow(p, length(p));
-        float weight = 1.0 - float(i) / float(spillSteps);
-        sunSpill += lit * weight;
-    }
-    sunSpill /= 3.5;
-
-    float beam = viewBeam * 0.65 + sunSpill * 0.18;
-    beam *= visibilityGate;
-    beam *= smoothstep(0.03, 0.40, maxDist / 80.0);
-
-    vec3 warmSun = mix(global.sun_color.rgb, vec3(1.0, 0.84, 0.52), 0.35);
-    return warmSun * beam * global.volumetric_params.y * 1.35;
-}
-
 void main() {
     vec3 color;
     float outputAlpha = 1.0;
@@ -632,7 +546,7 @@ void main() {
     vec3 L = normalize(global.sun_dir.xyz);
     float skyVisibility = clamp(vSkyLight, 0.0, 1.0);
     float atmosphericVisibility = skyVisibilityFactor(skyVisibility);
-    bool isCloud = vTileID < 0 && vEntranceDir.x > 0.9 && vEntranceDir.y < -0.9;
+    bool isCloud = vCloud > 0.5;
     float cascadeDistance = max(vViewDepth, 0.0);
     int layer = selectShadowCascade(vFragPosWorld, cascadeDistance);
     float shadowFactor = 0.0;
@@ -729,8 +643,6 @@ void main() {
             color = clamp(vBlockLight, 0.0, 1.0);
         } else if (debugChannel < DEBUG_OUTDOOR_FACTOR + 0.5) {
             color = vec3(debugOutdoor);
-        } else if (debugChannel < DEBUG_ENTRANCE_BOUNCE + 0.5) {
-            color = mix(vec3(0.02, 0.02, 0.02), vec3(0.18, 0.85, 1.0), clamp(vEntranceBounce, 0.0, 1.0));
         } else if (debugChannel < DEBUG_SKYLIGHT + 0.5) {
             color = vec3(clamp(vSkyLight, 0.0, 1.0));
         } else if (debugChannel < DEBUG_AMBIENT_OCCLUSION + 0.5) {

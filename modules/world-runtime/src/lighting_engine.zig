@@ -102,8 +102,6 @@ const VOXEL_NEIGHBOR_OFFSETS = [_][3]i32{ .{ 1, 0, 0 }, .{ -1, 0, 0 }, .{ 0, 1, 
 
 fn resetChunkLighting(chunk: *Chunk) void {
     for (&chunk.light) |*light| light.* = PackedLight.init(0, 0);
-    for (&chunk.entrance_bounce) |*bounce| bounce.* = 0;
-    for (&chunk.entrance_dir) |*dir| dir.* = world_core.packEntranceDir(0, 0);
 }
 
 fn seedChunkSunlight(chunk: *Chunk, allocator: std.mem.Allocator, queue: *std.ArrayListUnmanaged(SkyNode)) !void {
@@ -225,12 +223,9 @@ test "WorldLightingEngine removes stale light across the loaded component" {
     center.chunk.generated = true;
     east.chunk.generated = true;
     center.chunk.setBlock(CHUNK_SIZE_X - 1, 4, 1, .torch);
-    east.chunk.setEntranceBounce(2, 4, 1, 7);
-    east.chunk.setEntranceDir(2, 4, 1, world_core.packEntranceDir(1, -1));
     var lighting = WorldLightingEngine.init(&storage, testing.allocator);
     try lighting.afterBlockMutation(0, 0);
-    try testing.expectEqual(@as(u4, 0), east.chunk.getEntranceBounce(2, 4, 1));
-    try testing.expectEqual(world_core.packEntranceDir(0, 0), east.chunk.getEntranceDir(2, 4, 1));
+    try testing.expect(east.chunk.getLight(2, 4, 1).getBlockLightR() > 0);
     center.chunk.setBlock(CHUNK_SIZE_X - 1, 4, 1, .air);
     try lighting.afterBlockMutation(0, 0);
     try testing.expectEqual(@as(u4, 0), east.chunk.getLight(2, 4, 1).getBlockLightR());

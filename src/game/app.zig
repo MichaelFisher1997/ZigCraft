@@ -610,7 +610,6 @@ fn applyShadowTestPreset(settings: *Settings) void {
     settings.shadow_cascade_blend = false;
     settings.pbr_enabled = false;
     settings.volumetric_lighting_enabled = false;
-    settings.sun_shafts_enabled = false;
     settings.ssao_enabled = false;
     settings.lpv_enabled = false;
     settings.taa_enabled = false;

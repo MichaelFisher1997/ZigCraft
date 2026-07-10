@@ -40,8 +40,6 @@ pub const FaceKey = struct {
     block: BlockType,
     side: bool,
     light: PackedLight,
-    entrance_bounce: u4,
-    entrance_dir: u8,
     color: [3]f32,
 };
 
@@ -91,14 +89,10 @@ pub fn meshSlice(
 
             if (boundary.isEmittingSubchunk(axis, s - 1, u, v, y_min, y_max) and b1_emits and b1_cube and !b2_def.occludes(b1_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
-                const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
-                const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, true);
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, axis, s - 1, u, v, b1);
-                mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
+                mask[u + v * du] = .{ .block = b1, .side = true, .light = light, .color = color };
             } else if (boundary.isEmittingSubchunk(axis, s, u, v, y_min, y_max) and b2_emits and b2_cube and !b1_def.occludes(b2_def, axis)) {
                 const light = lighting_sampler.sampleLightAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
-                const entrance_bounce = lighting_sampler.sampleEntranceBounceAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
-                const entrance_dir = lighting_sampler.sampleEntranceDirAtBoundary(chunk, neighbors, axis, s, u, v, si, false);
                 const face = switch (axis) {
                     .top => Face.bottom,
                     .east => Face.west,
@@ -106,7 +100,7 @@ pub fn meshSlice(
                     else => unreachable,
                 };
                 const color = biome_color_sampler.getBlockColor(chunk, neighbors, axis, face, s, u, v, b2);
-                mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .entrance_bounce = entrance_bounce, .entrance_dir = entrance_dir, .color = color };
+                mask[u + v * du] = .{ .block = b2, .side = false, .light = light, .color = color };
             }
         }
     }
@@ -146,7 +140,7 @@ pub fn meshSlice(
                 .cutout => cutout_list,
                 else => solid_list,
             };
-            try addGreedyFace(allocator, target, axis, s, su, sv, width, height, k_def, k.side, si, k.light, k.entrance_bounce, k.entrance_dir, k.color, chunk, neighbors, atlas);
+            try addGreedyFace(allocator, target, axis, s, su, sv, width, height, k_def, k.side, si, k.light, k.color, chunk, neighbors, atlas);
 
             var dy: u32 = 0;
             while (dy < height) : (dy += 1) {
@@ -175,8 +169,6 @@ fn addGreedyFace(
     forward: bool,
     si: u32,
     face_light: PackedLight,
-    face_entrance_bounce: u4,
-    face_entrance_dir: u8,
     tint: [3]f32,
     chunk: *const Chunk,
     neighbors: NeighborChunks,
@@ -259,7 +251,7 @@ fn addGreedyFace(
 
     // Calculate AO for all 4 corners
     const ao = ao_calculator.calculateQuadAO(chunk, neighbors, axis, forward, p);
-    const face_light_floor = lighting_sampler.normalizeLightValues(face_light, face_entrance_bounce, face_entrance_dir);
+    const face_light_floor = lighting_sampler.normalizeLightValues(face_light);
 
     // Choose triangle orientation to minimize AO artifacts (flipping the diagonal)
     var idxs: [6]usize = undefined;
@@ -271,7 +263,7 @@ fn addGreedyFace(
 
     for (idxs) |i| {
         const norm_light = maxLightFloor(lighting_sampler.sampleSmoothLightAtVertex(chunk, neighbors, p[i], nf), face_light_floor);
-        try verts.append(allocator, Vertex.initWithEntrance(
+        try verts.append(allocator, Vertex.init(
             p[i],
             col,
             nf,
@@ -280,8 +272,6 @@ fn addGreedyFace(
             norm_light.skylight,
             norm_light.blocklight,
             ao[i],
-            norm_light.entrance_bounce,
-            norm_light.entrance_dir,
         ));
     }
 }
@@ -292,8 +282,7 @@ fn canMergeFaces(a: FaceKey, b: FaceKey) bool {
     const r_diff = @as(i8, @intCast(b.light.getBlockLightR())) - @as(i8, @intCast(a.light.getBlockLightR()));
     const g_diff = @as(i8, @intCast(b.light.getBlockLightG())) - @as(i8, @intCast(a.light.getBlockLightG()));
     const bl_diff = @as(i8, @intCast(b.light.getBlockLightB())) - @as(i8, @intCast(a.light.getBlockLightB()));
-    const bounce_diff = @as(i8, @intCast(b.entrance_bounce)) - @as(i8, @intCast(a.entrance_bounce));
-    if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bl_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bounce_diff) > MAX_LIGHT_DIFF_FOR_MERGE or b.entrance_dir != a.entrance_dir) return false;
+    if (@abs(sky_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(r_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(g_diff) > MAX_LIGHT_DIFF_FOR_MERGE or @abs(bl_diff) > MAX_LIGHT_DIFF_FOR_MERGE) return false;
 
     const diff_r = @abs(b.color[0] - a.color[0]);
     const diff_g = @abs(b.color[1] - a.color[1]);
@@ -309,7 +298,5 @@ fn maxLightFloor(light: lighting_sampler.NormalizedLight, floor: lighting_sample
             @max(light.blocklight[1], floor.blocklight[1]),
             @max(light.blocklight[2], floor.blocklight[2]),
         },
-        .entrance_bounce = @max(light.entrance_bounce, floor.entrance_bounce),
-        .entrance_dir = if (light.entrance_bounce >= floor.entrance_bounce) light.entrance_dir else floor.entrance_dir,
     };
 }

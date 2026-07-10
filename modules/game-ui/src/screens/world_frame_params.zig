@@ -84,8 +84,6 @@ pub fn build(input: BuildInput) BuiltParams {
             .exposure = input.settings.exposure,
             .saturation = input.settings.saturation,
             .volumetric_enabled = input.settings.volumetric_lighting_enabled and !input.safe_mode and !input.startup_light_render,
-            .sun_shafts_enabled = input.settings.sun_shafts_enabled and input.shadow_sandbox_active and !input.safe_mode,
-            .sun_shafts_intensity = input.settings.sun_shafts_intensity,
             .volumetric_density = input.settings.volumetric_density,
             .volumetric_steps = input.settings.volumetric_steps,
             .volumetric_scattering = input.settings.volumetric_scattering,

@@ -21,7 +21,6 @@ fn makeWireframeVertex(x: f32, y: f32, z: f32) Vertex {
         1.0,
         .{ 1.0, 1.0, 1.0 },
         1.0,
-        0.0,
     );
 }
 
@@ -55,7 +54,7 @@ const wireframe_line_vertices = [_]Vertex{
 const wireframe_line_vertex_count: u32 = @intCast(wireframe_line_vertices.len);
 
 fn makeSolidVertex(x: f32, y: f32, z: f32) Vertex {
-    return Vertex.init(.{ x, y, z }, .{ 1.0, 1.0, 1.0 }, .{ 0, 1, 0 }, .{ 0, 0 }, 0xffff, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0, 0.0);
+    return Vertex.init(.{ x, y, z }, .{ 1.0, 1.0, 1.0 }, .{ 0, 1, 0 }, .{ 0, 0 }, 0xffff, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
 }
 
 const solid_box_vertices = [_]Vertex{

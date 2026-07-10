@@ -117,10 +117,10 @@ pub const HandRenderer = struct {
     }
 
     fn addQuad(verts: *[36]Vertex, idx: *usize, p0: [3]f32, p1: [3]f32, p2: [3]f32, p3: [3]f32, normal: [3]f32, tile: u16, color: [3]f32) void {
-        const v0 = Vertex.init(p0, color, normal, .{ 0, 0 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0, 0.0);
-        const v1 = Vertex.init(p1, color, normal, .{ 1, 0 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0, 0.0);
-        const v2 = Vertex.init(p2, color, normal, .{ 1, 1 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0, 0.0);
-        const v3 = Vertex.init(p3, color, normal, .{ 0, 1 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0, 0.0);
+        const v0 = Vertex.init(p0, color, normal, .{ 0, 0 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
+        const v1 = Vertex.init(p1, color, normal, .{ 1, 0 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
+        const v2 = Vertex.init(p2, color, normal, .{ 1, 1 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
+        const v3 = Vertex.init(p3, color, normal, .{ 0, 1 }, tile, 1.0, .{ 1.0, 1.0, 1.0 }, 1.0);
 
         // Triangle 1: 0 -> 2 -> 1 (CCW)
         verts[idx.*] = v0;

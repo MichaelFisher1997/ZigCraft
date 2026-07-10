@@ -82,26 +82,6 @@ pub inline fn getLightCross(chunk: *const Chunk, neighbors: NeighborChunks, x: i
     return chunk.getLightSafe(x, y, z);
 }
 
-pub inline fn getEntranceBounceCross(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) u4 {
-    if (y < 0 or y >= CHUNK_SIZE_Y) return 0;
-
-    if (x < 0) return if (neighbors.west) |w| w.getEntranceBounceSafe(CHUNK_SIZE_X - 1, y, z) else 0;
-    if (x >= CHUNK_SIZE_X) return if (neighbors.east) |e| e.getEntranceBounceSafe(0, y, z) else 0;
-    if (z < 0) return if (neighbors.north) |n| n.getEntranceBounceSafe(x, y, CHUNK_SIZE_Z - 1) else 0;
-    if (z >= CHUNK_SIZE_Z) return if (neighbors.south) |s| s.getEntranceBounceSafe(x, y, 0) else 0;
-    return chunk.getEntranceBounceSafe(x, y, z);
-}
-
-pub inline fn getEntranceDirCross(chunk: *const Chunk, neighbors: NeighborChunks, x: i32, y: i32, z: i32) u8 {
-    if (y < 0 or y >= CHUNK_SIZE_Y) return 0;
-
-    if (x < 0) return if (neighbors.west) |w| w.getEntranceDirSafe(CHUNK_SIZE_X - 1, y, z) else 0;
-    if (x >= CHUNK_SIZE_X) return if (neighbors.east) |e| e.getEntranceDirSafe(0, y, z) else 0;
-    if (z < 0) return if (neighbors.north) |n| n.getEntranceDirSafe(x, y, CHUNK_SIZE_Z - 1) else 0;
-    if (z >= CHUNK_SIZE_Z) return if (neighbors.south) |s| s.getEntranceDirSafe(x, y, 0) else 0;
-    return chunk.getEntranceDirSafe(x, y, z);
-}
-
 /// Get biome ID with cross-chunk neighbor lookup.
 /// Handles diagonal corners (both X and Z out of bounds) by clamping to the
 /// nearest in-bounds corner of the appropriate neighbor or current chunk.

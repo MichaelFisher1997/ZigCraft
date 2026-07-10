@@ -182,7 +182,7 @@ const MockWorld = struct {
         _ = world_x;
         _ = world_y;
         _ = world_z;
-        return .{ .sky = 15, .block = 3, .entrance_bounce = 1 };
+        return .{ .sky = 15, .block = 3 };
     }
 
     fn getRegionInfo(ptr: *anyopaque, world_x: i32, world_z: i32) worldgen.RegionInfo {

@@ -15,10 +15,6 @@ pub const MAX_LIGHT = @import("chunk_constants.zig").MAX_LIGHT;
 
 pub const PackedLight = @import("light.zig").PackedLight;
 
-pub const packEntranceDir = @import("light.zig").packEntranceDir;
-pub const unpackEntranceDirX = @import("light.zig").unpackEntranceDirX;
-pub const unpackEntranceDirZ = @import("light.zig").unpackEntranceDirZ;
-
 pub const Chunk = struct {
     pub const State = enum {
         missing,
@@ -37,8 +33,6 @@ pub const Chunk = struct {
     chunk_z: i32,
     blocks: [CHUNK_VOLUME]BlockType,
     light: [CHUNK_VOLUME]PackedLight,
-    entrance_bounce: [CHUNK_VOLUME]u4,
-    entrance_dir: [CHUNK_VOLUME]u8,
     biomes: [CHUNK_SIZE_X * CHUNK_SIZE_Z]BiomeId,
     heightmap: [CHUNK_SIZE_X * CHUNK_SIZE_Z]i16,
     state: State = .missing,
@@ -62,8 +56,6 @@ pub const Chunk = struct {
             .chunk_z = chunk_z,
             .blocks = [_]BlockType{.air} ** CHUNK_VOLUME,
             .light = [_]PackedLight{PackedLight.init(0, 0)} ** CHUNK_VOLUME,
-            .entrance_bounce = [_]u4{0} ** CHUNK_VOLUME,
-            .entrance_dir = [_]u8{packEntranceDir(0, 0)} ** CHUNK_VOLUME,
             .biomes = [_]BiomeId{.plains} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
             .heightmap = [_]i16{0} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
             .state = .missing,
@@ -154,30 +146,6 @@ pub const Chunk = struct {
         self.light[getIndex(x, y, z)].setSkyLight(val);
     }
 
-    /// Reads the entrance-bounce light value used by cave/entrance lighting propagation.
-    /// Coordinates must be in bounds.
-    pub fn getEntranceBounce(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
-        return self.entrance_bounce[getIndex(x, y, z)];
-    }
-
-    /// Writes the entrance-bounce light value used by cave/entrance lighting propagation.
-    /// Coordinates must be in bounds and `val` is stored as a 4-bit value.
-    pub fn setEntranceBounce(self: *Chunk, x: u32, y: u32, z: u32, val: u4) void {
-        self.entrance_bounce[getIndex(x, y, z)] = val;
-    }
-
-    /// Reads the packed horizontal direction associated with entrance lighting.
-    /// Coordinates must be in bounds.
-    pub fn getEntranceDir(self: *const Chunk, x: u32, y: u32, z: u32) u8 {
-        return self.entrance_dir[getIndex(x, y, z)];
-    }
-
-    /// Writes the packed horizontal direction associated with entrance lighting.
-    /// Use `packEntranceDir` to encode direction components.
-    pub fn setEntranceDir(self: *Chunk, x: u32, y: u32, z: u32, val: u8) void {
-        self.entrance_dir[getIndex(x, y, z)] = val;
-    }
-
     /// Reads only the block-light channel at chunk-local coordinates.
     /// Coordinates must be in bounds.
     pub fn getBlockLight(self: *const Chunk, x: u32, y: u32, z: u32) u4 {
@@ -222,20 +190,6 @@ pub const Chunk = struct {
         if (y >= CHUNK_SIZE_Y) return PackedLight.init(MAX_LIGHT, 0);
         if (y < 0) return PackedLight.init(0, 0);
         return self.getLight(@intCast(x), @intCast(y), @intCast(z));
-    }
-
-    /// Safely reads entrance-bounce light for possibly out-of-bounds local coordinates.
-    /// Out-of-range samples return zero bounce light.
-    pub fn getEntranceBounceSafe(self: *const Chunk, x: i32, y: i32, z: i32) u4 {
-        if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return 0;
-        return self.getEntranceBounce(@intCast(x), @intCast(y), @intCast(z));
-    }
-
-    /// Safely reads packed entrance direction for possibly out-of-bounds local coordinates.
-    /// Out-of-range samples return the neutral zero direction.
-    pub fn getEntranceDirSafe(self: *const Chunk, x: i32, y: i32, z: i32) u8 {
-        if (x < 0 or x >= CHUNK_SIZE_X or z < 0 or z >= CHUNK_SIZE_Z or y < 0 or y >= CHUNK_SIZE_Y) return packEntranceDir(0, 0);
-        return self.getEntranceDir(@intCast(x), @intCast(y), @intCast(z));
     }
 
     /// Returns the world-space block X coordinate of this chunk's minimum X edge.

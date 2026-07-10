@@ -91,10 +91,10 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
             const face_z = target.z + face_offset.z;
             const target_light = telemetry.getDebugLightInfo(target.x, target.y, target.z);
             const face_light = telemetry.getDebugLightInfo(face_x, face_y, face_z);
-            const target_light_text = if (target_light) |l| std.fmt.bufPrint(&buf2, "TARGET S:{} B:{} E:{}", .{ l.sky, l.block, l.entrance_bounce }) catch "TARGET: ???" else "TARGET: missing";
+            const target_light_text = if (target_light) |l| std.fmt.bufPrint(&buf2, "TARGET S:{} B:{}", .{ l.sky, l.block }) catch "TARGET: ???" else "TARGET: missing";
             Font.drawText(ui, target_light_text, ux, uy + 5, 1.5, Color.white);
             uy += 25;
-            const face_light_text = if (face_light) |l| std.fmt.bufPrint(&buf2, "FACE AIR S:{} B:{} E:{} ({}, {}, {})", .{ l.sky, l.block, l.entrance_bounce, face_x, face_y, face_z }) catch "FACE AIR: ???" else "FACE AIR: missing";
+            const face_light_text = if (face_light) |l| std.fmt.bufPrint(&buf2, "FACE AIR S:{} B:{} ({}, {}, {})", .{ l.sky, l.block, face_x, face_y, face_z }) catch "FACE AIR: ???" else "FACE AIR: missing";
             Font.drawText(ui, face_light_text, ux, uy + 5, 1.5, Color.white);
             uy += 25;
             const tiles_text = std.fmt.bufPrint(&buf2, "TILES: T:{} B:{} S:{}", .{ tiles.top, tiles.bottom, tiles.side }) catch "TILES: ???";

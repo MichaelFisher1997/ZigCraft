@@ -28,15 +28,3 @@ test "fuzz corpus: PackedLight round-trips all channel nibbles" {
         }
     }
 }
-
-test "fuzz corpus: entrance direction nibble packing preserves signed range" {
-    var x: i8 = -8;
-    while (x <= 7) : (x += 1) {
-        var z: i8 = -8;
-        while (z <= 7) : (z += 1) {
-            const encoded = light.packEntranceDir(@intCast(x), @intCast(z));
-            try std.testing.expectEqual(@as(i4, @intCast(x)), light.unpackEntranceDirX(encoded));
-            try std.testing.expectEqual(@as(i4, @intCast(z)), light.unpackEntranceDirZ(encoded));
-        }
-    }
-}
