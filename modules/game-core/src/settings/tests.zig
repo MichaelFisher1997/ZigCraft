@@ -25,6 +25,7 @@ test "Preset Application" {
     try std.testing.expectEqual(@as(i32, 6), settings.render_distance);
     try std.testing.expectEqual(RenderDistancePreset.low, settings.render_distance_preset);
     try std.testing.expectEqual(true, settings.lod_enabled);
+    try std.testing.expectEqual(false, settings.lpv_enabled);
 
     presets.apply(&settings, 3);
     try std.testing.expectEqual(@as(u32, 3), settings.shadow_quality);

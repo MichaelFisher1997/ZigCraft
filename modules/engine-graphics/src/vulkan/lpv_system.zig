@@ -39,6 +39,7 @@ pub const LPVSystem = struct {
     propagation_factor: f32,
     center_retention: f32,
     enabled: bool,
+    resources_initialized: bool = false,
     update_interval_frames: u32 = 6,
 
     origin: Vec3 = Vec3.zero,
@@ -102,12 +103,20 @@ pub const LPVSystem = struct {
             },
         };
 
+        if (enabled) try self.initResources();
+
+        return self;
+    }
+
+    fn initResources(self: *LPVSystem) !void {
+        std.debug.assert(!self.resources_initialized);
+
         try self.createGridTextures();
         errdefer self.destroyGridTextures();
 
         const light_buffer_size = MAX_LIGHTS_PER_UPDATE * @sizeOf(GpuLight);
         self.light_buffer = try Utils.createVulkanBuffer(
-            &vk_ctx.vulkan_device,
+            &self.vk_ctx.vulkan_device,
             light_buffer_size,
             c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -115,9 +124,9 @@ pub const LPVSystem = struct {
         errdefer self.destroyLightBuffer();
 
         // Occlusion grid buffer: one u32 per cell (1 = opaque, 0 = transparent)
-        const occlusion_buffer_size = @as(usize, clamped_grid) * @as(usize, clamped_grid) * @as(usize, clamped_grid) * @sizeOf(u32);
+        const occlusion_buffer_size = @as(usize, self.grid_size) * @as(usize, self.grid_size) * @as(usize, self.grid_size) * @sizeOf(u32);
         self.occlusion_buffer = try Utils.createVulkanBuffer(
-            &vk_ctx.vulkan_device,
+            &self.vk_ctx.vulkan_device,
             occlusion_buffer_size,
             c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -130,19 +139,25 @@ pub const LPVSystem = struct {
         errdefer self.deinitComputeResources();
         try self.initComputeResources();
 
-        return self;
+        self.resources_initialized = true;
     }
 
-    pub fn deinit(self: *LPVSystem) void {
+    fn deinitResources(self: *LPVSystem) void {
+        if (!self.resources_initialized) return;
+
         self.deinitComputeResources();
         self.destroyOcclusionBuffer();
         self.destroyLightBuffer();
         self.destroyGridTextures();
+        self.resources_initialized = false;
+    }
+
+    pub fn deinit(self: *LPVSystem) void {
+        self.deinitResources();
         self.allocator.destroy(self);
     }
 
     pub fn setSettings(self: *LPVSystem, enabled: bool, intensity: f32, cell_size: f32, propagation_iterations: u32, grid_size: u32, update_interval_frames: u32) !void {
-        self.enabled = enabled;
         self.intensity = std.math.clamp(intensity, 0.0, 4.0);
         self.cell_size = @max(cell_size, 0.5);
         self.propagation_iterations = std.math.clamp(propagation_iterations, 1, 8);
@@ -151,6 +166,21 @@ pub const LPVSystem = struct {
         self.stats.update_interval_frames = self.update_interval_frames;
 
         const clamped_grid = std.math.clamp(grid_size, 16, 64);
+        if (!enabled) {
+            self.enabled = false;
+            self.deinitResources();
+            self.stats.light_count = 0;
+            self.stats.cpu_update_ms = 0.0;
+            return;
+        }
+
+        if (!self.resources_initialized) {
+            self.grid_size = clamped_grid;
+            self.stats.grid_size = clamped_grid;
+            try self.initResources();
+        }
+        self.enabled = true;
+
         if (clamped_grid == self.grid_size) return;
 
         const old_resources = GridResources{
@@ -229,6 +259,10 @@ pub const LPVSystem = struct {
         return self.cell_size;
     }
 
+    pub fn isEnabled(self: *const LPVSystem) bool {
+        return self.enabled and self.resources_initialized;
+    }
+
     pub fn update(self: *LPVSystem, world: ILPVWorld, camera_pos: Vec3, debug_overlay_enabled: bool) !void {
         self.current_frame +%= 1;
         const timer_start = std.Io.Clock.awake.now(std.Options.debug_io);
@@ -237,12 +271,7 @@ pub const LPVSystem = struct {
         self.stats.propagation_iterations = self.propagation_iterations;
         self.stats.update_interval_frames = self.update_interval_frames;
 
-        if (!self.enabled) {
-            self.active_grid_textures = self.grid_textures_a;
-            if (self.was_enabled_last_frame and debug_overlay_enabled) {
-                self.buildDebugOverlay(&.{}, 0);
-                try self.uploadDebugOverlay();
-            }
+        if (!self.isEnabled()) {
             self.was_enabled_last_frame = false;
             self.debug_overlay_was_enabled = debug_overlay_enabled;
             self.stats.light_count = 0;
@@ -550,6 +579,7 @@ pub const LPVSystem = struct {
     fn createGridTextures(self: *LPVSystem) !void {
         const resources = try self.createGridResources(self.grid_size);
         self.applyGridResources(resources);
+        errdefer self.destroyGridTextures();
 
         self.buildDebugOverlay(&.{}, 0);
         try self.uploadDebugOverlay();

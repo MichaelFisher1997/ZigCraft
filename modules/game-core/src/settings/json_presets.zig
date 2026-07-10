@@ -34,7 +34,7 @@ pub const PresetConfig = struct {
     volumetric_scattering: f32,
     ssao_enabled: bool,
     lpv_quality_preset: u32 = 1,
-    lpv_enabled: bool = true,
+    lpv_enabled: bool = false,
     lpv_intensity: f32 = 0.5,
     lpv_cell_size: f32 = 2.0,
     lpv_grid_size: u32 = 32,
