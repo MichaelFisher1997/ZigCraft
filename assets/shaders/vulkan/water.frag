@@ -151,7 +151,7 @@ void main() {
         base_normal = -base_normal;
     }
 
-    vec3 V = normalize(global.cam_pos.xyz - vFragPosWorld);
+    vec3 V = normalize(-vFragPosWorld);
 
     vec3 noise_normal = fbmNormal(vFragPosWorld.xz * 0.10, time);
     vec3 N = normalize(base_normal + noise_normal * 0.16);

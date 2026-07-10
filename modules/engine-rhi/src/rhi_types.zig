@@ -306,7 +306,6 @@ pub const FrameRenderParams = struct {
     fog_color: Vec3 = Vec3.init(0.7, 0.8, 0.9),
     fog_density: f32 = 0.0,
     pbr_enabled: bool = false,
-    simple_lighting_enabled: bool = false,
     shadow_apply_to_beauty: bool = false,
     shadow: ShadowConfig = .{},
     pbr_quality: u8 = 0,

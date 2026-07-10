@@ -40,7 +40,7 @@ pub fn updateGlobalUniforms(ctx: anytype, uniforms: rhi.GlobalUniforms, frame_pa
         .reserved0 = .{ 0.0, 0.0, 0.0, 0.0 },
         .params = .{ uniforms.time, uniforms.fog_density, if (uniforms.fog_enabled) 1.0 else 0.0, uniforms.sun_intensity },
         .lighting = .{ uniforms.ambient, if (uniforms.use_texture) 1.0 else 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, 0.0 },
-        .render_flags = .{ 0.0, 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, if (frame_params.simple_lighting_enabled) 1.0 else 0.0 },
+        .render_flags = .{ 0.0, 0.0, if (frame_params.pbr_enabled) 1.0 else 0.0, 0.0 },
         .shadow_params = .{ @floatFromInt(frame_params.shadow.pcf_samples), if (frame_params.shadow.cascade_blend) 1.0 else 0.0, frame_params.shadow.strength, if (frame_params.shadow_apply_to_beauty) 1.0 else 0.0 },
         .pbr_params = .{ @floatFromInt(frame_params.pbr_quality), frame_params.exposure, frame_params.saturation, if (frame_params.ssao_enabled) 1.0 else 0.0 },
         .volumetric_params = .{ if (frame_params.volumetric_enabled or frame_params.sun_shafts_enabled) 1.0 else 0.0, if (frame_params.sun_shafts_enabled) frame_params.sun_shafts_intensity else frame_params.volumetric_density, @floatFromInt(frame_params.volumetric_steps), frame_params.volumetric_scattering },

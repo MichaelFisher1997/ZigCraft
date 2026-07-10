@@ -352,12 +352,10 @@ pub const WorldScreen = struct {
             Font.drawText(ui, save_warning, warning_rect.x + 10.0 * ctx.settings.ui_scale, warning_rect.y + 10.0 * ctx.settings.ui_scale, 0.78 * ctx.settings.ui_scale, Color.rgba(1.0, 0.90, 0.84, 1.0));
         }
 
-        // TODO: Replace this stabilization toggle with a user-facing simple lighting setting.
-        const simple_lighting_mode = true;
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
-            ctx.settings.lpv_enabled and !safe_mode and !startup_light_render and !simple_lighting_mode,
+            ctx.settings.lpv_enabled and !safe_mode and !startup_light_render,
             ctx.settings.lpv_intensity,
             ctx.settings.lpv_cell_size,
             lpv_quality.propagation_iterations,
@@ -391,7 +389,6 @@ pub const WorldScreen = struct {
             .shadow_beauty_active = shadow_beauty_active,
             .shadow_distance_active = shadow_distance_active,
             .shadow_caster_distance_active = shadow_caster_distance_active,
-            .simple_lighting_mode = simple_lighting_mode,
             .lpv_cell_size = lpv_system.getCellSize(),
             .lpv_grid_size = lpv_system.getGridSize(),
             .lpv_origin = lpv_origin,
