@@ -50,7 +50,8 @@ pub const WorldMutationCoordinator = struct {
         if (world_y < 0 or world_y >= 256) return null;
 
         const cp = worldToChunk(world_x, world_z);
-        const data = try self.storage.getOrCreate(cp.chunk_x, cp.chunk_z);
+        const data = self.storage.get(cp.chunk_x, cp.chunk_z) orelse return null;
+        if (!data.chunk.generated) return null;
         const local = worldToLocal(world_x, world_z);
 
         const local_y: u32 = @intCast(world_y);
@@ -109,6 +110,8 @@ test "WorldMutationCoordinator places block within bounds" {
     var storage = ChunkStorage.init(testing.allocator);
     defer storage.deinitWithoutRHI();
 
+    const data = try storage.getOrCreate(0, 0);
+    data.chunk.generated = true;
     var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
     const result = (try mutation.applyBlockMutation(1, 64, 2, .stone)).?;
 
@@ -132,7 +135,7 @@ test "WorldMutationCoordinator ignores out-of-bounds y" {
     try testing.expectEqual(@as(usize, 0), storage.count());
 }
 
-test "WorldMutationCoordinator marks boundary neighbors dirty" {
+test "WorldMutationCoordinator relights nearby loaded chunks after a boundary edit" {
     const testing = std.testing;
 
     var storage = ChunkStorage.init(testing.allocator);
@@ -143,6 +146,11 @@ test "WorldMutationCoordinator marks boundary neighbors dirty" {
     const east = try storage.getOrCreate(1, 0);
     const north = try storage.getOrCreate(0, -1);
     const south = try storage.getOrCreate(0, 1);
+    center.chunk.generated = true;
+    west.chunk.generated = true;
+    east.chunk.generated = true;
+    north.chunk.generated = true;
+    south.chunk.generated = true;
     center.chunk.dirty = false;
     west.chunk.dirty = false;
     east.chunk.dirty = false;
@@ -153,25 +161,23 @@ test "WorldMutationCoordinator marks boundary neighbors dirty" {
     _ = try mutation.applyBlockMutation(0, 64, 0, .stone);
     try testing.expect(west.chunk.dirty);
     try testing.expect(north.chunk.dirty);
-    try testing.expect(!east.chunk.dirty);
-    try testing.expect(!south.chunk.dirty);
+    try testing.expect(east.chunk.dirty);
+    try testing.expect(south.chunk.dirty);
 
-    west.chunk.dirty = false;
-    north.chunk.dirty = false;
     _ = try mutation.applyBlockMutation(CHUNK_SIZE_X - 1, 64, CHUNK_SIZE_Z - 1, .dirt);
     try testing.expect(east.chunk.dirty);
     try testing.expect(south.chunk.dirty);
 }
 
-test "WorldMutationCoordinator propagates allocation failure" {
+test "WorldMutationCoordinator does not create missing chunks" {
     const testing = std.testing;
 
-    var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
-    var storage = ChunkStorage.init(failing.allocator());
+    var storage = ChunkStorage.init(testing.allocator);
     defer storage.deinitWithoutRHI();
 
-    var mutation = WorldMutationCoordinator.init(&storage, failing.allocator(), null, false);
-    try testing.expectError(error.OutOfMemory, mutation.applyBlockMutation(1, 64, 2, .stone));
+    var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
+    try testing.expect((try mutation.applyBlockMutation(1, 64, 2, .stone)) == null);
+    try testing.expectEqual(@as(usize, 0), storage.count());
 }
 
 test "WorldMutationCoordinator relights dug tunnel from skylight shaft" {
@@ -181,6 +187,7 @@ test "WorldMutationCoordinator relights dug tunnel from skylight shaft" {
     defer storage.deinitWithoutRHI();
 
     const data = try storage.getOrCreate(0, 0);
+    data.chunk.generated = true;
     for (0..CHUNK_SIZE_Z) |z| {
         for (0..CHUNK_SIZE_X) |x| {
             data.chunk.setBlock(@intCast(x), 5, @intCast(z), .stone);
@@ -206,6 +213,8 @@ test "WorldMutationCoordinator propagates skylight across loaded chunk border" {
 
     const center = try storage.getOrCreate(0, 0);
     const east = try storage.getOrCreate(1, 0);
+    center.chunk.generated = true;
+    east.chunk.generated = true;
     for (0..CHUNK_SIZE_Z) |z| {
         for (0..CHUNK_SIZE_X) |x| {
             center.chunk.setBlock(@intCast(x), 5, @intCast(z), .stone);
@@ -227,6 +236,7 @@ test "WorldMutationCoordinator clears stale block light after emitter removal" {
     defer storage.deinitWithoutRHI();
 
     const data = try storage.getOrCreate(0, 0);
+    data.chunk.generated = true;
     var mutation = WorldMutationCoordinator.init(&storage, testing.allocator, null, false);
 
     _ = try mutation.applyBlockMutation(4, 4, 4, .torch);

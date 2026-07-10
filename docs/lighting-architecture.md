@@ -1,6 +1,6 @@
 # Lighting Architecture
 
-Terrain uses one production lighting model: skylight and RGB block light stored in `PackedLight` and propagated by `WorldLightingEngine` across each connected loaded chunk component. Chunk arrival and block mutations trigger reconciliation; unloaded chunks are a propagation frontier.
+Terrain uses one production lighting model: skylight and RGB block light stored in `PackedLight` and propagated by `WorldLightingEngine` across the loaded 3x3 chunk window around a chunk arrival or block mutation. The 15-block light range cannot extend beyond one 16-block chunk boundary on either horizontal axis; unloaded chunks remain a propagation frontier.
 
 World generation may seed local light for initial chunk data. Runtime reconciliation is authoritative and removes stale values before meshing. Entrance-bounce storage, directional packing, and its mesh/shader path have been retired; save files contain only `PackedLight`, so no chunk migration is needed.
 

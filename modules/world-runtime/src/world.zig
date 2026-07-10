@@ -949,7 +949,7 @@ pub const World = struct {
     /// Applies a block mutation at world-space coordinates.
     /// Updates chunk data and schedules affected mesh/render state refreshes. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
-        _ = try self.mutation.applyBlockMutation(world_x, world_y, world_z, block);
+        if ((try self.mutation.applyBlockMutation(world_x, world_y, world_z, block)) == null) return;
         // Notify the LOD system so distant terrain reflects player edits after
         // the player teleports away. Coalesced on a debounce inside LODManager.
         if (self.lod) |lod| {

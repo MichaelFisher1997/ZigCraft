@@ -12,8 +12,9 @@ const block_registry = world_core.block_registry;
 const ChunkKey = world_core.ChunkKey;
 const ChunkStorage = @import("world-meshing").ChunkStorage;
 
-/// Solves light for the connected loaded component containing a chunk.
-/// Unloaded chunks are a frontier; their arrival triggers another reconciliation.
+/// Solves light in the loaded 3x3 chunk window around a change.
+/// Voxel light has a maximum range of 15 blocks, so it cannot cross more than
+/// one 16-block chunk boundary on either horizontal axis.
 pub const WorldLightingEngine = struct {
     storage: *ChunkStorage,
     allocator: std.mem.Allocator,
@@ -38,8 +39,8 @@ pub const WorldLightingEngine = struct {
             while (chunks.next()) |chunk| chunk.*.unpin();
         }
 
-        // Pin the complete component while the storage map is stable, then do
-        // the expensive solve without blocking unrelated storage operations.
+        // Pin the local light-influence window while the storage map is stable,
+        // then solve without blocking unrelated storage operations.
         self.storage.chunks_mutex.lockShared();
         var storage_locked = true;
         defer {
@@ -50,21 +51,18 @@ pub const WorldLightingEngine = struct {
         try component.put(.{ .x = center_cx, .z = center_cz }, &center.chunk);
         center.chunk.pin();
 
-        var discovery = std.ArrayListUnmanaged(ChunkCoords).empty;
-        defer discovery.deinit(self.allocator);
-        try discovery.append(self.allocator, .{ .cx = center_cx, .cz = center_cz });
-
-        var index: usize = 0;
-        while (index < discovery.items.len) : (index += 1) {
-            const coords = discovery.items[index];
-            for (CARDINAL_CHUNK_OFFSETS) |offset| {
-                const key = ChunkKey{ .x = coords.cx + offset[0], .z = coords.cz + offset[1] };
+        var dz: i32 = -1;
+        while (dz <= 1) : (dz += 1) {
+            const cz = std.math.add(i32, center_cz, dz) catch continue;
+            var dx: i32 = -1;
+            while (dx <= 1) : (dx += 1) {
+                const cx = std.math.add(i32, center_cx, dx) catch continue;
+                const key = ChunkKey{ .x = cx, .z = cz };
                 if (component.contains(key)) continue;
                 const data = self.storage.chunks.get(key) orelse continue;
                 if (!data.chunk.generated) continue;
                 try component.put(key, &data.chunk);
                 data.chunk.pin();
-                try discovery.append(self.allocator, .{ .cx = key.x, .cz = key.z });
             }
         }
         self.storage.chunks_mutex.unlockShared();
@@ -92,12 +90,10 @@ pub const WorldLightingEngine = struct {
     }
 };
 
-const ChunkCoords = struct { cx: i32, cz: i32 };
 const ComponentChunks = std.AutoHashMap(ChunkKey, *Chunk);
 const SkyNode = struct { cx: i32, cz: i32, x: u8, y: u16, z: u8, light: u4 };
 const RgbNode = struct { cx: i32, cz: i32, x: u8, y: u16, z: u8, r: u4, g: u4, b: u4 };
 const LoadedStep = struct { cx: i32, cz: i32, x: u32, y: u32, z: u32, chunk: *Chunk };
-const CARDINAL_CHUNK_OFFSETS = [_][2]i32{ .{ 0, -1 }, .{ 0, 1 }, .{ 1, 0 }, .{ -1, 0 } };
 const VOXEL_NEIGHBOR_OFFSETS = [_][3]i32{ .{ 1, 0, 0 }, .{ -1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, -1, 0 }, .{ 0, 0, 1 }, .{ 0, 0, -1 } };
 
 fn resetChunkLighting(chunk: *Chunk) void {
@@ -229,4 +225,26 @@ test "WorldLightingEngine removes stale light across the loaded component" {
     center.chunk.setBlock(CHUNK_SIZE_X - 1, 4, 1, .air);
     try lighting.afterBlockMutation(0, 0);
     try testing.expectEqual(@as(u4, 0), east.chunk.getLight(2, 4, 1).getBlockLightR());
+}
+
+test "WorldLightingEngine limits relighting to the local chunk window" {
+    const testing = std.testing;
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const center = try storage.getOrCreate(0, 0);
+    const adjacent = try storage.getOrCreate(1, 0);
+    const distant = try storage.getOrCreate(2, 0);
+    center.chunk.generated = true;
+    adjacent.chunk.generated = true;
+    distant.chunk.generated = true;
+    distant.chunk.setLight(1, 1, 1, PackedLight.init(0, 13));
+
+    var lighting = WorldLightingEngine.init(&storage, testing.allocator);
+    _ = try lighting.reconcileChunkArrival(0, 0);
+
+    try testing.expect(center.chunk.lighting_valid);
+    try testing.expect(adjacent.chunk.lighting_valid);
+    try testing.expect(!distant.chunk.lighting_valid);
+    try testing.expectEqual(@as(u4, 13), distant.chunk.getLight(1, 1, 1).getBlockLightR());
 }
