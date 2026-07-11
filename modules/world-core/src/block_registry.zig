@@ -49,6 +49,13 @@ pub fn lightAttenuation(block: BlockType) u4 {
     return if (block == .water) 2 else 1;
 }
 
+/// Direct skylight does not decay through air, but water needs enough residual
+/// light for the floor of ordinary lakes to remain readable.
+pub fn attenuateVerticalSkylight(light: u4, block: BlockType) u4 {
+    if (block != .water) return light;
+    return @max(light -| 2, @as(u4, 6));
+}
+
 pub const AttachmentFaces = packed struct {
     top: bool = false,
     bottom: bool = false,
@@ -433,8 +440,8 @@ pub const BLOCK_REGISTRY = blk: {
 
         // 8. Render Shape
         def.render_shape = switch (id) {
-            .tall_grass, .tall_seagrass, .kelp => .tall_cross,
-            .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch, .seagrass, .seaweed => .cross,
+            .tall_grass, .tall_seagrass => .tall_cross,
+            .flower_red, .flower_yellow, .dead_bush, .acacia_sapling, .bamboo, .torch, .seagrass, .kelp, .seaweed => .cross,
             .coral_fan => .flat_quad,
             .snow_layer => .flat_quad,
             .vine => .wall_attached,

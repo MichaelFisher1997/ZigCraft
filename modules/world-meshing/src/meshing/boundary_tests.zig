@@ -62,10 +62,10 @@ test "getLightCross cross-chunk south neighbor" {
     try testing.expectEqual(@as(u4, 11), light.getSkyLight());
 }
 
-test "getLightCross null neighbor returns max light" {
+test "getLightCross null neighbor returns no underground light" {
     var chunk = Chunk.init(0, 0);
     const light = boundary.getLightCross(&chunk, .empty, 16, 64, 8);
-    try testing.expectEqual(@as(u4, MAX_LIGHT), light.getSkyLight());
+    try testing.expectEqual(@as(u4, 0), light.getSkyLight());
 }
 
 test "getBiomeAt within chunk" {

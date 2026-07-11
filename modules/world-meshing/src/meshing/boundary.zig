@@ -75,10 +75,10 @@ pub inline fn getLightCross(chunk: *const Chunk, neighbors: NeighborChunks, x: i
     if (y >= CHUNK_SIZE_Y) return PackedLight.init(MAX_LIGHT, 0);
     if (y < 0) return PackedLight.init(0, 0);
 
-    if (x < 0) return if (neighbors.west) |w| w.getLightSafe(CHUNK_SIZE_X - 1, y, z) else PackedLight.init(MAX_LIGHT, 0);
-    if (x >= CHUNK_SIZE_X) return if (neighbors.east) |e| e.getLightSafe(0, y, z) else PackedLight.init(MAX_LIGHT, 0);
-    if (z < 0) return if (neighbors.north) |n| n.getLightSafe(x, y, CHUNK_SIZE_Z - 1) else PackedLight.init(MAX_LIGHT, 0);
-    if (z >= CHUNK_SIZE_Z) return if (neighbors.south) |s| s.getLightSafe(x, y, 0) else PackedLight.init(MAX_LIGHT, 0);
+    if (x < 0) return if (neighbors.west) |w| w.getLightSafe(CHUNK_SIZE_X - 1, y, z) else PackedLight.init(0, 0);
+    if (x >= CHUNK_SIZE_X) return if (neighbors.east) |e| e.getLightSafe(0, y, z) else PackedLight.init(0, 0);
+    if (z < 0) return if (neighbors.north) |n| n.getLightSafe(x, y, CHUNK_SIZE_Z - 1) else PackedLight.init(0, 0);
+    if (z >= CHUNK_SIZE_Z) return if (neighbors.south) |s| s.getLightSafe(x, y, 0) else PackedLight.init(0, 0);
     return chunk.getLightSafe(x, y, z);
 }
 

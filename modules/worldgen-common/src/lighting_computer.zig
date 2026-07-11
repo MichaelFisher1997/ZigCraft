@@ -51,8 +51,7 @@ pub const LightingComputer = struct {
                     }
                     chunk.setSkyLight(@intCast(x), uy, @intCast(z), sky_light);
                     if (sky_light > 0) try queue.append(allocator, .{ .x = @intCast(x), .y = @intCast(uy), .z = @intCast(z), .light = sky_light });
-                    const attenuation = block_registry.lightAttenuation(block);
-                    if (attenuation > 1) sky_light = if (sky_light > attenuation) sky_light - attenuation else 0;
+                    sky_light = block_registry.attenuateVerticalSkylight(sky_light, block);
                 }
             }
         }

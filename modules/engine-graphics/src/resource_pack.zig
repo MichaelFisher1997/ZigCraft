@@ -99,7 +99,7 @@ pub const BLOCK_TEXTURES = [_]TextureMapping{
     .{ .name = "dead_bush", .files = &.{ "dead_bush.png", "deadbush.png" } },
     .{ .name = "seagrass", .files = &.{ "seagrass.png", "short_grass.png", "tall_grass.png" } },
     .{ .name = "tall_seagrass", .files = &.{ "seagrass.png", "tall_grass_top.png", "tall_grass_bottom.png", "tall_grass.png" } },
-    .{ .name = "kelp", .files = &.{ "kelp.png", "seagrass.png", "dried_kelp_side.png" } },
+    .{ .name = "kelp", .files = &.{ "kelp.png", "seagrass.png", "dried_kelp_side.png", "vine.png", "tall_grass.png" } },
     .{ .name = "seaweed", .files = &.{ "seagrass.png", "kelp.png", "tall_grass.png" } },
     .{ .name = "coral_block", .files = &.{ "brain_coral_block.png", "bubble_coral_block.png", "fire_coral_block.png", "tube_coral_block.png", "horn_coral_block.png" } },
     .{ .name = "coral_fan", .files = &.{ "brain_coral_fan.png", "bubble_coral_fan.png", "fire_coral_fan.png", "tube_coral_fan.png", "horn_coral_fan.png" } },
@@ -560,4 +560,10 @@ pub fn defaultPackHasAnyFile(mapping: TextureMapping) bool {
         if (fs.cwd().access(path, .{})) |_| return true else |_| {}
     }
     return false;
+}
+
+test "default pack provides a transparent kelp texture fallback" {
+    const mapping = getTextureMapping("kelp") orelse return error.MissingKelpTextureMapping;
+    try std.testing.expect(defaultPackHasAnyFile(mapping));
+    try std.testing.expect(std.mem.eql(u8, mapping.files[mapping.files.len - 2], "vine.png"));
 }

@@ -286,8 +286,7 @@ pub const Chunk = struct {
             if (block_registry.getBlockDefinition(block).isOpaque()) {
                 sky_light = 0;
             } else {
-                const attenuation = block_registry.lightAttenuation(block);
-                if (attenuation > 1) sky_light = if (sky_light > attenuation) sky_light - attenuation else 0;
+                sky_light = block_registry.attenuateVerticalSkylight(sky_light, block);
             }
         }
     }

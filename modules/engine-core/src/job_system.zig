@@ -188,11 +188,17 @@ pub const JobQueue = struct {
     }
 
     pub fn push(self: *JobQueue, job: Job) !void {
+        _ = try self.tryPush(job);
+    }
+
+    /// Attempts to enqueue a job and reports whether it was accepted.
+    pub fn tryPush(self: *JobQueue, job: Job) !bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.stopped or self.paused) return;
+        if (self.stopped or self.paused) return false;
         try self.jobs.push(self.allocator, job);
         self.cond.signal();
+        return true;
     }
 
     pub fn count(self: *JobQueue) usize {
@@ -573,6 +579,18 @@ test "JobQueue.setPaused true calls cleanup on generic jobs" {
 
     queue.setPaused(true);
     try testing.expectEqual(@as(usize, 3), cleanup_count);
+}
+
+test "JobQueue.tryPush reports paused submissions" {
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    queue.setPaused(true);
+    try testing.expect(!(try queue.tryPush(.{
+        .type = .chunk_meshing,
+        .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 1 } },
+    })));
+    try testing.expectEqual(@as(usize, 0), queue.count());
 }
 
 test "JobQueue.clear with mixed job types" {

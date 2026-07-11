@@ -949,7 +949,12 @@ pub const World = struct {
     /// Applies a block mutation at world-space coordinates.
     /// Updates chunk data and schedules affected mesh/render state refreshes. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
-        _ = try self.mutation.applyBlockMutation(world_x, world_y, world_z, block);
+        const result = (try self.mutation.applyBlockMutation(world_x, world_y, world_z, block)) orelse return;
+        self.streamer.enqueueMutationLighting(&self.mutation, result) catch |err| {
+            log.log.warn("Failed to enqueue block lighting update, applying synchronously: {}", .{err});
+            try self.mutation.updateLighting(result);
+            self.streamer.requestDirtyRemesh(result.chunk_x, result.chunk_z);
+        };
         // Notify the LOD system so distant terrain reflects player edits after
         // the player teleports away. Coalesced on a debounce inside LODManager.
         if (self.lod) |lod| {

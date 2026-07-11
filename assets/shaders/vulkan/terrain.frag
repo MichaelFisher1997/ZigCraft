@@ -425,12 +425,15 @@ float debugOutdoorFactor(float skyLight) {
 }
 
 vec3 computeTerrainLighting(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness, float totalShadow, float skyLight, float skyVisibility, vec3 blockLight, float ao, float ssao, out float directKeyOut, out float skyFillOut, out float blockLightOut, out float outdoorOut) {
-    float atmosphere = skyVisibilityFactor(skyVisibility);
+    float outdoor = baselineOutdoorFactor(skyVisibility);
     float nDotL = max(dot(N, L), 0.0);
     vec3 sunRadiance = global.sun_color.rgb * global.params.w * SUN_RADIANCE_TO_IRRADIANCE / PI;
-    vec3 direct = computeBRDF(albedo, N, V, L, roughness) * sunRadiance * nDotL * (1.0 - totalShadow);
-    vec3 skyIrradiance = min(computeIBLAmbient(N, roughness), IBL_CLAMP) * skyLight * atmosphere;
-    vec3 groundBounce = vec3(0.018) * skyLight * max(-N.y, 0.0);
+    vec3 direct = computeBRDF(albedo, N, V, L, roughness) * sunRadiance * nDotL * (1.0 - totalShadow) * outdoor;
+    float indirectSky = sqrt(clamp(skyLight, 0.0, 1.0)) * clamp(skyVisibility, 0.0, 1.0);
+    vec3 outdoorIrradiance = min(computeIBLAmbient(N, roughness), IBL_CLAMP);
+    vec3 tunnelIrradiance = vec3(0.42);
+    vec3 skyIrradiance = mix(tunnelIrradiance, outdoorIrradiance, outdoor) * indirectSky;
+    vec3 groundBounce = vec3(0.018) * indirectSky * max(-N.y, 0.0) * outdoor;
     vec3 propagated = sampleLPVAtlas(absoluteWorldPos(vFragPosWorld), N);
     vec3 indirect = albedo * (skyIrradiance + groundBounce + propagated + blockLight);
     // AO is an indirect-diffuse visibility term: do not darken sunlight or specular.
@@ -441,7 +444,7 @@ vec3 computeTerrainLighting(vec3 albedo, vec3 N, vec3 V, vec3 L, float roughness
     directKeyOut = clamp(max(max(direct.r, direct.g), direct.b), 0.0, 1.0);
     skyFillOut = clamp(max(max((albedo * (skyIrradiance + groundBounce + propagated)).r, (albedo * (skyIrradiance + groundBounce + propagated)).g), (albedo * (skyIrradiance + groundBounce + propagated)).b), 0.0, 1.0);
     blockLightOut = clamp(max(blockLight.r, max(blockLight.g, blockLight.b)), 0.0, 1.0);
-    outdoorOut = debugOutdoorFactor(skyVisibility);
+    outdoorOut = outdoor;
     return direct + indirect;
 }
 

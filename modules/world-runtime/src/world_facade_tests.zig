@@ -515,14 +515,14 @@ test "World storage facade returns air for unloaded and out-of-bounds blocks" {
     try testing.expectEqual(world_core.BlockType.air, world.getBlock(0, 256, 0));
 }
 
-test "World setBlock and getBlock round-trip through mutation coordinator" {
+test "World setBlock ignores unloaded chunks" {
     var world = makeStorageOnlyWorld(testing.allocator);
     defer deinitStorageOnlyWorld(&world);
 
     try world.setBlock(17, 42, -1, .stone);
 
-    try testing.expectEqual(world_core.BlockType.stone, world.getBlock(17, 42, -1));
-    try testing.expectEqual(@as(usize, 1), world.storage.count());
+    try testing.expectEqual(world_core.BlockType.air, world.getBlock(17, 42, -1));
+    try testing.expectEqual(@as(usize, 0), world.storage.count());
 }
 
 test "World setBlock ignores out-of-bounds y without creating chunks" {

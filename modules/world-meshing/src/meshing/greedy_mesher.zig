@@ -81,8 +81,11 @@ pub fn meshSlice(
             const b1_def = block_registry.getBlockDefinition(b1);
             const b2_def = block_registry.getBlockDefinition(b2);
 
-            const b1_emits = b1_def.is_solid or (b1_def.is_fluid and !b2_def.is_fluid);
-            const b2_emits = b2_def.is_solid or (b2_def.is_fluid and !b1_def.is_fluid);
+            // Cutout blocks such as seagrass occupy a voxel but do not displace
+            // water. Emitting a fluid cube face against them creates visible
+            // water slabs around every underwater plant.
+            const b1_emits = b1_def.is_solid or (b1_def.is_fluid and fluidFaceVisible(b2, b2_def));
+            const b2_emits = b2_def.is_solid or (b2_def.is_fluid and fluidFaceVisible(b1, b1_def));
 
             const b1_cube = b1_def.render_shape == .cube;
             const b2_cube = b2_def.render_shape == .cube;
@@ -152,6 +155,10 @@ pub fn meshSlice(
             su += width - 1;
         }
     }
+}
+
+fn fluidFaceVisible(neighbor: BlockType, neighbor_def: *const block_registry.BlockDefinition) bool {
+    return neighbor == .air or neighbor_def.is_solid;
 }
 
 /// Generate 6 vertices (2 triangles) for a greedy-merged quad.

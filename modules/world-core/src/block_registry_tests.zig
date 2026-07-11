@@ -216,7 +216,7 @@ test "aquatic vegetation blocks use cutout shapes" {
 
     const kelp = block_registry.getBlockDefinition(.kelp);
     try testing.expect(!kelp.is_solid);
-    try testing.expectEqual(block_registry.RenderShape.tall_cross, kelp.render_shape);
+    try testing.expectEqual(block_registry.RenderShape.cross, kelp.render_shape);
 
     const coral_fan = block_registry.getBlockDefinition(.coral_fan);
     try testing.expect(!coral_fan.is_solid);
