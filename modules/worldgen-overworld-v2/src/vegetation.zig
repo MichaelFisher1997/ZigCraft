@@ -8,6 +8,10 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const BlockType = world_core.BlockType;
 const BiomeId = world_core.BiomeId;
 
+const KELP_COVERAGE = 0.025;
+const TALL_SEAGRASS_COVERAGE = 0.065;
+const AQUATIC_VEGETATION_COVERAGE = 0.14;
+
 pub const GroundDecoration = enum {
     tall_grass,
     flower_red,
@@ -89,11 +93,11 @@ fn placeAquaticVegetation(self: anytype, chunk: *Chunk, x: u32, surface_y: u32, 
         return;
     }
 
-    if (water_depth >= 6 and scatter < 0.06) {
+    if (water_depth >= 6 and scatter < KELP_COVERAGE) {
         placeKelp(chunk, x, place_y, z, @min(water_depth - 1, 2 + @as(u8, @intFromFloat(variant * 7.0))));
-    } else if (water_depth >= 4 and scatter < 0.13) {
+    } else if (water_depth >= 4 and scatter < TALL_SEAGRASS_COVERAGE) {
         setDecorationBlock(chunk, x, place_y, z, .tall_seagrass);
-    } else if (scatter < 0.24) {
+    } else if (scatter < AQUATIC_VEGETATION_COVERAGE) {
         setDecorationBlock(chunk, x, place_y, z, if (variant < 0.75) .seagrass else .seaweed);
     }
 }

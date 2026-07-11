@@ -27,7 +27,7 @@
     "assets/shaders/vulkan/taa.frag": 9760,
     "assets/shaders/vulkan/taa.vert": 1160,
     "assets/shaders/vulkan/terrain_debug.frag": 1336,
-    "assets/shaders/vulkan/terrain.frag": 63108,
+    "assets/shaders/vulkan/terrain.frag": 63336,
     "assets/shaders/vulkan/terrain.vert": 10500,
     "assets/shaders/vulkan/ui.frag": 744,
     "assets/shaders/vulkan/ui_tex.frag": 1408,

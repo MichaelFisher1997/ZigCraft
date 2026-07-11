@@ -66,6 +66,7 @@ const log = @import("engine-core").log;
 const SaveManager = @import("world-persistence").SaveManager;
 const GpuBlockBuffer = world_meshing.GpuBlockBuffer;
 const GpuMesher = @import("gpu_mesher.zig").GpuMesher;
+const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
 const GpuAccelerationCoordinator = @import("gpu_acceleration_coordinator.zig").GpuAccelerationCoordinator;
 const ChunkQueueCoordinator = @import("chunk_queue_coordinator.zig").ChunkQueueCoordinator;
 const LODStreamingCoordinator = @import("world-lod").LODStreamingCoordinator;
@@ -103,21 +104,19 @@ pub const WorldStreamer = struct {
     last_diag_uploaded: u64 = 0,
 
     const MIN_GEN_WORKERS = 2;
+    const MAX_GEN_WORKERS = 4;
     const MIN_MESH_WORKERS = 2;
+    const MAX_MESH_WORKERS = 6;
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
         errdefer allocator.destroy(streamer);
 
-        // Worker pool sizing. The historical caps (gen<=4, mesh<=6) left most
-        // cores idle on modern multi-core CPUs during the chunk-load burst.
-        // We now size both pools against the CPU count so the gen+mesh pipeline
-        // can saturate the machine, while leaving at least one core for the
-        // main thread and the Vulkan driver. Defaults split the budget 50/50;
-        // ZIGCRAFT_GEN_WORKERS / ZIGCRAFT_MESH_WORKERS override either side.
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
-        const total_budget = @max(@as(usize, 4), cpu_count -| 1);
-        const default_gen = @max(MIN_GEN_WORKERS, total_budget / 2);
-        const default_mesh = @max(MIN_MESH_WORKERS, total_budget - default_gen);
+        // Leave CPU capacity for the main thread and graphics driver while
+        // streaming. Explicit environment overrides remain available for
+        // throughput-oriented workloads.
+        const default_gen = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
+        const default_mesh = std.math.clamp(cpu_count / 2, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
         const gen_worker_count = engine_core.envInt("ZIGCRAFT_GEN_WORKERS", default_gen);
         const mesh_worker_count = engine_core.envInt("ZIGCRAFT_MESH_WORKERS", default_mesh);
 
@@ -283,6 +282,40 @@ pub const WorldStreamer = struct {
     pub fn setSaveManager(self: *WorldStreamer, sm: ?*SaveManager) void {
         self.save_manager = sm;
         self.queue_coordinator.setSaveManager(sm);
+    }
+
+    pub fn requestDirtyRemesh(self: *WorldStreamer, center_cx: i32, center_cz: i32) void {
+        self.queue_coordinator.requestDirtyRemesh(center_cx, center_cz);
+    }
+
+    pub fn enqueueMutationLighting(self: *WorldStreamer, mutation: *WorldMutationCoordinator, result: WorldMutationCoordinator.MutationResult) !void {
+        if (result.lighting_update == .none) {
+            self.requestDirtyRemesh(result.chunk_x, result.chunk_z);
+            return;
+        }
+
+        const context = try self.allocator.create(MutationLightingJob);
+        errdefer self.allocator.destroy(context);
+        context.* = .{
+            .allocator = self.allocator,
+            .mutation = mutation,
+            .queue_coordinator = &self.queue_coordinator,
+            .result = result,
+        };
+        const queued = try self.mesh_queue.tryPush(.{
+            .type = .generic,
+            .priority = -1,
+            .data = .{ .generic = .{
+                .context = context,
+                .process_fn = processMutationLighting,
+                .cleanup_fn = cleanupMutationLighting,
+            } },
+        });
+        if (!queued) {
+            self.allocator.destroy(context);
+            try mutation.updateLighting(result);
+            self.requestDirtyRemesh(result.chunk_x, result.chunk_z);
+        }
     }
 
     pub fn updateFrame(self: *WorldStreamer, player_pos: Vec3, dt: f32) !void {
@@ -611,6 +644,29 @@ pub const WorldStreamer = struct {
         };
     }
 };
+
+const MutationLightingJob = struct {
+    allocator: std.mem.Allocator,
+    mutation: *WorldMutationCoordinator,
+    queue_coordinator: *ChunkQueueCoordinator,
+    result: WorldMutationCoordinator.MutationResult,
+};
+
+fn processMutationLighting(raw_context: *anyopaque) void {
+    const context: *MutationLightingJob = @ptrCast(@alignCast(raw_context));
+    context.mutation.updateLighting(context.result) catch |err| {
+        log.log.warn("BLOCK_LIGHTING_ERROR: ({},{}) update failed: {}", .{ context.result.chunk_x, context.result.chunk_z, err });
+    };
+    context.queue_coordinator.requestDirtyRemesh(context.result.chunk_x, context.result.chunk_z);
+    const allocator = context.allocator;
+    allocator.destroy(context);
+}
+
+fn cleanupMutationLighting(raw_context: *anyopaque) void {
+    const context: *MutationLightingJob = @ptrCast(@alignCast(raw_context));
+    const allocator = context.allocator;
+    allocator.destroy(context);
+}
 
 /// ChunkResolver callback: look up a resident, generated chunk by coordinate.
 /// The returned pointer is only valid for synchronous use on the main thread

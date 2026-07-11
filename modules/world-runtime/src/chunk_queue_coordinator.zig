@@ -325,6 +325,43 @@ pub const ChunkQueueCoordinator = struct {
         self.pending_upload_incoming.append(self.allocator, .{ .x = cx, .z = cz }) catch return;
     }
 
+    /// Immediately schedules dirty chunks near a runtime edit instead of
+    /// waiting for the periodic recovery scan.
+    pub fn requestDirtyRemesh(self: *ChunkQueueCoordinator, center_cx: i32, center_cz: i32) void {
+        var enqueue_refs: [9]PendingMeshRef = undefined;
+        var enqueue_count: usize = 0;
+
+        self.storage.chunks_mutex.lock();
+        var dz: i32 = -1;
+        while (dz <= 1) : (dz += 1) {
+            var dx: i32 = -1;
+            while (dx <= 1) : (dx += 1) {
+                const data = self.storage.chunks.get(.{ .x = center_cx + dx, .z = center_cz + dz }) orelse continue;
+                if (!data.chunk.dirty or !data.chunk.generated) continue;
+                switch (data.chunk.state) {
+                    .generated, .renderable, .mesh_ready, .uploading => {
+                        // Invalidate in-flight GPU/CPU mesh output before the
+                        // replacement job is queued.
+                        data.chunk.job_token +%= 1;
+                        data.chunk.state = .generated;
+                        enqueue_refs[enqueue_count] = .{
+                            .x = data.chunk.chunk_x,
+                            .z = data.chunk.chunk_z,
+                            .job_token = data.chunk.job_token,
+                        };
+                        enqueue_count += 1;
+                    },
+                    else => {},
+                }
+            }
+        }
+        self.storage.chunks_mutex.unlock();
+
+        for (enqueue_refs[0..enqueue_count]) |ref| {
+            self.enqueuePendingMesh(ref.x, ref.z, ref.job_token);
+        }
+    }
+
     fn drainPendingMesh(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32) void {
         // Swap-and-clear under the pending mutex, then process outside it so
         // worker appends are unblocked as quickly as possible.
@@ -479,7 +516,8 @@ pub const ChunkQueueCoordinator = struct {
                 break :blk sm.loadChunk(cx, cz, &chunk_data.chunk);
             };
 
-            if (load_result != .success and load_result != .success_relight_required) {
+            const generated_new = load_result != .success and load_result != .success_relight_required;
+            if (generated_new) {
                 if (load_result == .read_error or load_result == .corrupt_data) {
                     log.log.warn("Save load failed for chunk ({}, {}): {}, regenerating", .{ cx, cz, load_result });
                 }
@@ -497,14 +535,22 @@ pub const ChunkQueueCoordinator = struct {
                     self.storage.chunks_mutex.unlock();
                     return;
                 }
+                // World generators already compute chunk-local lighting. Mark it
+                // current instead of rebuilding a loaded chunk neighborhood.
+                chunk_data.chunk.lighting_valid = true;
             }
 
             var lighting = WorldLightingEngine.init(self.storage, self.allocator);
-            const relit = lighting.reconcileChunkArrival(cx, cz) catch |err| blk: {
-                log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) relight failed: {}", .{ cx, cz, err });
-                break :blk false;
-            };
-            _ = relit;
+            _ = if (load_result == .success_relight_required)
+                lighting.reconcileLegacyArea(cx, cz) catch |err| blk: {
+                    log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) legacy relight failed: {}", .{ cx, cz, err });
+                    break :blk false;
+                }
+            else
+                lighting.reconcileChunkArrival(cx, cz) catch |err| blk: {
+                    log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) boundary reconciliation failed: {}", .{ cx, cz, err });
+                    break :blk false;
+                };
 
             self.storage.chunks_mutex.lock();
             if (!chunk_data.chunk.generated) {
@@ -766,4 +812,35 @@ test "stale mesh job resets chunk to generated" {
     });
 
     try testing.expectEqual(Chunk.State.generated, data.chunk.state);
+}
+
+test "runtime edits enqueue dirty renderable chunks immediately" {
+    const testing = std.testing;
+    var storage = ChunkStorage.init(testing.allocator);
+    defer storage.deinitWithoutRHI();
+
+    const data = try storage.getOrCreate(0, 0);
+    data.chunk.generated = true;
+    data.chunk.state = .renderable;
+    data.chunk.dirty = true;
+
+    var gpu = GpuAccelerationCoordinator.init(null, null);
+    var coordinator = ChunkQueueCoordinator{
+        .allocator = testing.allocator,
+        .storage = &storage,
+        .generator = undefined,
+        .atlas = undefined,
+        .gen_queue = undefined,
+        .mesh_queue = undefined,
+        .upload_queue = try RingBuffer(ChunkKey).init(testing.allocator, 16),
+        .vertex_allocator = undefined,
+        .gpu = &gpu,
+        .max_uploads_per_frame = 8,
+    };
+    defer coordinator.deinit();
+
+    coordinator.requestDirtyRemesh(0, 0);
+
+    try testing.expectEqual(Chunk.State.generated, data.chunk.state);
+    try testing.expectEqual(@as(usize, 1), coordinator.pending_mesh_incoming.items.len);
 }

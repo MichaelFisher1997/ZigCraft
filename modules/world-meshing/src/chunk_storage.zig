@@ -70,6 +70,7 @@ pub const ChunkStorage = struct {
     chunks: std.HashMap(ChunkKey, *ChunkData, ChunkKeyContext, 80),
     free_list: std.ArrayListUnmanaged(*ChunkData),
     chunks_mutex: sync.RwLock,
+    lighting_mutex: sync.Mutex,
     allocator: std.mem.Allocator,
     next_job_token: u32,
 
@@ -78,6 +79,7 @@ pub const ChunkStorage = struct {
             .chunks = std.HashMap(ChunkKey, *ChunkData, ChunkKeyContext, 80).init(allocator),
             .free_list = .empty,
             .chunks_mutex = .{},
+            .lighting_mutex = .{},
             .allocator = allocator,
             .next_job_token = 1,
         };

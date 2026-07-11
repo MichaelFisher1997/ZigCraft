@@ -471,7 +471,10 @@ pub const App = struct {
         if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
             const requires_world_ready = build_options.shadow_test_scene or build_options.auto_world.len > 0;
-            const world_ready = self.pending_world_launch == null and world_stats.chunks_rendered > 0 and world_stats.gen_queue == 0 and world_stats.mesh_queue == 0 and world_stats.upload_queue == 0;
+            const world_ready = if (world_stats) |stats|
+                self.pending_world_launch == null and stats.chunks_rendered > 0 and stats.gen_queue == 0 and stats.mesh_queue == 0 and stats.upload_queue == 0
+            else
+                false;
             if (!requires_world_ready or world_ready) {
                 self.screenshot_settle_frames += 1;
             } else {

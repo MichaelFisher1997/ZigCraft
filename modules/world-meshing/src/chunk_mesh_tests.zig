@@ -80,6 +80,23 @@ test "ChunkMesh emits wall-attached fixture cutout quad" {
     try testing.expectEqual(null, mesh.pending_fluid);
 }
 
+test "ChunkMesh does not emit water faces around seagrass" {
+    var chunk = world_core.Chunk.init(0, 0);
+    chunk.setBlock(1, 1, 1, .water);
+    chunk.setBlock(2, 1, 1, .seagrass);
+
+    var atlas: TextureAtlas = undefined;
+    atlas.tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(7)} ** 256;
+
+    var mesh = ChunkMesh.init(testing.allocator);
+    defer mesh.deinitWithoutRHI();
+
+    try mesh.buildWithNeighbors(&chunk, NeighborChunks.empty, &atlas);
+
+    // The water cube exposes five faces; its east face must not wrap the cutout plant.
+    try testing.expectEqual(@as(usize, 30), mesh.pending_fluid.?.len);
+}
+
 test "ChunkMesh emits custom slab fixture solid mesh" {
     var chunk = world_core.Chunk.init(0, 0);
     chunk.setBlock(1, 1, 1, .stone_slab);

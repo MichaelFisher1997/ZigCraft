@@ -102,6 +102,15 @@ test "Chunk.updateSkylightColumn water reduces light below water" {
     try testing.expectEqual(@as(u4, MAX_LIGHT - 2), chunk.getSkyLight(8, 63, 8));
 }
 
+test "Chunk.updateSkylightColumn keeps deep water readable" {
+    var chunk = Chunk.init(0, 0);
+    for (64..80) |y| chunk.setBlock(8, @intCast(y), 8, .water);
+
+    chunk.updateSkylightColumn(8, 8);
+
+    try testing.expectEqual(@as(u4, 6), chunk.getSkyLight(8, 63, 8));
+}
+
 test "Chunk.updateSkylightColumn light propagates through air" {
     var chunk = Chunk.init(0, 0);
     chunk.updateSkylightColumn(8, 8);

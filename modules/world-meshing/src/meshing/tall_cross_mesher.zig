@@ -5,7 +5,7 @@
 //!
 //! Design note: unlike vanilla Minecraft which uses separate upper/lower block
 //! types for tall vegetation, this engine stores tall vegetation (tall_grass,
-//! tall_seagrass, kelp) as a SINGLE block whose billboard quad spans two
+//! tall_seagrass) as a SINGLE block whose billboard quad spans two
 //! vertical blocks (y to y+2). Each tall_cross block is therefore
 //! self-contained: it is found at its own Y position and renders the full
 //! 2-block height from there. There is no separate "top half" block to detect,
