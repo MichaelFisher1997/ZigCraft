@@ -393,6 +393,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                                 first_missing_cz = cov.missing_cz;
                                 first_missing_in_radius = cov.missing_chunk_in_radius;
                             }
+                            // A single LOD instance cannot exclude individual loaded
+                            // chunks. Keep the radial mask while any full-detail chunk
+                            // is present so LOD never phases through that foreground
+                            // terrain. Only unmask when the entire area is missing.
                             if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) {
                                 mask_radius = LOD_UNMASKED_SENTINEL;
                             }
@@ -410,10 +414,10 @@ pub fn LODRenderer(comptime RHI: type) type {
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
-                    // Keep coarser LODs visible until full-detail chunks cover them.
-                    // Culling against inner LOD bands creates visible holes while finer
-                    // LOD regions are still streaming in.
-                    const fade = @min(calculateBandFade(config, lod, chunk_bounds, camera_pos), chunk.transitionFadeProgress());
+                    // Parent coverage, not camera distance, owns LOD handoff. A
+                    // distance-band cutoff creates concentric visible rings while
+                    // the parent already provides complete fallback terrain.
+                    const fade = chunk.transitionFadeProgress();
                     try self.instance_data.append(self.allocator, .{
                         .model = model,
                         .mask_radius = mask_radius,

@@ -24,7 +24,6 @@ const Vertex = rhi_types.Vertex;
 const BufferHandle = rhi_types.BufferHandle;
 const RhiError = rhi_types.RhiError;
 const QuadricSimplifier = @import("world-meshing").meshing.quadric_simplifier.QuadricSimplifier;
-const engine_core = @import("engine-core");
 const log = @import("engine-core").log;
 const lod_seam = @import("lod_seam.zig");
 const resources_mod = @import("lod_mesh_resources.zig");
@@ -60,21 +59,17 @@ const foldedCanopyColumnForLOD = geom.foldedCanopyColumnForLOD;
 const getLodSideTile = geom.getLodSideTile;
 const getLodTopColor = geom.getLodTopColor;
 const getLodTopTile = geom.getLodTopTile;
-const highestSolidSpanIndex = geom.highestSolidSpanIndex;
 const isLeafBlock = geom.isLeafBlock;
 const isLODWaterCellForLOD = geom.isLODWaterCellForLOD;
 const LODColumnSpan = geom.LODColumnSpan;
 const LOD_TREE_COVERAGE_THRESHOLD = geom.LOD_TREE_COVERAGE_THRESHOLD;
-const maxStitchedHeightAdjustment = geom.maxStitchedHeightAdjustment;
 const packBlockDefaultColor = geom.packBlockDefaultColor;
 const quantizedCellVisualTerrainHeightForLOD = geom.quantizedCellVisualTerrainHeightForLOD;
-const quantizedHeight = geom.quantizedHeight;
 const quantizedWaterSurfaceHeightForCell = geom.quantizedWaterSurfaceHeightForCell;
 const quantizedWaterSurfaceHeightForSpan = geom.quantizedWaterSurfaceHeightForSpan;
 const representativeVegetationForLOD = geom.representativeVegetationForLOD;
 const selectCellMaterial = geom.selectCellMaterial;
 const shouldRenderLODTree = geom.shouldRenderLODTree;
-const stitchedHeight = geom.stitchedHeight;
 const terrainBlockForLODQuadForLOD = geom.terrainBlockForLODQuadForLOD;
 const tintColorForLodFace = geom.tintColorForLodFace;
 const unpackB = geom.unpackB;
@@ -289,7 +284,6 @@ pub const LODMesh = struct {
         defer vertices.deinit(self.allocator);
         var water_vertices = std.ArrayListUnmanaged(Vertex).empty;
         defer water_vertices.deinit(self.allocator);
-        const diag_enabled = engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false);
 
         var gz: u32 = 0;
         while (gz + 1 < data.width) : (gz += 1) {
@@ -334,13 +328,6 @@ pub const LODMesh = struct {
                         try addTreeColumn(self.allocator, &vertices, data, gx, gz, self.lod_level, wx, wz, size, column_height, vegetation, atlas, world_x, world_z);
                     }
                 }
-            }
-        }
-
-        if (diag_enabled) {
-            const max_adjust = maxStitchedHeightAdjustment(data);
-            if (max_adjust > 0.25) {
-                log.log.info("LOD_SEAM_DIAG lod={} origin=({}, {}) max_edge_adjust={d:.2}", .{ @intFromEnum(self.lod_level), world_x, world_z, max_adjust });
             }
         }
 
@@ -393,21 +380,6 @@ pub const LODMesh = struct {
                 if (span_count == 0) continue;
                 found_span = true;
 
-                // Snap the surface (top) span to the stitched boundary height at
-                // region/band borders so the span path matches the heightfield
-                // seam behavior (issue #752 Phase 5.5).
-                const on_boundary = (gx == 0) or (gz == 0) or
-                    (gx + 1 >= data.width - 1) or (gz + 1 >= data.width - 1);
-                if (on_boundary) {
-                    if (highestSolidSpanIndex(spans_buf[0..span_count])) |solid_idx| {
-                        const stitched_top = quantizedHeight(stitchedHeight(data, gx, gz));
-                        spans_buf[solid_idx].max_height = if (isLeafBlock(spans_buf[solid_idx].block))
-                            @max(spans_buf[solid_idx].max_height, stitched_top)
-                        else
-                            stitched_top;
-                    }
-                }
-
                 const wx = @as(f32, @floatFromInt(gx)) * cell_size;
                 const wz = @as(f32, @floatFromInt(gz)) * cell_size;
 
@@ -433,11 +405,12 @@ pub const LODMesh = struct {
                     }
 
                     if (isLeafBlock(span.block)) {
+                        const tree_is_water_cell = isLODWaterCellForLOD(data, gx, gz, self.lod_level);
+                        if (tree_is_water_cell) continue;
                         var vegetation = representativeVegetationForLOD(data, gx, gz, self.lod_level);
                         if (vegetation.leaves == .air) vegetation.leaves = span.block;
                         if (vegetation.tree_coverage < LOD_TREE_COVERAGE_THRESHOLD) vegetation.tree_coverage = LOD_TREE_COVERAGE_THRESHOLD;
                         if (vegetation.avg_tree_height < 2.0) vegetation.avg_tree_height = @max(2.0, span.max_height - span.min_height);
-                        const tree_is_water_cell = isLODWaterCellForLOD(data, gx, gz, self.lod_level);
                         const tree_base_height = quantizedCellVisualTerrainHeightForLOD(data, gx, gz, self.lod_level, tree_is_water_cell);
                         try addTreeCanopyColumn(self.allocator, &vertices, data, gx, gz, self.lod_level, wx, wz, cell_size, tree_base_height, span.min_height, span.max_height, vegetation, atlas, world_x, world_z);
                         continue;

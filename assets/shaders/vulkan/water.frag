@@ -129,19 +129,10 @@ vec2 atlasUV(int tileID, vec2 texCoord) {
 }
 
 void main() {
-    const float LOD_TRANSITION_WIDTH = 32.0;
     bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
     if (vMaskRadius >= 1.0) {
-        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
-        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
-        if (fade < lodTransitionNoise(worldXZ)) discard;
+        if (length(vFragPosWorld.xz) < vMaskRadius) discard;
     }
-    if (vMaskRadius > 0.0 && vLODFade < 0.999) {
-        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        if (vLODFade < lodTransitionNoise(worldXZ + vec2(19.37, 41.91))) discard;
-    }
-
     float time = global.params.x;
 
     vec3 base_normal = normalize(vNormal);

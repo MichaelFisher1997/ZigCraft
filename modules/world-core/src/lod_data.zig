@@ -135,14 +135,13 @@ pub const LODSimplifiedData = struct {
 
     pub fn getGridSize(lod_level: LODLevel) u32 {
         return switch (lod_level) {
-            // Use region_size / (width - 1). The far bands need a denser
-            // source grid so visible terrain doesn't collapse into 8/16-block
-            // slabs before fog hides it.
+            // LOD4 is the fast horizon fallback; LOD3 retains the dense grid
+            // and replaces it as refinement arrives.
             .lod0 => 33,
             .lod1 => 65,
             .lod2 => 65,
             .lod3 => 129,
-            .lod4 => 129,
+            .lod4 => 65,
         };
     }
 

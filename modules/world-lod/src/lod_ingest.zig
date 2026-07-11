@@ -227,7 +227,7 @@ pub fn writeIngestedColumn(
         .ambient_occlusion = 1.0,
     };
 
-    const vegetation: LODVegetationHint = if (sample.has_tree)
+    const vegetation: LODVegetationHint = if (sample.has_tree and !water_state.is_surface)
         .{
             .tree_coverage = 1.0,
             .avg_tree_height = sample.tree_height,
@@ -614,6 +614,26 @@ test "downsampleChunkIntoRegion emits water state for a flooded column" {
     try testing.expect(data.water[0].is_surface);
     try testing.expectEqual(@as(f32, 63.0), data.water[0].surface_height);
     try testing.expectEqual(@as(f32, 5.0), data.water[0].depth);
+}
+
+test "writeIngestedColumn clears vegetation from flooded samples" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+    defer data.deinit();
+
+    try testing.expect(writeIngestedColumn(&data, 0, 0, .{
+        .terrain_height = 58.0,
+        .biome = .forest,
+        .has_water = true,
+        .water_surface_height = 63.0,
+        .water_depth = 5.0,
+        .water_coverage = 1.0,
+        .has_tree = true,
+        .tree_height = 8.0,
+    }, .chunk_derived));
+
+    try testing.expect(data.water[0].is_surface);
+    try testing.expectEqual(@as(f32, 0.0), data.vegetation[0].tree_coverage);
+    try testing.expectEqual(@as(u8, 2), data.verticalSpanCount(0, 0));
 }
 
 test "downsampleChunkIntoRegion keeps terrain surface above cave gaps" {

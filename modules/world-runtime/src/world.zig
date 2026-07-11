@@ -711,7 +711,7 @@ pub const World = struct {
         );
 
         log.log.info("World.init: initializing WorldStreamer (render_distance={}, requested={})", .{ streamer_render_distance, safe_render_distance });
-        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, streamer_render_distance, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
+        world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, streamer_render_distance, options.lod_config != null, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
         errdefer world.streamer.deinit();
 
         if (options.lod_config) |lod_config| {
@@ -899,7 +899,8 @@ pub const World = struct {
         log.log.info("Horizon distance changed: {} -> {}", .{ self.horizon_distance, target });
         self.horizon_distance = target;
         if (self.lod) |lod| {
-            lod.setRadii(LODConfig.radiiForDistances(self.render_distance, target));
+            const radii = LODConfig.radiiForDistances(self.render_distance, target);
+            lod.setRadii(radii);
             lod.setActiveLODCount(LODLevel.count);
         }
     }

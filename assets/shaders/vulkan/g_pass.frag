@@ -36,24 +36,10 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
     vec4 lpv_origin;
 } global;
 
-// World-space hash for LOD transition masking.
-// Using world-space noise avoids a fixed screen-space dot pattern.
-float lodTransitionNoise(vec2 worldXZ) {
-    vec2 p = floor(worldXZ * 0.25);
-    p = fract(p * vec2(0.1031, 0.1030));
-    p += dot(p, p.yx + 33.33);
-    return fract((p.x + p.y) * p.x);
-}
-
 void main() {
-    const float LOD_TRANSITION_WIDTH = 32.0;
     bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
     if (vMaskRadius >= 1.0) {
-        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
-        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
-        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        float ditherThreshold = lodTransitionNoise(worldXZ);
-        if (fade < ditherThreshold) discard;
+        if (length(vFragPosWorld.xz) < vMaskRadius) discard;
     }
 
     vec3 N = normalize(vNormal);

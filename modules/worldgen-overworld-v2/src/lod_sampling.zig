@@ -24,6 +24,8 @@ const ColumnSample = struct {
 };
 
 const ClassifiedLODSample = struct {
+    world_x: i32,
+    world_z: i32,
     terrain_height: f32,
     terrain_height_i: i32,
     biome: BiomeId,
@@ -64,9 +66,12 @@ pub fn generateHeightmapOnly(self: anytype, data: *LODSimplifiedData, region_x: 
 }
 
 fn sampleRepresentativeLODColumn(self: anytype, wx: f32, wz: f32, cell_span: f32) RepresentativeLODColumn {
-    const sample_offsets = [_]f32{0.0};
+    // Sample the full cell footprint so shorelines retain fractional coverage
+    // rather than snapping every coarse cell fully to land or water.
+    const sample_offsets = [_]f32{ -1.0, 0.0, 1.0 };
     const sample_radius = @min(cell_span * 0.5, 48.0);
-    const center_sample = classifyLODSample(self, wx, wz);
+    var classified_samples: [sample_offsets.len * sample_offsets.len]ClassifiedLODSample = undefined;
+    var classified_count: usize = 0;
 
     var block_counts = [_]u32{0} ** world_core.MAX_BLOCK_TYPES;
     var biome_counts = [_]u32{0} ** 256;
@@ -83,6 +88,8 @@ fn sampleRepresentativeLODColumn(self: anytype, wx: f32, wz: f32, cell_span: f32
     for (sample_offsets) |oz| {
         for (sample_offsets) |ox| {
             const sample = classifyLODSample(self, wx + ox * sample_radius, wz + oz * sample_radius);
+            classified_samples[classified_count] = sample;
+            classified_count += 1;
             const block_index = @intFromEnum(sample.surface_block);
             if (block_index < block_counts.len) block_counts[block_index] += 1;
             biome_counts[@intFromEnum(sample.biome)] += 1;
@@ -108,6 +115,7 @@ fn sampleRepresentativeLODColumn(self: anytype, wx: f32, wz: f32, cell_span: f32
     const render_water_surface = water_coverage >= 0.45;
     const dominant_biome = dominantBiome(biome_counts);
     const dominant_block = dominantBlock(block_counts);
+    const center_sample = classified_samples[classified_samples.len / 2];
     const surface_block: BlockType = if (render_water_surface) .water else if (center_sample.render_water_surface) dominant_block else center_sample.surface_block;
     const avg_height = terrain_height_sum / @as(f32, @floatFromInt(sample_count));
     const terrain_range = @max(terrain_max - terrain_min, 0.0);
@@ -117,7 +125,7 @@ fn sampleRepresentativeLODColumn(self: anytype, wx: f32, wz: f32, cell_span: f32
     const vegetation = if (render_water_surface)
         world_core.LODVegetationHint.empty
     else
-        lodVegetationHintInArea(self, wx, wz, sample_radius, dominant_biome);
+        lodVegetationHintFromSamples(self, classified_samples[0..classified_count], wx, wz);
     const avg_color = packAverageColor(color_r, color_g, color_b, sample_count);
 
     return .{
@@ -152,6 +160,8 @@ fn classifyLODSample(self: anytype, wx: f32, wz: f32) ClassifiedLODSample {
     const surface_block: BlockType = if (render_water_surface) .water else block_colors.surfaceBlock(sample.biome, sample.terrain_height, self.params.sea_level, false);
 
     return .{
+        .world_x = wx_i,
+        .world_z = wz_i,
         .terrain_height = @floatFromInt(sample.terrain_height),
         .terrain_height_i = sample.terrain_height,
         .biome = sample.biome,
@@ -179,9 +189,7 @@ fn sampleLODColumn(self: anytype, wx: i32, wz: i32) ColumnSample {
     };
 }
 
-fn lodVegetationHintInArea(self: anytype, center_wx: f32, center_wz: f32, radius: f32, dominant_biome: BiomeId) world_core.LODVegetationHint {
-    const sample_offsets = [_]f32{ -0.5, 0.0, 0.5 };
-
+fn lodVegetationHintFromSamples(self: anytype, samples: []const ClassifiedLODSample, center_wx: f32, center_wz: f32) world_core.LODVegetationHint {
     var tree_count: u32 = 0;
     var total_columns: u32 = 0;
     var height_sum: f32 = 0.0;
@@ -189,25 +197,24 @@ fn lodVegetationHintInArea(self: anytype, center_wx: f32, center_wz: f32, radius
     var offset_z_sum: f32 = 0.0;
     var best_shape: ?trees.TreeShape = null;
 
-    for (sample_offsets) |oz| {
-        for (sample_offsets) |ox| {
-            const wx = util.floorToI32(center_wx + ox * radius);
-            const wz = util.floorToI32(center_wz + oz * radius);
-            total_columns += 1;
-            const shape = trees.treeForColumn(self, dominant_biome, wx, wz) orelse continue;
-            tree_count += 1;
-            height_sum += trees.treeHeightForShape(shape);
-            offset_x_sum += @as(f32, @floatFromInt(wx)) - center_wx;
-            offset_z_sum += @as(f32, @floatFromInt(wz)) - center_wz;
-            if (best_shape == null) best_shape = shape;
-        }
+    for (samples) |sample| {
+        total_columns += 1;
+        if (sample.terrain_height_i <= self.params.sea_level) continue;
+        if (sample.surface_block != .grass and sample.surface_block != .dirt and sample.surface_block != .snow_block and sample.surface_block != .sand) continue;
+
+        const shape = trees.treeForColumn(self, sample.biome, sample.world_x, sample.world_z) orelse continue;
+        tree_count += 1;
+        height_sum += trees.treeHeightForShape(shape);
+        offset_x_sum += @as(f32, @floatFromInt(sample.world_x)) - center_wx;
+        offset_z_sum += @as(f32, @floatFromInt(sample.world_z)) - center_wz;
+        if (best_shape == null) best_shape = shape;
     }
 
     if (tree_count == 0) return world_core.LODVegetationHint.empty;
 
     const area = @as(f32, @floatFromInt(@max(total_columns, 1)));
     const sampled_coverage = std.math.clamp(@as(f32, @floatFromInt(tree_count)) / area, 0.0, 1.0);
-    const blocks = trees.treeBlocksForShape(best_shape orelse trees.defaultTreeShapeForBiome(dominant_biome));
+    const blocks = trees.treeBlocksForShape(best_shape orelse .oak);
 
     return .{
         .tree_coverage = sampled_coverage,

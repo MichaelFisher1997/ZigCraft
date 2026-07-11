@@ -73,6 +73,16 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
     const radii = self.config.getRadii();
     const active_lod_count = lod_chunk.activeLODCount(self.config);
     const use_vertical_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(lod) == .column_spans;
+    var pending_regions: usize = 0;
+    for (0..active_lod_count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| {
+            switch (entry.value_ptr.*.getState()) {
+                .missing, .renderable => {},
+                else => pending_regions += 1,
+            }
+        }
+    }
     self.mutex.unlock();
 
     const Coverage = struct {
@@ -96,7 +106,10 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
         .coverage_ptr = self,
         .are_all_chunks_loaded = Coverage.areAllLoaded,
         .radius_reduction = &self.memory_governor.radius_shrink_chunks,
-        .defer_generation_dispatch = self.cacheEnabled(),
+        // Route every region through the bounded admission path, whether or
+        // not persistent LOD caching is enabled.
+        .defer_generation_dispatch = true,
+        .pending_regions = &pending_regions,
         .use_vertical_spans = use_vertical_spans,
     }, lod, velocity, chunk_checker, checker_ctx);
 }

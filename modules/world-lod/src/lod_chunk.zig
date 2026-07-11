@@ -603,6 +603,8 @@ pub const LODConfig = struct {
 
     skip_lighting_lod3: bool = false,
 
+    // The coarsest level remains active even when it shares the horizon radius
+    // with its child: it is the fast, large-area fallback while that child loads.
     active_lod_count: u32 = LODLevel.count,
 
     /// Maximum fraction of direct finer child regions that may be missing before
@@ -639,7 +641,6 @@ pub const LODConfig = struct {
     }
 
     /// Returns how many LOD levels should be active for a render-distance setting.
-    /// The current policy keeps all levels active regardless of near render distance.
     pub fn activeCountForRenderDistance(distance: i32) u32 {
         _ = distance;
         return LODLevel.count;
@@ -901,6 +902,17 @@ test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(i32, 256), custom_horizon[2]);
     try std.testing.expectEqual(@as(i32, 512), custom_horizon[3]);
     try std.testing.expectEqual(@as(i32, 1024), custom_horizon[4]);
+}
+
+test "LODConfig keeps the coarse fallback when tail radii match" {
+    var config = LODConfig{ .active_lod_count = LODLevel.count };
+    const interface = config.interface();
+
+    interface.setRadii(.{ 30, 96, 256, 512, 512 });
+    try std.testing.expectEqual(@as(u32, LODLevel.count), interface.getActiveLODCount());
+
+    interface.setRadii(.{ 36, 96, 256, 512, 1024 });
+    try std.testing.expectEqual(@as(u32, LODLevel.count), interface.getActiveLODCount());
 }
 
 test "ChunkBounds intersects radius radially" {

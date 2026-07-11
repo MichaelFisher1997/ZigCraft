@@ -278,12 +278,13 @@ pub fn terrainHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f
     return @min(height, floor_height);
 }
 
-/// Returns the stitched terrain surface height at a sample-grid point.
-/// Coordinates are clamped and then passed through seam stitching so region boundaries agree.
+/// Returns the authoritative terrain surface height at a sample-grid point.
+/// Cross-region stitching requires real neighbor samples; blending against
+/// unrelated samples inside this region creates visible edge distortion.
 pub fn terrainSurfaceHeightForPoint(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     const clamped_x = @min(gx, data.width - 1);
     const clamped_z = @min(gz, data.width - 1);
-    return stitchedHeight(data, clamped_x, clamped_z);
+    return data.getHeight(clamped_x, clamped_z);
 }
 
 /// Returns the quantized solid terrain height for a sample-grid point.
@@ -298,7 +299,7 @@ pub fn quantizedCellTerrainHeight(data: *const LODSimplifiedData, gx: u32, gz: u
     return quantizedHeight(terrainHeightForPoint(data, gx, gz));
 }
 
-/// Returns a quantized stitched surface height for an LOD cell.
+/// Returns a quantized surface height for an LOD cell.
 /// Unlike terrain-floor height, this keeps dry columns at the visible terrain surface.
 pub fn quantizedCellSurfaceHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
     return quantizedHeight(terrainSurfaceHeightForPoint(data, gx, gz));
@@ -564,6 +565,7 @@ pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_
     var has_water_span = false;
     var has_solid_span = false;
     var has_canopy_span = false;
+    const is_water_cell = isLODWaterCellForLOD(data, gx, gz, lod_level);
     var i: u8 = 0;
     while (i < data.verticalSpanCount(gx, gz)) : (i += 1) {
         const raw = data.getVerticalSpan(gx, gz, i) orelse continue;
@@ -576,6 +578,7 @@ pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_
             if (!shouldEmitWaterSpanForLOD(data, gx, gz, lod_level, raw.water)) continue;
             has_water_span = true;
         } else {
+            if (is_water_cell and isLeafBlock(block)) continue;
             has_solid_span = true;
             const terrain_height = data.getHeight(gx, gz);
             if (raw.vegetation.tree_coverage > 0.0 and max_height > terrain_height + 1.0) {
@@ -594,7 +597,7 @@ pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_
     if (gx < data.width and gz < data.width) {
         const idx = gx + gz * data.width;
         const vegetation = data.vegetation[idx];
-        if (!has_canopy_span and vegetation.tree_coverage >= LOD_TREE_COVERAGE_THRESHOLD and vegetation.avg_tree_height >= 2.0 and count < out.len) {
+        if (!is_water_cell and !has_canopy_span and vegetation.tree_coverage >= LOD_TREE_COVERAGE_THRESHOLD and vegetation.avg_tree_height >= 2.0 and count < out.len) {
             const leaves = if (vegetation.leaves == .air) BlockType.leaves else vegetation.leaves;
             const canopy = treeCanopyInterval(quantizedTerrainHeightForPoint(data, gx, gz), vegetation);
             insertColumnSpan(out, &count, .{
@@ -1127,41 +1130,6 @@ pub fn shouldEmitWaterSpanForLOD(data: *const LODSimplifiedData, gx: u32, gz: u3
 
     const stats = waterCoverageStats(data, gx, gz);
     return stats.wet_samples >= 2 and stats.average_coverage >= 0.25 and stats.representative_depth >= 1.5;
-}
-
-/// Returns a heightmap sample adjusted to match neighboring LOD region boundaries.
-/// Boundary samples may be clamped toward adjacent values to reduce visible cracks.
-pub fn stitchedHeight(data: *const LODSimplifiedData, gx: u32, gz: u32) f32 {
-    const height = data.getHeight(gx, gz);
-    if (data.width < 5) return height;
-
-    const blend_cells: u32 = 2;
-    const max_idx = data.width - 1;
-    const edge_dist = @min(@min(gx, gz), @min(max_idx - gx, max_idx - gz));
-    if (edge_dist >= blend_cells) return height;
-
-    const coarse_x = @min(((gx + 1) / 2) * 2, max_idx);
-    const coarse_z = @min(((gz + 1) / 2) * 2, max_idx);
-    const coarse_height = data.getHeight(coarse_x, coarse_z);
-    const edge_weight = 1.0 - (@as(f32, @floatFromInt(edge_dist)) / @as(f32, @floatFromInt(blend_cells)));
-    const blend = edge_weight * 0.35;
-    return height * (1.0 - blend) + coarse_height * blend;
-}
-
-/// Returns the maximum seam-height adjustment allowed for a point in the sample grid.
-/// Interior points allow no adjustment; boundary points allow bounded correction.
-pub fn maxStitchedHeightAdjustment(data: *const LODSimplifiedData) f32 {
-    if (data.width < 5) return 0.0;
-
-    var max_adjust: f32 = 0.0;
-    var i: u32 = 0;
-    while (i < data.width) : (i += 1) {
-        max_adjust = @max(max_adjust, @abs(data.getHeight(i, 0) - stitchedHeight(data, i, 0)));
-        max_adjust = @max(max_adjust, @abs(data.getHeight(i, data.width - 1) - stitchedHeight(data, i, data.width - 1)));
-        max_adjust = @max(max_adjust, @abs(data.getHeight(0, i) - stitchedHeight(data, 0, i)));
-        max_adjust = @max(max_adjust, @abs(data.getHeight(data.width - 1, i) - stitchedHeight(data, data.width - 1, i)));
-    }
-    return max_adjust;
 }
 
 // Helper functions for unpacking colors
