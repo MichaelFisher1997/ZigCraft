@@ -31,6 +31,7 @@ pub const HomeScreen = struct {
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext) !*HomeScreen {
         const self = try allocator.create(HomeScreen);
+        errdefer allocator.destroy(self);
         self.* = .{
             .context = context,
             .focused_action = 0,
