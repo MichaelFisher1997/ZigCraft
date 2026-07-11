@@ -236,6 +236,14 @@ pub const WorldListScreen = struct {
         if (self.confirm_rename and self.rename_focused) {
             try text_input.handleTextTyping(&self.rename_buffer, self.context.allocator, self.context.input, 32);
         }
+        if (!self.confirm_delete and !self.confirm_clear_all and !self.confirm_rename and self.worlds.len > 0) {
+            const input = self.context.input;
+            if (input.isKeyPressed(.down)) self.selected = if (self.selected) |idx| (idx + 1) % self.worlds.len else 0;
+            if (input.isKeyPressed(.up)) self.selected = if (self.selected) |idx| if (idx == 0) self.worlds.len - 1 else idx - 1 else self.worlds.len - 1;
+            if (self.context.input_mapper.isActionPressed(input, .ui_confirm)) {
+                if (self.selected) |idx| try self.loadWorld(idx);
+            }
+        }
     }
 
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
@@ -260,7 +268,7 @@ pub const WorldListScreen = struct {
         const ph: f32 = @min(screen_h - margin * 2.0, PANEL_HEIGHT_BASE * ui_scale);
         const px: f32 = (screen_w - pw) * 0.5;
         const py: f32 = (screen_h - ph) * 0.5;
-        const shell = Theme.drawShell(ui, .{ .x = px, .y = py, .width = pw, .height = ph }, ui_scale, "SAVES", "WORLDS", "Load, rename, or remove saved worlds.");
+        const shell = Theme.drawShell(ui, .{ .x = px, .y = py, .width = pw, .height = ph }, ui_scale, "PLAY", "YOUR WORLDS", "Select a save to see details and available actions.");
 
         if (self.error_message) |message| {
             const banner = Rect{ .x = shell.content.x + 12.0 * ui_scale, .y = shell.content.y + 8.0 * ui_scale, .width = shell.content.width - 24.0 * ui_scale, .height = 34.0 * ui_scale };
@@ -274,16 +282,31 @@ pub const WorldListScreen = struct {
         const count_w = Font.measureTextWidth(count_text, 0.94 * ui_scale);
         Font.drawText(ui, count_text, shell.rect.x + shell.rect.width - 34.0 * ui_scale - count_w, shell.rect.y + 86.0 * ui_scale, 0.94 * ui_scale, Theme.signal);
 
+        const detail_layout = shell.content.width >= 720.0 * ui_scale;
+        const detail_gap: f32 = 18.0 * ui_scale;
+        const list_rect = Rect{
+            .x = shell.content.x,
+            .y = shell.content.y,
+            .width = if (detail_layout) shell.content.width * 0.62 else shell.content.width,
+            .height = shell.content.height,
+        };
+        const detail_rect = Rect{
+            .x = list_rect.x + list_rect.width + detail_gap,
+            .y = shell.content.y,
+            .width = shell.content.width - list_rect.width - detail_gap,
+            .height = shell.content.height,
+        };
+
         const scroll_dy = ctx.input.getScrollDelta().y;
         self.scroll_offset -= scroll_dy * 30.0 * ui_scale;
-        const list_top: f32 = shell.content.y;
-        const list_bottom: f32 = shell.content.y + shell.content.height;
+        const list_top: f32 = list_rect.y;
+        const list_bottom: f32 = list_rect.y + list_rect.height;
         const row_h: f32 = 68.0 * ui_scale;
         const max_scroll = @max(0.0, @as(f32, @floatFromInt(self.worlds.len)) * row_h - (list_bottom - list_top));
         self.scroll_offset = @max(0.0, @min(self.scroll_offset, max_scroll));
 
-        Theme.drawListRail(ui, shell.content, ui_scale);
-        Theme.drawScrollbar(ui, shell.content.x + shell.content.width - 12.0 * ui_scale, list_top + 12.0 * ui_scale, shell.content.height - 24.0 * ui_scale, @as(f32, @floatFromInt(self.worlds.len)) * row_h, shell.content.height, self.scroll_offset, max_scroll, ui_scale);
+        Theme.drawListRail(ui, list_rect, ui_scale);
+        Theme.drawScrollbar(ui, list_rect.x + list_rect.width - 12.0 * ui_scale, list_top + 12.0 * ui_scale, list_rect.height - 24.0 * ui_scale, @as(f32, @floatFromInt(self.worlds.len)) * row_h, list_rect.height, self.scroll_offset, max_scroll, ui_scale);
 
         if (self.worlds.len == 0) {
             Font.drawTextCentered(ui, "NO SAVED WORLDS FOUND", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.40, 1.35 * ui_scale, Theme.title);
@@ -295,7 +318,7 @@ pub const WorldListScreen = struct {
             const ry: f32 = list_top + @as(f32, @floatFromInt(i)) * row_h - self.scroll_offset;
             if (ry + row_h < list_top or ry > list_bottom) continue;
             const world = self.worlds[i];
-            const row_rect = Rect{ .x = shell.content.x + 16.0 * ui_scale, .y = ry, .width = shell.content.width - 42.0 * ui_scale, .height = row_h - 8.0 * ui_scale };
+            const row_rect = Rect{ .x = list_rect.x + 16.0 * ui_scale, .y = ry, .width = list_rect.width - 42.0 * ui_scale, .height = row_h - 8.0 * ui_scale };
             const row_hovered = row_rect.contains(mx, my);
             const is_selected = self.selected == i;
             if (mc and row_hovered and !modal_open) {
@@ -307,10 +330,12 @@ pub const WorldListScreen = struct {
             var desc_buf: [128]u8 = undefined;
             const description = std.fmt.bufPrint(&desc_buf, "{s}  //  LAST PLAYED: {s}", .{ seed_text, last_text }) catch seed_text;
             Theme.drawOptionRow(ui, row_rect, world.name, description, 1.28 * ui_scale, is_selected or row_hovered, ui_scale);
-            if (is_selected) {
+            if (is_selected and !detail_layout) {
                 Theme.drawValueText(ui, .{ .x = row_rect.x + row_rect.width - 136.0 * ui_scale, .y = row_rect.y + 12.0 * ui_scale, .width = 118.0 * ui_scale, .height = 36.0 * ui_scale }, "SELECTED", 0.72 * ui_scale, ui_scale);
             }
         }
+
+        if (detail_layout) drawWorldDetails(ui, detail_rect, self, ui_scale);
 
         const btn_h: f32 = 46.0 * ui_scale;
         const byy: f32 = shell.footer_y;
@@ -319,17 +344,19 @@ pub const WorldListScreen = struct {
         const bx_base: f32 = shell.content.x;
         const btn_scale: f32 = 0.98 * ui_scale;
 
-        if (Theme.drawButton(ui, .{ .x = bx_base, .y = byy, .width = btn_w, .height = btn_h }, "BACK", btn_scale, mx, my, mc, .ghost, ui_scale)) {
+        if (Theme.drawButton(ui, .{ .x = bx_base, .y = byy, .width = if (detail_layout) 150.0 * ui_scale else btn_w, .height = btn_h }, "BACK", btn_scale, mx, my, mc, .ghost, ui_scale)) {
             ctx.screen_manager.popScreen();
         }
 
         const load_enabled = self.selected != null and !modal_open;
-        if (Theme.drawButton(ui, .{ .x = bx_base + btn_w + btn_gap, .y = byy, .width = btn_w, .height = btn_h }, "LOAD", btn_scale, mx, my, mc, if (load_enabled) .primary else .disabled, ui_scale)) {
+        const load_rect = if (detail_layout) Rect{ .x = detail_rect.x + 18.0 * ui_scale, .y = detail_rect.y + detail_rect.height - 168.0 * ui_scale, .width = detail_rect.width - 36.0 * ui_scale, .height = 44.0 * ui_scale } else Rect{ .x = bx_base + btn_w + btn_gap, .y = byy, .width = btn_w, .height = btn_h };
+        if (Theme.drawButton(ui, load_rect, "PLAY WORLD", btn_scale, mx, my, mc, if (load_enabled) .primary else .disabled, ui_scale)) {
             if (self.selected) |idx| try self.loadWorld(idx);
         }
 
         const rename_enabled = self.selected != null and !modal_open;
-        if (Theme.drawButton(ui, .{ .x = bx_base + 2.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, "RENAME", btn_scale, mx, my, mc, if (rename_enabled) .secondary else .disabled, ui_scale)) {
+        const rename_rect = if (detail_layout) Rect{ .x = detail_rect.x + 18.0 * ui_scale, .y = detail_rect.y + detail_rect.height - 114.0 * ui_scale, .width = (detail_rect.width - 46.0 * ui_scale) * 0.5, .height = 42.0 * ui_scale } else Rect{ .x = bx_base + 2.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h };
+        if (Theme.drawButton(ui, rename_rect, "RENAME", btn_scale, mx, my, mc, if (rename_enabled) .secondary else .disabled, ui_scale)) {
             if (self.selected) |idx| {
                 self.rename_buffer.clearRetainingCapacity();
                 try self.rename_buffer.appendSlice(self.context.allocator, self.worlds[idx].name);
@@ -339,12 +366,14 @@ pub const WorldListScreen = struct {
         }
 
         const del_enabled = self.selected != null and !modal_open;
-        if (Theme.drawButton(ui, .{ .x = bx_base + 3.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, "DELETE", btn_scale, mx, my, mc, if (del_enabled) .danger else .disabled, ui_scale)) {
+        const delete_rect = if (detail_layout) Rect{ .x = rename_rect.x + rename_rect.width + 10.0 * ui_scale, .y = rename_rect.y, .width = rename_rect.width, .height = rename_rect.height } else Rect{ .x = bx_base + 3.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h };
+        if (Theme.drawButton(ui, delete_rect, "DELETE", btn_scale, mx, my, mc, if (del_enabled) .danger else .disabled, ui_scale)) {
             self.confirm_delete = true;
         }
 
         const clear_enabled = self.worlds.len > 0 and !modal_open;
-        if (Theme.drawButton(ui, .{ .x = bx_base + 4.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h }, "CLEAR ALL", btn_scale, mx, my, mc, if (clear_enabled) .danger else .disabled, ui_scale)) {
+        const clear_rect = if (detail_layout) Rect{ .x = shell.content.x + shell.content.width - 150.0 * ui_scale, .y = byy, .width = 150.0 * ui_scale, .height = btn_h } else Rect{ .x = bx_base + 4.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h };
+        if (Theme.drawButton(ui, clear_rect, "CLEAR ALL", btn_scale, mx, my, mc, if (clear_enabled) .danger else .disabled, ui_scale)) {
             self.confirm_clear_all = true;
         }
 
@@ -502,6 +531,24 @@ pub const WorldListScreen = struct {
         self.error_message = null;
     }
 };
+
+fn drawWorldDetails(ui: *UISystem, rect: Rect, self: *WorldListScreen, scale: f32) void {
+    Theme.drawListRail(ui, rect, scale);
+    Font.drawText(ui, "WORLD DETAILS", rect.x + 18.0 * scale, rect.y + 18.0 * scale, 0.72 * scale, Theme.signal);
+    ui.drawRect(.{ .x = rect.x + 18.0 * scale, .y = rect.y + 44.0 * scale, .width = rect.width - 36.0 * scale, .height = 1.0 * scale }, Theme.outline);
+    if (self.selected) |idx| {
+        const world = self.worlds[idx];
+        Font.drawText(ui, world.name, rect.x + 18.0 * scale, rect.y + 64.0 * scale, 1.36 * scale, Theme.title);
+        Font.drawText(ui, registry.getGeneratorInfo(world.generator_index).name, rect.x + 18.0 * scale, rect.y + 100.0 * scale, 0.82 * scale, Theme.text);
+        var seed_buf: [64]u8 = undefined;
+        const seed_text = std.fmt.bufPrint(&seed_buf, "Seed  {}", .{world.seed}) catch "Seed  unknown";
+        Font.drawText(ui, seed_text, rect.x + 18.0 * scale, rect.y + 132.0 * scale, 0.76 * scale, Theme.muted);
+        Font.drawText(ui, "Use Play World to resume this save.", rect.x + 18.0 * scale, rect.y + 176.0 * scale, 0.72 * scale, Theme.muted);
+    } else {
+        Font.drawText(ui, "Select a world", rect.x + 18.0 * scale, rect.y + 68.0 * scale, 1.10 * scale, Theme.title);
+        Font.drawText(ui, "Its details and actions will appear here.", rect.x + 18.0 * scale, rect.y + 102.0 * scale, 0.70 * scale, Theme.muted);
+    }
+}
 
 fn formatTimestamp(ts: i64) []const u8 {
     if (ts <= 0) return "NEVER";

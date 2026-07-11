@@ -16,6 +16,7 @@ const PANEL_HEIGHT_MAX = 760.0;
 pub const ResourcePacksScreen = struct {
     context: ResourcePacksContext,
     reload_status: ?[]const u8,
+    scroll_offset: f32,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -29,6 +30,7 @@ pub const ResourcePacksScreen = struct {
         self.* = .{
             .context = context.resourcePacksContext(),
             .reload_status = null,
+            .scroll_offset = 0.0,
         };
         return self;
     }
@@ -73,28 +75,38 @@ pub const ResourcePacksScreen = struct {
         const shell = Theme.drawShell(ui, .{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, ui_scale, "ASSETS", "RESOURCE PACKS", "Pick a texture pack for block materials.");
 
         Theme.drawListRail(ui, shell.content, ui_scale);
-        var y = shell.content.y + 18.0 * ui_scale;
         const row_x = shell.content.x + 18.0 * ui_scale;
         const row_w = shell.content.width - 36.0 * ui_scale;
         const row_h = 56.0 * ui_scale;
         const btn_scale = 1.18 * ui_scale;
+        const packs = manager.getPackNames();
+        const content_h = @as(f32, @floatFromInt(packs.len + 1)) * (row_h + 10.0 * ui_scale) + 26.0 * ui_scale;
+        const max_scroll = @max(0.0, content_h - shell.content.height);
+        self.scroll_offset -= ctx.input.getScrollDelta().y * 32.0 * ui_scale;
+        self.scroll_offset = @max(0.0, @min(self.scroll_offset, max_scroll));
+        var y = shell.content.y + 18.0 * ui_scale - self.scroll_offset;
+        Theme.drawScrollbar(ui, shell.content.x + shell.content.width - 10.0 * ui_scale, shell.content.y + 12.0 * ui_scale, shell.content.height - 24.0 * ui_scale, content_h, shell.content.height, self.scroll_offset, max_scroll, ui_scale);
 
         const is_default = std.mem.eql(u8, settings.texture_pack, "default");
-        if (drawPackButton(ui, row_x, y, row_w, row_h, "DEFAULT / BUILT-IN", "Base texture atlas shipped with ZigCraft.", is_default, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
-            if (!is_default) {
-                try settings_pkg.persistence.setTexturePack(settings, ctx.allocator, "default");
-                try manager.setActivePack("default");
-                self.reload_status = "Reloading texture atlas...";
-                try self.reloadAtlas();
-                self.reload_status = "Texture pack reloaded.";
+        if (y + row_h >= shell.content.y and y <= shell.content.y + shell.content.height) {
+            if (drawPackButton(ui, row_x, y, row_w, row_h, "DEFAULT / BUILT-IN", "Base texture atlas shipped with ZigCraft.", is_default, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
+                if (!is_default) {
+                    try settings_pkg.persistence.setTexturePack(settings, ctx.allocator, "default");
+                    try manager.setActivePack("default");
+                    self.reload_status = "Reloading texture atlas...";
+                    try self.reloadAtlas();
+                    self.reload_status = "Texture pack reloaded.";
+                }
             }
         }
         y += row_h + 10.0 * ui_scale;
 
-        const packs = manager.getPackNames();
         var buffer: [160]u8 = undefined;
         for (packs) |pack| {
-            if (y + row_h > shell.content.y + shell.content.height) break;
+            if (y + row_h < shell.content.y or y > shell.content.y + shell.content.height) {
+                y += row_h + 10.0 * ui_scale;
+                continue;
+            }
             const is_selected = std.mem.eql(u8, settings.texture_pack, pack.name);
             const label = std.fmt.bufPrint(&buffer, "{s}", .{pack.name}) catch "PACK";
             if (drawPackButton(ui, row_x, y, row_w, row_h, label, "External pack discovered by the resource manager.", is_selected, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
@@ -138,8 +150,10 @@ pub const ResourcePacksScreen = struct {
 };
 
 fn drawPackButton(ui: *UISystem, x: f32, y: f32, w: f32, h: f32, label: []const u8, description: []const u8, selected: bool, btn_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) bool {
-    Theme.drawOptionRow(ui, .{ .x = x, .y = y, .width = w, .height = h }, label, description, 1.04 * scale, selected, scale);
+    const row = Theme.Rect{ .x = x, .y = y, .width = w, .height = h };
+    Theme.drawOptionRow(ui, row, label, description, 1.04 * scale, selected, scale);
     const action_w = 150.0 * scale;
     const action_x = x + w - action_w - 12.0 * scale;
-    return Theme.drawButton(ui, .{ .x = action_x, .y = y + 9.0 * scale, .width = action_w, .height = h - 18.0 * scale }, if (selected) "ACTIVE" else "SELECT", btn_scale, mx, my, clicked, if (selected) .primary else .secondary, scale);
+    const action_clicked = Theme.drawButton(ui, .{ .x = action_x, .y = y + 9.0 * scale, .width = action_w, .height = h - 18.0 * scale }, if (selected) "ACTIVE" else "USE PACK", btn_scale, mx, my, clicked, if (selected) .primary else .secondary, scale);
+    return action_clicked or (clicked and row.contains(mx, my));
 }

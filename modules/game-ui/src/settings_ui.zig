@@ -16,9 +16,9 @@ pub fn drawStepperControl(ui: *UISystem, row: Rect, value: []const u8, value_sca
     const value_x = right_x - value_w - 8.0 * scale;
     const left_x = value_x - arrow_w - 8.0 * scale;
     var result: StepResult = .none;
-    if (Theme.drawButton(ui, .{ .x = left_x, .y = control_y, .width = arrow_w, .height = control_h }, "<", button_scale, mx, my, clicked, .ghost, scale)) result = .previous;
+    if (Theme.drawButton(ui, .{ .x = left_x, .y = control_y, .width = arrow_w, .height = control_h }, "-", button_scale, mx, my, clicked, .ghost, scale)) result = .previous;
     Theme.drawValueText(ui, .{ .x = value_x, .y = control_y, .width = value_w, .height = control_h }, value, value_scale, scale);
-    if (Theme.drawButton(ui, .{ .x = right_x, .y = control_y, .width = arrow_w, .height = control_h }, ">", button_scale, mx, my, clicked, .ghost, scale)) result = .next;
+    if (Theme.drawButton(ui, .{ .x = right_x, .y = control_y, .width = arrow_w, .height = control_h }, "+", button_scale, mx, my, clicked, .ghost, scale)) result = .next;
     return result;
 }
 

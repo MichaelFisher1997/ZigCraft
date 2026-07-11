@@ -191,6 +191,7 @@ pub const IScreen = struct {
         onEnter: ?*const fn (ptr: *anyopaque) void = null,
         onExit: ?*const fn (ptr: *anyopaque) void = null,
         getWorldStats: ?*const fn (ptr: *anyopaque) ?WorldStats = null,
+        isReadyForPresentation: ?*const fn (ptr: *anyopaque) bool = null,
     };
 
     pub fn deinit(self: IScreen) void {
@@ -226,6 +227,13 @@ pub const IScreen = struct {
             return getStats_fn(self.ptr);
         }
         return null;
+    }
+
+    pub fn isReadyForPresentation(self: IScreen) bool {
+        if (self.vtable.isReadyForPresentation) |ready_fn| {
+            return ready_fn(self.ptr);
+        }
+        return true;
     }
 
     pub fn handle(self: IScreen) core_interfaces.ScreenHandle {
@@ -344,6 +352,11 @@ pub const ScreenManager = struct {
         if (self.stack.items.len > 0) {
             try self.stack.items[self.stack.items.len - 1].draw(ui);
         }
+    }
+
+    pub fn isReadyForPresentation(self: *const ScreenManager) bool {
+        if (self.stack.items.len == 0) return false;
+        return self.stack.items[self.stack.items.len - 1].isReadyForPresentation();
     }
 
     pub fn drawParentScreen(self: *ScreenManager, current_ptr: *anyopaque, ui: *UISystem) !void {
