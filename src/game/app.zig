@@ -117,6 +117,7 @@ pub const App = struct {
     screenshot_delay_start: ?f32 = null,
     screenshot_settle_frames: u32 = 0,
     frame_start_counter: u64 = 0,
+    reveal_window_when_menu_ready: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) !*App {
         log.log.info("Initializing engine systems...", .{});
@@ -139,6 +140,7 @@ pub const App = struct {
             applyShadowTestPreset(settings_manager.ptr());
         }
 
+        const preload_menu_preview = !build_options.skip_present and !build_options.smoke_test and build_options.screenshot_path.len == 0 and !build_options.benchmark and !build_options.shadow_test_scene and resolveAutoWorldGenerator() == null;
         const initial_window_width: u32 = if (build_options.benchmark) 1920 else settings_manager.settings.window_width;
         const initial_window_height: u32 = if (build_options.benchmark) 1080 else settings_manager.settings.window_height;
         log.log.info("App.init: initializing WindowManager ({}x{})", .{ initial_window_width, initial_window_height });
@@ -147,7 +149,7 @@ pub const App = struct {
             .monitor_name = build_options.monitor_name,
             .video_driver = build_options.window_video_driver,
             .no_focus = build_options.window_no_focus,
-            .hidden = build_options.skip_present,
+            .hidden = build_options.skip_present or preload_menu_preview,
         });
         errdefer wm.deinit();
 
@@ -226,6 +228,7 @@ pub const App = struct {
             .screenshot_delay_start = null,
             .screenshot_settle_frames = 0,
             .frame_start_counter = 0,
+            .reveal_window_when_menu_ready = preload_menu_preview,
         };
         errdefer app.screen_manager.deinit();
 
@@ -451,6 +454,7 @@ pub const App = struct {
         try self.ui_manager.draw(&self.screen_manager, self.render_system.getRHI(), world_stats, cpu_ms, self.time.fps);
 
         self.render_system.endFrame();
+        self.revealMenuWindowWhenReady();
 
         if (build_options.benchmark) {
             if (self.benchmark_runner) |runner| {
@@ -520,6 +524,13 @@ pub const App = struct {
         }
 
         self.limitFrameRateIfNeeded();
+    }
+
+    fn revealMenuWindowWhenReady(self: *App) void {
+        if (!self.reveal_window_when_menu_ready or !self.screen_manager.isReadyForPresentation()) return;
+        log.log.info("MENU PREVIEW READY: revealing preloaded window", .{});
+        self.window_manager.show();
+        self.reveal_window_when_menu_ready = false;
     }
 
     fn limitFrameRateIfNeeded(self: *App) void {

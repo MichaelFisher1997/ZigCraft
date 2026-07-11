@@ -66,6 +66,10 @@ pub const SingleplayerScreen = struct {
             self.context.screen_manager.popScreen();
             return;
         }
+        if (self.context.input.isKeyPressed(.tab)) {
+            self.name_focused = !self.name_focused;
+            self.seed_focused = !self.name_focused;
+        }
         if (self.seed_focused) try text_input.handleTextTyping(&self.seed_input, self.context.allocator, self.context.input, 32);
         if (self.name_focused) try text_input.handleTextTyping(&self.name_input, self.context.allocator, self.context.input, 32);
     }
@@ -89,40 +93,57 @@ pub const SingleplayerScreen = struct {
 
         Theme.drawBackdrop(ui, screen_w, screen_h, ui_scale, .create);
 
-        const margin: f32 = 42.0 * ui_scale;
-        const panel_w: f32 = @min(screen_w - margin * 2.0, PANEL_WIDTH_MAX * ui_scale);
-        const panel_h: f32 = @min(screen_h - margin * 2.0, PANEL_HEIGHT_MAX * ui_scale);
-        const panel_x: f32 = (screen_w - panel_w) * 0.5;
-        const panel_y: f32 = (screen_h - panel_h) * 0.5;
-        const shell = Theme.drawShell(ui, .{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, ui_scale, "GENERATOR", "NEW WORLD", "Name it, seed it, pick a terrain generator.");
-
         const cursor_visible = @as(u32, @truncate(@as(u64, @intFromFloat(ctx.time.elapsed * 2.0)))) % 2 == 0;
         const form_scale: f32 = 1.18 * ui_scale;
         const btn_scale: f32 = 1.16 * ui_scale;
-        const input_h: f32 = 52.0 * ui_scale;
+        const input_h: f32 = 58.0 * ui_scale;
 
-        const gap: f32 = 28.0 * ui_scale;
-        const preview_w: f32 = if (compact) 0.0 else shell.content.width * 0.40;
-        const form_x: f32 = if (compact) shell.content.x else shell.content.x + preview_w + gap;
-        const form_w: f32 = if (compact) shell.content.width else shell.content.width - preview_w - gap;
+        const margin: f32 = 48.0 * ui_scale;
+        const page_w = @min(screen_w - margin * 2.0, 1420.0 * ui_scale);
+        const page_x = (screen_w - page_w) * 0.5;
+        const page_top = @max(38.0 * ui_scale, (screen_h - 860.0 * ui_scale) * 0.5);
+        const header_h: f32 = 128.0 * ui_scale;
+        const footer_h: f32 = 74.0 * ui_scale;
+        const body_y = page_top + header_h;
+        const body_h = @min(610.0 * ui_scale, screen_h - body_y - footer_h - 32.0 * ui_scale);
+        const column_gap: f32 = 18.0 * ui_scale;
+        const rail_w: f32 = if (compact) 0.0 else 190.0 * ui_scale;
+        const summary_visible = page_w >= 1120.0 * ui_scale;
+        const summary_w: f32 = if (summary_visible) 330.0 * ui_scale else 0.0;
+        const form_x = page_x + rail_w + (if (compact) 0.0 else column_gap);
+        const form_w = page_w - rail_w - summary_w - (if (compact) 0.0 else column_gap) - (if (summary_visible) column_gap else 0.0);
+        const summary_x = form_x + form_w + column_gap;
 
-        if (!compact) drawGeneratorPreview(ui, .{ .x = shell.content.x, .y = shell.content.y, .width = preview_w, .height = shell.content.height }, self.selected_generator_index, ui_scale);
+        Font.drawText(ui, "NEW WORLD", page_x, page_top, 0.88 * ui_scale, Theme.signal);
+        Font.drawText(ui, "Create something new.", page_x, page_top + 28.0 * ui_scale, 4.2 * ui_scale, Theme.title);
+        Font.drawText(ui, "Name your world, choose its terrain, then jump in.", page_x, page_top + 86.0 * ui_scale, 1.06 * ui_scale, Theme.muted);
 
-        var y = shell.content.y + 6.0 * ui_scale;
-        Theme.drawSectionLabel(ui, form_x, y, "WORLD NAME", ui_scale);
-        y += 34.0 * ui_scale;
+        if (!compact) drawCreateSteps(ui, .{ .x = page_x, .y = body_y, .width = rail_w, .height = body_h }, ui_scale);
 
-        Font.drawText(ui, "WORLD NAME", form_x, y, 0.82 * ui_scale, Theme.muted);
-        y += 20.0 * ui_scale;
-        const name_rect = Rect{ .x = form_x, .y = y, .width = form_w, .height = input_h };
-        y += input_h + 18.0 * ui_scale;
+        const form_rect = Rect{ .x = form_x, .y = body_y, .width = form_w, .height = body_h };
+        ui.drawRect(.{ .x = form_rect.x + 9.0 * ui_scale, .y = form_rect.y + 10.0 * ui_scale, .width = form_rect.width, .height = form_rect.height }, Color.rgba(0, 0, 0, 0.38));
+        ui.drawRect(form_rect, Color.rgba(0.045, 0.070, 0.090, 0.98));
+        ui.drawRect(.{ .x = form_rect.x, .y = form_rect.y, .width = 7.0 * ui_scale, .height = form_rect.height }, Theme.signal);
 
-        Font.drawText(ui, "SEED", form_x, y, 0.82 * ui_scale, Theme.muted);
-        y += 20.0 * ui_scale;
-        const random_w: f32 = @min(150.0 * ui_scale, form_w * 0.34);
-        const seed_rect = Rect{ .x = form_x, .y = y, .width = form_w - random_w - 12.0 * ui_scale, .height = input_h };
+        const content_x = form_rect.x + 34.0 * ui_scale;
+        const content_w = form_rect.width - 68.0 * ui_scale;
+        var y = form_rect.y + 28.0 * ui_scale;
+        Font.drawText(ui, "World details", content_x, y, 1.62 * ui_scale, Theme.title);
+        y += 35.0 * ui_scale;
+        Font.drawText(ui, "Give this save a recognizable name.", content_x, y, 0.84 * ui_scale, Theme.muted);
+        y += 35.0 * ui_scale;
+
+        Font.drawText(ui, "NAME", content_x, y, 0.76 * ui_scale, Theme.signal);
+        y += 21.0 * ui_scale;
+        const name_rect = Rect{ .x = content_x, .y = y, .width = content_w, .height = input_h };
+        y += input_h + 20.0 * ui_scale;
+
+        Font.drawText(ui, "SEED", content_x, y, 0.76 * ui_scale, Theme.signal);
+        y += 21.0 * ui_scale;
+        const random_w: f32 = @min(144.0 * ui_scale, content_w * 0.30);
+        const seed_rect = Rect{ .x = content_x, .y = y, .width = content_w - random_w - 12.0 * ui_scale, .height = input_h };
         const random_rect = Rect{ .x = seed_rect.x + seed_rect.width + 12.0 * ui_scale, .y = y, .width = random_w, .height = input_h };
-        y += input_h + 24.0 * ui_scale;
+        y += input_h + 30.0 * ui_scale;
 
         if (mouse_clicked) {
             self.name_focused = name_rect.contains(mouse_x, mouse_y);
@@ -137,41 +158,44 @@ pub const SingleplayerScreen = struct {
             self.name_focused = false;
         }
 
-        Theme.drawSectionLabel(ui, form_x, y, "TERRAIN TYPE", ui_scale);
-        y += 38.0 * ui_scale;
-        const g_info = registry.getGeneratorInfo(self.selected_generator_index);
+        Font.drawText(ui, "CHOOSE TERRAIN", content_x, y, 0.76 * ui_scale, Theme.signal);
+        y += 24.0 * ui_scale;
         const gen_count = registry.getGeneratorCount();
-        const profile_h: f32 = 76.0 * ui_scale;
-        Theme.drawOptionRow(ui, .{ .x = form_x, .y = y, .width = form_w, .height = profile_h }, g_info.name, g_info.description, 1.22 * ui_scale, true, ui_scale);
-
-        const arrow_w: f32 = 48.0 * ui_scale;
-        const label_w: f32 = 142.0 * ui_scale;
-        const ctrl_y = y + 14.0 * ui_scale;
-        const right_x = form_x + form_w - arrow_w - 12.0 * ui_scale;
-        const value_x = right_x - label_w - 8.0 * ui_scale;
-        const left_x = value_x - arrow_w - 8.0 * ui_scale;
-        if (Theme.drawButton(ui, .{ .x = left_x, .y = ctrl_y, .width = arrow_w, .height = 46.0 * ui_scale }, "<", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
-            self.selected_generator_index = if (self.selected_generator_index == 0) gen_count - 1 else self.selected_generator_index - 1;
+        const generator_gap: f32 = 12.0 * ui_scale;
+        const generator_cols: usize = if (content_w >= 480.0 * ui_scale) 2 else 1;
+        const generator_w = (content_w - generator_gap * @as(f32, @floatFromInt(generator_cols - 1))) / @as(f32, @floatFromInt(generator_cols));
+        const generator_h: f32 = 82.0 * ui_scale;
+        var generator_index: usize = 0;
+        while (generator_index < gen_count) : (generator_index += 1) {
+            const col = generator_index % generator_cols;
+            const row = generator_index / generator_cols;
+            const generator_rect = Rect{
+                .x = content_x + @as(f32, @floatFromInt(col)) * (generator_w + generator_gap),
+                .y = y + @as(f32, @floatFromInt(row)) * (generator_h + generator_gap),
+                .width = generator_w,
+                .height = generator_h,
+            };
+            const info = registry.getGeneratorInfo(generator_index);
+            const selected = self.selected_generator_index == generator_index;
+            drawTerrainTile(ui, generator_rect, info.name, info.description, generator_index, selected, ui_scale);
+            if (mouse_clicked and generator_rect.contains(mouse_x, mouse_y)) self.selected_generator_index = generator_index;
         }
-        var gen_label_buf: [32]u8 = undefined;
-        const gen_label = std.fmt.bufPrint(&gen_label_buf, "{}/{}", .{ self.selected_generator_index + 1, gen_count }) catch "?";
-        Theme.drawValueText(ui, .{ .x = value_x, .y = ctrl_y, .width = label_w, .height = 46.0 * ui_scale }, gen_label, btn_scale, ui_scale);
-        if (Theme.drawButton(ui, .{ .x = right_x, .y = ctrl_y, .width = arrow_w, .height = 46.0 * ui_scale }, ">", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
-            self.selected_generator_index = (self.selected_generator_index + 1) % gen_count;
-        }
 
-        const bottom_y = shell.footer_y;
-        const load_w = @min(260.0 * ui_scale, form_w * 0.42);
-        const action_w = (form_w - load_w - 24.0 * ui_scale) * 0.5;
-        if (Theme.drawButton(ui, .{ .x = form_x, .y = bottom_y, .width = load_w, .height = 48.0 * ui_scale }, "LOAD WORLD", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
+        if (summary_visible) drawWorldSummary(ui, .{ .x = summary_x, .y = body_y, .width = summary_w, .height = body_h }, self.selected_generator_index, self.seed_input.items, ui_scale);
+
+        const bottom_y = body_y + body_h + 20.0 * ui_scale;
+        const load_w = @min(220.0 * ui_scale, page_w * 0.30);
+        const action_w = 176.0 * ui_scale;
+        const actions_x = page_x + page_w - action_w * 2.0 - 12.0 * ui_scale;
+        if (Theme.drawButton(ui, .{ .x = page_x, .y = bottom_y, .width = load_w, .height = 52.0 * ui_scale }, "MY WORLDS", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
             const wl_screen = try WorldListScreen.init(ctx.allocator, ctx);
             errdefer wl_screen.deinit(wl_screen);
             ctx.screen_manager.pushScreen(wl_screen.screen());
         }
-        if (Theme.drawButton(ui, .{ .x = form_x + load_w + 12.0 * ui_scale, .y = bottom_y, .width = action_w, .height = 48.0 * ui_scale }, "BACK", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
+        if (Theme.drawButton(ui, .{ .x = actions_x, .y = bottom_y, .width = action_w, .height = 52.0 * ui_scale }, "CANCEL", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, ui_scale)) {
             ctx.screen_manager.popScreen();
         }
-        if (Theme.drawButton(ui, .{ .x = form_x + load_w + 24.0 * ui_scale + action_w, .y = bottom_y, .width = action_w, .height = 48.0 * ui_scale }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked, .primary, ui_scale) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
+        if (Theme.drawButton(ui, .{ .x = actions_x + action_w + 12.0 * ui_scale, .y = bottom_y, .width = action_w, .height = 52.0 * ui_scale }, "CREATE", btn_scale, mouse_x, mouse_y, mouse_clicked, .primary, ui_scale) or ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm)) {
             const seed = try seed_gen.resolveSeed(&self.seed_input, ctx.allocator);
             const trimmed_name = std.mem.trim(u8, self.name_input.items, " \t\r\n");
             const world_name = if (trimmed_name.len > 0) trimmed_name else "New World";
@@ -188,26 +212,50 @@ pub const SingleplayerScreen = struct {
     }
 };
 
-fn drawGeneratorPreview(ui: *UISystem, rect: Rect, selected_generator_index: usize, scale: f32) void {
+fn drawWorldSummary(ui: *UISystem, rect: Rect, selected_generator_index: usize, seed: []const u8, scale: f32) void {
     const g_info = registry.getGeneratorInfo(selected_generator_index);
-    Theme.drawListRail(ui, rect, scale);
-    Font.drawText(ui, "TERRAIN PREVIEW", rect.x + 22.0 * scale, rect.y + 20.0 * scale, 0.82 * scale, Theme.muted);
-    Font.drawText(ui, g_info.name, rect.x + 22.0 * scale, rect.y + 50.0 * scale, 1.72 * scale, Theme.title);
-    Font.drawText(ui, g_info.description, rect.x + 22.0 * scale, rect.y + 86.0 * scale, 0.82 * scale, Theme.text);
+    ui.drawRect(rect, Color.rgba(0.035, 0.145, 0.185, 0.98));
+    ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = 8.0 * scale }, Theme.signal);
+    Font.drawText(ui, "READY TO CREATE", rect.x + 28.0 * scale, rect.y + 30.0 * scale, 0.78 * scale, Color.rgba(0.72, 0.92, 1.0, 1.0));
+    Font.drawText(ui, g_info.name, rect.x + 28.0 * scale, rect.y + 68.0 * scale, 1.82 * scale, Theme.title);
+    Font.drawText(ui, g_info.description, rect.x + 28.0 * scale, rect.y + 110.0 * scale, 0.86 * scale, Theme.text);
 
-    const terrain_y = rect.y + rect.height - 158.0 * scale;
-    ui.drawRect(.{ .x = rect.x + 22.0 * scale, .y = terrain_y, .width = rect.width - 44.0 * scale, .height = 104.0 * scale }, Color.rgba(0.034, 0.054, 0.070, 0.92));
-    ui.drawRect(.{ .x = rect.x + 22.0 * scale, .y = terrain_y + 52.0 * scale, .width = rect.width - 44.0 * scale, .height = 2.0 * scale }, Color.rgba(0.58, 0.72, 0.82, 0.44));
+    const divider_y = rect.y + 156.0 * scale;
+    ui.drawRect(.{ .x = rect.x + 28.0 * scale, .y = divider_y, .width = rect.width - 56.0 * scale, .height = 1.0 * scale }, Color.rgba(0.55, 0.82, 0.90, 0.42));
+    drawSummaryFact(ui, rect.x + 28.0 * scale, divider_y + 28.0 * scale, "SEED", if (seed.len == 0) "Random on launch" else "Custom seed", scale);
+    drawSummaryFact(ui, rect.x + 28.0 * scale, divider_y + 90.0 * scale, "SAVED TO", "My Worlds", scale);
+    drawSummaryFact(ui, rect.x + 28.0 * scale, divider_y + 152.0 * scale, "ACCESS", "Offline / local", scale);
 
-    var x = rect.x + 40.0 * scale;
-    var i: usize = 0;
-    while (i < 8) : (i += 1) {
-        const w: f32 = if (i % 3 == 0) 34.0 * scale else if (i % 3 == 1) 48.0 * scale else 28.0 * scale;
-        const h: f32 = if (i % 4 == 0) 78.0 * scale else if (i % 4 == 1) 46.0 * scale else if (i % 4 == 2) 92.0 * scale else 60.0 * scale;
-        ui.drawRect(.{ .x = x, .y = terrain_y + 104.0 * scale - h, .width = w, .height = h }, Color.rgba(0.080, 0.120, 0.150, 0.86));
-        ui.drawRect(.{ .x = x, .y = terrain_y + 104.0 * scale - h, .width = w, .height = 7.0 * scale }, if (i % 2 == 0) Theme.signal else Theme.copper);
-        x += w + 12.0 * scale;
+    const note_y = rect.y + rect.height - 62.0 * scale;
+    Font.drawText(ui, "PRESS ENTER TO CREATE", rect.x + 28.0 * scale, note_y, 0.74 * scale, Color.rgba(0.72, 0.92, 1.0, 1.0));
+}
+
+fn drawSummaryFact(ui: *UISystem, x: f32, y: f32, label: []const u8, value: []const u8, scale: f32) void {
+    Font.drawText(ui, label, x, y, 0.68 * scale, Color.rgba(0.58, 0.80, 0.88, 1.0));
+    Font.drawText(ui, value, x, y + 22.0 * scale, 1.04 * scale, Theme.title);
+}
+
+fn drawCreateSteps(ui: *UISystem, rect: Rect, scale: f32) void {
+    ui.drawRect(rect, Color.rgba(0.024, 0.038, 0.052, 0.92));
+    const labels = [_][]const u8{ "DETAILS", "TERRAIN", "REVIEW" };
+    for (labels, 0..) |label, i| {
+        const y = rect.y + 30.0 * scale + @as(f32, @floatFromInt(i)) * 82.0 * scale;
+        var number_buf: [4]u8 = undefined;
+        const number = std.fmt.bufPrint(&number_buf, "0{}", .{i + 1}) catch "";
+        Font.drawText(ui, number, rect.x + 22.0 * scale, y, 1.38 * scale, if (i == 0) Theme.signal else Theme.dim);
+        Font.drawText(ui, label, rect.x + 68.0 * scale, y + 5.0 * scale, 0.82 * scale, if (i == 0) Theme.title else Theme.muted);
+        if (i == 0) ui.drawRect(.{ .x = rect.x, .y = y - 8.0 * scale, .width = 5.0 * scale, .height = 42.0 * scale }, Theme.signal);
     }
+}
+
+fn drawTerrainTile(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, index: usize, selected: bool, scale: f32) void {
+    const accents = [_]Color{ Theme.signal, Color.rgba(0.42, 0.78, 0.56, 1.0), Color.rgba(0.88, 0.52, 0.38, 1.0), Color.rgba(0.62, 0.54, 0.94, 1.0) };
+    const accent = accents[index % accents.len];
+    ui.drawRect(rect, if (selected) Color.rgba(accent.r * 0.24, accent.g * 0.24, accent.b * 0.24, 1.0) else Color.rgba(0.025, 0.044, 0.060, 1.0));
+    ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = 8.0 * scale, .height = rect.height }, accent);
+    Font.drawText(ui, label, rect.x + 22.0 * scale, rect.y + 17.0 * scale, 1.08 * scale, Theme.title);
+    Font.drawText(ui, description, rect.x + 22.0 * scale, rect.y + 48.0 * scale, 0.68 * scale, Theme.muted);
+    if (selected) Font.drawText(ui, "SELECTED", rect.x + rect.width - 82.0 * scale, rect.y + 18.0 * scale, 0.62 * scale, accent);
 }
 
 fn saveNewWorld(allocator: std.mem.Allocator, seed: u64, generator_index: usize, world_name: []const u8) !void {

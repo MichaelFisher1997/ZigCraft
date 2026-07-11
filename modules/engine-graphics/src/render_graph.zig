@@ -257,6 +257,7 @@ pub const ShadowPass = struct {
         const self: *ShadowPass = @ptrCast(@alignCast(ptr));
         // Runtime verification to ensuring pointer safety in debug mode
         std.debug.assert(self.cascade_index < rhi_pkg.SHADOW_CASCADE_COUNT);
+        if (!self.enabled or !ctx.shadow_draw_enabled) return;
 
         const cascade_idx = self.cascade_index;
         const shadow_resolution = ctx.shadow_ctx.getResolution();
@@ -298,8 +299,6 @@ pub const ShadowPass = struct {
                 .distance = ctx.shadow.distance,
             });
         }
-
-        if (!self.enabled or !ctx.shadow_draw_enabled) return;
 
         // Keep cutout casters sampling the terrain atlas during the shadow pass.
         // Without this, shadow.frag can alpha-clip against whatever texture was last bound.

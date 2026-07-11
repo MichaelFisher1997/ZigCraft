@@ -66,6 +66,8 @@ pub const WorldScreen = struct {
     stable_shadow_sun_dir: Vec3 = Vec3.init(0.0, 1.0, 0.0),
     stable_shadow_sun_initialized: bool = false,
     save_failure_warning_count: usize = 0,
+    menu_preview: bool = false,
+    menu_preview_center: Vec3 = Vec3.zero,
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
         .update = update,
@@ -76,8 +78,25 @@ pub const WorldScreen = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
+        return initWithDistance(allocator, context, seed, generator_index, context.settings.render_distance, context.settings.horizon_distance, context.settings.lod_enabled, false);
+    }
+
+    pub fn initMenuPreview(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
+        return initWithDistance(
+            allocator,
+            context,
+            seed,
+            generator_index,
+            context.settings.render_distance,
+            context.settings.horizon_distance,
+            context.settings.lod_enabled,
+            true,
+        );
+    }
+
+    fn initWithDistance(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize, render_distance: i32, horizon_distance: i32, lod_enabled: bool, menu_preview: bool) !*WorldScreen {
         const render_system = context.render_system;
-        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, context.settings.render_distance, context.settings.horizon_distance, context.settings.lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, render_distance, horizon_distance, lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
         errdefer session.deinit();
         const world = session.world.interface();
 
@@ -93,7 +112,10 @@ pub const WorldScreen = struct {
             .startup_diagnostic_start_frame = context.time.frame_count,
             .startup_diagnostic_logged = false,
             .save_failure_warning_count = world.takeSaveFailureWarningCount(),
+            .menu_preview = menu_preview,
+            .menu_preview_center = session.player.position,
         };
+        if (menu_preview) self.applyMenuCamera();
         settings_data.clearTerrainDebugViews(context.settings);
         render_system.getRHI().options().setShadowDebugChannel(@intFromEnum(settings_data.resolveShadowDebugChannel(context.settings)));
         render_system.getRHI().options().setDebugShadowView(false);
@@ -122,7 +144,7 @@ pub const WorldScreen = struct {
             self.save_failure_warning_count += save_failures;
         }
 
-        if (!benchmark_mode and !automated_capture) {
+        if (!self.menu_preview and !benchmark_mode and !automated_capture) {
             if (try self.processControls(now)) return;
         }
 
@@ -135,18 +157,33 @@ pub const WorldScreen = struct {
         const cam = &self.session.player.camera;
         ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
 
-        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture);
+        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture or self.menu_preview);
+        if (self.menu_preview) self.applyMenuCamera();
         render_system.getCloudSystem().step(dt);
 
         const world_telemetry = self.world.telemetry();
-        if (world_telemetry.getRenderDistance() != ctx.settings.render_distance) {
-            world_telemetry.setRenderDistance(ctx.settings.render_distance);
-        }
-        if (world_telemetry.getHorizonDistance() != ctx.settings.horizon_distance) {
-            world_telemetry.setHorizonDistance(ctx.settings.horizon_distance);
+        if (!self.menu_preview) {
+            if (world_telemetry.getRenderDistance() != ctx.settings.render_distance) {
+                world_telemetry.setRenderDistance(ctx.settings.render_distance);
+            }
+            if (world_telemetry.getHorizonDistance() != ctx.settings.horizon_distance) {
+                world_telemetry.setHorizonDistance(ctx.settings.horizon_distance);
+            }
         }
 
         self.maybeLogStartupDiagnostic(now);
+    }
+
+    fn applyMenuCamera(self: *@This()) void {
+        const angle = self.context.time.elapsed * 0.002 + 0.72;
+        const radius: f32 = 32.0;
+        const camera = &self.session.player.camera;
+        camera.position = Vec3.init(
+            self.menu_preview_center.x + std.math.cos(angle) * radius,
+            self.menu_preview_center.y + 16.0,
+            self.menu_preview_center.z + std.math.sin(angle) * radius,
+        );
+        camera.setYawPitch(angle + std.math.pi, -0.28);
     }
 
     fn processControls(self: *@This(), now: f32) !bool {
@@ -458,8 +495,8 @@ pub const WorldScreen = struct {
                 .fxaa_enabled = ctx.settings.fxaa_enabled and !ctx.settings.taa_enabled,
                 .bloom_enabled = ctx.settings.bloom_enabled and !startup_light_render,
                 .resolution_scale = resolution_scale,
-                .overlay_renderer = if (clean_capture) null else renderOverlay,
-                .overlay_ctx = if (clean_capture) null else self,
+                .overlay_renderer = if (clean_capture or self.menu_preview) null else renderOverlay,
+                .overlay_ctx = if (clean_capture or self.menu_preview) null else self,
                 .shadow_caster_renderer = renderEntityShadowCasters,
                 .shadow_caster_ctx = self,
                 .cached_cascades = &frame_cascades,
@@ -485,7 +522,7 @@ pub const WorldScreen = struct {
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
         const hud_clicked = if (self.debug_ui.menuEnabled()) false else mouse_clicked;
 
-        if (!clean_capture) {
+        if (!clean_capture and !self.menu_preview) {
             try self.session.drawHUD(ui, render_system.getAtlas(), render_system.getResourcePackManager().active_pack, ctx.time.fps, screen_w, screen_h, mouse_x, mouse_y, hud_clicked);
         }
 

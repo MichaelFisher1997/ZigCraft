@@ -65,6 +65,16 @@ pub const WindowManager = struct {
         };
     }
 
+    pub fn show(self: *WindowManager) void {
+        if (c.SDL_ShowWindow(self.window) == false) {
+            log.log.warn("SDL_ShowWindow failed: {s}", .{c.SDL_GetError()});
+            return;
+        }
+        if (c.SDL_SyncWindow(self.window) == false) {
+            log.log.warn("SDL_SyncWindow failed: {s}", .{c.SDL_GetError()});
+        }
+    }
+
     const HyprlandMonitor = struct {
         width: c_int,
         height: c_int,
