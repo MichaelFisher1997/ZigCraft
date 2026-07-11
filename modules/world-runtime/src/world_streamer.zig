@@ -99,6 +99,10 @@ pub const WorldStreamer = struct {
     save_manager: ?*SaveManager = null,
 
     frame_counter: u64 = 0,
+    has_scanned_missing_chunks: bool = false,
+    last_missing_scan_pc_x: i32 = 0,
+    last_missing_scan_pc_z: i32 = 0,
+    last_missing_scan_render_dist: i32 = 0,
     last_diag_generated: u64 = 0,
     last_diag_meshed: u64 = 0,
     last_diag_uploaded: u64 = 0,
@@ -107,16 +111,28 @@ pub const WorldStreamer = struct {
     const MAX_GEN_WORKERS = 4;
     const MIN_MESH_WORKERS = 2;
     const MAX_MESH_WORKERS = 6;
-    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
+    const MIN_LOD_WORKERS = 2;
+    const MAX_LOD_WORKERS = 6;
+
+    pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, lod_enabled: bool, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
         errdefer allocator.destroy(streamer);
 
+        // Reserve LOD capacity from the same CPU budget as full-detail work
+        // while preserving the foreground pool caps. This leaves capacity for
+        // the main thread and graphics driver.
+        // This keeps horizon generation responsive without creating two pools
+        // that each try to saturate every core.
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
-        // Leave CPU capacity for the main thread and graphics driver while
-        // streaming. Explicit environment overrides remain available for
-        // throughput-oriented workloads.
-        const default_gen = std.math.clamp(cpu_count / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
-        const default_mesh = std.math.clamp(cpu_count / 2, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
+        const total_budget = @max(@as(usize, 4), cpu_count -| 1);
+        const requested_lod_workers = if (lod_enabled)
+            std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS)
+        else
+            0;
+        const lod_worker_reserve = @min(requested_lod_workers, total_budget -| (MIN_GEN_WORKERS + MIN_MESH_WORKERS));
+        const foreground_budget = total_budget - lod_worker_reserve;
+        const default_gen = std.math.clamp(foreground_budget / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
+        const default_mesh = std.math.clamp(foreground_budget - default_gen, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
         const gen_worker_count = engine_core.envInt("ZIGCRAFT_GEN_WORKERS", default_gen);
         const mesh_worker_count = engine_core.envInt("ZIGCRAFT_MESH_WORKERS", default_mesh);
 
@@ -155,7 +171,7 @@ pub const WorldStreamer = struct {
         streamer.queue_coordinator = try ChunkQueueCoordinator.init(allocator, storage, generator, atlas, gen_queue, mesh_queue, vertex_allocator, max_uploads_per_frame, &streamer.gpu_acceleration);
         errdefer streamer.queue_coordinator.deinit();
 
-        log.log.info("WorldStreamer workers: gen={} mesh={} (cpu={})", .{ gen_worker_count, mesh_worker_count, cpu_count });
+        log.log.info("WorldStreamer workers: gen={} mesh={} lod_reserve={} (cpu={})", .{ gen_worker_count, mesh_worker_count, lod_worker_reserve, cpu_count });
 
         streamer.gen_pool = try WorkerPool.init(allocator, gen_worker_count, gen_queue, &streamer.queue_coordinator, ChunkQueueCoordinator.processGenJob);
         errdefer streamer.gen_pool.deinit();
@@ -428,12 +444,23 @@ pub const WorldStreamer = struct {
             self.logMissingChunkDiagnostic(frame.pc_x, frame.pc_z);
         }
 
-        // Keep the generation queue hot while moving or recovering stale jobs.
-        // A full scan is cheap relative to chunk generation and avoids leaving
-        // boundary chunks idle in `.missing` until the next periodic rescan.
-        self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist, frame.movement) catch |err| {
-            log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
-        };
+        // The required chunk set changes only after crossing a chunk boundary or
+        // changing view distance. A periodic scan remains as a safety net for a
+        // failed queue insertion without taking the storage writer lock every frame.
+        const needs_missing_scan = !self.has_scanned_missing_chunks or
+            self.last_missing_scan_pc_x != frame.pc_x or
+            self.last_missing_scan_pc_z != frame.pc_z or
+            self.last_missing_scan_render_dist != frame.render_dist or
+            self.frame_counter % 60 == 0;
+        if (needs_missing_scan) {
+            self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist, frame.movement) catch |err| {
+                log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
+            };
+            self.has_scanned_missing_chunks = true;
+            self.last_missing_scan_pc_x = frame.pc_x;
+            self.last_missing_scan_pc_z = frame.pc_z;
+            self.last_missing_scan_render_dist = frame.render_dist;
+        }
         self.queue_coordinator.processChunkStates(frame.pc_x, frame.pc_z, frame.render_dist, self.frame_counter);
         self.lod_coordinator.updateLOD(player_pos, self.storage);
 

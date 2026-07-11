@@ -505,7 +505,6 @@ void main() {
     float debugSkyFill = 0.0;
     float debugBlockLight = clamp(max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b)), 0.0, 1.0);
     float debugOutdoor = baselineOutdoorFactor(vSkyLight);
-    const float LOD_TRANSITION_WIDTH = 32.0;
     const float AO_FADE_DISTANCE = 128.0;
     const float TEXTURE_FADE_START = 32.0;
     const float TEXTURE_FADE_END = 128.0;
@@ -517,19 +516,11 @@ void main() {
     }
 
     if (vMaskRadius >= 1.0) {
-        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        float distFromMask = length(vFragPosWorld.xz) - vMaskRadius;
-        float fade = clamp(distFromMask / LOD_TRANSITION_WIDTH, 0.0, 1.0);
-        float ditherThreshold = lodTransitionNoise(worldXZ);
-        if (fade < ditherThreshold) discard;
+        // Full-detail chunks own this area. Dithering the handoff creates a
+        // camera-following grid of holes at the chunk/LOD boundary.
+        if (length(vFragPosWorld.xz) < vMaskRadius) discard;
     }
 
-    if (isLOD && vLODFade < 0.999) {
-        vec2 worldXZ = vFragPosWorld.xz + global.cam_pos.xz;
-        float ditherThreshold = lodTransitionNoise(worldXZ + vec2(19.37, 41.91));
-        if (vLODFade < ditherThreshold) discard;
-    }
-    
     vec2 tileBase = vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) * (1.0 / 16.0);
     vec2 tiledUV = fract(vTexCoord);
     tiledUV = clamp(tiledUV, 0.001, 0.999);

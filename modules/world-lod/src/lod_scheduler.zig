@@ -37,6 +37,9 @@ pub const SchedulerContext = struct {
     // When true, queueLODRegions marks chunks queued_for_generation and lets
     // LODManager perform main-thread cache reads before dispatching workers.
     defer_generation_dispatch: bool = false,
+    // Shared admission count for queued or in-flight regions. The manager
+    // supplies this during normal updates; isolated scheduler tests may omit it.
+    pending_regions: ?*usize = null,
     use_vertical_spans: bool = false,
 };
 
@@ -55,6 +58,7 @@ const LOD0_QUEUE_CANDIDATE_LIMIT: usize = 96;
 const LOD1_QUEUE_CANDIDATE_LIMIT: usize = 64;
 const HORIZON_QUEUE_CANDIDATE_LIMIT: usize = 24;
 const REFINEMENT_QUEUE_CANDIDATE_LIMIT: usize = 48;
+const MAX_PENDING_LOD_REGIONS = @import("lod_manager_context.zig").MAX_PENDING_LOD_REGIONS;
 
 pub fn priorityRank(lod: LODLevel, active_lod_count: usize) usize {
     const lod_idx: usize = @intFromEnum(lod);
@@ -130,14 +134,9 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     const queue = ctx.gen_queues[LODLevel.count - 1];
     const lod_idx: u3 = @intFromEnum(lod);
 
-    // Collect candidates that need queuing, then sort nearest-first before
-    // pushing. This is essential because the shared priority queue is drained
-    // concurrently by worker threads: a corner-out row-major scan would push
-    // far candidates (produced first) long before near candidates, so workers
-    // process far terrain before near terrain is even inserted. Sorting by
-    // ascending encoded priority (lower = closer, within a single LOD level the
-    // bias bits are identical) ensures nearer regions enter — and thus leave —
-    // the heap first.
+    // Collect candidates and queue them nearest-first. Coarse regions must form
+    // contiguous fallback coverage; scattered horizon samples appear as
+    // isolated floating terrain islands.
     const Candidate = struct { key: LODRegionKey, encoded_priority: i32 };
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
     defer candidates.deinit(ctx.allocator);
@@ -172,13 +171,13 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         }
     }
 
+    const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
     std.mem.sort(Candidate, candidates.items, {}, struct {
         fn lessThan(_: void, a: Candidate, b: Candidate) bool {
             return a.encoded_priority < b.encoded_priority;
         }
     }.lessThan);
 
-    const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
     var queued_count: usize = 0;
 
     ctx.mutex.lock();
@@ -187,6 +186,9 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     const storage = &ctx.regions[@intFromEnum(lod)];
     for (candidates.items) |cand| {
         if (queued_count >= max_candidates) break;
+        if (ctx.pending_regions) |pending| {
+            if (pending.* >= MAX_PENDING_LOD_REGIONS) break;
+        }
 
         const existing = storage.get(cand.key);
         if (existing != null) diag.existing += 1;
@@ -228,6 +230,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         }
         diag.queued += 1;
         queued_count += 1;
+        if (ctx.pending_regions) |pending| pending.* += 1;
     }
 
     if (diag_enabled) {
@@ -401,20 +404,42 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
     const total = queue.count();
     try std.testing.expectEqual(LOD0_QUEUE_CANDIDATE_LIMIT + HORIZON_QUEUE_CANDIDATE_LIMIT, total);
 
+    // A cold cache must not keep admitting work once the global pipeline is
+    // full; completed regions free capacity on subsequent manager updates.
+    var pending_regions = MAX_PENDING_LOD_REGIONS;
+    var capped_ctx = ctx;
+    capped_ctx.pending_regions = &pending_regions;
+    try queueLODRegions(capped_ctx, .lod1, Vec3.zero, null, null);
+    try std.testing.expectEqual(total, queue.count());
+
     const first_job = queue.pop().?;
     try std.testing.expectEqual(@intFromEnum(LODLevel.lod4), first_job.data.chunk.lod_level);
 
     var lod0_count: usize = 0;
     var horizon_count: usize = 1;
+    var max_horizon_dist_sq: i64 = 0;
+    const recordHorizonDistance = struct {
+        fn record(max_dist_sq: *i64, job: engine_core.job_system.Job) void {
+            const scale: i32 = @intCast(LODLevel.lod4.chunksPerSide());
+            const center_x: i64 = job.data.chunk.x * scale + @divFloor(scale, 2);
+            const center_z: i64 = job.data.chunk.z * scale + @divFloor(scale, 2);
+            max_dist_sq.* = @max(max_dist_sq.*, center_x * center_x + center_z * center_z);
+        }
+    }.record;
+    recordHorizonDistance(&max_horizon_dist_sq, first_job);
     var i: usize = 1;
     while (i < total) : (i += 1) {
         const job = queue.pop().?;
         if (job.data.chunk.lod_level == @intFromEnum(LODLevel.lod0)) lod0_count += 1;
-        if (job.data.chunk.lod_level == @intFromEnum(LODLevel.lod4)) horizon_count += 1;
+        if (job.data.chunk.lod_level == @intFromEnum(LODLevel.lod4)) {
+            horizon_count += 1;
+            recordHorizonDistance(&max_horizon_dist_sq, job);
+        }
     }
 
     try std.testing.expectEqual(LOD0_QUEUE_CANDIDATE_LIMIT, lod0_count);
     try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, horizon_count);
+    try std.testing.expect(max_horizon_dist_sq <= 128 * 128);
 }
 
 test "LOD scheduling biases priorities toward movement direction" {

@@ -34,10 +34,8 @@ const collectColumnSpans = geom.collectColumnSpans;
 const makeLODVertex = geom.makeLODVertex;
 const quantizedCellSurfaceHeight = geom.quantizedCellSurfaceHeight;
 const quantizedCellTerrainHeight = geom.quantizedCellTerrainHeight;
-const quantizedHeight = geom.quantizedHeight;
 const quantizedWaterSurfaceHeightForCell = geom.quantizedWaterSurfaceHeightForCell;
 const representativeVegetationForLOD = geom.representativeVegetationForLOD;
-const stitchedHeight = geom.stitchedHeight;
 
 // Tests
 fn testResources() LODMeshResources {
@@ -597,34 +595,6 @@ test "buildFromColumnSpans sorts representative spans by height" {
     try std.testing.expect(found_upper_top);
 }
 
-test "buildFromColumnSpans snaps boundary span tops to stitched height" {
-    const allocator = std.testing.allocator;
-    var atlas = testAtlas(allocator);
-
-    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
-    defer data.deinit();
-    data.setHeight(0, 1, 100.0);
-    data.setHeight(0, 2, 10.0);
-    try std.testing.expect(data.setVerticalSpan(0, 1, 0, testSpan(0.0, 100.0, .grass, 0x3A7D42)));
-
-    const expected_height = quantizedHeight(stitchedHeight(&data, 0, 1));
-    try std.testing.expect(expected_height < 100.0);
-
-    var mesh = LODMesh.init(allocator, .lod2);
-    defer mesh.deinit(testResources());
-    try mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
-
-    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
-    var found_stitched_top = false;
-    for (verts) |v| {
-        if (vertexTileId(v) == 23 and @abs(v.pos[1] - expected_height) <= 0.001) {
-            found_stitched_top = true;
-            break;
-        }
-    }
-    try std.testing.expect(found_stitched_top);
-}
-
 test "buildFromColumnSpans keeps LOD2 canopy spans detached" {
     const allocator = std.testing.allocator;
     var atlas = testAtlas(allocator);
@@ -664,6 +634,34 @@ test "buildFromColumnSpans keeps LOD2 canopy spans detached" {
     try std.testing.expect(!found_folded);
     try std.testing.expect(found_detached);
     try std.testing.expect(found_compact_canopy);
+}
+
+test "buildFromColumnSpans omits canopy from water cells" {
+    const allocator = std.testing.allocator;
+    var atlas = testAtlas(allocator);
+    atlas.tile_mappings[@intFromEnum(BlockType.leaves)] = .{ .top = 70, .bottom = 70, .side = 70 };
+
+    var data = try LODSimplifiedData.initWithVerticalSpans(allocator, .lod2);
+    defer data.deinit();
+    fillColumnSpanData(&data, .sand, 60.0, 0xD8C76D);
+
+    const water_points = [_]u32{ 0, 1, data.width, data.width + 1 };
+    for (water_points) |idx| {
+        data.water[idx] = .{ .is_surface = true, .surface_height = 63.0, .depth = 3.0, .coverage = 1.0 };
+    }
+    data.clearVerticalSpans(0, 0);
+    try std.testing.expect(data.setVerticalSpan(0, 0, 0, testSpan(0.0, 60.0, .sand, 0xD8C76D)));
+    try std.testing.expect(data.setVerticalSpan(0, 0, 1, testSpan(62.0, 68.0, .leaves, 0x24941F)));
+
+    var mesh = LODMesh.init(allocator, .lod2);
+    defer mesh.deinit(testResources());
+    try mesh.buildFromColumnSpans(&data, 0, 0, &atlas);
+
+    const verts = mesh.pending_vertices orelse return error.TestExpectedEqual;
+    try std.testing.expect(mesh.water_vertex_count > 0);
+    for (verts[0..mesh.opaque_vertex_count]) |v| {
+        try std.testing.expect(vertexTileId(v) != 70);
+    }
 }
 
 test "buildFromSimplifiedData renders LOD3 tree columns" {
@@ -976,20 +974,6 @@ test "blockForLODQuad uses representative non-water surface" {
     try std.testing.expectEqual(BlockType.stone, blockForLODQuad(&data, 0, 0));
 }
 
-test "stitchedHeight blends boundary points toward coarse grid" {
-    const allocator = std.testing.allocator;
-    var data = try LODSimplifiedData.init(allocator, .lod1);
-    defer data.deinit();
-
-    for (0..data.width * data.width) |i| {
-        data.heightmap[i] = 10.0;
-    }
-    data.setHeight(0, 1, 100.0);
-
-    try std.testing.expect(stitchedHeight(&data, 0, 1) < 100.0);
-    try std.testing.expectEqual(@as(f32, 10.0), stitchedHeight(&data, 4, 4));
-}
-
 test "coarse cell terrain height uses source sample instead of corner mean" {
     const allocator = std.testing.allocator;
     var data = try LODSimplifiedData.init(allocator, .lod2);
@@ -1002,6 +986,17 @@ test "coarse cell terrain height uses source sample instead of corner mean" {
 
     try std.testing.expectEqual(@as(f32, 64.0), quantizedCellTerrainHeight(&data, 0, 0));
     try std.testing.expectEqual(@as(f32, 64.0), quantizedCellSurfaceHeight(&data, 0, 0));
+}
+
+test "LOD boundary height retains its authoritative source sample" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.init(allocator, .lod1);
+    defer data.deinit();
+
+    for (0..data.width * data.width) |i| data.heightmap[i] = 10.0;
+    data.setHeight(0, 1, 100.0);
+
+    try std.testing.expectEqual(@as(f32, 100.0), quantizedCellSurfaceHeight(&data, 0, 1));
 }
 
 test "representativeVegetationForLOD preserves sparse coarse coverage" {

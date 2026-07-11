@@ -129,12 +129,9 @@ pub const GameSession = struct {
         else if (effective_lod_enabled and manual_distance_expanded)
             LODConfig.radiiForDistances(chunk_render_radius, effective_horizon_distance)
         else
-            LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance);
+            preset_cfg.lod_radii;
 
-        const active_count = if (!strict_safe_mode and manual_distance_expanded)
-            LODConfig.activeCountForRadii(preset_radii)
-        else
-            preset_cfg.active_lod_count;
+        const active_count = preset_cfg.active_lod_count;
         if (active_count < LODLevel.count) {
             var i: usize = active_count;
             while (i < LODLevel.count) : (i += 1) {

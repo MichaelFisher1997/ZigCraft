@@ -540,17 +540,28 @@ pub const ChunkQueueCoordinator = struct {
                 chunk_data.chunk.lighting_valid = true;
             }
 
-            var lighting = WorldLightingEngine.init(self.storage, self.allocator);
-            _ = if (load_result == .success_relight_required)
-                lighting.reconcileLegacyArea(cx, cz) catch |err| blk: {
+            if (load_result == .success_relight_required) {
+                // Legacy saved chunks have no trustworthy lighting, so rebuild
+                // the local loaded area once.
+                var lighting = WorldLightingEngine.init(self.storage, self.allocator);
+                _ = lighting.reconcileLegacyArea(cx, cz) catch |err| blk: {
                     log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) legacy relight failed: {}", .{ cx, cz, err });
                     break :blk false;
-                }
-            else
-                lighting.reconcileChunkArrival(cx, cz) catch |err| blk: {
+                };
+            } else if (load_result == .success) {
+                // Loaded chunks need only interface reconciliation with their
+                // resident neighbors; fresh generation already lit itself.
+                var lighting = WorldLightingEngine.init(self.storage, self.allocator);
+                _ = lighting.reconcileChunkArrival(cx, cz) catch |err| blk: {
                     log.log.warn("CHUNK_LIGHTING_ERROR: ({},{}) boundary reconciliation failed: {}", .{ cx, cz, err });
                     break :blk false;
                 };
+            } else {
+                // Generation has completed its own lighting pass, so persist it
+                // as current instead of forcing a full resident-world relight on
+                // every newly generated chunk.
+                chunk_data.chunk.lighting_valid = true;
+            }
 
             self.storage.chunks_mutex.lock();
             if (!chunk_data.chunk.generated) {

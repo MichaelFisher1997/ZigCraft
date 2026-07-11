@@ -82,9 +82,14 @@ pub const ChunkResolver = struct {
 };
 
 pub const MAX_LOD_REGIONS = 2048;
+// Bound queued and in-flight regions so a cold cache cannot bury the horizon
+// fallback behind thousands of expensive generation jobs.
+pub const MAX_PENDING_LOD_REGIONS: usize = 64;
 pub const CHUNK_COVERAGE_PADDING: i32 = 1;
 pub const LOD_UPDATE_DIVISOR: u32 = 2;
-pub const MIN_LOD_WORKERS: usize = 4;
+// WorldStreamer reserves these workers from its foreground pools whenever LOD
+// is enabled, so horizon generation can be fast without oversubscribing CPUs.
+pub const MIN_LOD_WORKERS: usize = 2;
 pub const MAX_LOD_WORKERS: usize = 6;
 pub const MAX_MEMORY_EVICTIONS_PER_UPDATE: usize = 32;
 pub const MAX_MESH_DELETIONS_PER_SWEEP: usize = 64;
