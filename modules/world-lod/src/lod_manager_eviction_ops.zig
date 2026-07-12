@@ -128,7 +128,9 @@ pub fn queueMeshDeletion(self: *Self, mesh: *LODMesh) void {
     self.mesh_disposal.queue.append(self.allocator, mesh) catch {
         self.gpu_bridge.destroy(mesh);
         self.allocator.destroy(mesh);
+        return;
     };
+    self.profiling.addDeferredDeletionBytes(mesh.capacity * @sizeOf(Vertex));
 }
 
 pub fn processMeshDeletions(self: *Self, max_count: usize) void {
@@ -138,11 +140,15 @@ pub fn processMeshDeletions(self: *Self, max_count: usize) void {
     // LODMesh does not carry a per-frame fence today, so destruction still
     // requires GPU idle. Bound each sweep so a memory-pressure eviction burst
     // cannot turn into an unbounded main-thread stall.
+    const wait_idle_timer = self.profiling.begin();
+    self.profiling.addWaitIdle();
     self.gpu_bridge.waitIdle();
+    self.profiling.end(.wait_idle, wait_idle_timer);
     var processed: usize = 0;
     while (processed < count) : (processed += 1) {
         const idx = self.mesh_disposal.queue.items.len - 1;
         const mesh = self.mesh_disposal.queue.items[idx];
+        self.profiling.removeDeferredDeletionBytes(mesh.capacity * @sizeOf(Vertex));
         self.gpu_bridge.destroy(mesh);
         self.allocator.destroy(mesh);
         self.mesh_disposal.queue.items.len = idx;
@@ -264,6 +270,7 @@ pub fn enforceMemoryBudget(self: *Self) !void {
 pub fn updateStats(self: *Self) void {
     self.stats.reset();
     var mem_usage: usize = 0;
+    var pending_cpu_upload_bytes: usize = 0;
 
     self.mutex.lockShared();
     defer self.mutex.unlockShared();
@@ -280,6 +287,11 @@ pub fn updateStats(self: *Self) void {
                     mem_usage += s.totalMemoryBytes();
                 },
                 else => {},
+            }
+            if (chunk.getState() == .uploading) {
+                if (self.meshes[i].get(entry.key_ptr.*)) |mesh| {
+                    pending_cpu_upload_bytes += mesh.pendingUploadBytes();
+                }
             }
         }
 
@@ -302,6 +314,7 @@ pub fn updateStats(self: *Self) void {
     self.stats.cache_hits = self.cache_hits;
     self.stats.cache_misses = self.cache_misses;
     self.memory_governor.used_bytes = mem_usage;
+    self.profiling.setPendingCpuUploadBytes(pending_cpu_upload_bytes);
 
     if (engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false)) {
         const S = struct {

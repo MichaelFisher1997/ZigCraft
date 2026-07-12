@@ -9,6 +9,7 @@ const world_core = @import("world-core");
 const lod_manager = @import("world-lod").lod_manager;
 const LODManager = lod_manager.LODManager;
 const LODStats = lod_manager.LODStats;
+const LODProfilingCollector = @import("lod_stats.zig").LODProfilingCollector;
 const MAX_LOD_REGIONS = lod_manager.MAX_LOD_REGIONS;
 const lod_chunk = @import("world-lod").lod_chunk;
 const LODLevel = lod_chunk.LODLevel;
@@ -96,7 +97,7 @@ test "LODManager initialization" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -190,7 +191,7 @@ test "LODManager end-to-end covered cleanup" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -266,10 +267,12 @@ test "LODStats aggregation" {
 
     stats.addMemory(2 * 1024 * 1024);
     try std.testing.expectEqual(@as(u32, 2), stats.memory_used_mb);
+    stats.profiling.enabled = true;
 
     stats.reset();
     try std.testing.expectEqual(@as(u32, 0), stats.totalLoaded());
     try std.testing.expectEqual(@as(u32, 0), stats.memory_used_mb);
+    try std.testing.expect(!stats.profiling.enabled);
 }
 
 test "LODManager constants" {
@@ -335,7 +338,7 @@ fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LOD
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}

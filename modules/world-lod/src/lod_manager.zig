@@ -166,6 +166,7 @@ pub const LODManager = struct {
 
     // Stats
     stats: LODStats,
+    profiling: @import("lod_stats.zig").LODProfilingCollector,
     cache_hits: u32,
     cache_misses: u32,
 

@@ -372,6 +372,12 @@ pub const GpuTimingResults = struct {
     lpv_pass_ms: f32,
     sky_pass_ms: f32,
     opaque_pass_ms: f32,
+    /// GPU time spent drawing distant-terrain LOD geometry. This is a subset
+    /// of the containing scene pass and is therefore excluded from total_gpu_ms.
+    lod_terrain_pass_ms: f32,
+    /// GPU time spent drawing distant-water LOD geometry. This is a subset
+    /// of the containing scene pass and is therefore excluded from total_gpu_ms.
+    lod_water_pass_ms: f32,
     main_pass_ms: f32, // Overall main pass time (sum of sky and opaque)
     bloom_pass_ms: f32,
     fxaa_pass_ms: f32,

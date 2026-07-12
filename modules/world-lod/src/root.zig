@@ -41,5 +41,6 @@ pub const LODRenderLayer = lod_upload_queue.LODRenderLayer;
 pub const LODStreamingCoordinator = lod_streaming_coordinator.LODStreamingCoordinator;
 pub const LODState = lod_types.LODState;
 pub const LODStats = lod_stats.LODStats;
+pub const LODProfilingSnapshot = lod_stats.LODProfilingSnapshot;
 pub const LODVertexPool = lod_vertex_pool.LODVertexPool;
 pub const WorldLOD = world_lod.WorldLOD;
