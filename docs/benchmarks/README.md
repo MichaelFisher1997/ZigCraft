@@ -28,6 +28,58 @@ After the run finishes, download the `benchmark-results` artifact and replace th
 
 This gate is intentionally a short canary so every `dev` push gets a bounded performance signal without consuming long runner time. The benchmark warmup is excluded from samples so startup shader/resource transitions do not dominate steady-state regression checks. Longer profiling runs should use the manual workflow input with a larger duration and should not replace the CI canary baseline unless that policy changes deliberately.
 
+## Reproducible scenarios
+
+`-Dbenchmark-scenario` selects a deterministic, bounded camera path. The
+default is `traversal`, which is the original benchmark path and remains the
+only scenario used by the current CI baseline.
+
+| Scenario | Path | Intended signal |
+| --- | --- | --- |
+| `stationary` | Holds the camera at `(8, 100, 8)`. | Steady-state LOD and renderer cost. |
+| `traversal` | The original 60-second, smoothly interpolated six-waypoint loop. | Streaming and normal movement; default. |
+| `rapid-turn` | Holds position at `(8, 100, 8)` while cycling its view every second. | Frustum, visibility, and coverage churn without streaming movement. |
+| `teleport-eviction` | Jumps every four seconds between five fixed positions within ±1,536 blocks. | Streaming, cache, deferred-destruction, and eviction pressure. |
+
+Every benchmark starts the `overworld` generator with fixed seed `12345`, runs
+headless at 1920×1080, and records the scenario, seed, and build metadata in
+the result JSON. The `build` object records the Zig optimize mode, headless
+status, and fixed resolution, so artifacts can be compared only when their
+configuration is compatible.
+
+Run each bounded scenario with these commands (15 sampled seconds plus the
+one-second warmup; the external timeout also bounds a stalled process):
+
+```bash
+timeout --preserve-status 90s nix develop --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-duration=15 -Dbenchmark-scenario=stationary -Dbenchmark-output=docs/benchmarks/results/stationary.json
+timeout --preserve-status 90s nix develop --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-duration=15 -Dbenchmark-scenario=traversal -Dbenchmark-output=docs/benchmarks/results/traversal.json
+timeout --preserve-status 90s nix develop --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-duration=15 -Dbenchmark-scenario=rapid-turn -Dbenchmark-output=docs/benchmarks/results/rapid-turn.json
+timeout --preserve-status 90s nix develop --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-duration=15 -Dbenchmark-scenario=teleport-eviction -Dbenchmark-output=docs/benchmarks/results/teleport-eviction.json
+```
+
+Use the same preset and render-distance override for before/after comparison.
+For example, append `-Dbenchmark-preset=high -Dbenchmark-render-distance=16`
+to both commands. Unknown scenario values fail at build configuration time.
+
+## Visual baseline capture matrix
+
+When a LOD rendering change needs visual evidence, capture before and after
+images using the matching fixed seed, preset, render distance, and scenario.
+The benchmark runner is headless; this table defines the required evidence
+rather than storing screenshots in this repository.
+
+| Visual concern | Scenario | Capture points | Inspect |
+| --- | --- | --- | --- |
+| Terrain seams | `stationary` | After one-second warmup; after full-detail chunks settle. | Cracks, gaps, normal discontinuities, and material changes at LOD boundaries. |
+| LOD transitions | `traversal` | Before, during, and after each terrain-ring handoff. | Popping, holes, duplicate terrain, and transition timing. |
+| Water | `traversal` | Near water at an LOD boundary and after the boundary moves. | Shoreline cracks, water/terrain overlap, and missing distant water. |
+| Fog | `rapid-turn` | Each cardinal-view turn, especially toward the horizon. | Fog discontinuities, horizon banding, and terrain visible through fog. |
+| Full-detail handoff | `teleport-eviction` | Immediately after a jump and after detailed chunks replace LOD. | Stale regions, incorrect ownership, and gaps while uploads/evictions overlap. |
+
+Record the generated JSON filename beside each capture set. No screenshot is
+required for routine benchmark changes; use this matrix when visual behavior
+is affected.
+
 ## Tolerance Policy
 
 `scripts/compare_benchmarks.sh` applies an explicit tolerance per metric:

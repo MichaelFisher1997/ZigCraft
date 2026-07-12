@@ -25,6 +25,7 @@ pub const DebugUI = debug_ui.DebugUI;
 pub const FEATURE_INFOS = debug_menu.FEATURE_INFOS;
 pub const FontAtlas = font_atlas.FontAtlas;
 pub const InputEvent = ui_system.InputEvent;
+pub const LODProfilingDisplay = timing_overlay.LODProfilingDisplay;
 pub const LODStatsDisplay = timing_overlay.LODStatsDisplay;
 pub const PerformanceData = timing_overlay.PerformanceData;
 pub const Rect = ui_system.Rect;

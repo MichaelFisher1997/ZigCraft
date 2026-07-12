@@ -672,6 +672,30 @@ pub const WorldScreen = struct {
             lod_display = .{
                 .loaded = ls.loaded,
                 .memory_used_mb = ls.memory_used_mb,
+                .profiling = .{
+                    .enabled = ls.profiling.enabled,
+                    .update_ms = ls.profiling.update_ms,
+                    .scheduling_ms = ls.profiling.scheduling_ms,
+                    .cache_ms = ls.profiling.cache_ms,
+                    .generation_dispatch_ms = ls.profiling.generation_dispatch_ms,
+                    .state_transition_ms = ls.profiling.state_transition_ms,
+                    .upload_prep_ms = ls.profiling.upload_prep_ms,
+                    .upload_submission_ms = ls.profiling.upload_submission_ms,
+                    .visibility_ms = ls.profiling.visibility_ms,
+                    .coverage_ms = ls.profiling.coverage_ms,
+                    .eviction_ms = ls.profiling.eviction_ms,
+                    .worker_generation_ms = ls.profiling.worker_generation_ms,
+                    .worker_mesh_construction_ms = ls.profiling.worker_mesh_construction_ms,
+                    .upload_bytes = ls.profiling.upload_bytes,
+                    .pending_cpu_upload_bytes = ls.profiling.pending_cpu_upload_bytes,
+                    .staging_pressure_count = ls.profiling.staging_pressure_count,
+                    .visible_count = ls.profiling.visible_count,
+                    .rejected_count = ls.profiling.rejected_count,
+                    .coverage_count = ls.profiling.coverage_count,
+                    .deferred_deletion_bytes = ls.profiling.deferred_deletion_bytes,
+                    .wait_idle_count = ls.profiling.wait_idle_count,
+                    .wait_idle_ms = ls.profiling.wait_idle_ms,
+                },
             };
         }
         return .{

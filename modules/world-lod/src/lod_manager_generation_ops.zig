@@ -167,7 +167,9 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
         if (cache_enabled and cache_reads < MAX_CACHE_LOADS_PER_UPDATE) {
             cache_reads += 1;
             attempted_cache = true;
+            const cache_timer = self.profiling.begin();
             cached_data = self.loadCachedSourceData(candidate.key);
+            self.profiling.end(.cache, cache_timer);
             if (cached_data) |*cached| {
                 if (candidate.want_spans and !cached.hasVerticalSpans()) {
                     cached.deinit();
@@ -201,6 +203,7 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
         candidate.chunk.setState(.generating);
         self.mutex.unlock();
 
+        const dispatch_timer = self.profiling.begin();
         self.job_dispatcher.queues[LODLevel.count - 1].push(.{
             .type = .chunk_generation,
             .dist_sq = candidate.encoded_priority,
@@ -216,6 +219,7 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
                 },
             },
         }) catch |err| {
+            self.profiling.end(.generation_dispatch, dispatch_timer);
             self.mutex.lock();
             if (candidate.chunk.getState() == .generating and candidate.chunk.job_token == candidate.job_token) {
                 candidate.chunk.setState(.queued_for_generation);
@@ -223,6 +227,7 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
             self.mutex.unlock();
             return err;
         };
+        self.profiling.end(.generation_dispatch, dispatch_timer);
     }
 }
 
@@ -477,6 +482,8 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
 
     switch (job_type) {
         .chunk_generation => {
+            const generation_timer = self.profiling.begin();
+            defer self.profiling.end(.worker_generation, generation_timer);
             // Initialize simplified data if needed
             if (needs_data_init) {
                 var data = if (use_vertical_spans)
@@ -527,6 +534,8 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
             new_state = .generated;
         },
         .chunk_meshing => {
+            const mesh_timer = self.profiling.begin();
+            defer self.profiling.end(.worker_mesh_construction, mesh_timer);
             // Build mesh (expensive, done without lock)
             // Note: buildMeshForChunk -> getOrCreateMesh acquires its own lock
             self.buildMeshForChunk(chunk) catch |err| {

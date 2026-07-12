@@ -13,6 +13,7 @@ const rhi_mod = @import("engine-rhi").rhi;
 const ResourceManager = rhi_mod.ResourceManager;
 const RenderContext = rhi_mod.RenderContext;
 const IDeviceQuery = rhi_mod.IDeviceQuery;
+const IDeviceTiming = rhi_mod.IDeviceTiming;
 const LODManager = @import("world-lod").LODManager;
 const LODRenderLayer = @import("world-lod").LODRenderLayer;
 const math = @import("engine-math");
@@ -103,6 +104,7 @@ pub const WorldRenderer = struct {
     rm: ResourceManager,
     render_ctx: RenderContext,
     query: IDeviceQuery,
+    timing: IDeviceTiming,
     culling_screen_size: rhi_mod.RenderResolution,
 
     vertex_allocator: *GlobalVertexAllocator,
@@ -221,6 +223,7 @@ pub const WorldRenderer = struct {
             .rm = rm,
             .render_ctx = render_ctx,
             .query = query,
+            .timing = rhi.timing(),
             .culling_screen_size = culling_screen_size,
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
@@ -321,10 +324,14 @@ pub const WorldRenderer = struct {
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
                 if (layer != .fluid) {
+                    self.timing.beginPassTiming("LODTerrainPass");
                     lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
+                    self.timing.endPassTiming("LODTerrainPass");
                 }
                 if (layer != .terrain and parseEnabledEnv(getenv("ZIGCRAFT_LOD_WATER"), true)) {
+                    self.timing.beginPassTiming("LODWaterPass");
                     lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
+                    self.timing.endPassTiming("LODWaterPass");
                 }
             }
         }

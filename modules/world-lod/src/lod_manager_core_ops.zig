@@ -1,4 +1,5 @@
 const std = @import("std");
+const lod_options = @import("world_lod_options");
 const Self = @import("lod_manager.zig").LODManager;
 const fs = @import("fs");
 const lod_chunk = @import("lod_chunk.zig");
@@ -132,6 +133,7 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
         .stats = .{},
+        .profiling = .init(engine_core.envFlag("ZIGCRAFT_LOD_PROFILE", false) or lod_options.benchmark_lod_profile),
         .cache_hits = 0,
         .cache_misses = 0,
         .mutex = .{},
@@ -228,6 +230,8 @@ pub fn deinit(self: *Self) void {
 
 /// Update LOD system with player position
 pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
+    const update_timer = self.profiling.begin();
+    defer self.profiling.end(.update, update_timer);
     if (self.paused) return;
 
     // Deferred deletion handling. LOD meshes do not carry frame fences yet,
@@ -280,6 +284,7 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
 
     // Queue a small horizon seed first so something appears quickly, then
     // let LOD0/LOD1/LOD2 refinements replace the coarse fallback.
+    const scheduling_timer = self.profiling.begin();
     var order_idx: usize = 0;
     while (order_idx < active_lod_count) : (order_idx += 1) {
         const i = lod_scheduler.priorityLevelIndex(order_idx, active_lod_count);
@@ -287,24 +292,29 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
             log.log.warn("LOD queue error for level {}: {} (non-fatal)", .{ i, err });
         };
     }
+    self.profiling.end(.scheduling, scheduling_timer);
 
     self.processQueuedGenerations(player_velocity) catch |err| {
         log.log.warn("LOD cache/generation dispatch error: {} (non-fatal)", .{err});
     };
 
     // Process state transitions
+    const transitions_timer = self.profiling.begin();
     self.processStateTransitions(player_velocity) catch |err| {
         log.log.warn("LOD state transitions error: {} (non-fatal)", .{err});
     };
+    self.profiling.end(.state_transition, transitions_timer);
 
     // Process uploads (limited per frame)
     self.processUploads();
 
     // Update stats
     self.updateStats();
+    const eviction_timer = self.profiling.begin();
     self.enforceMemoryBudget() catch |err| {
         log.log.warn("LOD memory budget eviction error: {} (non-fatal)", .{err});
     };
+    self.profiling.end(.eviction, eviction_timer);
 
     // Periodic WARN-level LOD stats so logs/zigcraft.log shows LOD fill
     // progress by default (no env vars needed). update_tick counts frames;
@@ -327,9 +337,11 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     }
 
     // Unload distant regions
+    const distant_eviction_timer = self.profiling.begin();
     self.unloadDistantRegions() catch |err| {
         log.log.warn("LOD unload error: {} (non-fatal)", .{err});
     };
+    self.profiling.end(.eviction, distant_eviction_timer);
 
     // Chunk-derived ingestion: replay deferred ingestions, flush debounced
     // player edits, and persist any dirty source regions to the store.
@@ -341,7 +353,11 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
 
 /// Get current statistics
 pub fn getStats(self: *Self) LODStats {
-    return self.stats;
+    self.mutex.lockShared();
+    defer self.mutex.unlockShared();
+    var snapshot = self.stats;
+    snapshot.profiling = self.profiling.snapshot();
+    return snapshot;
 }
 
 /// Pause all LOD generation
@@ -394,7 +410,9 @@ pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?Ch
     self.mutex.lockShared();
     defer self.mutex.unlockShared();
 
-    self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats);
+    const visibility_timer = self.profiling.begin();
+    defer self.profiling.end(.visibility, visibility_timer);
+    self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
 pub fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {

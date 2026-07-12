@@ -8,6 +8,26 @@ pub fn timestampMs() i64 {
     return std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
 }
 
+/// A lightweight monotonic elapsed-time timer backed by SDL's high-resolution
+/// performance counter. Construct it only at an enabled instrumentation site.
+pub const MonotonicTimer = struct {
+    start_ticks: u64,
+
+    pub fn start() MonotonicTimer {
+        return .{ .start_ticks = c.SDL_GetPerformanceCounter() };
+    }
+
+    pub fn read(self: MonotonicTimer) u64 {
+        const frequency = c.SDL_GetPerformanceFrequency();
+        if (frequency == 0) return 0;
+        const elapsed_ticks = c.SDL_GetPerformanceCounter() - self.start_ticks;
+        // Split quotient/remainder to preserve precision without overflowing
+        // for a process that has been running for a long time.
+        return (elapsed_ticks / frequency) * std.time.ns_per_s +
+            (elapsed_ticks % frequency) * std.time.ns_per_s / frequency;
+    }
+};
+
 pub const Time = struct {
     /// Time since last frame in seconds
     delta_time: f32 = 0,

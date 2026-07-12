@@ -12,6 +12,7 @@ const LODRegionKey = lod_chunk.LODRegionKey;
 const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const ILODConfig = lod_chunk.ILODConfig;
 const LODStats = @import("lod_stats.zig").LODStats;
+const LODProfilingCollector = @import("lod_stats.zig").LODProfilingCollector;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
@@ -95,6 +96,7 @@ pub const LODRenderInterface = struct {
         max_distance_chunks: ?i32,
         layer: LODRenderLayer,
         stats: ?*LODStats,
+        profiling: ?*LODProfilingCollector,
     ) void,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
@@ -114,8 +116,9 @@ pub const LODRenderInterface = struct {
         max_distance_chunks: ?i32,
         layer: LODRenderLayer,
         stats: ?*LODStats,
+        profiling: ?*LODProfilingCollector,
     ) void {
-        self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats);
+        self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
     }
 
     pub fn deinit(self: LODRenderInterface) void {

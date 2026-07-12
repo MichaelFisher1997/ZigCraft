@@ -15,6 +15,7 @@ const InputMapper = @import("game-core").InputMapper;
 const RenderSystem = @import("engine-graphics").RenderSystem;
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 const BenchmarkRunner = @import("game-core").BenchmarkRunner;
+const BENCHMARK_WORLD_SEED = @import("game-core").BENCHMARK_WORLD_SEED;
 const json_presets = @import("game-core").settings.json_presets;
 
 const SettingsManager = @import("game-core").SettingsManager;
@@ -200,9 +201,20 @@ pub const App = struct {
 
         var benchmark_runner: ?*BenchmarkRunner = null;
         if (build_options.benchmark) {
+            // Benchmarks include GPU pass breakdowns, including LOD passes.
+            render_system.getRHI().timing().setTimingEnabled(true);
             const runner = try allocator.create(BenchmarkRunner);
             const benchmark_duration_s: f32 = @as(f32, @floatFromInt(build_options.benchmark_duration));
-            runner.* = try BenchmarkRunner.init(allocator, build_options.benchmark_preset, settings_manager.settings.render_distance, benchmark_duration_s, build_options.benchmark_output);
+            runner.* = try BenchmarkRunner.init(
+                allocator,
+                build_options.benchmark_preset,
+                build_options.benchmark_scenario,
+                settings_manager.settings.render_distance,
+                benchmark_duration_s,
+                BENCHMARK_WORLD_SEED,
+                build_options.benchmark_build_mode,
+                build_options.benchmark_output,
+            );
             benchmark_runner = runner;
         }
 
@@ -232,7 +244,7 @@ pub const App = struct {
         };
         errdefer app.screen_manager.deinit();
 
-        if (build_options.smoke_test or build_options.screenshot_path.len > 0 or build_options.benchmark) {
+        if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             app.render_system.getRHI().timing().setTimingEnabled(true);
         }
 
@@ -253,7 +265,7 @@ pub const App = struct {
             }
         } else if (build_options.benchmark) {
             log.log.info("BENCHMARK MODE: Deferring world launch until swapchain settles", .{});
-            app.pending_world_launch = .{ .seed = 12345, .generator_index = 0 };
+            app.pending_world_launch = .{ .seed = BENCHMARK_WORLD_SEED, .generator_index = 0 };
             if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
         } else if (resolveAutoWorldGenerator()) |generator_index| {
             log.log.info("AUTO WORLD MODE: Deferring '{s}' world launch until swapchain settles", .{build_options.auto_world});

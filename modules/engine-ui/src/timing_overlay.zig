@@ -23,7 +23,7 @@ pub const TimingOverlay = struct {
 
         comptime std.debug.assert(rhi.SHADOW_CASCADE_COUNT >= 3);
 
-        var num_lines: f32 = 2 + 1 + 13 + 1 + 6 + 1 + 4 + 1;
+        var num_lines: f32 = 2 + 1 + 15 + 1 + 6 + 1 + 4 + 1;
         if (data.world) |ws| {
             num_lines += 1 + 6;
             if (ws.lod != null) {
@@ -61,6 +61,8 @@ pub const TimingOverlay = struct {
         drawGpuLine(ui, "LPV:", data.gpu.lpv_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "SKY:", data.gpu.sky_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "OPAQUE:", data.gpu.opaque_pass_ms, label_x, value_x, &y, scale, muted);
+        drawGpuLine(ui, "LOD TERRAIN:", data.gpu.lod_terrain_pass_ms, label_x, value_x, &y, scale, muted);
+        drawGpuLine(ui, "LOD WATER:", data.gpu.lod_water_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "MAIN:", data.gpu.main_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "BLOOM:", data.gpu.bloom_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "FXAA:", data.gpu.fxaa_pass_ms, label_x, value_x, &y, scale, muted);
@@ -172,4 +174,32 @@ pub const WorldStats = struct {
 pub const LODStatsDisplay = struct {
     loaded: [LODLevel.count]u32,
     memory_used_mb: u32,
+    profiling: LODProfilingDisplay = .{},
+};
+
+/// Dependency-neutral projection of the world-lod cumulative profiling snapshot.
+/// Keeping this at the UI boundary lets telemetry consumers avoid a world-lod import.
+pub const LODProfilingDisplay = struct {
+    enabled: bool = false,
+    update_ms: f64 = 0,
+    scheduling_ms: f64 = 0,
+    cache_ms: f64 = 0,
+    generation_dispatch_ms: f64 = 0,
+    state_transition_ms: f64 = 0,
+    upload_prep_ms: f64 = 0,
+    upload_submission_ms: f64 = 0,
+    visibility_ms: f64 = 0,
+    coverage_ms: f64 = 0,
+    eviction_ms: f64 = 0,
+    worker_generation_ms: f64 = 0,
+    worker_mesh_construction_ms: f64 = 0,
+    upload_bytes: u64 = 0,
+    pending_cpu_upload_bytes: u64 = 0,
+    staging_pressure_count: u64 = 0,
+    visible_count: u64 = 0,
+    rejected_count: u64 = 0,
+    coverage_count: u64 = 0,
+    deferred_deletion_bytes: u64 = 0,
+    wait_idle_count: u64 = 0,
+    wait_idle_ms: f64 = 0,
 };
