@@ -250,7 +250,6 @@ pub const LODVertexPool = struct {
         }
 
         if (old_handle != 0) {
-            resources.waitIdle();
             resources.destroyBuffer(old_handle);
         }
         if (old_shadow) |shadow| self.allocator.free(shadow);
@@ -536,7 +535,7 @@ test "LODVertexPool grows and preserves pooled handles" {
     try std.testing.expectEqual(first.buffer_handle, second.buffer_handle);
     try std.testing.expectEqual(@as(u32, 0), resources.uploaded);
     try std.testing.expect(resources.updated >= 1);
-    try std.testing.expectEqual(@as(u32, 1), resources.wait_idle);
+    try std.testing.expectEqual(@as(u32, 0), resources.wait_idle);
     pool.destroyMesh(&first);
     pool.destroyMesh(&second);
 }

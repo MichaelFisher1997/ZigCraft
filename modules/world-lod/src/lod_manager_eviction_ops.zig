@@ -140,13 +140,10 @@ pub fn processMeshDeletions(self: *Self, max_count: usize) void {
     const count = @min(max_count, self.mesh_disposal.queue.items.len);
     if (count == 0) return;
 
-    // LODMesh does not carry a per-frame fence today, so destruction still
-    // requires GPU idle. Bound each sweep so a memory-pressure eviction burst
-    // cannot turn into an unbounded main-thread stall.
-    const wait_idle_timer = self.profiling.begin();
-    self.profiling.addWaitIdle();
-    self.gpu_bridge.waitIdle();
-    self.profiling.end(.wait_idle, wait_idle_timer);
+    // Meshes have already spent a full disposal grace period outside the
+    // render maps. Whole buffers are retired by the RHI's frame-fence deletion
+    // queue; pooled ranges are only returned here, after that grace period.
+    // Do not turn routine streaming eviction into a device-global stall.
     var processed: usize = 0;
     while (processed < count) : (processed += 1) {
         const idx = self.mesh_disposal.queue.items.len - 1;

@@ -103,7 +103,7 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
                 const key = chunk.key();
                 if (self.meshes[i].get(key)) |mesh| {
                     const pending_bytes = mesh.pendingUploadBytes();
-                    if (wouldExceedUploadBudget(uploaded_bytes, pending_bytes, upload_budget_bytes, uploads)) {
+                    if (wouldExceedUploadBudget(uploaded_bytes, pending_bytes, upload_budget_bytes)) {
                         self.profiling.addStagingPressure();
                         self.requeueUpload(i, chunk);
                         stop_processing = true;

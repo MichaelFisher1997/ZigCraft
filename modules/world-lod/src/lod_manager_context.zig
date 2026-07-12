@@ -109,9 +109,9 @@ pub fn lodUploadBudgetBytes() usize {
     return std.math.mul(usize, mb, 1024 * 1024) catch DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
 }
 
-pub fn wouldExceedUploadBudget(uploaded_bytes: usize, pending_bytes: usize, budget_bytes: usize, uploads: u32) bool {
+pub fn wouldExceedUploadBudget(uploaded_bytes: usize, pending_bytes: usize, budget_bytes: usize) bool {
     if (budget_bytes == 0 or budget_bytes == std.math.maxInt(usize)) return false;
-    if (pending_bytes == 0 or uploads == 0) return false;
+    if (pending_bytes == 0) return false;
     if (uploaded_bytes >= budget_bytes) return true;
     return pending_bytes > budget_bytes - uploaded_bytes;
 }

@@ -25,6 +25,7 @@ const manager_mod = @import("lod_manager.zig");
 const LODManager = manager_mod.LODManager;
 const MAX_CACHE_LOADS_PER_UPDATE = @import("lod_manager_context.zig").MAX_CACHE_LOADS_PER_UPDATE;
 const DEFAULT_LOD_UPLOAD_BUDGET_BYTES = @import("lod_manager_context.zig").DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+const wouldExceedUploadBudget = @import("lod_manager_context.zig").wouldExceedUploadBudget;
 const testing = std.testing;
 
 test "LODManager cache helpers save and reload source data" {
@@ -430,6 +431,34 @@ test "LODManager upload budget defers remaining queued meshes" {
     try testing.expectEqual(LODState.renderable, first.state);
     try testing.expectEqual(LODState.uploading, second.state);
     try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
+}
+
+test "LODManager upload budget defers an oversized first mesh" {
+    var config = LODConfig{ .max_uploads_per_frame = 8 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var mock = UploadMock{ .allocator = testing.allocator };
+    manager.gpu_bridge = mock.bridge();
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const chunk = try putTestRegion(&manager, key, .uploading);
+    _ = try putTestPendingMesh(&manager, key, 1);
+    try manager.upload_queues[1].push(chunk);
+
+    manager.processUploadsWithBudget(@sizeOf(Vertex) - 1);
+
+    try testing.expectEqual(@as(u32, 0), mock.calls);
+    try testing.expectEqual(LODState.uploading, chunk.state);
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
+}
+
+test "LOD upload budget permits zero-pending and unlimited uploads" {
+    const pending_bytes = @sizeOf(Vertex);
+
+    try testing.expect(!wouldExceedUploadBudget(0, 0, 1));
+    try testing.expect(!wouldExceedUploadBudget(0, pending_bytes, 0));
+    try testing.expect(!wouldExceedUploadBudget(0, pending_bytes, std.math.maxInt(usize)));
 }
 
 test "LODManager staging pressure failure stops upload sweep" {
