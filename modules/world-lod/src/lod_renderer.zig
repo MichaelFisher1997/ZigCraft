@@ -398,22 +398,27 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const mesh = entry.value_ptr.*;
                     if (!mesh.isReady()) {
                         telemetry.rejected_not_ready += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
                     if ((mesh.drawRange(.terrain) orelse mesh.drawRange(.fluid)) == null) {
                         telemetry.rejected_no_draw += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
                     const chunk = all_regions[i].get(entry.key_ptr.*) orelse {
                         telemetry.rejected_missing_region += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     };
                     if (!chunk.isRenderable()) {
                         telemetry.rejected_not_renderable += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
                     if (self.isCoveredByFinerLOD(chunk, config)) {
                         telemetry.rejected_finer_coverage += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
 
@@ -424,11 +429,13 @@ pub fn LODRenderer(comptime RHI: type) type {
                     if (max_distance_chunks) |max_dist| {
                         if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) {
                             telemetry.rejected_range += 1;
+                            if (profiling) |profile| profile.addRejected();
                             continue;
                         }
                     }
                     if (use_frustum and !disable_frustum and !isRegionInFrustum(frustum, bounds, camera_pos)) {
                         telemetry.rejected_frustum += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
 
@@ -437,10 +444,14 @@ pub fn LODRenderer(comptime RHI: type) type {
                         if (checker_ctx) |ctx_ptr| {
                             const coverage_timer = if (profiling) |profile| profile.begin() else null;
                             const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, camera_chunk.chunk_x, camera_chunk.chunk_z, chunk_radius);
-                            if (profiling) |profile| profile.end(.coverage, coverage_timer);
+                            if (profiling) |profile| {
+                                profile.end(.coverage, coverage_timer);
+                                profile.addCoverage();
+                            }
                             telemetry.coverage_checks += 1;
                             if (cov.covered) {
                                 telemetry.rejected_chunk_coverage += 1;
+                                if (profiling) |profile| profile.addRejected();
                                 continue;
                             }
                             if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) mask_radius = LOD_UNMASKED_SENTINEL;

@@ -57,10 +57,9 @@ pub fn flushCacheIO(self: *Self) void {
 /// `flushDirtyStores` and never wait for I/O.
 pub fn shutdownCacheIO(self: *Self) void {
     var attempts: usize = 0;
-    while (attempts < 2048) {
+    while (attempts < 2048) : (attempts += 1) {
         const queued = queueDirtyStores(self, cache_io.MAX_PENDING_TASKS);
         if (queued == 0) break;
-        attempts += queued;
         self.cache_io.waitUntilIdle();
         drainCacheCompletions(self);
     }
@@ -94,7 +93,10 @@ pub fn drainCacheCompletions(self: *Self) void {
                                 dispatch_generation = true;
                             } else {
                                 region.data = .{ .simplified = data.* };
-                                data.* = undefined;
+                                // Ownership moved into the region. Retag the
+                                // completion so deferred cleanup does not
+                                // deinitialize the consumed payload.
+                                read.result = .miss;
                                 region.updateHeightBoundsFromData();
                                 region.source_revision +%= 1;
                                 region.setState(.generated);
