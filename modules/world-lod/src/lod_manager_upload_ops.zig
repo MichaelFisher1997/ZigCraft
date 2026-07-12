@@ -207,6 +207,7 @@ pub fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void
 pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
     if (chunk.isRenderable()) return;
     chunk.markRenderable(self.countRenderableChildren(key));
+    if (self.pending_region_count > 0) self.pending_region_count -= 1;
     if (self.regionContributesGeometry(key, chunk)) {
         self.adjustParentReadyChildren(key, 1);
     }
@@ -236,6 +237,7 @@ pub fn demoteRegionForRemesh(self: *Self, key: LODRegionKey, chunk: *LODChunk) v
     if (chunk.getState() == .renderable) {
         self.noteRegionRemoved(key, chunk);
         chunk.setState(.generated);
+        self.pending_region_count += 1;
     } else if (chunk.getState() == .mesh_ready) {
         chunk.setState(.generated);
     }

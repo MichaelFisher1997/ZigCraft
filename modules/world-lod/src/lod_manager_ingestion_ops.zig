@@ -145,8 +145,7 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
                 const min_z: i32 = lod_chunk_ptr.region_z * region_size;
                 const written = lod_ingest.downsampleChunkIntoRegion(chunk, cx, cz, data, min_x, min_z, region_size, provenance);
                 if (written == 0) continue;
-                lod_chunk_ptr.dirty = true;
-                lod_chunk_ptr.store_dirty = true;
+                lod_chunk_ptr.markSourceDirty();
                 lod_chunk_ptr.updateHeightBoundsFromData();
                 // Force a remesh of already-rendered regions so the new
                 // chunk-derived data becomes visible.

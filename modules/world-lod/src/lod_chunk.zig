@@ -192,6 +192,14 @@ pub const LODChunk = struct {
     /// or edit). The manager writes the region container to disk lazily.
     store_dirty: bool,
 
+    /// Monotonic source revision used to reject stale cache write completions.
+    source_revision: u32,
+
+    /// Cache pipeline state. These flags are owned by the manager update
+    /// thread and prevent duplicate requests without pinning region memory.
+    cache_read_queued: bool,
+    store_write_queued: bool,
+
     /// Creates an empty LOD region record in the missing state.
     /// Source data, mesh handles, readiness counts, and transition state are initialized to safe defaults.
     pub fn init(rx: i32, rz: i32, lod: LODLevel) LODChunk {
@@ -210,6 +218,9 @@ pub const LODChunk = struct {
             .transition_frames_remaining = 0,
             .dirty = false,
             .store_dirty = false,
+            .source_revision = 0,
+            .cache_read_queued = false,
+            .store_write_queued = false,
         };
     }
 
@@ -341,6 +352,7 @@ pub const LODChunk = struct {
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;
+        self.source_revision +%= 1;
     }
 
     /// Sets the ready-child count directly, clamped to four direct children.

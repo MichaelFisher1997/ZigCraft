@@ -79,6 +79,31 @@ pub fn serializedSize(data: *const LODSimplifiedData) usize {
     return total;
 }
 
+/// Creates an allocator-owned snapshot suitable for handing to an asynchronous
+/// serializer. Source data remains owned by the LOD region and may be edited
+/// as soon as this returns.
+pub fn cloneSourceData(data: *const LODSimplifiedData, lod: LODLevel, allocator: std.mem.Allocator) !LODSimplifiedData {
+    var copy = if (data.hasVerticalSpans())
+        try LODSimplifiedData.initWithVerticalSpans(allocator, lod)
+    else
+        try LODSimplifiedData.init(allocator, lod);
+    errdefer copy.deinit();
+
+    copy.version = data.version;
+    @memcpy(copy.heightmap, data.heightmap);
+    @memcpy(copy.biomes, data.biomes);
+    @memcpy(copy.top_blocks, data.top_blocks);
+    @memcpy(copy.colors, data.colors);
+    @memcpy(copy.material_layers, data.material_layers);
+    @memcpy(copy.water, data.water);
+    @memcpy(copy.lighting, data.lighting);
+    @memcpy(copy.vegetation, data.vegetation);
+    @memcpy(copy.provenance, data.provenance);
+    if (data.vertical_span_counts) |counts| @memcpy(copy.vertical_span_counts.?, counts);
+    if (data.vertical_spans) |spans| @memcpy(copy.vertical_spans.?, spans);
+    return copy;
+}
+
 fn writeF32(buf: []u8, value: f32) void {
     std.mem.writeInt(u32, buf[0..4], @as(u32, @bitCast(value)), .little);
 }

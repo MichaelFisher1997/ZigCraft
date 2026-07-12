@@ -146,9 +146,13 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .mesh_disposal = .{},
         .renderer = render_iface,
         .cleanup_covered_regions = true,
-        .cache_store = .{},
+        .cache_store = .{ .store_size_cap_mb = config.getLODStoreSizeCapMB(), .use_config_store_size_cap = true },
+        .cache_io = undefined,
         .ingestion_queue = LODIngestionQueue.init(allocator),
     };
+
+    mgr.cache_io = try @import("lod_cache_io.zig").CacheIoPipeline.init(allocator, &mgr.profiling);
+    errdefer mgr.cache_io.deinit();
 
     const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
     const lod_worker_count = std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS);
@@ -184,6 +188,12 @@ pub fn deinit(self: *Self) void {
     if (self.job_dispatcher.worker_pool) |pool| {
         pool.deinit();
     }
+
+    // This is an explicit shutdown boundary: it is permitted to wait for the
+    // dedicated cache worker and flush source snapshots before region storage
+    // is released. The normal update path only enqueues/drains completions.
+    self.shutdownCacheIO();
+    self.cache_io.deinit();
 
     for (0..LODLevel.count) |i| {
         self.job_dispatcher.queues[i].deinit();
@@ -232,6 +242,9 @@ pub fn deinit(self: *Self) void {
 pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
     const update_timer = self.profiling.begin();
     defer self.profiling.end(.update, update_timer);
+    // Completion application only: no filesystem or serialization occurs on
+    // this frame/update path.
+    self.drainCacheCompletions();
     if (self.paused) return;
 
     // Deferred deletion handling. LOD meshes do not carry frame fences yet,
@@ -366,6 +379,36 @@ pub fn pause(self: *Self) void {
     for (0..LODLevel.count) |i| {
         self.job_dispatcher.queues[i].setPaused(true);
     }
+
+    // setPaused clears jobs that have not reached a worker. Reconcile their
+    // lifecycle states while holding the manager lock; otherwise they would
+    // remain permanently .generating/.meshing with no queued job. A pinned
+    // chunk belongs to a worker that already accepted its job, so leave both
+    // its state and token intact for that worker to publish safely.
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    for (0..LODLevel.count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| {
+            const chunk = entry.value_ptr.*;
+            if (chunk.isPinned()) continue;
+            switch (chunk.getState()) {
+                .generating => {
+                    chunk.job_token +%= 1;
+                    if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                    chunk.setState(.missing);
+                },
+                .meshing => {
+                    chunk.job_token +%= 1;
+                    // The generated source data remains valid. Requeue the
+                    // mesh transition after unpause without discarding its
+                    // pending admission slot.
+                    chunk.setState(.generated);
+                },
+                else => {},
+            }
+        }
+    }
 }
 
 /// Resume LOD generation
@@ -413,6 +456,16 @@ pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?Ch
     const visibility_timer = self.profiling.begin();
     defer self.profiling.end(.visibility, visibility_timer);
     self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
+}
+
+/// Renders a layer using a WorldRenderer-monotonic frame serial. The concrete
+/// LOD renderer projects visibility once for a serial and reuses safe value
+/// snapshots for the terrain and water submissions.
+pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+    self.mutex.lockShared();
+    defer self.mutex.unlockShared();
+
+    self.renderer.renderFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
 pub fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {

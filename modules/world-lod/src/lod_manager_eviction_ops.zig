@@ -107,6 +107,9 @@ pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void 
     if (to_remove.items.len > 0) {
         for (to_remove.items) |key| {
             if (storage.get(key)) |chunk| {
+                if (chunk.getState() != .missing and chunk.getState() != .renderable and self.pending_region_count > 0) {
+                    self.pending_region_count -= 1;
+                }
                 // Clean up mesh before removing chunk
                 const meshes = &self.meshes[@intFromEnum(lod)];
                 self.noteRegionRemoved(key, chunk);
@@ -379,6 +382,9 @@ pub fn unloadLODWhereChunksLoaded(self: *Self, checker: ChunkChecker, ctx: *anyo
                 self.queueMeshDeletion(mesh_entry.value);
             }
             if (storage.fetchRemove(rem_key)) |chunk_entry| {
+                if (chunk_entry.value.getState() != .missing and chunk_entry.value.getState() != .renderable and self.pending_region_count > 0) {
+                    self.pending_region_count -= 1;
+                }
                 chunk_entry.value.deinit(self.allocator);
                 self.allocator.destroy(chunk_entry.value);
             }
