@@ -265,14 +265,10 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
                 const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - player.cx, center_cz - player.cz, velocity, active_lod_count);
-                // Append before flipping state so an allocation failure
-                // leaves the chunk in .generated (re-tried next tick)
-                // instead of stuck in .meshing with no queued job.
                 mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale, .job_token = chunk.job_token, .lod_radius = radii[i] }) catch |err| {
                     self.mutex.unlock();
                     return err;
                 };
-                chunk.setState(.meshing);
             } else if (chunk.getState() == .mesh_ready) {
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
@@ -281,7 +277,6 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                     self.mutex.unlock();
                     return err;
                 };
-                chunk.setState(.uploading);
             }
         }
     }
@@ -295,6 +290,15 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         }
     }.lt);
     for (mesh_candidates.items) |mc| {
+        // Transition and enqueue atomically with respect to workers. A worker
+        // may pop immediately, but cannot inspect the chunk until this short
+        // manager critical section publishes the matching state.
+        self.mutex.lock();
+        if (mc.chunk.getState() != .generated or mc.chunk.job_token != mc.job_token) {
+            self.mutex.unlock();
+            continue;
+        }
+        mc.chunk.setState(.meshing);
         self.job_dispatcher.queues[LODLevel.count - 1].push(.{
             .type = .chunk_meshing,
             .dist_sq = mc.encoded_priority,
@@ -309,13 +313,13 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                 },
             },
         }) catch |err| {
-            self.mutex.lock();
             if (mc.chunk.getState() == .meshing and mc.chunk.job_token == mc.job_token) {
                 mc.chunk.setState(.generated);
             }
             self.mutex.unlock();
             return err;
         };
+        self.mutex.unlock();
     }
 
     // Uploads go to per-level FIFO queues. Sort by the same encoded priority
@@ -327,14 +331,20 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         }
     }.lt);
     for (upload_candidates.items) |uc| {
+        self.mutex.lock();
+        if (uc.chunk.getState() != .mesh_ready) {
+            self.mutex.unlock();
+            continue;
+        }
+        uc.chunk.setState(.uploading);
         self.upload_queues[uc.level].push(uc.chunk) catch |err| {
-            self.mutex.lock();
             if (uc.chunk.getState() == .uploading) {
                 uc.chunk.setState(.mesh_ready);
             }
             self.mutex.unlock();
             return err;
         };
+        self.mutex.unlock();
     }
 }
 
