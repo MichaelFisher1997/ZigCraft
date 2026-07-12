@@ -88,7 +88,10 @@ pub const CacheIoPipeline = struct {
         errdefer self.allocator.free(path_copy);
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.stopping or self.tasks.items.len >= MAX_PENDING_TASKS) return false;
+        if (self.stopping or self.tasks.items.len >= MAX_PENDING_TASKS) {
+            self.allocator.free(path_copy);
+            return false;
+        }
         self.tasks.appendAssumeCapacity(.{ .read = .{ .path = path_copy, .region_key = region_key, .cache_key = cache_key, .token = token } });
         self.work_ready.signal();
         return true;
@@ -101,7 +104,10 @@ pub const CacheIoPipeline = struct {
         errdefer self.allocator.free(path_copy);
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.stopping or self.tasks.items.len >= MAX_PENDING_TASKS) return false;
+        if (self.stopping or self.tasks.items.len >= MAX_PENDING_TASKS) {
+            self.allocator.free(path_copy);
+            return false;
+        }
         self.tasks.appendAssumeCapacity(.{ .write = .{
             .path = path_copy,
             .region_key = region_key,

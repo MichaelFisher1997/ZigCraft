@@ -483,12 +483,18 @@ pub fn LODRenderer(comptime RHI: type) type {
                     _ = self.instance_data.pop();
                     continue;
                 };
-                if (mesh.isPooled()) self.draw_commands[lod_idx].append(self.allocator, .{
-                    .vertexCount = range.count,
-                    .instanceCount = 1,
-                    .firstVertex = mesh.firstVertex(range),
-                    .firstInstance = @intCast(self.instance_data.items.len - 1),
-                }) catch {};
+                if (mesh.isPooled()) {
+                    self.draw_commands[lod_idx].append(self.allocator, .{
+                        .vertexCount = range.count,
+                        .instanceCount = 1,
+                        .firstVertex = mesh.firstVertex(range),
+                        .firstInstance = @intCast(self.instance_data.items.len - 1),
+                    }) catch {
+                        _ = self.draw_list.pop();
+                        _ = self.instance_data.pop();
+                        continue;
+                    };
+                }
                 if (stats) |s| {
                     if (layer == .fluid) {
                         s.fluid_drawn[lod_idx] += 1;
