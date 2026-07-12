@@ -661,7 +661,6 @@ pub const LODMesh = struct {
 
         if (pending.len == 0) {
             if (self.buffer_handle != 0 and !self.pooled) {
-                resources.waitIdle();
                 resources.destroyBuffer(self.buffer_handle);
             }
             self.buffer_handle = 0;
@@ -685,7 +684,7 @@ pub const LODMesh = struct {
         var new_handle: BufferHandle = 0;
 
         // Create or resize buffer. Keep the old buffer renderable until the
-        // replacement upload succeeds, then destroy it after an idle wait.
+        // replacement upload succeeds, then retire it through the RHI.
         if (self.buffer_handle == 0 or needed_capacity > self.capacity * @sizeOf(Vertex)) {
             new_handle = try resources.createBuffer(needed_capacity, .vertex);
             upload_handle = new_handle;
@@ -701,7 +700,6 @@ pub const LODMesh = struct {
             self.vertex_offset = 0;
             self.pooled = false;
             if (old_handle != 0 and !self.pooled) {
-                resources.waitIdle();
                 resources.destroyBuffer(old_handle);
             }
         }
