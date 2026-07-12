@@ -325,12 +325,12 @@ pub const WorldRenderer = struct {
             if (lod_manager) |lod_mgr| {
                 if (layer != .fluid) {
                     self.timing.beginPassTiming("LODTerrainPass");
-                    lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
                     self.timing.endPassTiming("LODTerrainPass");
                 }
                 if (layer != .terrain and parseEnabledEnv(getenv("ZIGCRAFT_LOD_WATER"), true)) {
                     self.timing.beginPassTiming("LODWaterPass");
-                    lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
                     self.timing.endPassTiming("LODWaterPass");
                 }
             }

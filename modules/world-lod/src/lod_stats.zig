@@ -12,6 +12,8 @@ pub const LODProfilingSnapshot = struct {
     enabled: bool = false,
     update_ms: f64 = 0,
     scheduling_ms: f64 = 0,
+    /// Cumulative dedicated cache-worker CPU/I/O time. This is intentionally
+    /// not update-thread blocking time; frame work only queues and drains.
     cache_ms: f64 = 0,
     generation_dispatch_ms: f64 = 0,
     state_transition_ms: f64 = 0,
@@ -29,12 +31,64 @@ pub const LODProfilingSnapshot = struct {
     visible_count: u64 = 0,
     rejected_count: u64 = 0,
     coverage_count: u64 = 0,
+    /// Per-LOD visibility projection telemetry. These counters are cumulative
+    /// and count a region once, even when terrain and water are both drawn.
+    visibility_levels: [LODLevel.count]LODVisibilityLevelSnapshot = [_]LODVisibilityLevelSnapshot{.{}} ** LODLevel.count,
     /// Known CPU vertex-capacity bytes retained by meshes awaiting deletion.
     /// GPU pool allocations are deliberately not reported because they are not
     /// available through the current RHI/LOD pool interface.
     deferred_deletion_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
+};
+
+pub const LODVisibilityLevelSnapshot = struct {
+    candidates: u64 = 0,
+    accepted: u64 = 0,
+    rejected_no_draw: u64 = 0,
+    rejected_not_ready: u64 = 0,
+    rejected_missing_region: u64 = 0,
+    rejected_not_renderable: u64 = 0,
+    rejected_finer_coverage: u64 = 0,
+    rejected_range: u64 = 0,
+    rejected_frustum: u64 = 0,
+    rejected_chunk_coverage: u64 = 0,
+    coverage_checks: u64 = 0,
+};
+
+const LODVisibilityLevelCounters = struct {
+    candidates: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    accepted: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_no_draw: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_not_ready: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_missing_region: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_not_renderable: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_finer_coverage: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_range: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_frustum: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    rejected_chunk_coverage: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+    coverage_checks: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
+
+    fn add(self: *LODVisibilityLevelCounters, value: LODVisibilityLevelSnapshot) void {
+        inline for (std.meta.fields(LODVisibilityLevelSnapshot)) |field| {
+            const amount = @field(value, field.name);
+            if (amount != 0) _ = @field(self, field.name).fetchAdd(amount, .monotonic);
+        }
+    }
+
+    fn reset(self: *LODVisibilityLevelCounters) void {
+        inline for (std.meta.fields(LODVisibilityLevelSnapshot)) |field| {
+            @field(self, field.name).store(0, .monotonic);
+        }
+    }
+
+    fn snapshot(self: *const LODVisibilityLevelCounters) LODVisibilityLevelSnapshot {
+        var result = LODVisibilityLevelSnapshot{};
+        inline for (std.meta.fields(LODVisibilityLevelSnapshot)) |field| {
+            @field(result, field.name) = @field(self, field.name).load(.monotonic);
+        }
+        return result;
+    }
 };
 
 /// Thread-safe backing store for an `LODProfilingSnapshot`.
@@ -81,6 +135,7 @@ pub const LODProfilingCollector = struct {
     visible_count: AtomicU64 = AtomicU64.init(0),
     rejected_count: AtomicU64 = AtomicU64.init(0),
     coverage_count: AtomicU64 = AtomicU64.init(0),
+    visibility_levels: [LODLevel.count]LODVisibilityLevelCounters = [_]LODVisibilityLevelCounters{.{}} ** LODLevel.count,
     deferred_deletion_bytes: AtomicU64 = AtomicU64.init(0),
     wait_idle_count: AtomicU64 = AtomicU64.init(0),
 
@@ -128,6 +183,11 @@ pub const LODProfilingCollector = struct {
         self.add(&self.coverage_count, 1);
     }
 
+    pub fn addVisibilityLevel(self: *LODProfilingCollector, lod: LODLevel, value: LODVisibilityLevelSnapshot) void {
+        if (!self.enabled) return;
+        self.visibility_levels[@intFromEnum(lod)].add(value);
+    }
+
     pub fn addDeferredDeletionBytes(self: *LODProfilingCollector, bytes: usize) void {
         self.add(&self.deferred_deletion_bytes, @intCast(bytes));
     }
@@ -154,6 +214,7 @@ pub const LODProfilingCollector = struct {
             &self.staging_pressure_count, &self.visible_count,           &self.rejected_count,
             &self.coverage_count,         &self.deferred_deletion_bytes, &self.wait_idle_count,
         }) |counter| counter.store(0, .monotonic);
+        for (&self.visibility_levels) |*level| level.reset();
     }
 
     pub fn snapshot(self: *const LODProfilingCollector) LODProfilingSnapshot {
@@ -177,6 +238,11 @@ pub const LODProfilingCollector = struct {
             .visible_count = self.visible_count.load(.monotonic),
             .rejected_count = self.rejected_count.load(.monotonic),
             .coverage_count = self.coverage_count.load(.monotonic),
+            .visibility_levels = blk: {
+                var levels: [LODLevel.count]LODVisibilityLevelSnapshot = undefined;
+                for (&levels, 0..) |*level, index| level.* = self.visibility_levels[index].snapshot();
+                break :blk levels;
+            },
             .deferred_deletion_bytes = self.deferred_deletion_bytes.load(.monotonic),
             .wait_idle_count = self.wait_idle_count.load(.monotonic),
             .wait_idle_ms = nsToMs(self.wait_idle_ns.load(.monotonic)),
@@ -313,6 +379,7 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     collector.addVisible();
     collector.addRejected();
     collector.addCoverage();
+    collector.addVisibilityLevel(.lod1, .{ .candidates = 3, .accepted = 1, .rejected_frustum = 1, .coverage_checks = 1 });
     collector.addDeferredDeletionBytes(32);
     collector.addWaitIdle();
 
@@ -323,6 +390,8 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     try std.testing.expectEqual(@as(u64, 1), snapshot.visible_count);
     try std.testing.expectEqual(@as(u64, 1), snapshot.rejected_count);
     try std.testing.expectEqual(@as(u64, 1), snapshot.coverage_count);
+    try std.testing.expectEqual(@as(u64, 3), snapshot.visibility_levels[1].candidates);
+    try std.testing.expectEqual(@as(u64, 1), snapshot.visibility_levels[1].rejected_frustum);
     try std.testing.expectEqual(@as(u64, 32), snapshot.deferred_deletion_bytes);
     try std.testing.expectEqual(@as(u64, 1), snapshot.wait_idle_count);
 
@@ -331,6 +400,7 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.upload_bytes);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.visible_count);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.deferred_deletion_bytes);
+    try std.testing.expectEqual(@as(u64, 0), reset_snapshot.visibility_levels[1].candidates);
 }
 
 test "disabled LOD profiling collector does not accumulate samples" {

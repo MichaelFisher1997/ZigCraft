@@ -7,6 +7,8 @@ const RenderDeviceStats = @import("engine-rhi").render_device.Stats;
 const LODLevel = @import("engine-core").lod_types.LODLevel;
 const font = @import("font.zig");
 
+pub const LOD_VISIBILITY_LEVEL_COUNT = LODLevel.count;
+
 pub const TimingOverlay = struct {
     enabled: bool = false,
 
@@ -199,7 +201,23 @@ pub const LODProfilingDisplay = struct {
     visible_count: u64 = 0,
     rejected_count: u64 = 0,
     coverage_count: u64 = 0,
+    visibility_levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT,
     deferred_deletion_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
+};
+
+/// UI-neutral per-level visibility projection counters from world-lod.
+pub const LODVisibilityLevelDisplay = struct {
+    candidates: u64 = 0,
+    accepted: u64 = 0,
+    rejected_no_draw: u64 = 0,
+    rejected_not_ready: u64 = 0,
+    rejected_missing_region: u64 = 0,
+    rejected_not_renderable: u64 = 0,
+    rejected_finer_coverage: u64 = 0,
+    rejected_range: u64 = 0,
+    rejected_frustum: u64 = 0,
+    rejected_chunk_coverage: u64 = 0,
+    coverage_checks: u64 = 0,
 };

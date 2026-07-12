@@ -75,6 +75,16 @@ const RenderDiag = struct {
     drawn: u32 = 0,
 };
 
+/// Value-only result of the frame visibility projection. It deliberately holds
+/// no mesh or region pointer: the projection can survive the terrain pass and
+/// is revalidated under the manager's shared lock before a later water pass.
+const VisibleRegion = struct {
+    key: LODRegionKey,
+    model: Mat4,
+    mask_radius: f32,
+    lod_fade: f32,
+};
+
 const MAX_LOD_MDI_REGIONS: usize = 2048;
 
 /// Expected RHI interface for LODRenderer:
@@ -94,6 +104,8 @@ pub fn LODRenderer(comptime RHI: type) type {
         // MDI Resources (Moved from LODManager)
         instance_data: std.ArrayListUnmanaged(rhi_types.InstanceData),
         draw_list: std.ArrayListUnmanaged(*LODMesh),
+        projection_regions: std.ArrayListUnmanaged(VisibleRegion),
+        projection_frame: ?u64,
         draw_commands: [LODLevel.count]std.ArrayListUnmanaged(rhi_types.DrawIndirectCommand),
         instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
         indirect_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
@@ -136,18 +148,20 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .rhi = rhi,
                 .instance_data = .empty,
                 .draw_list = .empty,
+                .projection_regions = .empty,
+                .projection_frame = null,
                 .draw_commands = draw_commands,
                 .instance_buffers = instance_buffers,
                 .indirect_buffers = indirect_buffers,
                 .vertex_pools = vertex_pools,
                 .frame_index = 0,
-                .enable_mdi = engine_core.envFlag("ZIGCRAFT_ENABLE_LOD_MDI", false),
+                .enable_mdi = !engine_core.envFlag("ZIGCRAFT_DISABLE_LOD_MDI", false),
                 .gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false),
                 .gpu_culling_fallback_logged = false,
             };
 
             if (!renderer.enable_mdi) {
-                log.log.info("LOD MDI disabled by default; set ZIGCRAFT_ENABLE_LOD_MDI=1 to test indirect LOD batches", .{});
+                log.log.info("LOD MDI disabled by ZIGCRAFT_DISABLE_LOD_MDI", .{});
             }
 
             return renderer;
@@ -172,11 +186,45 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
+            self.projection_regions.deinit(self.allocator);
             for (&self.draw_commands) |*commands| commands.deinit(self.allocator);
             self.allocator.destroy(self);
         }
 
         /// Render all LOD meshes using explicitly provided data.
+        ///
+        /// `frame_serial` is supplied by WorldRenderer and advances only from
+        /// its `beginFrame`. Visibility and full-chunk coverage are projected
+        /// once for that frame; terrain and water then consume value-only
+        /// entries without retaining map-owned mesh pointers.
+        pub fn renderFrame(
+            self: *Self,
+            frame_serial: u64,
+            meshes: *const [LODLevel.count]MeshMap,
+            regions: *const [LODLevel.count]RegionMap,
+            config: ILODConfig,
+            view_proj: Mat4,
+            camera_pos: Vec3,
+            chunk_checker: ?ChunkChecker,
+            checker_ctx: ?*anyopaque,
+            use_frustum: bool,
+            max_distance_chunks: ?i32,
+            layer: LODRenderLayer,
+            stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
+        ) void {
+            if (self.projection_frame == null or self.projection_frame.? != frame_serial) {
+                const timer = if (profiling) |profile| profile.begin() else null;
+                defer if (profiling) |profile| profile.end(.visibility, timer);
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                    log.log.errWithTrace("Failed to project LOD visibility: {}", .{err});
+                    return;
+                };
+                self.projection_frame = frame_serial;
+            }
+            self.renderProjectedLayer(meshes, layer, stats);
+        }
+
         pub fn render(
             self: *Self,
             meshes: *const [LODLevel.count]MeshMap,
@@ -237,9 +285,10 @@ pub fn LODRenderer(comptime RHI: type) type {
 
             if (self.instance_data.items.len == 0) return;
 
-            if (self.enable_mdi and layer == .terrain and self.renderIndirectBatches(render_ctx, query)) return;
+            const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
 
             for (self.draw_list.items, 0..) |mesh, idx| {
+                if (indirect_drawn and mesh.isPooled()) continue;
                 const instance = self.instance_data.items[idx];
                 const range = mesh.drawRange(layer) orelse continue;
                 render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
@@ -268,7 +317,6 @@ pub fn LODRenderer(comptime RHI: type) type {
             var total_commands: usize = 0;
             for (self.draw_commands) |commands| total_commands += commands.items.len;
             if (total_commands == 0) return false;
-            if (total_commands != self.draw_list.items.len) return false;
             if (total_commands > MAX_LOD_MDI_REGIONS) {
                 log.log.warn("LOD MDI: command overflow ({} > {}), falling back to CPU draw", .{ total_commands, MAX_LOD_MDI_REGIONS });
                 return false;
@@ -311,6 +359,157 @@ pub fn LODRenderer(comptime RHI: type) type {
                 render_ctx.drawIndirect(pool_buffer, self.indirect_buffers[fi], lod_offsets[lod_idx] * stride, lod_counts[lod_idx], stride);
             }
             return true;
+        }
+
+        fn buildVisibilityProjection(
+            self: *Self,
+            all_meshes: *const [LODLevel.count]MeshMap,
+            all_regions: *const [LODLevel.count]RegionMap,
+            config: ILODConfig,
+            view_proj: Mat4,
+            camera_pos: Vec3,
+            chunk_checker: ?ChunkChecker,
+            checker_ctx: ?*anyopaque,
+            use_frustum: bool,
+            max_distance_chunks: ?i32,
+            stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
+        ) !void {
+            self.projection_regions.clearRetainingCapacity();
+            if (stats) |s| {
+                s.drawn = [_]u32{0} ** LODLevel.count;
+                s.instances = [_]u32{0} ** LODLevel.count;
+                s.fluid_drawn = [_]u32{0} ** LODLevel.count;
+                s.fluid_instances = [_]u32{0} ** LODLevel.count;
+            }
+
+            const frustum = Frustum.fromViewProj(view_proj);
+            const disable_frustum = engine_core.envFlag("ZIGCRAFT_LOD_DISABLE_FRUSTUM", false);
+            const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+            const chunk_radius = config.getChunkRenderRadius();
+            var i = lod_chunk.activeLODCount(config);
+            while (i > 0) {
+                i -= 1;
+                const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
+                var telemetry = @import("lod_stats.zig").LODVisibilityLevelSnapshot{};
+                var iter = all_meshes[i].iterator();
+                while (iter.next()) |entry| {
+                    telemetry.candidates += 1;
+                    const mesh = entry.value_ptr.*;
+                    if (!mesh.isReady()) {
+                        telemetry.rejected_not_ready += 1;
+                        continue;
+                    }
+                    if ((mesh.drawRange(.terrain) orelse mesh.drawRange(.fluid)) == null) {
+                        telemetry.rejected_no_draw += 1;
+                        continue;
+                    }
+                    const chunk = all_regions[i].get(entry.key_ptr.*) orelse {
+                        telemetry.rejected_missing_region += 1;
+                        continue;
+                    };
+                    if (!chunk.isRenderable()) {
+                        telemetry.rejected_not_renderable += 1;
+                        continue;
+                    }
+                    if (self.isCoveredByFinerLOD(chunk, config)) {
+                        telemetry.rejected_finer_coverage += 1;
+                        continue;
+                    }
+
+                    const bounds = chunk.worldBounds();
+                    const chunk_bounds = chunk.chunkBounds();
+                    // Cheap radial and frustum tests intentionally precede the
+                    // potentially large chunk-coverage scan.
+                    if (max_distance_chunks) |max_dist| {
+                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) {
+                            telemetry.rejected_range += 1;
+                            continue;
+                        }
+                    }
+                    if (use_frustum and !disable_frustum and !isRegionInFrustum(frustum, bounds, camera_pos)) {
+                        telemetry.rejected_frustum += 1;
+                        continue;
+                    }
+
+                    var mask_radius = config.calculateMaskRadius();
+                    if (chunk_checker) |checker| {
+                        if (checker_ctx) |ctx_ptr| {
+                            const coverage_timer = if (profiling) |profile| profile.begin() else null;
+                            const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, camera_chunk.chunk_x, camera_chunk.chunk_z, chunk_radius);
+                            if (profiling) |profile| profile.end(.coverage, coverage_timer);
+                            telemetry.coverage_checks += 1;
+                            if (cov.covered) {
+                                telemetry.rejected_chunk_coverage += 1;
+                                continue;
+                            }
+                            if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) mask_radius = LOD_UNMASKED_SENTINEL;
+                        }
+                    }
+
+                    try self.projection_regions.append(self.allocator, .{
+                        .key = entry.key_ptr.*,
+                        .model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z)),
+                        .mask_radius = mask_radius,
+                        .lod_fade = chunk.transitionFadeProgress(),
+                    });
+                    telemetry.accepted += 1;
+                    if (profiling) |profile| profile.addVisible();
+                }
+                if (profiling) |profile| profile.addVisibilityLevel(lod, telemetry);
+            }
+        }
+
+        fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats) void {
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
+            self.frame_index = query.getFrameIndex();
+            defer if (@hasDecl(@TypeOf(render_ctx), "setInstanceBuffer")) render_ctx.setInstanceBuffer(0);
+            render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
+            self.instance_data.clearRetainingCapacity();
+            self.draw_list.clearRetainingCapacity();
+            for (&self.draw_commands) |*commands| commands.clearRetainingCapacity();
+
+            for (self.projection_regions.items) |visible| {
+                const lod_idx = @intFromEnum(visible.key.lod);
+                const mesh = all_meshes[lod_idx].get(visible.key) orelse continue;
+                const range = mesh.drawRange(layer) orelse continue;
+                if (!mesh.isReady() or range.count == 0) continue;
+                const lod_y_offset: f32 = if (layer == .fluid) 0.0 else -0.05;
+                var instance = rhi_types.InstanceData{ .model = visible.model, .mask_radius = visible.mask_radius, .lod_fade = visible.lod_fade, .padding = .{ 0, 0 } };
+                instance.model.data[3][1] += lod_y_offset;
+                self.instance_data.append(self.allocator, instance) catch continue;
+                self.draw_list.append(self.allocator, mesh) catch {
+                    _ = self.instance_data.pop();
+                    continue;
+                };
+                if (mesh.isPooled()) self.draw_commands[lod_idx].append(self.allocator, .{
+                    .vertexCount = range.count,
+                    .instanceCount = 1,
+                    .firstVertex = mesh.firstVertex(range),
+                    .firstInstance = @intCast(self.instance_data.items.len - 1),
+                }) catch {};
+                if (stats) |s| {
+                    if (layer == .fluid) {
+                        s.fluid_drawn[lod_idx] += 1;
+                        s.fluid_instances[lod_idx] += 1;
+                    } else {
+                        s.drawn[lod_idx] += 1;
+                        s.instances[lod_idx] += 1;
+                    }
+                }
+            }
+            if (self.instance_data.items.len == 0) return;
+            const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
+            for (self.draw_list.items, 0..) |mesh, index| {
+                if (indirect_drawn and mesh.isPooled()) continue;
+                const instance = self.instance_data.items[index];
+                const range = mesh.drawRange(layer) orelse continue;
+                render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
+                if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
+                    render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
+                } else render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
+            }
         }
 
         fn collectVisibleMeshes(
@@ -383,6 +582,14 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }
                     }
 
+                    if (use_frustum and !disable_frustum) {
+                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) {
+                            diag.frustum_culled += 1;
+                            if (profiling) |profile| profile.addRejected();
+                            continue;
+                        }
+                    }
+
                     var mask_radius = config.calculateMaskRadius();
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
@@ -418,14 +625,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                     }
 
                     lod_rendered += 1;
-
-                    if (use_frustum and !disable_frustum) {
-                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) {
-                            diag.frustum_culled += 1;
-                            if (profiling) |profile| profile.addRejected();
-                            continue;
-                        }
-                    }
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
@@ -643,6 +842,25 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
                 }
+                fn renderFrameFn(
+                    self_ptr: *anyopaque,
+                    frame_serial: u64,
+                    meshes: *const [LODLevel.count]MeshMap,
+                    regions: *const [LODLevel.count]RegionMap,
+                    config: ILODConfig,
+                    view_proj: Mat4,
+                    camera_pos: Vec3,
+                    chunk_checker: ?ChunkChecker,
+                    checker_ctx: ?*anyopaque,
+                    use_frustum: bool,
+                    max_distance_chunks: ?i32,
+                    layer: LODRenderLayer,
+                    stats: ?*LODStats,
+                    profiling: ?*LODProfilingCollector,
+                ) void {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    renderer.renderFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+                }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.deinit();
@@ -650,6 +868,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             };
             return .{
                 .render_fn = Wrapper.renderFn,
+                .render_frame_fn = Wrapper.renderFrameFn,
                 .deinit_fn = Wrapper.deinitFn,
                 .ptr = self,
             };
@@ -786,7 +1005,9 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
         pub fn setInstanceBuffer(_: @This(), _: anytype) void {}
         pub fn setSelectionMode(_: @This(), _: bool) void {}
         pub fn draw(_: @This(), _: u32, _: u32, _: anytype) void {}
-        pub fn drawOffset(_: @This(), _: u32, _: u32, _: anytype, _: usize) void {}
+        pub fn drawOffset(self: @This(), _: u32, _: u32, _: anytype, _: usize) void {
+            self.state.direct_draw_calls += 1;
+        }
         pub fn drawIndirect(self: @This(), _: u32, _: u32, _: usize, draw_count: u32, _: u32) void {
             self.state.draw_indirect_calls += 1;
             self.state.last_draw_count += draw_count;
@@ -799,6 +1020,7 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     const Renderer = LODRenderer(MockRHI);
     const renderer = try Renderer.init(allocator, mock_rhi);
     defer renderer.deinit();
+    // Explicitly exercise the default-on MDI path.
     renderer.enable_mdi = true;
 
     renderer.vertex_pools[1].buffer_handle = 101;
@@ -842,10 +1064,31 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     try regions[2].put(.{ .rx = 8, .rz = 0, .lod = .lod2 }, &chunk_lod2);
 
     var mock_config = LODConfig{ .radii = .{ 16, 128, 256, 512, 1024 } };
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, null);
+    var profiling = LODProfilingCollector.init(true);
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
 
     try std.testing.expectEqual(@as(u32, 2), mock_state.draw_indirect_calls);
     try std.testing.expectEqual(@as(u32, 2), mock_state.last_draw_count);
+
+    // Water reuses the pooled indirect path rather than falling back to one
+    // direct submission per region.
+    mesh_lod1.water_vertex_offset = 12 * @sizeOf(rhi_types.Vertex);
+    mesh_lod1.water_vertex_count = 6;
+    mesh_lod2.water_vertex_offset = 18 * @sizeOf(rhi_types.Vertex);
+    mesh_lod2.water_vertex_count = 9;
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .fluid, null, &profiling);
+    try std.testing.expectEqual(@as(u32, 4), mock_state.draw_indirect_calls);
+    try std.testing.expectEqual(@as(u32, 0), mock_state.direct_draw_calls);
+    const projection = profiling.snapshot().visibility_levels;
+    try std.testing.expectEqual(@as(u64, 1), projection[1].candidates);
+    try std.testing.expectEqual(@as(u64, 1), projection[2].candidates);
+
+    // A direct-only mesh must not disable indirect submission for its pooled
+    // sibling. This is the upload-transition fallback used in production.
+    mesh_lod2.pooled = false;
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    try std.testing.expectEqual(@as(u32, 5), mock_state.draw_indirect_calls);
+    try std.testing.expectEqual(@as(u32, 1), mock_state.direct_draw_calls);
 }
 
 test "LODRenderer band fade follows configured fog start percent" {
@@ -921,6 +1164,9 @@ test "LODRenderer render draw path" {
     const Renderer = LODRenderer(MockRHI);
     const renderer = try Renderer.init(allocator, mock_rhi);
     defer renderer.deinit();
+    // MDI is enabled, but this RHI intentionally lacks indirect support.
+    // Rendering must preserve the direct fallback for both terrain and water.
+    renderer.enable_mdi = true;
 
     // Create mock mesh
     var mesh = LODMesh.init(allocator, .lod1);

@@ -692,6 +692,23 @@ pub const WorldScreen = struct {
                     .visible_count = ls.profiling.visible_count,
                     .rejected_count = ls.profiling.rejected_count,
                     .coverage_count = ls.profiling.coverage_count,
+                    .visibility_levels = blk: {
+                        var levels: [@import("engine-ui").LOD_VISIBILITY_LEVEL_COUNT]@import("engine-ui").LODVisibilityLevelDisplay = undefined;
+                        for (&levels, 0..) |*level, index| level.* = .{
+                            .candidates = ls.profiling.visibility_levels[index].candidates,
+                            .accepted = ls.profiling.visibility_levels[index].accepted,
+                            .rejected_no_draw = ls.profiling.visibility_levels[index].rejected_no_draw,
+                            .rejected_not_ready = ls.profiling.visibility_levels[index].rejected_not_ready,
+                            .rejected_missing_region = ls.profiling.visibility_levels[index].rejected_missing_region,
+                            .rejected_not_renderable = ls.profiling.visibility_levels[index].rejected_not_renderable,
+                            .rejected_finer_coverage = ls.profiling.visibility_levels[index].rejected_finer_coverage,
+                            .rejected_range = ls.profiling.visibility_levels[index].rejected_range,
+                            .rejected_frustum = ls.profiling.visibility_levels[index].rejected_frustum,
+                            .rejected_chunk_coverage = ls.profiling.visibility_levels[index].rejected_chunk_coverage,
+                            .coverage_checks = ls.profiling.visibility_levels[index].coverage_checks,
+                        };
+                        break :blk levels;
+                    },
                     .deferred_deletion_bytes = ls.profiling.deferred_deletion_bytes,
                     .wait_idle_count = ls.profiling.wait_idle_count,
                     .wait_idle_ms = ls.profiling.wait_idle_ms,

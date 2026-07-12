@@ -6,6 +6,8 @@ const Vec3 = @import("engine-math").Vec3;
 const GpuTimingResults = @import("engine-rhi").GpuTimingResults;
 const WorldStats = @import("engine-ui").WorldStats;
 const LODProfilingDisplay = @import("engine-ui").LODProfilingDisplay;
+const LODVisibilityLevelDisplay = @import("engine-ui").LODVisibilityLevelDisplay;
+const LOD_VISIBILITY_LEVEL_COUNT = @import("engine-ui").LOD_VISIBILITY_LEVEL_COUNT;
 
 pub const Waypoint = struct {
     pos: Vec3,
@@ -109,6 +111,7 @@ pub const LODFrameSample = struct {
     visible_count: u64 = 0,
     rejected_count: u64 = 0,
     coverage_count: u64 = 0,
+    visibility_levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT,
     deferred_deletion_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
@@ -180,6 +183,7 @@ pub const LODVisibilitySummary = struct {
     visible_total: u64,
     rejected_total: u64,
     coverage_total: u64,
+    levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay,
 };
 
 pub const LODPressureSummary = struct {
@@ -410,6 +414,7 @@ pub const BenchmarkRunner = struct {
         var lod_visible_count: u64 = 0;
         var lod_rejected_count: u64 = 0;
         var lod_coverage_count: u64 = 0;
+        var lod_visibility_levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT;
         var lod_wait_idle_count: u64 = 0;
         var lod_wait_idle_ms: f64 = 0;
         var worst_frame = WorstFrame{
@@ -477,6 +482,7 @@ pub const BenchmarkRunner = struct {
             lod_visible_count +|= lod.visible_count;
             lod_rejected_count +|= lod.rejected_count;
             lod_coverage_count +|= lod.coverage_count;
+            for (&lod_visibility_levels, lod.visibility_levels) |*total, level| addVisibilityLevel(total, level);
             lod_wait_idle_count +|= lod.wait_idle_count;
             lod_wait_idle_ms += lod.wait_idle_ms;
         }
@@ -551,6 +557,7 @@ pub const BenchmarkRunner = struct {
                     .visible_total = lod_visible_count,
                     .rejected_total = lod_rejected_count,
                     .coverage_total = lod_coverage_count,
+                    .levels = lod_visibility_levels,
                 },
                 .pressure = .{
                     .staging_pressure_total = lod_staging_pressure_count,
@@ -712,7 +719,7 @@ test "benchmark draw-call SLO scales for render-distance override" {
                 .pending_cpu_upload_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
                 .deferred_deletion_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
             },
-            .visibility = .{ .visible_total = 0, .rejected_total = 0, .coverage_total = 0 },
+            .visibility = .{ .visible_total = 0, .rejected_total = 0, .coverage_total = 0, .levels = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT },
             .pressure = .{ .staging_pressure_total = 0, .wait_idle_count_total = 0, .wait_idle_ms_total = 0, .wait_idle_ms_avg = 0 },
         },
     };
@@ -812,6 +819,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .visible_count = 10,
         .rejected_count = 4,
         .coverage_count = 6,
+        .visibility_levels = .{ .{}, .{ .candidates = 5, .accepted = 2, .rejected_frustum = 1, .coverage_checks = 4 }, .{}, .{}, .{} },
         .deferred_deletion_bytes = 30,
         .wait_idle_count = 5,
         .wait_idle_ms = 3,
@@ -836,6 +844,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .visible_count = 13,
         .rejected_count = 5,
         .coverage_count = 8,
+        .visibility_levels = .{ .{}, .{ .candidates = 7, .accepted = 3, .rejected_frustum = 2, .coverage_checks = 6 }, .{}, .{}, .{} },
         .deferred_deletion_bytes = 40,
         .wait_idle_count = 6,
         .wait_idle_ms = 5,
@@ -860,6 +869,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .visible_count = 2,
         .rejected_count = 1,
         .coverage_count = 3,
+        .visibility_levels = .{ .{}, .{ .candidates = 1, .accepted = 1, .rejected_chunk_coverage = 1, .coverage_checks = 1 }, .{}, .{}, .{} },
         .deferred_deletion_bytes = 8,
         .wait_idle_count = 2,
         .wait_idle_ms = 0.5,
@@ -882,6 +892,11 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
     try std.testing.expectEqual(@as(u64, 3), results.lod.pressure.wait_idle_count_total);
     try std.testing.expectApproxEqAbs(@as(f64, 2.5), results.lod.pressure.wait_idle_ms_total, 0.001);
     try std.testing.expectEqual(@as(u64, 3), results.lod.pressure.staging_pressure_total);
+    try std.testing.expectEqual(@as(u64, 3), results.lod.visibility.levels[1].candidates);
+    try std.testing.expectEqual(@as(u64, 2), results.lod.visibility.levels[1].accepted);
+    try std.testing.expectEqual(@as(u64, 1), results.lod.visibility.levels[1].rejected_frustum);
+    try std.testing.expectEqual(@as(u64, 1), results.lod.visibility.levels[1].rejected_chunk_coverage);
+    try std.testing.expectEqual(@as(u64, 3), results.lod.visibility.levels[1].coverage_checks);
     try std.testing.expectEqual(@as(u32, 2), results.worst_frame.frame_index);
     try std.testing.expectEqualStrings("cache", results.worst_frame.dominant_lod_cpu_category);
     try std.testing.expectEqual(@as(u64, 20), results.worst_frame.lod_upload_bytes);
@@ -967,10 +982,29 @@ fn lodFrameDelta(current: ?LODProfilingDisplay, previous: *?LODProfilingDisplay)
         .visible_count = cumulativeCounterDelta(snapshot.visible_count, prior.visible_count),
         .rejected_count = cumulativeCounterDelta(snapshot.rejected_count, prior.rejected_count),
         .coverage_count = cumulativeCounterDelta(snapshot.coverage_count, prior.coverage_count),
+        .visibility_levels = blk: {
+            var levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = undefined;
+            for (&levels, 0..) |*level, index| level.* = visibilityLevelDelta(snapshot.visibility_levels[index], prior.visibility_levels[index]);
+            break :blk levels;
+        },
         .deferred_deletion_bytes = gauges.deferred_deletion_bytes,
         .wait_idle_count = cumulativeCounterDelta(snapshot.wait_idle_count, prior.wait_idle_count),
         .wait_idle_ms = cumulativeTimingDelta(snapshot.wait_idle_ms, prior.wait_idle_ms),
     };
+}
+
+fn visibilityLevelDelta(current: LODVisibilityLevelDisplay, previous: LODVisibilityLevelDisplay) LODVisibilityLevelDisplay {
+    var result = LODVisibilityLevelDisplay{};
+    inline for (std.meta.fields(LODVisibilityLevelDisplay)) |field| {
+        @field(result, field.name) = cumulativeCounterDelta(@field(current, field.name), @field(previous, field.name));
+    }
+    return result;
+}
+
+fn addVisibilityLevel(total: *LODVisibilityLevelDisplay, value: LODVisibilityLevelDisplay) void {
+    inline for (std.meta.fields(LODVisibilityLevelDisplay)) |field| {
+        @field(total.*, field.name) +|= @field(value, field.name);
+    }
 }
 
 fn cumulativeTimingDelta(current: f64, previous: f64) f64 {

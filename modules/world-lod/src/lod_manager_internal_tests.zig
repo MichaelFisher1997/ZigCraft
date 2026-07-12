@@ -35,7 +35,8 @@ test "LODManager cache helpers save and reload source data" {
     var path_buf: [fs.max_path_bytes]u8 = undefined;
     const save_dir_path = try dir.realpath(".", &path_buf);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 2, .rz = -3, .lod = .lod1 };
@@ -49,6 +50,7 @@ test "LODManager cache helpers save and reload source data" {
     }, 0xFF112233, .empty, .daylight, .empty);
 
     manager.saveCachedSourceData(key, &data);
+    manager.flushCacheIO();
 
     const store_path = try lod_store.containerPath(testing.allocator, save_dir_path, manager.cacheKey(key));
     defer testing.allocator.free(store_path);
@@ -71,7 +73,8 @@ test "LODManager cache helpers delete corrupt cache files" {
     var path_buf: [fs.max_path_bytes]u8 = undefined;
     const save_dir_path = try dir.realpath(".", &path_buf);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
@@ -105,7 +108,8 @@ test "LODManager enableCache deletes stale generator-keyed store and writes live
     const stale_key = lod_cache.Key{ .seed = 42, .generator_identity_hash = 1234, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
     try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
@@ -134,7 +138,8 @@ test "LODManager enableCache deletes stale data-version store" {
     const stale_key = lod_cache.Key{ .seed = 42, .generator_identity_hash = 99, .generator_version = 7, .rx = 0, .rz = 0, .lod = .lod1 };
     try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
@@ -144,7 +149,7 @@ test "LODManager enableCache deletes stale data-version store" {
     try testing.expectEqual(lod_cache.CACHE_VERSION, header.lod_data_version);
 }
 
-test "LODManager queued generation reloads source store on main thread" {
+test "LODManager queued generation applies source-store completion asynchronously" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -163,15 +168,18 @@ test "LODManager queued generation reloads source store on main thread" {
         .foundation = .stone,
     }, 0xFF445566, .empty, .daylight, .empty);
 
-    var writer = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var writer = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer writer.cache_io.deinit();
     writer.config = config.interface();
     writer.cache_store.cache_dir_path = null;
     try writer.enableCache(save_dir_path);
     writer.saveCachedSourceData(key, &source);
+    writer.flushCacheIO();
     if (writer.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     writer.ingestion_queue.edit_dirty.deinit();
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.config = config.interface();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
@@ -209,6 +217,12 @@ test "LODManager queued generation reloads source store on main thread" {
 
     try manager.processQueuedGenerations(Vec3.zero);
 
+    // The update-side call only enqueues the read; no source data has been
+    // deserialized or applied until the dedicated cache worker completes.
+    try testing.expectEqual(@as(u32, 0), manager.cache_hits);
+    try testing.expectEqual(LODState.queued_for_generation, chunk.state);
+    manager.flushCacheIO();
+
     try testing.expectEqual(@as(u32, 1), manager.cache_hits);
     try testing.expectEqual(@as(usize, 0), manager.job_dispatcher.queues[LODLevel.count - 1].count());
     try testing.expectEqual(LODState.generated, chunk.state);
@@ -231,7 +245,8 @@ test "LODManager queued generation dispatches beyond cache read budget" {
     const save_dir_path = try dir.realpath(".", &path_buf);
 
     var config = LODConfig{};
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.config = config.interface();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
@@ -273,17 +288,22 @@ test "LODManager queued generation dispatches beyond cache read budget" {
 
     try manager.processQueuedGenerations(Vec3.zero);
 
+    try testing.expectEqual(@as(u32, 0), manager.cache_misses);
+    try testing.expectEqual(candidate_count - MAX_CACHE_LOADS_PER_UPDATE, manager.job_dispatcher.queues[LODLevel.count - 1].count());
+    manager.flushCacheIO();
     try testing.expectEqual(@as(u32, @intCast(MAX_CACHE_LOADS_PER_UPDATE)), manager.cache_misses);
     try testing.expectEqual(candidate_count, manager.job_dispatcher.queues[LODLevel.count - 1].count());
 }
 
 fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {
-    var manager = LODManager.initCacheTestManager(allocator, "");
+    var manager = try LODManager.initCacheTestManager(allocator, "");
     manager.config = config.interface();
     for (0..LODLevel.count) |i| {
         manager.regions[i] = RegionMap.init(allocator);
         manager.meshes[i] = MeshMap.init(allocator);
         manager.upload_queues[i] = try RingBuffer(*LODChunk).init(allocator, 4);
+        manager.job_dispatcher.queues[i] = try allocator.create(JobQueue);
+        manager.job_dispatcher.queues[i].* = JobQueue.init(allocator);
     }
     var bridge_ctx: u8 = 0;
     manager.gpu_bridge = .{
@@ -302,6 +322,7 @@ fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LO
 }
 
 fn deinitEvictionTestManager(manager: *LODManager) void {
+    manager.cache_io.deinit();
     for (0..LODLevel.count) |i| {
         var region_iter = manager.regions[i].iterator();
         while (region_iter.next()) |entry| {
@@ -319,6 +340,8 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
         }
         manager.meshes[i].deinit();
         manager.upload_queues[i].deinit();
+        manager.job_dispatcher.queues[i].deinit();
+        manager.allocator.destroy(manager.job_dispatcher.queues[i]);
     }
     for (manager.mesh_disposal.queue.items) |mesh| {
         manager.allocator.destroy(mesh);
@@ -433,6 +456,43 @@ test "LODManager staging pressure failure stops upload sweep" {
     try testing.expectEqual(LODState.uploading, second.state);
     try testing.expectEqual(@as(usize, 2), manager.upload_queues[1].count());
     try testing.expectEqual(@as(u32, 1), manager.stats.upload_failures);
+}
+
+test "LODManager pause reconciles cleared jobs while preserving pinned work" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const queued_generation = try putTestRegion(&manager, .{ .rx = 0, .rz = 0, .lod = .lod1 }, .generating);
+    queued_generation.job_token = 11;
+    const queued_mesh = try putTestRegion(&manager, .{ .rx = 1, .rz = 0, .lod = .lod1 }, .meshing);
+    queued_mesh.job_token = 12;
+    const running_generation = try putTestRegion(&manager, .{ .rx = 2, .rz = 0, .lod = .lod1 }, .generating);
+    running_generation.job_token = 13;
+    running_generation.pin();
+    defer running_generation.unpin();
+    const running_mesh = try putTestRegion(&manager, .{ .rx = 3, .rz = 0, .lod = .lod1 }, .meshing);
+    running_mesh.job_token = 14;
+    running_mesh.pin();
+    defer running_mesh.unpin();
+    manager.pending_region_count = 4;
+
+    const queue = manager.job_dispatcher.queues[LODLevel.count - 1];
+    try queue.push(.{ .type = .chunk_generation, .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 11, .lod_level = 1 } } });
+    try queue.push(.{ .type = .chunk_meshing, .data = .{ .chunk = .{ .x = 1, .z = 0, .job_token = 12, .lod_level = 1 } } });
+
+    manager.pause();
+
+    try testing.expectEqual(@as(usize, 0), queue.count());
+    try testing.expectEqual(LODState.missing, queued_generation.state);
+    try testing.expectEqual(@as(u32, 12), queued_generation.job_token);
+    try testing.expectEqual(LODState.generated, queued_mesh.state);
+    try testing.expectEqual(@as(u32, 13), queued_mesh.job_token);
+    try testing.expectEqual(LODState.generating, running_generation.state);
+    try testing.expectEqual(@as(u32, 13), running_generation.job_token);
+    try testing.expectEqual(LODState.meshing, running_mesh.state);
+    try testing.expectEqual(@as(u32, 14), running_mesh.job_token);
+    try testing.expectEqual(@as(usize, 3), manager.pending_region_count);
 }
 
 test "LODManager ready child counters update on renderable transitions and removal" {

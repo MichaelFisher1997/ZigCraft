@@ -98,6 +98,25 @@ pub const LODRenderInterface = struct {
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void,
+    /// Frame-aware render entry point. Optional to preserve small test and
+    /// alternate renderer implementations; production renderers use it to
+    /// share a value-only visibility projection across terrain and water.
+    render_frame_fn: ?*const fn (
+        self_ptr: *anyopaque,
+        frame_serial: u64,
+        meshes: *const [LODLevel.count]MeshMap,
+        regions: *const [LODLevel.count]RegionMap,
+        config: ILODConfig,
+        view_proj: Mat4,
+        camera_pos: Vec3,
+        chunk_checker: ?ChunkChecker,
+        checker_ctx: ?*anyopaque,
+        use_frustum: bool,
+        max_distance_chunks: ?i32,
+        layer: LODRenderLayer,
+        stats: ?*LODStats,
+        profiling: ?*LODProfilingCollector,
+    ) void = null,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
     /// Opaque pointer to the concrete renderer.
@@ -119,6 +138,29 @@ pub const LODRenderInterface = struct {
         profiling: ?*LODProfilingCollector,
     ) void {
         self.render_fn(self.ptr, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+    }
+
+    pub fn renderFrame(
+        self: LODRenderInterface,
+        frame_serial: u64,
+        meshes: *const [LODLevel.count]MeshMap,
+        regions: *const [LODLevel.count]RegionMap,
+        config: ILODConfig,
+        view_proj: Mat4,
+        camera_pos: Vec3,
+        chunk_checker: ?ChunkChecker,
+        checker_ctx: ?*anyopaque,
+        use_frustum: bool,
+        max_distance_chunks: ?i32,
+        layer: LODRenderLayer,
+        stats: ?*LODStats,
+        profiling: ?*LODProfilingCollector,
+    ) void {
+        if (self.render_frame_fn) |render_frame| {
+            render_frame(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+        } else {
+            self.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+        }
     }
 
     pub fn deinit(self: LODRenderInterface) void {
