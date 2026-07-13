@@ -181,6 +181,47 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
     }
 }
 
+/// Vulkan draw-indirect-count path for compute-compacted streams.  It never
+/// maps the count on the CPU, so the current frame remains fully GPU-driven.
+pub fn drawIndirectCount(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, count_buffer: rhi.BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
+    if (!ctx.frames.frame_in_progress or !ctx.vulkan_device.draw_indirect_count) return false;
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
+    if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) return false;
+    const vbo = ctx.resources.buffers.get(handle) orelse return false;
+    const commands = ctx.resources.buffers.get(command_buffer) orelse return false;
+    const counts = ctx.resources.buffers.get(count_buffer) orelse return false;
+    const cb = ctx.frames.command_buffers[ctx.frames.current_frame];
+    const use_shadow = ctx.shadow_system.pass_active;
+    const use_g_pass = ctx.runtime.g_pass_active;
+    if (use_shadow) {
+        if (!ctx.shadow_system.pipeline_bound) {
+            if (ctx.shadow_system.shadow_pipeline == null) return false;
+            c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.shadow_system.shadow_pipeline);
+            ctx.shadow_system.pipeline_bound = true;
+        }
+    } else if (use_g_pass) {
+        if (ctx.pipeline_manager.g_pipeline == null) return false;
+        c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.g_pipeline);
+    } else if (!ctx.draw.terrain_pipeline_bound) {
+        const pipeline = if (ctx.water_system.pass_active)
+            if (ctx.options.wireframe_enabled and ctx.water_system.reflection_wireframe_pipeline != null) ctx.water_system.reflection_wireframe_pipeline else ctx.water_system.reflection_terrain_pipeline
+        else if (ctx.options.wireframe_enabled and ctx.pipeline_manager.wireframe_pipeline != null) ctx.pipeline_manager.wireframe_pipeline else ctx.pipeline_manager.terrain_pipeline;
+        if (pipeline == null) return false;
+        c.vkCmdBindPipeline(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        ctx.draw.terrain_pipeline_bound = !ctx.water_system.pass_active and pipeline == ctx.pipeline_manager.terrain_pipeline;
+    }
+    const descriptor_set = if (ctx.draw.lod_mode) &ctx.descriptors.lod_descriptor_sets[ctx.frames.current_frame] else &ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
+    c.vkCmdBindDescriptorSets(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, descriptor_set, 0, null);
+    const uniforms = ModelUniforms{ .model = Mat4.identity, .color = .{ 1.0, 1.0, 1.0, 1.0 }, .mask_radius = -1.0 };
+    c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
+    const offsets = [_]c.VkDeviceSize{0};
+    c.vkCmdBindVertexBuffers(cb, 0, 1, &vbo.buffer, &offsets);
+    const draw_indirect_count = ctx.vulkan_device.vkCmdDrawIndirectCountKHR orelse return false;
+    draw_indirect_count(cb, commands.buffer, @intCast(offset), counts.buffer, @intCast(count_offset), max_draw_count, stride);
+    ctx.runtime.draw_call_count += 1;
+    return true;
+}
+
 pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance_index: u32) void {
     if (!ctx.frames.frame_in_progress) return;
 

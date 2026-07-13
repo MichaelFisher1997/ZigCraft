@@ -97,6 +97,7 @@ pub const Rect = rhi_types.Rect;
 pub const UVRect = rhi_types.UVRect;
 pub const GpuTimingResults = rhi_types.GpuTimingResults;
 pub const ICullingSystem = culling.ICullingSystem;
+pub const ILODCullingSystem = culling.ILODCullingSystem;
 
 pub const RenderResolution = struct {
     width: u32,
@@ -431,6 +432,11 @@ pub const RenderContext = struct {
     /// The indirect buffer must contain backend-compatible command records and remain valid through submission. Must be called from the render thread that owns the backend context.
     pub fn drawIndirect(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
         self.encoder.drawIndirect(handle, command_buffer, offset, draw_count, stride);
+    }
+    /// Issues GPU-generated indirect commands, with the command count read from
+    /// `count_buffer`. Returns false when the active backend lacks the feature.
+    pub fn drawIndirectCount(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
+        return self.encoder.drawIndirectCount(handle, command_buffer, offset, count_buffer, count_offset, max_draw_count, stride);
     }
     /// Issues an instanced draw using currently bound per-instance state.
     /// Instance buffers and model data must be populated for the active frame. Must be called from the render thread that owns the backend context.
@@ -783,6 +789,7 @@ pub const IGraphicsCommandEncoder = struct {
         drawOffset: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, mode: DrawMode, offset: usize) void,
         drawIndexed: *const fn (ptr: *anyopaque, vbo: BufferHandle, ebo: BufferHandle, count: u32) void,
         drawIndirect: *const fn (ptr: *anyopaque, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void,
+        drawIndirectCount: *const fn (ptr: *anyopaque, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool,
         drawInstance: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, instance_index: u32) void,
         setViewport: *const fn (ptr: *anyopaque, width: u32, height: u32) void,
     };
@@ -821,6 +828,9 @@ pub const IGraphicsCommandEncoder = struct {
     /// The indirect buffer must contain backend-compatible command records and remain valid through submission. Must be called from the render thread that owns the backend context.
     pub fn drawIndirect(self: IGraphicsCommandEncoder, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
         self.vtable.drawIndirect(self.ptr, handle, command_buffer, offset, draw_count, stride);
+    }
+    pub fn drawIndirectCount(self: IGraphicsCommandEncoder, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
+        return self.vtable.drawIndirectCount(self.ptr, handle, command_buffer, offset, count_buffer, count_offset, max_draw_count, stride);
     }
     /// Issues an instanced draw using currently bound per-instance state.
     /// Instance buffers and model data must be populated for the active frame. Must be called from the render thread that owns the backend context.
@@ -1281,6 +1291,7 @@ pub const IDeviceQuery = struct {
     pub const VTable = struct {
         getFrameIndex: *const fn (ptr: *anyopaque) usize,
         supportsIndirectFirstInstance: *const fn (ptr: *anyopaque) bool,
+        supportsIndirectCount: *const fn (ptr: *anyopaque) bool,
         getMaxAnisotropy: *const fn (ptr: *anyopaque) u8,
         getMaxMSAASamples: *const fn (ptr: *anyopaque) u8,
         getFaultCount: *const fn (ptr: *anyopaque) u32,
@@ -1300,6 +1311,10 @@ pub const IDeviceQuery = struct {
     /// Callers must fall back to direct or rebased draws when this returns false.
     pub fn supportsIndirectFirstInstance(self: IDeviceQuery) bool {
         return self.vtable.supportsIndirectFirstInstance(self.ptr);
+    }
+    /// Reports whether GPU-generated indirect command counts are supported.
+    pub fn supportsIndirectCount(self: IDeviceQuery) bool {
+        return self.vtable.supportsIndirectCount(self.ptr);
     }
     /// Returns fault count from the active graphics backend.
     /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.
@@ -1536,12 +1551,16 @@ pub const ICullingSystemFactory = struct {
 
     pub const VTable = struct {
         createCullingSystem: *const fn (ctx: *anyopaque, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem,
+        createLODCullingSystem: *const fn (ctx: *anyopaque, allocator: Allocator, max_regions: usize) anyerror!?ILODCullingSystem,
     };
 
     /// Creates a GPU culling system bound to the active backend resources.
     /// The caller owns the returned interface and must deinitialize it through its contract. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createCullingSystem(self: ICullingSystemFactory, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
         return self.vtable.createCullingSystem(self.ptr, allocator, max_chunks);
+    }
+    pub fn createLODCullingSystem(self: ICullingSystemFactory, allocator: Allocator, max_regions: usize) anyerror!?ILODCullingSystem {
+        return self.vtable.createLODCullingSystem(self.ptr, allocator, max_regions);
     }
 };
 
@@ -1805,6 +1824,10 @@ pub const RHI = struct {
     /// The caller owns the returned interface and must deinitialize it through its contract. Propagates `RhiError` when the backend cannot allocate, stage, or encode the requested operation. Must be called from the render thread that owns the backend context.
     pub fn createCullingSystem(self: RHI, allocator: Allocator, max_chunks: usize) anyerror!?ICullingSystem {
         return self.cullingFactory().createCullingSystem(allocator, max_chunks);
+    }
+    /// Creates the dedicated LOD compute/MDI compaction system.
+    pub fn createLODCullingSystem(self: RHI, allocator: Allocator, max_regions: usize) anyerror!?ILODCullingSystem {
+        return self.cullingFactory().createLODCullingSystem(allocator, max_regions);
     }
 
     // Lifecycle

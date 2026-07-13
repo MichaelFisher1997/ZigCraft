@@ -59,6 +59,9 @@ const rhi_types = @import("engine-rhi");
 const engine_core = @import("engine-core");
 const log = engine_core.log;
 const build_options = @import("world_lod_options");
+const LODCullCandidate = rhi_types.LODCullCandidate;
+const LODCullDispatch = rhi_types.LODCullDispatch;
+const ILODCullingSystem = rhi_types.ILODCullingSystem;
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 const LOD_UNMASKED_SENTINEL: f32 = 0.5;
@@ -113,7 +116,11 @@ pub fn LODRenderer(comptime RHI: type) type {
         frame_index: usize,
         enable_mdi: bool,
         gpu_culling_requested: bool,
-        gpu_culling_fallback_logged: bool,
+        gpu_culling: ?ILODCullingSystem,
+        gpu_candidates: std.ArrayListUnmanaged(LODCullCandidate),
+        gpu_culling_ready_frame: ?u64,
+        gpu_culling_threshold: usize,
+        gpu_culling_overflow_count: u32,
 
         /// Allocates LOD renderer GPU buffers and per-frame indirect draw resources.
         /// The renderer owns created buffers until `deinit`; allocation failures are returned to the caller.
@@ -143,6 +150,14 @@ pub fn LODRenderer(comptime RHI: type) type {
                 vertex_pools[i] = LODVertexPool.init(allocator, @enumFromInt(@as(u3, @intCast(i))), 8 * 1024 * 1024);
             }
 
+            const gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false);
+            var gpu_culling: ?ILODCullingSystem = null;
+            if (gpu_culling_requested and @hasDecl(RHI, "createLODCullingSystem")) {
+                gpu_culling = rhi.createLODCullingSystem(allocator, MAX_LOD_MDI_REGIONS) catch |err| blk: {
+                    log.log.warn("LOD GPU culling unavailable ({}); CPU fallback active", .{err});
+                    break :blk null;
+                };
+            }
             renderer.* = .{
                 .allocator = allocator,
                 .rhi = rhi,
@@ -156,8 +171,12 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .vertex_pools = vertex_pools,
                 .frame_index = 0,
                 .enable_mdi = !engine_core.envFlag("ZIGCRAFT_DISABLE_LOD_MDI", false),
-                .gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false),
-                .gpu_culling_fallback_logged = false,
+                .gpu_culling_requested = gpu_culling_requested,
+                .gpu_culling = gpu_culling,
+                .gpu_candidates = .empty,
+                .gpu_culling_ready_frame = null,
+                .gpu_culling_threshold = gpuCullingThreshold(),
+                .gpu_culling_overflow_count = 0,
             };
 
             if (!renderer.enable_mdi) {
@@ -187,6 +206,8 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
             self.projection_regions.deinit(self.allocator);
+            self.gpu_candidates.deinit(self.allocator);
+            if (self.gpu_culling) |gpu| gpu.deinit();
             for (&self.draw_commands) |*commands| commands.deinit(self.allocator);
             self.allocator.destroy(self);
         }
@@ -222,7 +243,97 @@ pub fn LODRenderer(comptime RHI: type) type {
                 };
                 self.projection_frame = frame_serial;
             }
-            self.renderProjectedLayer(meshes, layer, stats);
+            if (!self.renderProjectedLayer(meshes, layer, stats)) {
+                // GPU submission can still fail after the compute prepass (for
+                // example if a pooled buffer becomes unavailable). Never feed
+                // the broad GPU candidate projection into the CPU renderer.
+                self.gpu_culling_ready_frame = null;
+                const timer = if (profiling) |profile| profile.begin() else null;
+                defer if (profiling) |profile| profile.end(.visibility, timer);
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                    log.log.errWithTrace("Failed to rebuild CPU LOD visibility: {}", .{err});
+                    self.projection_frame = null;
+                    return;
+                };
+                self.projection_frame = frame_serial;
+                _ = self.renderProjectedLayer(meshes, layer, stats);
+            }
+        }
+
+        /// Records the LOD compute pass before the render graph enters a graphics
+        /// pass. Hierarchy/readiness/chunk-coverage stay CPU authoritative.
+        pub fn prepareFrame(
+            self: *Self,
+            frame_serial: u64,
+            meshes: *const [LODLevel.count]MeshMap,
+            regions: *const [LODLevel.count]RegionMap,
+            config: ILODConfig,
+            view_proj: Mat4,
+            camera_pos: Vec3,
+            chunk_checker: ?ChunkChecker,
+            checker_ctx: ?*anyopaque,
+            max_distance_chunks: ?i32,
+        ) void {
+            const gpu = self.gpu_culling orelse return;
+            if (!self.gpu_culling_requested or self.projection_frame == frame_serial) return;
+            self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, false, null, null, null) catch |err| {
+                log.log.err("LOD GPU culling projection failed: {}", .{err});
+                return;
+            };
+            self.projection_frame = frame_serial;
+            self.gpu_candidates.clearRetainingCapacity();
+            // Never truncate a visibility projection: losing an LOD fallback
+            // region can create a terrain hole, so overflow is CPU-rendered.
+            if (self.projection_regions.items.len > MAX_LOD_MDI_REGIONS) {
+                self.gpu_culling_overflow_count +%= 1;
+                self.projection_frame = null;
+                return;
+            }
+            var all_pooled = true;
+            for (self.projection_regions.items) |visible| {
+                const lod_index = @intFromEnum(visible.key.lod);
+                const mesh = meshes[lod_index].get(visible.key) orelse continue;
+                const chunk = regions[lod_index].get(visible.key) orelse continue;
+                const terrain = mesh.drawRange(.terrain);
+                const fluid = mesh.drawRange(.fluid);
+                if ((terrain orelse fluid) == null) continue;
+                if (!mesh.isPooled()) all_pooled = false;
+                const bounds = chunk.worldBounds();
+                self.gpu_candidates.append(self.allocator, .{
+                    .min_point = .{ @as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, bounds.min_y - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z, 0 },
+                    .max_point = .{ @as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, bounds.max_y - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z, 0 },
+                    .model = visible.model,
+                    .instance_params = .{ visible.mask_radius, visible.lod_fade, 0, 0 },
+                    .terrain_command = commandFor(mesh, terrain),
+                    .water_command = commandFor(mesh, fluid),
+                    .lod_and_padding = .{ @intCast(lod_index), 0, 0, 0 },
+                }) catch return;
+            }
+            if (self.gpu_candidates.items.len < self.gpu_culling_threshold or !all_pooled) {
+                self.projection_frame = null;
+                return;
+            }
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            if (!@hasDecl(@TypeOf(query), "supportsIndirectCount")) {
+                self.projection_frame = null;
+                return;
+            }
+            if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount()) {
+                self.projection_frame = null;
+                return;
+            }
+            const distance_chunks = max_distance_chunks orelse config.getRadii()[lod_chunk.activeLODCount(config) - 1];
+            if (comptime @hasDecl(RHI, "timing")) {
+                const timing = self.rhi.timing();
+                timing.beginPassTiming("LODGpuCullingComputeBarrier");
+                defer timing.endPassTiming("LODGpuCullingComputeBarrier");
+            }
+            if (gpu.dispatch(query.getFrameIndex(), self.gpu_candidates.items, .{
+                .planes = extractPlanes(view_proj),
+                .candidate_count = 0,
+                .max_distance_blocks = @as(f32, @floatFromInt(distance_chunks * CHUNK_SIZE_X)),
+                .max_commands_per_lod = 0,
+            })) self.gpu_culling_ready_frame = frame_serial else self.projection_frame = null;
         }
 
         pub fn render(
@@ -244,11 +355,6 @@ pub fn LODRenderer(comptime RHI: type) type {
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
-            if (self.gpu_culling_requested and !self.gpu_culling_fallback_logged) {
-                log.log.warn("ZIGCRAFT_LOD_GPU_CULLING requested, but LOD GPU culling is using CPU fallback until RHI exposes indirect-command compaction", .{});
-                self.gpu_culling_fallback_logged = true;
-            }
-
             // Use the LOD descriptor set while issuing LOD draws, then restore
             // normal terrain descriptor mode so the chunk pass keeps its textures.
             defer if (@hasDecl(@TypeOf(render_ctx), "setInstanceBuffer")) render_ctx.setInstanceBuffer(0);
@@ -381,6 +487,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                 s.instances = [_]u32{0} ** LODLevel.count;
                 s.fluid_drawn = [_]u32{0} ** LODLevel.count;
                 s.fluid_instances = [_]u32{0} ** LODLevel.count;
+                s.gpu_terrain_candidates = 0;
+                s.gpu_fluid_candidates = 0;
             }
 
             const frustum = Frustum.fromViewProj(view_proj);
@@ -471,7 +579,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
         }
 
-        fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats) void {
+        /// Returns false only when a prepared GPU frame could not be submitted;
+        /// callers must rebuild the CPU projection with normal culling first.
+        fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats) bool {
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
@@ -480,6 +590,14 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.instance_data.clearRetainingCapacity();
             self.draw_list.clearRetainingCapacity();
             for (&self.draw_commands) |*commands| commands.clearRetainingCapacity();
+            if (stats) |s| {
+                s.gpu_culling_overflows = self.gpu_culling_overflow_count;
+                if (self.gpu_culling) |gpu| s.gpu_culling_validation_mismatches = gpu.diagnostics().validation_mismatch_count;
+            }
+
+            const gpu_frame_prepared = self.projection_frame != null and self.gpu_culling_ready_frame == self.projection_frame;
+            if (self.renderGpuCulledLayer(layer, stats, render_ctx, query)) return true;
+            if (gpu_frame_prepared) return false;
 
             for (self.projection_regions.items) |visible| {
                 const lod_idx = @intFromEnum(visible.key.lod);
@@ -516,7 +634,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                     }
                 }
             }
-            if (self.instance_data.items.len == 0) return;
+            if (self.instance_data.items.len == 0) return true;
             const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
             for (self.draw_list.items, 0..) |mesh, index| {
                 if (indirect_drawn and mesh.isPooled()) continue;
@@ -527,6 +645,40 @@ pub fn LODRenderer(comptime RHI: type) type {
                     render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
                 } else render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
             }
+            return true;
+        }
+
+        fn renderGpuCulledLayer(self: *Self, layer: LODRenderLayer, stats: ?*LODStats, render_ctx: anytype, query: anytype) bool {
+            const frame = self.projection_frame orelse return false;
+            if (self.gpu_culling_ready_frame != frame) return false;
+            const gpu = self.gpu_culling orelse return false;
+            if (!@hasDecl(@TypeOf(render_ctx), "drawIndirectCount") or !@hasDecl(@TypeOf(query), "supportsIndirectCount")) return false;
+            if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount() or self.gpu_candidates.items.len < self.gpu_culling_threshold) return false;
+            for (self.gpu_candidates.items) |candidate| {
+                const lod_index = candidate.lod_and_padding[0];
+                if (lod_index >= LODLevel.count) return false;
+                const command = if (layer == .fluid) candidate.water_command else candidate.terrain_command;
+                if (command.vertexCount != 0 and self.vertex_pools[lod_index].buffer_handle == 0) return false;
+            }
+            const fi = self.frame_index;
+            render_ctx.setLODInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid));
+            const commands = gpu.indirectBuffer(fi, layer == .fluid);
+            const counts = gpu.countBuffer(fi);
+            const stride = @sizeOf(rhi_types.DrawIndirectCommand);
+            for (0..LODLevel.count) |lod_index| {
+                if (self.vertex_pools[lod_index].buffer_handle == 0) continue;
+                if (!render_ctx.drawIndirectCount(self.vertex_pools[lod_index].buffer_handle, commands, lod_index * MAX_LOD_MDI_REGIONS * stride, counts, (if (layer == .fluid) LODLevel.count + lod_index else lod_index) * @sizeOf(u32), MAX_LOD_MDI_REGIONS, stride)) return false;
+            }
+            if (stats) |s| {
+                // GPU counters remain device-local; keep submitted streams distinct
+                // from CPU visibility counts without introducing a readback stall.
+                const submitted: u32 = @intCast(self.gpu_candidates.items.len);
+                if (layer == .fluid) s.gpu_fluid_candidates = submitted else s.gpu_terrain_candidates = submitted;
+                const diagnostics = gpu.diagnostics();
+                s.gpu_culling_overflows = self.gpu_culling_overflow_count + diagnostics.overflow_count;
+                s.gpu_culling_validation_mismatches = diagnostics.validation_mismatch_count;
+            }
+            return true;
         }
 
         fn collectVisibleMeshes(
@@ -878,6 +1030,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.renderFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
                 }
+                fn prepareFrameFn(self_ptr: *anyopaque, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    renderer.prepareFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+                }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.deinit();
@@ -886,6 +1042,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             return .{
                 .render_fn = Wrapper.renderFn,
                 .render_frame_fn = Wrapper.renderFrameFn,
+                .prepare_frame_fn = Wrapper.prepareFrameFn,
                 .deinit_fn = Wrapper.deinitFn,
                 .ptr = self,
             };
@@ -918,6 +1075,39 @@ fn supports_lod_indirect(comptime RenderCtx: type, comptime Query: type, comptim
     return @hasDecl(RenderCtx, "drawIndirect") and
         @hasDecl(RenderCtx, "setLODInstanceBuffer") and
         @hasDecl(Query, "supportsIndirectFirstInstance");
+}
+
+fn commandFor(mesh: *const LODMesh, range: ?LODMesh.DrawRange) rhi_types.DrawIndirectCommand {
+    const draw_range = range orelse return .{ .vertexCount = 0, .instanceCount = 0, .firstVertex = 0, .firstInstance = 0 };
+    return .{
+        .vertexCount = draw_range.count,
+        .instanceCount = 1,
+        .firstVertex = mesh.firstVertex(draw_range),
+        .firstInstance = 0,
+    };
+}
+
+fn extractPlanes(view_proj: Mat4) [6][4]f32 {
+    const m = view_proj.data;
+    var planes = [6][4]f32{
+        .{ m[3][0] + m[0][0], m[3][1] + m[0][1], m[3][2] + m[0][2], m[3][3] + m[0][3] },
+        .{ m[3][0] - m[0][0], m[3][1] - m[0][1], m[3][2] - m[0][2], m[3][3] - m[0][3] },
+        .{ m[3][0] - m[1][0], m[3][1] - m[1][1], m[3][2] - m[1][2], m[3][3] - m[1][3] },
+        .{ m[3][0] + m[1][0], m[3][1] + m[1][1], m[3][2] + m[1][2], m[3][3] + m[1][3] },
+        .{ m[3][0] + m[2][0], m[3][1] + m[2][1], m[3][2] + m[2][2], m[3][3] + m[2][3] },
+        .{ m[3][0] - m[2][0], m[3][1] - m[2][1], m[3][2] - m[2][2], m[3][3] - m[2][3] },
+    };
+    for (&planes) |*plane| {
+        const length = @sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
+        if (length > 0.0001) {
+            for (plane) |*value| value.* /= length;
+        }
+    }
+    return planes;
+}
+
+fn gpuCullingThreshold() usize {
+    return engine_core.envInt("ZIGCRAFT_LOD_GPU_CULLING_THRESHOLD", 128);
 }
 
 fn isRegionInFrustum(frustum: Frustum, bounds: LODChunk.WorldBounds, camera_pos: Vec3) bool {

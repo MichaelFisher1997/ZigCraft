@@ -293,6 +293,8 @@ const MockWorld = struct {
         self.last_render_lod = render_lod;
     }
 
+    fn prepareLODCulling(_: *anyopaque, _: Mat4, _: Vec3) void {}
+
     fn renderOpaque(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         render(ptr, view_proj, camera_pos, render_lod);
     }
@@ -471,7 +473,7 @@ const MockWorld = struct {
     }
 
     fn graphicsRenderView(ptr: *anyopaque) GraphicsWorldRenderView {
-        return .{ .ptr = ptr, .vtable = &.{ .render = render, .renderOpaque = renderOpaque, .renderFluid = renderFluid } };
+        return .{ .ptr = ptr, .vtable = &.{ .prepareLODCulling = prepareLODCulling, .render = render, .renderOpaque = renderOpaque, .renderFluid = renderFluid } };
     }
 
     fn getGpuMeshDispatch(ptr: *anyopaque) GpuMeshDispatch {

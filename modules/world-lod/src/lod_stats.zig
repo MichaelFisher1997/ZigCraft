@@ -299,6 +299,12 @@ pub const LODStats = struct {
     instances: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     fluid_drawn: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     fluid_instances: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
+    /// Candidate counts submitted to device-local LOD compute streams. These
+    /// deliberately do not require a same-frame readback of compacted counts.
+    gpu_terrain_candidates: u32 = 0,
+    gpu_fluid_candidates: u32 = 0,
+    gpu_culling_overflows: u32 = 0,
+    gpu_culling_validation_mismatches: u32 = 0,
     ingestion_backlog: u32 = 0,
     upgrades_pending: u32 = 0,
     downgrades_pending: u32 = 0,
@@ -333,6 +339,10 @@ pub const LODStats = struct {
         self.instances = [_]u32{0} ** LODLevel.count;
         self.fluid_drawn = [_]u32{0} ** LODLevel.count;
         self.fluid_instances = [_]u32{0} ** LODLevel.count;
+        self.gpu_terrain_candidates = 0;
+        self.gpu_fluid_candidates = 0;
+        self.gpu_culling_overflows = 0;
+        self.gpu_culling_validation_mismatches = 0;
         self.upgrades_pending = 0;
         self.downgrades_pending = 0;
         self.upload_failures = 0;

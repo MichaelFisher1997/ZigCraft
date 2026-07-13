@@ -312,6 +312,11 @@ pub const LODManager = struct {
         return lod_manager_core.renderFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer);
     }
 
+    /// Prepares same-frame GPU LOD culling before active graphics passes.
+    pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+        return lod_manager_core.prepareFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    }
+
     /// Enables persistent source-data caching for LOD regions below `save_dir_path`.
     /// Allocates and stores the cache path; errors indicate allocation or filesystem setup failure.
     pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
