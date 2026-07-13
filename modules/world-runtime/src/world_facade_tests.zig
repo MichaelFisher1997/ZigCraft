@@ -85,6 +85,8 @@ const MockWorld = struct {
         cast(ptr).render_count += 1;
     }
 
+    fn prepareLODCulling(_: *anyopaque, _: math.Mat4, _: math.Vec3) void {}
+
     fn renderOpaque(ptr: *anyopaque, view_proj: math.Mat4, camera_pos: math.Vec3, render_lod: bool) void {
         _ = view_proj;
         _ = camera_pos;

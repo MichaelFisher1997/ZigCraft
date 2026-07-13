@@ -22,6 +22,7 @@ const rhi_timing = @import("vulkan/rhi_timing.zig");
 const screenshot = @import("vulkan/screenshot.zig");
 const Utils = @import("vulkan/utils.zig");
 const CullingSystem = @import("vulkan/culling_system.zig").CullingSystem;
+const lod_culling = @import("vulkan/lod_culling_system.zig");
 const build_options = @import("engine_graphics_options");
 
 const imgui_c = if (build_options.imgui) @cImport({
@@ -406,6 +407,11 @@ fn createCullingSystem(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, max_ch
     return system.interface();
 }
 
+fn createLODCullingSystem(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, max_regions: usize) anyerror!?rhi.ILODCullingSystem {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return @as(?rhi.ILODCullingSystem, try lod_culling.create(allocator, ctx, max_regions));
+}
+
 fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return screenshot.captureScreenshot(ctx, path);
@@ -584,6 +590,11 @@ fn supportsIndirectFirstInstance(ctx_ptr: *anyopaque) bool {
     return state_control.supportsIndirectFirstInstance(ctx);
 }
 
+fn supportsIndirectCount(ctx_ptr: *anyopaque) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return state_control.supportsIndirectCount(ctx);
+}
+
 fn recover(ctx_ptr: *anyopaque) anyerror!void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     try state_control.recover(ctx);
@@ -684,6 +695,11 @@ fn drawIndirect(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, command_buffer: r
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
     draw_submission.drawIndirect(ctx, handle, command_buffer, offset, draw_count, stride);
+}
+
+fn drawIndirectCount(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, count_buffer: rhi.BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return draw_submission.drawIndirectCount(ctx, handle, command_buffer, offset, count_buffer, count_offset, max_draw_count, stride);
 }
 
 fn drawInstance(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, count: u32, instance_index: u32) void {
@@ -1065,6 +1081,7 @@ const VULKAN_COMMAND_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{
     .drawOffset = drawOffset,
     .drawIndexed = drawIndexed,
     .drawIndirect = drawIndirect,
+    .drawIndirectCount = drawIndirectCount,
     .drawInstance = drawInstance,
     .setViewport = setViewport,
 };
@@ -1411,6 +1428,7 @@ const VULKAN_NATIVE_HANDLES_VTABLE = rhi.VulkanNativeHandles.VTable{
 const VULKAN_DEVICE_QUERY_VTABLE = rhi.IDeviceQuery.VTable{
     .getFrameIndex = getFrameIndex,
     .supportsIndirectFirstInstance = supportsIndirectFirstInstance,
+    .supportsIndirectCount = supportsIndirectCount,
     .getMaxAnisotropy = getMaxAnisotropy,
     .getMaxMSAASamples = getMaxMSAASamples,
     .getFaultCount = getFaultCount,
@@ -1460,6 +1478,7 @@ const VULKAN_DEVICE_RECOVERY_VTABLE = rhi.IDeviceRecovery.VTable{
 
 const VULKAN_CULLING_FACTORY_VTABLE = rhi.ICullingSystemFactory.VTable{
     .createCullingSystem = createCullingSystem,
+    .createLODCullingSystem = createLODCullingSystem,
 };
 
 const VULKAN_SCREENSHOT_CONTEXT_VTABLE = rhi.IScreenshotContext.VTable{

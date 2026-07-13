@@ -478,6 +478,19 @@ pub const OpaquePass = struct {
     }
 };
 
+/// Must execute while no graphics pass is active so Vulkan can place the
+/// compute-to-indirect/storage barriers in the same frame command buffer.
+pub const LODCullingPass = struct {
+    const VTABLE = IRenderPass.VTable{ .name = "LODCullingPass", .needs_main_pass = false, .execute = execute };
+    pub fn pass(self: *LODCullingPass) IRenderPass {
+        return .{ .ptr = self, .vtable = &VTABLE };
+    }
+    fn execute(_: *anyopaque, ctx: SceneContext) anyerror!void {
+        const view_proj = ctx.camera.getJitteredProjectionMatrixReverseZ(ctx.aspect, ctx.viewport_width, ctx.viewport_height, ctx.taa_enabled).multiply(ctx.camera.getViewMatrixOriginCentered());
+        ctx.world.prepareLODCulling(view_proj, ctx.camera.position);
+    }
+};
+
 pub const EntityPass = struct {
     const VTABLE = IRenderPass.VTable{
         .name = "EntityPass",

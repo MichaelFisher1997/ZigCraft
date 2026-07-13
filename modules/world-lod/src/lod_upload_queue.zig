@@ -117,6 +117,18 @@ pub const LODRenderInterface = struct {
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void = null,
+    prepare_frame_fn: ?*const fn (
+        self_ptr: *anyopaque,
+        frame_serial: u64,
+        meshes: *const [LODLevel.count]MeshMap,
+        regions: *const [LODLevel.count]RegionMap,
+        config: ILODConfig,
+        view_proj: Mat4,
+        camera_pos: Vec3,
+        chunk_checker: ?ChunkChecker,
+        checker_ctx: ?*anyopaque,
+        max_distance_chunks: ?i32,
+    ) void = null,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
     /// Opaque pointer to the concrete renderer.
@@ -165,5 +177,9 @@ pub const LODRenderInterface = struct {
 
     pub fn deinit(self: LODRenderInterface) void {
         self.deinit_fn(self.ptr);
+    }
+
+    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
     }
 };

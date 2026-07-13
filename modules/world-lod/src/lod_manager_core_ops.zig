@@ -468,6 +468,12 @@ pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: 
     self.renderer.renderFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
+pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+    self.mutex.lockShared();
+    defer self.mutex.unlockShared();
+    self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+}
+
 pub fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {
     const dx = @as(i64, x0) - @as(i64, x1);
     const dz = @as(i64, z0) - @as(i64, z1);

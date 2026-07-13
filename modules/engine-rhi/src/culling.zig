@@ -1,4 +1,5 @@
 const Mat4 = @import("engine-math").Mat4;
+const rhi_types = @import("rhi_types.zig");
 
 pub const ChunkCullData = extern struct {
     min_point: [4]f32,
@@ -55,3 +56,72 @@ pub const ICullingSystem = struct {
         self.vtable.dispatch(self.ptr, config);
     }
 };
+
+/// One CPU-approved LOD region.  The layout deliberately uses only vec4/mat4
+/// aligned fields so it can be consumed directly by a std430 storage buffer.
+pub const LODCullCandidate = extern struct {
+    min_point: [4]f32,
+    max_point: [4]f32,
+    model: Mat4,
+    instance_params: [4]f32,
+    terrain_command: rhi_types.DrawIndirectCommand,
+    water_command: rhi_types.DrawIndirectCommand,
+    lod_and_padding: [4]u32,
+};
+
+pub const LODCullDispatch = extern struct {
+    planes: [6][4]f32,
+    candidate_count: u32,
+    max_distance_blocks: f32,
+    max_commands_per_lod: u32,
+    _padding: u32 = 0,
+};
+
+pub const LODCullDiagnostics = extern struct {
+    overflow_count: u32 = 0,
+    validation_mismatch_count: u32 = 0,
+};
+
+pub const ILODCullingSystem = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        deinit: *const fn (ptr: *anyopaque) void,
+        dispatch: *const fn (ptr: *anyopaque, frame_index: usize, candidates: []const LODCullCandidate, config: LODCullDispatch) bool,
+        instanceBuffer: *const fn (ptr: *anyopaque, frame_index: usize, fluid: bool) rhi_types.BufferHandle,
+        indirectBuffer: *const fn (ptr: *anyopaque, frame_index: usize, fluid: bool) rhi_types.BufferHandle,
+        countBuffer: *const fn (ptr: *anyopaque, frame_index: usize) rhi_types.BufferHandle,
+        diagnostics: *const fn (ptr: *anyopaque) LODCullDiagnostics,
+    };
+
+    pub fn deinit(self: ILODCullingSystem) void {
+        self.vtable.deinit(self.ptr);
+    }
+
+    /// Records same-frame compute culling before graphics render passes begin.
+    /// Returns false when inputs exceed the fixed GPU capacity.
+    pub fn dispatch(self: ILODCullingSystem, frame_index: usize, candidates: []const LODCullCandidate, config: LODCullDispatch) bool {
+        return self.vtable.dispatch(self.ptr, frame_index, candidates, config);
+    }
+
+    pub fn instanceBuffer(self: ILODCullingSystem, frame_index: usize, fluid: bool) rhi_types.BufferHandle {
+        return self.vtable.instanceBuffer(self.ptr, frame_index, fluid);
+    }
+
+    pub fn indirectBuffer(self: ILODCullingSystem, frame_index: usize, fluid: bool) rhi_types.BufferHandle {
+        return self.vtable.indirectBuffer(self.ptr, frame_index, fluid);
+    }
+    pub fn countBuffer(self: ILODCullingSystem, frame_index: usize) rhi_types.BufferHandle {
+        return self.vtable.countBuffer(self.ptr, frame_index);
+    }
+    pub fn diagnostics(self: ILODCullingSystem) LODCullDiagnostics {
+        return self.vtable.diagnostics(self.ptr);
+    }
+};
+
+test "LOD culling candidate ABI is std430 aligned" {
+    try @import("std").testing.expectEqual(@as(usize, 144), @sizeOf(LODCullCandidate));
+    try @import("std").testing.expectEqual(@as(usize, 32), @offsetOf(LODCullCandidate, "model"));
+    try @import("std").testing.expectEqual(@as(usize, 96), @offsetOf(LODCullCandidate, "instance_params"));
+}

@@ -77,6 +77,8 @@ pub const VulkanDevice = struct {
     max_msaa_samples: u8 = 1,
     multi_draw_indirect: bool = false,
     draw_indirect_first_instance: bool = false,
+    draw_indirect_count: bool = false,
+    vkCmdDrawIndirectCountKHR: ?*const fn (c.VkCommandBuffer, c.VkBuffer, c.VkDeviceSize, c.VkBuffer, c.VkDeviceSize, u32, u32) callconv(.c) void = null,
     timestamp_period: f32 = 1.0,
 
     pub fn init(allocator: std.mem.Allocator, window: *c.SDL_Window) !VulkanDevice {
@@ -293,16 +295,20 @@ pub const VulkanDevice = struct {
 
         const robustness2_name: [*:0]const u8 = @ptrCast(c.VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
         const device_fault_name: [*:0]const u8 = @ptrCast(c.VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+        const indirect_count_name: [*:0]const u8 = @ptrCast(c.VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
         const robustness2_name_slice = std.mem.span(robustness2_name);
         const device_fault_name_slice = std.mem.span(device_fault_name);
+        const indirect_count_name_slice = std.mem.span(indirect_count_name);
 
         var supports_robustness2 = false;
         var supports_device_fault = false;
+        var supports_indirect_count = false;
         for (ext_props) |prop| {
             const name: [*:0]const u8 = @ptrCast(&prop.extensionName);
             const name_slice = std.mem.span(name);
             if (std.mem.eql(u8, name_slice, robustness2_name_slice)) supports_robustness2 = true;
             if (std.mem.eql(u8, name_slice, device_fault_name_slice)) supports_device_fault = true;
+            if (std.mem.eql(u8, name_slice, indirect_count_name_slice)) supports_indirect_count = true;
         }
 
         if (supports_robustness2) log.log.info("VK_EXT_robustness2 supported", .{});
@@ -334,7 +340,7 @@ pub const VulkanDevice = struct {
             robustness2_features.pNext = if (allow_device_fault) @ptrCast(&fault_features) else null;
         }
 
-        var enabled_extensions: [3][*c]const u8 = undefined;
+        var enabled_extensions: [4][*c]const u8 = undefined;
         var enabled_extension_count: u32 = 0;
         enabled_extensions[enabled_extension_count] = c.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
         enabled_extension_count += 1;
@@ -344,6 +350,10 @@ pub const VulkanDevice = struct {
         }
         if (allow_device_fault) {
             enabled_extensions[enabled_extension_count] = c.VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
+            enabled_extension_count += 1;
+        }
+        if (supports_indirect_count) {
+            enabled_extensions[enabled_extension_count] = c.VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME;
             enabled_extension_count += 1;
         }
 
@@ -368,6 +378,7 @@ pub const VulkanDevice = struct {
             device_create_info.pNext = null;
             enabled_extensions[0] = c.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
             enabled_extension_count = 1;
+            supports_indirect_count = false;
             device_create_info.enabledExtensionCount = enabled_extension_count;
             device_create_info.ppEnabledExtensionNames = &enabled_extensions;
             queue_create_count = 1;
@@ -385,6 +396,13 @@ pub const VulkanDevice = struct {
                 self.vkGetDeviceFaultInfoEXT = @ptrCast(proc);
             } else {
                 self.supports_device_fault = false;
+            }
+        }
+        if (supports_indirect_count and self.vk_device != null) {
+            const proc = c.vkGetDeviceProcAddr(self.vk_device, "vkCmdDrawIndirectCountKHR");
+            if (proc) |function| {
+                self.vkCmdDrawIndirectCountKHR = @ptrCast(function);
+                self.draw_indirect_count = true;
             }
         }
 

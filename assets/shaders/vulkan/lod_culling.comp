@@ -1,0 +1,53 @@
+#version 450
+layout(local_size_x = 64) in;
+
+struct Candidate {
+    vec4 min_point;
+    vec4 max_point;
+    mat4 model;
+    vec4 instance_params;
+    uvec4 terrain_command;
+    uvec4 water_command;
+    uvec4 lod_and_padding;
+};
+struct Instance { mat4 model; vec4 params; };
+layout(std430, binding = 0) readonly buffer Candidates { Candidate items[]; } candidates;
+layout(std430, binding = 1) writeonly buffer TerrainInstances { Instance items[]; } terrain_instances;
+layout(std430, binding = 2) writeonly buffer WaterInstances { Instance items[]; } water_instances;
+layout(std430, binding = 3) writeonly buffer TerrainCommands { uvec4 items[]; } terrain_commands;
+layout(std430, binding = 4) writeonly buffer WaterCommands { uvec4 items[]; } water_commands;
+layout(std430, binding = 5) buffer Counters { uint values[]; } counters;
+layout(std430, binding = 6) writeonly buffer TerrainVisibleIds { uint items[]; } terrain_ids;
+layout(std430, binding = 7) writeonly buffer WaterVisibleIds { uint items[]; } water_ids;
+layout(push_constant) uniform Params { vec4 planes[6]; uint candidate_count; float max_distance_blocks; uint max_commands_per_lod; uint padding; } params;
+
+bool visible(vec3 lo, vec3 hi) {
+    for (int i = 0; i < 6; ++i) {
+        vec3 n = params.planes[i].xyz;
+        vec3 p = vec3(n.x >= 0.0 ? hi.x : lo.x, n.y >= 0.0 ? hi.y : lo.y, n.z >= 0.0 ? hi.z : lo.z);
+        if (dot(n, p) + params.planes[i].w < 0.0) return false;
+    }
+    float dx = lo.x > 0.0 ? lo.x : (hi.x < 0.0 ? hi.x : 0.0);
+    float dz = lo.z > 0.0 ? lo.z : (hi.z < 0.0 ? hi.z : 0.0);
+    return params.max_distance_blocks <= 0.0 || dx * dx + dz * dz <= params.max_distance_blocks * params.max_distance_blocks;
+}
+void emit(bool water, Candidate c, uvec4 command, uint candidate_id) {
+    if (command.x == 0u) return;
+    uint lod = min(c.lod_and_padding.x, 4u);
+    uint counter = (water ? 5u : 0u) + lod;
+    uint slot = atomicAdd(counters.values[counter], 1u);
+    if (slot >= params.max_commands_per_lod) return;
+    uint out_index = lod * params.max_commands_per_lod + slot;
+    Instance instance = Instance(c.model, c.instance_params);
+    command.w = out_index;
+    if (water) { water_instances.items[out_index] = instance; water_commands.items[out_index] = command; water_ids.items[out_index] = candidate_id; }
+    else { terrain_instances.items[out_index] = instance; terrain_commands.items[out_index] = command; terrain_ids.items[out_index] = candidate_id; }
+}
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= params.candidate_count) return;
+    Candidate c = candidates.items[index];
+    if (!visible(c.min_point.xyz, c.max_point.xyz)) return;
+    emit(false, c, c.terrain_command, index);
+    emit(true, c, c.water_command, index);
+}
