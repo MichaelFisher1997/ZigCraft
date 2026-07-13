@@ -66,6 +66,7 @@ const LOD_FRAME_DT_APPROX = manager_ctx.LOD_FRAME_DT_APPROX;
 const lodUploadBudgetBytes = manager_ctx.lodUploadBudgetBytes;
 const wouldExceedUploadBudget = manager_ctx.wouldExceedUploadBudget;
 const isUploadPressureError = manager_ctx.isUploadPressureError;
+const TELEPORT_CANCEL_DISTANCE_CHUNKS: i32 = 32;
 
 pub fn storePlayerChunkPos(self: *Self, cx: i32, cz: i32) void {
     self.player_cx.store(cx, .release);
@@ -136,6 +137,7 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .profiling = .init(engine_core.envFlag("ZIGCRAFT_LOD_PROFILE", false) or lod_options.benchmark_lod_profile),
         .cache_hits = 0,
         .cache_misses = 0,
+        .cancelled_jobs = 0,
         .mutex = .{},
         .gpu_bridge = gpu_bridge,
         .generator = generator,
@@ -177,6 +179,13 @@ pub fn deinit(self: *Self) void {
     // This is the ONLY place stop_flag is set: normal pause()/unpause() and
     // map-open leave it false so LOD generation runs uninterrupted.
     self.job_dispatcher.stop_flag.store(true, .release);
+
+    self.mutex.lock();
+    for (0..LODLevel.count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| entry.value_ptr.*.requestCancellation();
+    }
+    self.mutex.unlock();
 
     // Stop and cleanup queues
     for (0..LODLevel.count) |i| {
@@ -260,7 +269,14 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
 
     const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
+    const previous_pc = self.loadPlayerChunkPos();
     self.storePlayerChunkPos(pc.chunk_x, pc.chunk_z);
+    const moved_x = @abs(@as(i64, pc.chunk_x) - @as(i64, previous_pc.cx));
+    const moved_z = @abs(@as(i64, pc.chunk_z) - @as(i64, previous_pc.cz));
+    const teleport_distance_sq = @as(i64, TELEPORT_CANCEL_DISTANCE_CHUNKS) * TELEPORT_CANCEL_DISTANCE_CHUNKS;
+    if (moved_x * moved_x + moved_z * moved_z >= teleport_distance_sq) {
+        cancelWorkOutsideHorizon(self, pc.chunk_x, pc.chunk_z);
+    }
 
     // Keep LOD job priorities fresh as the player moves. doReprioritize is
     // LOD-aware (scales region coords to chunk space, preserves LOD-bias
@@ -380,33 +396,69 @@ pub fn pause(self: *Self) void {
         self.job_dispatcher.queues[i].setPaused(true);
     }
 
-    // setPaused clears jobs that have not reached a worker. Reconcile their
-    // lifecycle states while holding the manager lock; otherwise they would
-    // remain permanently .generating/.meshing with no queued job. A pinned
-    // chunk belongs to a worker that already accepted its job, so leave both
-    // its state and token intact for that worker to publish safely.
+    // setPaused clears queued jobs. In-flight jobs are cancelled through their
+    // per-region signal and token so they cannot publish stale data after an
+    // unpause, even when unpause happens before a worker checks cancellation.
     self.mutex.lock();
     defer self.mutex.unlock();
     for (0..LODLevel.count) |i| {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
-            if (chunk.isPinned()) continue;
             switch (chunk.getState()) {
                 .generating => {
+                    chunk.requestCancellation();
                     chunk.job_token +%= 1;
+                    chunk.cache_read_queued = false;
                     if (self.pending_region_count > 0) self.pending_region_count -= 1;
                     chunk.setState(.missing);
+                    self.cancelled_jobs +|= 1;
                 },
                 .meshing => {
+                    chunk.requestCancellation();
                     chunk.job_token +%= 1;
                     // The generated source data remains valid. Requeue the
                     // mesh transition after unpause without discarding its
                     // pending admission slot.
                     chunk.setState(.generated);
+                    self.cancelled_jobs +|= 1;
+                },
+                .queued_for_generation => {
+                    chunk.requestCancellation();
+                    chunk.job_token +%= 1;
+                    chunk.cache_read_queued = false;
+                    if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                    chunk.setState(.missing);
+                    self.cancelled_jobs +|= 1;
                 },
                 else => {},
             }
+        }
+    }
+}
+
+pub fn cancelWorkOutsideHorizon(self: *Self, player_cx: i32, player_cz: i32) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    const radii = self.config.getRadii();
+    const active = lod_chunk.activeLODCount(self.config);
+    for (0..LODLevel.count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| {
+            const chunk = entry.value_ptr.*;
+            switch (chunk.getState()) {
+                .queued_for_generation, .generating, .meshing => {},
+                else => continue,
+            }
+            if (i < active and entry.key_ptr.*.chunkBounds().intersectsRadius(player_cx, player_cz, radii[i])) continue;
+
+            const was_generation = chunk.getState() != .meshing;
+            chunk.requestCancellation();
+            chunk.job_token +%= 1;
+            chunk.cache_read_queued = false;
+            if (was_generation and self.pending_region_count > 0) self.pending_region_count -= 1;
+            chunk.setState(if (was_generation) .missing else .generated);
+            self.cancelled_jobs +|= 1;
         }
     }
 }

@@ -94,7 +94,7 @@ The p1 FPS metric is the primary user-visible smoothness guard. GPU time and dra
 
 ## Absolute SLOs
 
-The benchmark harness also enforces absolute service-level objectives before regression comparison. These thresholds are intentionally separate from `baseline.json`: a run can fail even if there is no baseline drift when the absolute floor or ceiling is breached.
+The benchmark harness also enforces absolute service-level objectives before regression comparison. These thresholds are intentionally separate from `baseline.json`: a run can fail even if there is no baseline drift when the absolute floor or ceiling is breached. The LOD preset's CPU-source/mesh RAM cap and persistent-store cap are defined in [`../lod-quality-controls.md`](../lod-quality-controls.md); the GPU limits below cover measured renderer resource memory.
 
 | Preset | p1 FPS min | Max frame ms | Draw calls avg max | Vertices avg max | GPU memory max |
 | --- | ---: | ---: | ---: | ---: | ---: |

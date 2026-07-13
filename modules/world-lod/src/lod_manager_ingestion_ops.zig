@@ -133,7 +133,8 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
                 // Defer if a mesh/generation/upload job is mid-flight for
                 // this region: writing source data concurrently with a
                 // mesh job reading it (under the shared lock) would race.
-                if (lod_chunk_ptr.getState() == .generating or
+                if (lod_chunk_ptr.isPinned() or
+                    lod_chunk_ptr.getState() == .generating or
                     lod_chunk_ptr.getState() == .meshing or
                     lod_chunk_ptr.getState() == .uploading)
                 {

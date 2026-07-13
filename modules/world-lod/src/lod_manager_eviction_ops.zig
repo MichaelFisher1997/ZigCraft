@@ -313,6 +313,7 @@ pub fn updateStats(self: *Self) void {
     self.stats.store_misses = self.cache_misses;
     self.stats.cache_hits = self.cache_hits;
     self.stats.cache_misses = self.cache_misses;
+    self.stats.cancelled_jobs = self.cancelled_jobs;
     self.memory_governor.used_bytes = mem_usage;
     self.profiling.setPendingCpuUploadBytes(pending_cpu_upload_bytes);
 

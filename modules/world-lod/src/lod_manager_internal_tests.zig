@@ -26,6 +26,7 @@ const LODManager = manager_mod.LODManager;
 const MAX_CACHE_LOADS_PER_UPDATE = @import("lod_manager_context.zig").MAX_CACHE_LOADS_PER_UPDATE;
 const DEFAULT_LOD_UPLOAD_BUDGET_BYTES = @import("lod_manager_context.zig").DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
 const wouldExceedUploadBudget = @import("lod_manager_context.zig").wouldExceedUploadBudget;
+const cancelWorkOutsideHorizon = @import("lod_manager_core_ops.zig").cancelWorkOutsideHorizon;
 const testing = std.testing;
 
 test "LODManager cache helpers save and reload source data" {
@@ -208,6 +209,9 @@ test "LODManager queued generation applies source-store completion asynchronousl
             manager.job_dispatcher.queues[i].deinit();
             testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
+        manager.generation_candidates_scratch.deinit(testing.allocator);
+        manager.mesh_candidates_scratch.deinit(testing.allocator);
+        manager.upload_candidates_scratch.deinit(testing.allocator);
     }
 
     const chunk = try testing.allocator.create(LODChunk);
@@ -275,6 +279,9 @@ test "LODManager queued generation dispatches beyond cache read budget" {
             manager.job_dispatcher.queues[i].deinit();
             testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
+        manager.generation_candidates_scratch.deinit(testing.allocator);
+        manager.mesh_candidates_scratch.deinit(testing.allocator);
+        manager.upload_candidates_scratch.deinit(testing.allocator);
     }
 
     const candidate_count = MAX_CACHE_LOADS_PER_UPDATE + 4;
@@ -349,6 +356,9 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
     }
     manager.mesh_disposal.queue.deinit(manager.allocator);
     manager.ingestion_queue.edit_dirty.deinit();
+    manager.generation_candidates_scratch.deinit(manager.allocator);
+    manager.mesh_candidates_scratch.deinit(manager.allocator);
+    manager.upload_candidates_scratch.deinit(manager.allocator);
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
@@ -375,6 +385,36 @@ fn putTestPendingMesh(manager: *LODManager, key: LODRegionKey, vertex_count: usi
     mesh.pending_vertices = try manager.allocator.alloc(Vertex, vertex_count);
     try manager.meshes[@intFromEnum(key.lod)].put(key, mesh);
     return mesh;
+}
+
+test "LODManager backs off size-limited store writes until the cap changes" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{ .lod_store_size_cap_mb = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    manager.cache_store.cache_dir_path = try testing.allocator.dupe(u8, save_dir);
+    defer testing.allocator.free(manager.cache_store.cache_dir_path.?);
+    manager.cache_store.use_config_store_size_cap = true;
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const chunk = try putTestRegion(&manager, key, .generated);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod1) };
+    chunk.store_dirty = true;
+    chunk.store_size_limited = true;
+    chunk.store_size_limit_cap_mb = 1;
+
+    manager.flushDirtyStores();
+    try testing.expect(!chunk.store_write_queued);
+    try testing.expect(chunk.store_dirty);
+
+    config.lod_store_size_cap_mb = 2;
+    manager.flushDirtyStores();
+    try testing.expect(chunk.store_write_queued);
 }
 
 const UploadMock = struct {
@@ -487,7 +527,7 @@ test "LODManager staging pressure failure stops upload sweep" {
     try testing.expectEqual(@as(u32, 1), manager.stats.upload_failures);
 }
 
-test "LODManager pause reconciles cleared jobs while preserving pinned work" {
+test "LODManager pause cancels queued and pinned stale work" {
     var config = LODConfig{};
     var manager = try initEvictionTestManager(testing.allocator, &config);
     defer deinitEvictionTestManager(&manager);
@@ -517,11 +557,39 @@ test "LODManager pause reconciles cleared jobs while preserving pinned work" {
     try testing.expectEqual(@as(u32, 12), queued_generation.job_token);
     try testing.expectEqual(LODState.generated, queued_mesh.state);
     try testing.expectEqual(@as(u32, 13), queued_mesh.job_token);
-    try testing.expectEqual(LODState.generating, running_generation.state);
-    try testing.expectEqual(@as(u32, 13), running_generation.job_token);
-    try testing.expectEqual(LODState.meshing, running_mesh.state);
-    try testing.expectEqual(@as(u32, 14), running_mesh.job_token);
-    try testing.expectEqual(@as(usize, 3), manager.pending_region_count);
+    try testing.expectEqual(LODState.missing, running_generation.state);
+    try testing.expectEqual(@as(u32, 14), running_generation.job_token);
+    try testing.expect(running_generation.cancellationRequested());
+    try testing.expectEqual(LODState.generated, running_mesh.state);
+    try testing.expectEqual(@as(u32, 15), running_mesh.job_token);
+    try testing.expect(running_mesh.cancellationRequested());
+    try testing.expectEqual(@as(usize, 2), manager.pending_region_count);
+    try testing.expectEqual(@as(u32, 4), manager.cancelled_jobs);
+}
+
+test "LODManager traversal cancels work outside its level horizon" {
+    var config = LODConfig{ .radii = .{ 8, 16, 32, 64, 128 } };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const near = try putTestRegion(&manager, .{ .rx = 0, .rz = 0, .lod = .lod1 }, .generating);
+    near.job_token = 7;
+    const stale = try putTestRegion(&manager, .{ .rx = 100, .rz = 100, .lod = .lod1 }, .generating);
+    stale.job_token = 9;
+    stale.cache_read_queued = true;
+    manager.pending_region_count = 2;
+
+    cancelWorkOutsideHorizon(&manager, 0, 0);
+
+    try testing.expectEqual(LODState.generating, near.state);
+    try testing.expectEqual(@as(u32, 7), near.job_token);
+    try testing.expect(!near.cancellationRequested());
+    try testing.expectEqual(LODState.missing, stale.state);
+    try testing.expectEqual(@as(u32, 10), stale.job_token);
+    try testing.expect(stale.cancellationRequested());
+    try testing.expect(!stale.cache_read_queued);
+    try testing.expectEqual(@as(usize, 1), manager.pending_region_count);
+    try testing.expectEqual(@as(u32, 1), manager.cancelled_jobs);
 }
 
 test "LODManager ready child counters update on renderable transitions and removal" {

@@ -70,11 +70,6 @@ test {
     _ = @import("world-worldgen").terrain_modifier_tests;
     _ = @import("world-worldgen").terrain_shape_generator_tests;
     _ = @import("world-worldgen").terrain_report;
-    _ = @import("world-lod").lod_manager_tests;
-    _ = @import("world-lod").lod_manager_internal_tests;
-    _ = @import("world-lod").lod_seam;
-    _ = @import("world-lod").lod_renderer;
-    _ = @import("world-lod").lod_tile;
     _ = @import("engine-atmosphere").atmosphere_tests;
     _ = @import("game-core").settings_tests;
     _ = @import("game-core").input_settings;

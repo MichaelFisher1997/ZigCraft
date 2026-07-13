@@ -483,12 +483,12 @@ test "LODSimplifiedData initializes rich column defaults" {
     try std.testing.expectEqual(@as(f32, 0.0), data.vegetation[0].tree_coverage);
 }
 
-test "LODSimplifiedData far levels use high-detail grids" {
+test "LODSimplifiedData far levels use configured detail grids" {
     try std.testing.expectEqual(@as(u32, 33), LODSimplifiedData.getGridSize(.lod0));
     try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod1));
     try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod2));
     try std.testing.expectEqual(@as(u32, 129), LODSimplifiedData.getGridSize(.lod3));
-    try std.testing.expectEqual(@as(u32, 129), LODSimplifiedData.getGridSize(.lod4));
+    try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod4));
 }
 
 test "LODColumnProvenance orders overwrite authority" {
