@@ -150,8 +150,9 @@ pub fn LODRenderer(comptime RHI: type) type {
                 vertex_pools[i] = LODVertexPool.init(allocator, @enumFromInt(@as(u3, @intCast(i))), 8 * 1024 * 1024);
             }
 
+            const gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false);
             var gpu_culling: ?ILODCullingSystem = null;
-            if (@hasDecl(RHI, "createLODCullingSystem")) {
+            if (gpu_culling_requested and @hasDecl(RHI, "createLODCullingSystem")) {
                 gpu_culling = rhi.createLODCullingSystem(allocator, MAX_LOD_MDI_REGIONS) catch |err| blk: {
                     log.log.warn("LOD GPU culling unavailable ({}); CPU fallback active", .{err});
                     break :blk null;
@@ -170,7 +171,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .vertex_pools = vertex_pools,
                 .frame_index = 0,
                 .enable_mdi = !engine_core.envFlag("ZIGCRAFT_DISABLE_LOD_MDI", false),
-                .gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false),
+                .gpu_culling_requested = gpu_culling_requested,
                 .gpu_culling = gpu_culling,
                 .gpu_candidates = .empty,
                 .gpu_culling_ready_frame = null,
@@ -242,7 +243,21 @@ pub fn LODRenderer(comptime RHI: type) type {
                 };
                 self.projection_frame = frame_serial;
             }
-            self.renderProjectedLayer(meshes, layer, stats);
+            if (!self.renderProjectedLayer(meshes, layer, stats)) {
+                // GPU submission can still fail after the compute prepass (for
+                // example if a pooled buffer becomes unavailable). Never feed
+                // the broad GPU candidate projection into the CPU renderer.
+                self.gpu_culling_ready_frame = null;
+                const timer = if (profiling) |profile| profile.begin() else null;
+                defer if (profiling) |profile| profile.end(.visibility, timer);
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                    log.log.errWithTrace("Failed to rebuild CPU LOD visibility: {}", .{err});
+                    self.projection_frame = null;
+                    return;
+                };
+                self.projection_frame = frame_serial;
+                _ = self.renderProjectedLayer(meshes, layer, stats);
+            }
         }
 
         /// Records the LOD compute pass before the render graph enters a graphics
@@ -564,7 +579,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
         }
 
-        fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats) void {
+        /// Returns false only when a prepared GPU frame could not be submitted;
+        /// callers must rebuild the CPU projection with normal culling first.
+        fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats) bool {
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
@@ -578,7 +595,9 @@ pub fn LODRenderer(comptime RHI: type) type {
                 if (self.gpu_culling) |gpu| s.gpu_culling_validation_mismatches = gpu.diagnostics().validation_mismatch_count;
             }
 
-            if (self.renderGpuCulledLayer(all_meshes, layer, stats, render_ctx, query)) return;
+            const gpu_frame_prepared = self.projection_frame != null and self.gpu_culling_ready_frame == self.projection_frame;
+            if (self.renderGpuCulledLayer(layer, stats, render_ctx, query)) return true;
+            if (gpu_frame_prepared) return false;
 
             for (self.projection_regions.items) |visible| {
                 const lod_idx = @intFromEnum(visible.key.lod);
@@ -615,7 +634,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                     }
                 }
             }
-            if (self.instance_data.items.len == 0) return;
+            if (self.instance_data.items.len == 0) return true;
             const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
             for (self.draw_list.items, 0..) |mesh, index| {
                 if (indirect_drawn and mesh.isPooled()) continue;
@@ -626,17 +645,20 @@ pub fn LODRenderer(comptime RHI: type) type {
                     render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
                 } else render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
             }
+            return true;
         }
 
-        fn renderGpuCulledLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats, render_ctx: anytype, query: anytype) bool {
+        fn renderGpuCulledLayer(self: *Self, layer: LODRenderLayer, stats: ?*LODStats, render_ctx: anytype, query: anytype) bool {
             const frame = self.projection_frame orelse return false;
             if (self.gpu_culling_ready_frame != frame) return false;
             const gpu = self.gpu_culling orelse return false;
             if (!@hasDecl(@TypeOf(render_ctx), "drawIndirectCount") or !@hasDecl(@TypeOf(query), "supportsIndirectCount")) return false;
             if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount() or self.gpu_candidates.items.len < self.gpu_culling_threshold) return false;
-            for (self.projection_regions.items) |visible| {
-                const mesh = all_meshes[@intFromEnum(visible.key.lod)].get(visible.key) orelse return false;
-                if ((mesh.drawRange(layer) orelse return false).count != 0 and !mesh.isPooled()) return false;
+            for (self.gpu_candidates.items) |candidate| {
+                const lod_index = candidate.lod_and_padding[0];
+                if (lod_index >= LODLevel.count) return false;
+                const command = if (layer == .fluid) candidate.water_command else candidate.terrain_command;
+                if (command.vertexCount != 0 and self.vertex_pools[lod_index].buffer_handle == 0) return false;
             }
             const fi = self.frame_index;
             render_ctx.setLODInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid));

@@ -66,7 +66,7 @@ const LODCullingSystem = struct {
         const stream_commands = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndirectCommand);
         for (0..FRAME_COUNT) |i| {
             self.candidates[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, candidate_bytes, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            self.counters[i] = try ctx.resources.createBuffer(MAX_LOD_LEVELS * 2 * @sizeOf(u32), .storage);
+            self.counters[i] = try ctx.resources.createBuffer(MAX_LOD_LEVELS * 2 * @sizeOf(u32), .indirect);
             self.counter_readbacks[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, MAX_LOD_LEVELS * 2 * @sizeOf(u32), c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             self.terrain_ids[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, capacity * MAX_LOD_LEVELS * @sizeOf(u32), c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             self.water_ids[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, capacity * MAX_LOD_LEVELS * @sizeOf(u32), c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);

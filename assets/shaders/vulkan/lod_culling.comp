@@ -1,5 +1,6 @@
 #version 450
 layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint MAX_LOD_LEVELS = 5u;
 
 struct Candidate {
     vec4 min_point;
@@ -33,8 +34,8 @@ bool visible(vec3 lo, vec3 hi) {
 }
 void emit(bool water, Candidate c, uvec4 command, uint candidate_id) {
     if (command.x == 0u) return;
-    uint lod = min(c.lod_and_padding.x, 4u);
-    uint counter = (water ? 5u : 0u) + lod;
+    uint lod = min(c.lod_and_padding.x, MAX_LOD_LEVELS - 1u);
+    uint counter = (water ? MAX_LOD_LEVELS : 0u) + lod;
     uint slot = atomicAdd(counters.values[counter], 1u);
     if (slot >= params.max_commands_per_lod) return;
     uint out_index = lod * params.max_commands_per_lod + slot;
