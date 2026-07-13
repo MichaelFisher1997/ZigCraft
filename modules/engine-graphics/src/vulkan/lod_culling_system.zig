@@ -117,7 +117,7 @@ const LODCullingSystem = struct {
         c.vkCmdFillBuffer(cmd, water_indirect.buffer, 0, stream_command_bytes, 0);
         var transfer_to_compute = std.mem.zeroes(c.VkMemoryBarrier);
         transfer_to_compute.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        transfer_to_compute.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+        transfer_to_compute.srcAccessMask = c.VK_ACCESS_HOST_WRITE_BIT | c.VK_ACCESS_TRANSFER_WRITE_BIT;
         transfer_to_compute.dstAccessMask = c.VK_ACCESS_SHADER_READ_BIT | c.VK_ACCESS_SHADER_WRITE_BIT;
         c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT | c.VK_PIPELINE_STAGE_HOST_BIT, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &transfer_to_compute, 0, null, 0, null);
 

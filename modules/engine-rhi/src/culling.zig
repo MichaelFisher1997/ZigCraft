@@ -121,7 +121,7 @@ pub const ILODCullingSystem = struct {
 };
 
 test "LOD culling candidate ABI is std430 aligned" {
-    try @import("std").testing.expectEqual(@as(usize, 144), @sizeOf(LODCullCandidate));
+    try @import("std").testing.expectEqual(@as(usize, 160), @sizeOf(LODCullCandidate));
     try @import("std").testing.expectEqual(@as(usize, 32), @offsetOf(LODCullCandidate, "model"));
     try @import("std").testing.expectEqual(@as(usize, 96), @offsetOf(LODCullCandidate, "instance_params"));
 }

@@ -47,7 +47,9 @@ test {
     _ = @import("engine-graphics").utils_tests;
     _ = @import("vulkan_tests.zig");
     _ = @import("engine-graphics").rhi_tests;
+    _ = @import("engine-graphics").lod_culling_system;
     _ = @import("engine-rhi").rhi_contract_tests;
+    _ = @import("engine-rhi").culling;
     _ = @import("engine-clouds").cloud_system;
     _ = @import("engine-shadows").shadow_cascade_tests;
     _ = @import("engine-graphics").shadow_tests;
