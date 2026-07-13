@@ -52,6 +52,7 @@ const DEPTH_SCALE: f32 = 4.0;
 const VEGETATION_HEIGHT_SCALE: f32 = 2.0;
 const MAX_ENCODED_BLOCK_ID: u8 = 0x7f;
 const MAX_KNOWN_BLOCK_ID: u8 = @intFromEnum(BlockType.stone_stairs);
+const MAX_VALID_WIRE_BLOCK_ID: u7 = @intCast(@min(MAX_ENCODED_BLOCK_ID, MAX_KNOWN_BLOCK_ID));
 
 pub const TileEdge = enum(u2) {
     north = 0,
@@ -121,9 +122,9 @@ pub const CompactLODSample = struct {
         const bits = @as(u128, low) | (@as(u128, high) << 64);
         if ((high >> 59) != 0) return false;
         if (((high >> 57) & 0x3) > @intFromEnum(LODColumnProvenance.edited)) return false;
-        return unsignedField(bits, 48, u7) <= @as(u7, @intCast(MAX_KNOWN_BLOCK_ID)) and
-            unsignedField(bits, 55, u7) <= @as(u7, @intCast(MAX_KNOWN_BLOCK_ID)) and
-            unsignedField(bits, 62, u7) <= @as(u7, @intCast(MAX_KNOWN_BLOCK_ID));
+        return unsignedField(bits, 48, u7) <= MAX_VALID_WIRE_BLOCK_ID and
+            unsignedField(bits, 55, u7) <= MAX_VALID_WIRE_BLOCK_ID and
+            unsignedField(bits, 62, u7) <= MAX_VALID_WIRE_BLOCK_ID;
     }
 };
 
@@ -150,7 +151,10 @@ pub const ByteMetrics = struct {
     conservative_expanded_top_grid_bytes: usize,
 
     pub fn savedBytes(self: ByteMetrics) usize {
-        return self.conservative_expanded_top_grid_bytes - self.compact_upload_bytes;
+        return if (self.conservative_expanded_top_grid_bytes > self.compact_upload_bytes)
+            self.conservative_expanded_top_grid_bytes - self.compact_upload_bytes
+        else
+            0;
     }
 };
 
@@ -272,13 +276,15 @@ pub const CompactLODTile = struct {
         return (self.neighbor_apron_mask & (@as(u8, 1) << @intFromEnum(edge))) != 0;
     }
 
-    pub fn byteMetrics(self: *const CompactLODTile) ByteMetrics {
+    /// Compares compact bytes with the current CPU top-face expansion using an
+    /// explicit vertex size supplied by the renderer-facing caller.
+    pub fn byteMetrics(self: *const CompactLODTile, expanded_vertex_bytes: usize) ByteMetrics {
         const cells = @as(usize, self.width - 1) * @as(usize, self.width - 1);
         return .{
             .compact_upload_bytes = self.samples.len * COMPACT_LOD_SAMPLE_BYTES,
-            // The current path emits two triangles (six 32-byte Vertex values)
+            // The current path emits two triangles (six Vertex values)
             // per cell before side faces, water, or vegetation are considered.
-            .conservative_expanded_top_grid_bytes = cells * 6 * @sizeOf(@import("engine-rhi").Vertex),
+            .conservative_expanded_top_grid_bytes = cells * 6 * expanded_vertex_bytes,
         };
     }
 
@@ -297,8 +303,9 @@ pub const CompactLODTile = struct {
         bytes[7] = self.neighbor_apron_mask;
         std.mem.writeInt(u32, bytes[8..12], self.width, .little);
         std.mem.writeInt(u32, bytes[12..16], @intCast(self.samples.len), .little);
-        std.mem.writeInt(u32, bytes[16..20], std.hash.Crc32.hash(std.mem.sliceAsBytes(self.samples)), .little);
+        std.mem.writeInt(u32, bytes[16..20], 0, .little);
         @memcpy(bytes[COMPACT_LOD_TILE_HEADER_BYTES..], std.mem.sliceAsBytes(self.samples));
+        std.mem.writeInt(u32, bytes[16..20], computeTileCrc(bytes), .little);
         return bytes;
     }
 
@@ -320,7 +327,7 @@ pub const CompactLODTile = struct {
         const payload_len = std.math.mul(usize, sample_count, COMPACT_LOD_SAMPLE_BYTES) catch return TileError.InvalidHeader;
         if (bytes.len != COMPACT_LOD_TILE_HEADER_BYTES + payload_len) return TileError.InvalidLength;
         const payload = bytes[COMPACT_LOD_TILE_HEADER_BYTES..];
-        if (std.mem.readInt(u32, bytes[16..20], .little) != std.hash.Crc32.hash(payload)) return TileError.ChecksumMismatch;
+        if (std.mem.readInt(u32, bytes[16..20], .little) != computeTileCrc(bytes)) return TileError.ChecksumMismatch;
 
         const samples = try allocator.alloc(CompactLODSample, sample_count);
         errdefer allocator.free(samples);
@@ -443,6 +450,14 @@ fn semanticMaterialFromId(id: u7) BlockType {
 
 fn provenanceFromBits(bits: u8) LODColumnProvenance {
     return std.enums.fromInt(LODColumnProvenance, bits) orelse .worldgen;
+}
+
+fn computeTileCrc(bytes: []const u8) u32 {
+    var crc = std.hash.Crc32.init();
+    crc.update(bytes[0..16]);
+    crc.update(&.{ 0, 0, 0, 0 });
+    crc.update(bytes[COMPACT_LOD_TILE_HEADER_BYTES..]);
+    return crc.final();
 }
 
 fn apronStride(width: u32) ?u32 {
@@ -652,7 +667,7 @@ test "CompactLODTile rejects unknown semantic materials with a valid checksum" {
     low &= ~(@as(u64, 0x7f) << 48);
     low |= @as(u64, MAX_KNOWN_BLOCK_ID + 1) << 48;
     std.mem.writeInt(u64, sample[0..8], low, .little);
-    std.mem.writeInt(u32, wire[16..20], std.hash.Crc32.hash(wire[COMPACT_LOD_TILE_HEADER_BYTES..]), .little);
+    std.mem.writeInt(u32, wire[16..20], computeTileCrc(wire), .little);
 
     try std.testing.expectError(TileError.InvalidSample, CompactLODTile.deserialize(allocator, wire));
 }
@@ -667,8 +682,22 @@ test "CompactLODTile reduces future material IDs and reports compact byte metric
     defer source.deinit();
     var tile = try CompactLODTile.initFromSimplified(allocator, .lod4, &source);
     defer tile.deinit();
-    const metrics = tile.byteMetrics();
+    const metrics = tile.byteMetrics(32);
     try std.testing.expectEqual(tile.samples.len * COMPACT_LOD_SAMPLE_BYTES, metrics.compact_upload_bytes);
     try std.testing.expect(metrics.compact_upload_bytes < metrics.conservative_expanded_top_grid_bytes);
     try std.testing.expectEqual(metrics.conservative_expanded_top_grid_bytes - metrics.compact_upload_bytes, metrics.savedBytes());
+    try std.testing.expectEqual(@as(usize, 0), (ByteMetrics{ .compact_upload_bytes = 16, .conservative_expanded_top_grid_bytes = 0 }).savedBytes());
+}
+
+test "CompactLODTile checksum covers header metadata" {
+    const allocator = std.testing.allocator;
+    var source = try LODSimplifiedData.init(allocator, .lod4);
+    defer source.deinit();
+    var tile = try CompactLODTile.initFromSimplified(allocator, .lod4, &source);
+    defer tile.deinit();
+    const wire = try tile.serialize(allocator);
+    defer allocator.free(wire);
+    wire[7] ^= 0x01;
+
+    try std.testing.expectError(TileError.ChecksumMismatch, CompactLODTile.deserialize(allocator, wire));
 }
