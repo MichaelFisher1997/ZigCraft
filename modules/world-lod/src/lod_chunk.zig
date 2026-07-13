@@ -204,6 +204,10 @@ pub const LODChunk = struct {
     /// thread and prevent duplicate requests without pinning region memory.
     cache_read_queued: bool,
     store_write_queued: bool,
+    /// Suppresses retries for a snapshot that cannot fit the current store
+    /// cap. A source revision or cap increase makes it eligible again.
+    store_size_limited: bool,
+    store_size_limit_cap_mb: u32,
 
     /// Creates an empty LOD region record in the missing state.
     /// Source data, mesh handles, readiness counts, and transition state are initialized to safe defaults.
@@ -227,6 +231,8 @@ pub const LODChunk = struct {
             .source_revision = 0,
             .cache_read_queued = false,
             .store_write_queued = false,
+            .store_size_limited = false,
+            .store_size_limit_cap_mb = 0,
         };
     }
 
@@ -370,6 +376,7 @@ pub const LODChunk = struct {
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;
+        self.store_size_limited = false;
         self.source_revision +%= 1;
     }
 

@@ -668,6 +668,35 @@ fn defineBuildSteps(
     run_exe_tests.step.dependOn(&shader_cmd.step);
     test_step.dependOn(&run_exe_tests.step);
 
+    // world-lod gates its dedicated test modules on builtin.is_test. Importing
+    // the production module into src/tests.zig leaves that module compiled with
+    // is_test=false, so run it as a test root as well.
+    const world_lod_test_root = b.createModule(.{
+        .root_source_file = b.path("modules/world-lod/src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_c = sanitize_c,
+    });
+    addSharedImports(world_lod_test_root, modules.zig_math, modules.zig_noise, modules.fs_module, modules.sync_module, modules.c_module, options);
+    world_lod_test_root.addImport("engine-core", modules.engine_core);
+    world_lod_test_root.addImport("engine-assets", modules.engine_assets);
+    world_lod_test_root.addImport("engine-graphics", modules.engine_graphics);
+    world_lod_test_root.addImport("engine-math", modules.engine_math);
+    world_lod_test_root.addImport("engine-rhi", modules.engine_rhi);
+    world_lod_test_root.addImport("world-meshing", modules.world_meshing);
+    world_lod_test_root.addImport("world-core", modules.world_core);
+    world_lod_test_root.addImport("world-persistence", modules.world_persistence);
+    world_lod_test_root.addImport("world-worldgen", modules.world_worldgen);
+    world_lod_test_root.addOptions("world_lod_options", opts.world_lod_options);
+
+    const world_lod_tests = b.addTest(.{
+        .root_module = world_lod_test_root,
+        .filters = test_filters,
+    });
+    const run_world_lod_tests = b.addRunArtifact(world_lod_tests);
+    run_world_lod_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
+    test_step.dependOn(&run_world_lod_tests.step);
+
     const engine_math_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     engine_math_fuzz_root.addImport("zig-math", zig_math);
     const engine_math_fuzz_tests = b.addTest(.{ .root_module = engine_math_fuzz_root, .filters = test_filters });

@@ -33,6 +33,8 @@ pub const Completion = union(enum) {
         key: LODRegionKey,
         revision: u32,
         success: bool,
+        size_limited: bool,
+        store_size_cap_mb: u32,
     },
 };
 
@@ -204,17 +206,19 @@ pub const CacheIoPipeline = struct {
                 defer data.deinit();
                 const bytes = lod_cache.serialize(&data, write.cache_key, self.allocator) catch |err| {
                     log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(write.region_key.lod), write.region_key.rx, write.region_key.rz, err });
-                    break :blk .{ .write = .{ .key = write.region_key, .revision = write.revision, .success = false } };
+                    break :blk .{ .write = .{ .key = write.region_key, .revision = write.revision, .success = false, .size_limited = false, .store_size_cap_mb = write.store_size_cap_mb } };
                 };
                 defer self.allocator.free(bytes);
+                var size_limited = false;
                 const success = blk_success: {
                     lod_store.writePayload(self.allocator, write.path, write.cache_key, bytes, write.store_size_cap_mb) catch |err| {
                         log.log.warn("Failed to write LOD{} store ({}, {}): {}", .{ @intFromEnum(write.region_key.lod), write.region_key.rx, write.region_key.rz, err });
+                        size_limited = err == lod_store.StoreError.StoreSizeLimit;
                         break :blk_success false;
                     };
                     break :blk_success true;
                 };
-                break :blk .{ .write = .{ .key = write.region_key, .revision = write.revision, .success = success } };
+                break :blk .{ .write = .{ .key = write.region_key, .revision = write.revision, .success = success, .size_limited = size_limited, .store_size_cap_mb = write.store_size_cap_mb } };
             },
         };
     }

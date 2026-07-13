@@ -37,6 +37,7 @@ pub const CacheError = error{
     InvalidBiome,
     InvalidBlock,
     InvalidSpanCount,
+    InvalidProvenance,
     MissingProvenance,
     ChecksumMismatch,
 };
@@ -428,7 +429,7 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
                     0 => .worldgen,
                     1 => .chunk_derived,
                     2 => .edited,
-                    else => return CacheError.InvalidSpanCount,
+                    else => return CacheError.InvalidProvenance,
                 };
                 off += 1;
             }
@@ -535,8 +536,8 @@ test "LOD cache round-trip preserves vertical spans" {
     try testing.expect(decoded.hasVerticalSpans());
     try testing.expectEqual(data.vertical_span_counts.?.len, decoded.vertical_span_counts.?.len);
     try testing.expectEqualSlices(u8, data.vertical_span_counts.?, decoded.vertical_span_counts.?);
-    try testing.expectEqual(data.vertical_spans.?.len, decoded.vertical_spans.?.len);
-    try testing.expectEqualSlices(u8, std.mem.sliceAsBytes(data.vertical_spans.?), std.mem.sliceAsBytes(decoded.vertical_spans.?));
+    try testing.expectEqual(lower, decoded.getVerticalSpan(2, 3, 0).?);
+    try testing.expectEqual(upper, decoded.getVerticalSpan(2, 3, 1).?);
 }
 
 test "LOD cache round-trip preserves span-less column provenance" {
@@ -607,6 +608,22 @@ test "LOD cache rejects checksum mismatch" {
     bytes[bytes.len - 1] ^= 0x01;
 
     try testing.expectError(CacheError.ChecksumMismatch, deserialize(bytes, key, testing.allocator));
+}
+
+test "LOD cache reports invalid provenance" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod2);
+    defer data.deinit();
+
+    const key = Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod2 };
+    const bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(bytes);
+    const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
+    const provenance_offset = HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE;
+    bytes[provenance_offset] = 3;
+    std.mem.writeInt(u32, bytes[6..][0..4], 0, .little);
+    std.mem.writeInt(u32, bytes[6..][0..4], computeCrc(bytes), .little);
+
+    try testing.expectError(CacheError.InvalidProvenance, deserialize(bytes, key, testing.allocator));
 }
 
 test "LOD cache rejects mismatched cache key" {

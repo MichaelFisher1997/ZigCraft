@@ -575,23 +575,23 @@ test "writeIngestedColumn respects provenance authority" {
 
     // Worldgen cell can be upgraded by chunk_derived.
     data.setColumn(1, 1, 5.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0, LODWaterState.empty, LODLightingHint.daylight, LODVegetationHint.empty);
-    const upgraded = writeIngestedColumn(data, 1, 1, .{ .terrain_height = 40.0, .biome = .forest }, .chunk_derived);
+    const upgraded = writeIngestedColumn(&data, 1, 1, .{ .terrain_height = 40.0, .biome = .forest }, .chunk_derived);
     try testing.expect(upgraded);
     try testing.expectEqual(@as(f32, 40.0), data.getHeight(1, 1));
 
     // chunk_derived refresh can replace previous chunk_derived data.
-    const refreshed = writeIngestedColumn(data, 1, 1, .{ .terrain_height = 45.0, .biome = .forest }, .chunk_derived);
+    const refreshed = writeIngestedColumn(&data, 1, 1, .{ .terrain_height = 45.0, .biome = .forest }, .chunk_derived);
     try testing.expect(refreshed);
     try testing.expectEqual(@as(f32, 45.0), data.getHeight(1, 1));
 
     // chunk_derived must NOT be overwritten by worldgen.
-    const clobbered = writeIngestedColumn(data, 1, 1, .{ .terrain_height = 1.0, .biome = .desert }, .worldgen);
+    const clobbered = writeIngestedColumn(&data, 1, 1, .{ .terrain_height = 1.0, .biome = .desert }, .worldgen);
     try testing.expect(!clobbered);
     try testing.expectEqual(@as(f32, 45.0), data.getHeight(1, 1));
     try testing.expectEqual(BiomeId.forest, data.biomes[1 + data.width]);
 
     // edited beats chunk_derived.
-    const edited = writeIngestedColumn(data, 1, 1, .{ .terrain_height = 70.0, .biome = .mountains }, .edited);
+    const edited = writeIngestedColumn(&data, 1, 1, .{ .terrain_height = 70.0, .biome = .mountains }, .edited);
     try testing.expect(edited);
     try testing.expectEqual(@as(f32, 70.0), data.getHeight(1, 1));
     try testing.expectEqual(LODColumnProvenance.edited, data.getColumnProvenance(1, 1));

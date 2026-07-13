@@ -264,7 +264,10 @@ fn writeCompactedContainer(allocator: std.mem.Allocator, path: []const u8, tmp_p
         }
     }
 
-    try region.writeChunk(target_x, target_z, bytes);
+    region.writeChunk(target_x, target_z, bytes) catch |err| {
+        if (err == error.FileTooShort) return StoreError.StoreSizeLimit;
+        return err;
+    };
     region.close();
 }
 
@@ -331,6 +334,7 @@ pub fn writePayload(allocator: std.mem.Allocator, save_dir_path: []const u8, key
         region.writeChunk(localCoord(key.rx), localCoord(key.rz), bytes) catch |err| {
             region.close();
             fs.cwd().deleteFile(tmp_path) catch {};
+            if (err == error.FileTooShort) return StoreError.StoreSizeLimit;
             return err;
         };
         region.close();

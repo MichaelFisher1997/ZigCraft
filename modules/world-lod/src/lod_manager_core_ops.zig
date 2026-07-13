@@ -273,7 +273,8 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     self.storePlayerChunkPos(pc.chunk_x, pc.chunk_z);
     const moved_x = @abs(@as(i64, pc.chunk_x) - @as(i64, previous_pc.cx));
     const moved_z = @abs(@as(i64, pc.chunk_z) - @as(i64, previous_pc.cz));
-    if (moved_x >= TELEPORT_CANCEL_DISTANCE_CHUNKS or moved_z >= TELEPORT_CANCEL_DISTANCE_CHUNKS) {
+    const teleport_distance_sq = @as(i64, TELEPORT_CANCEL_DISTANCE_CHUNKS) * TELEPORT_CANCEL_DISTANCE_CHUNKS;
+    if (moved_x * moved_x + moved_z * moved_z >= teleport_distance_sq) {
         cancelWorkOutsideHorizon(self, pc.chunk_x, pc.chunk_z);
     }
 

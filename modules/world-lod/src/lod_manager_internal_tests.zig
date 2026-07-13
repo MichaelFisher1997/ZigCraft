@@ -209,6 +209,9 @@ test "LODManager queued generation applies source-store completion asynchronousl
             manager.job_dispatcher.queues[i].deinit();
             testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
+        manager.generation_candidates_scratch.deinit(testing.allocator);
+        manager.mesh_candidates_scratch.deinit(testing.allocator);
+        manager.upload_candidates_scratch.deinit(testing.allocator);
     }
 
     const chunk = try testing.allocator.create(LODChunk);
@@ -276,6 +279,9 @@ test "LODManager queued generation dispatches beyond cache read budget" {
             manager.job_dispatcher.queues[i].deinit();
             testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
+        manager.generation_candidates_scratch.deinit(testing.allocator);
+        manager.mesh_candidates_scratch.deinit(testing.allocator);
+        manager.upload_candidates_scratch.deinit(testing.allocator);
     }
 
     const candidate_count = MAX_CACHE_LOADS_PER_UPDATE + 4;
@@ -350,6 +356,9 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
     }
     manager.mesh_disposal.queue.deinit(manager.allocator);
     manager.ingestion_queue.edit_dirty.deinit();
+    manager.generation_candidates_scratch.deinit(manager.allocator);
+    manager.mesh_candidates_scratch.deinit(manager.allocator);
+    manager.upload_candidates_scratch.deinit(manager.allocator);
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
@@ -376,6 +385,36 @@ fn putTestPendingMesh(manager: *LODManager, key: LODRegionKey, vertex_count: usi
     mesh.pending_vertices = try manager.allocator.alloc(Vertex, vertex_count);
     try manager.meshes[@intFromEnum(key.lod)].put(key, mesh);
     return mesh;
+}
+
+test "LODManager backs off size-limited store writes until the cap changes" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{ .lod_store_size_cap_mb = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    manager.cache_store.cache_dir_path = try testing.allocator.dupe(u8, save_dir);
+    defer testing.allocator.free(manager.cache_store.cache_dir_path.?);
+    manager.cache_store.use_config_store_size_cap = true;
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const chunk = try putTestRegion(&manager, key, .generated);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod1) };
+    chunk.store_dirty = true;
+    chunk.store_size_limited = true;
+    chunk.store_size_limit_cap_mb = 1;
+
+    manager.flushDirtyStores();
+    try testing.expect(!chunk.store_write_queued);
+    try testing.expect(chunk.store_dirty);
+
+    config.lod_store_size_cap_mb = 2;
+    manager.flushDirtyStores();
+    try testing.expect(chunk.store_write_queued);
 }
 
 const UploadMock = struct {

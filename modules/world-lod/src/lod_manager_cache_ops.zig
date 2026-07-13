@@ -115,11 +115,16 @@ pub fn drainCacheCompletions(self: *Self) void {
             if (dispatch_generation) self.dispatchCacheMiss(read.key, read.token);
         },
         .write => |write| {
+            // Explicit saveCachedSourceData requests are not tied to a live
+            // region lifecycle and use revision zero.
+            if (write.revision == 0) continue;
             self.mutex.lock();
             if (self.regions[@intFromEnum(write.key.lod)].get(write.key)) |region| {
                 if (region.store_write_queued and region.source_revision == write.revision) {
                     region.store_write_queued = false;
                     region.store_dirty = !write.success;
+                    region.store_size_limited = write.size_limited;
+                    region.store_size_limit_cap_mb = if (write.size_limited) write.store_size_cap_mb else 0;
                 } else if (region.store_write_queued) {
                     // A newer source snapshot arrived while this write was in
                     // flight. Preserve dirty state and let a later update
@@ -146,6 +151,8 @@ fn queueDirtyStores(self: *Self, max_count: usize) usize {
             if (queued >= max_count) break;
             const region = entry.value_ptr.*;
             if (!region.store_dirty or region.store_write_queued) continue;
+            const store_size_cap_mb = if (self.cache_store.use_config_store_size_cap) self.config.getLODStoreSizeCapMB() else self.cache_store.store_size_cap_mb;
+            if (region.store_size_limited and store_size_cap_mb <= region.store_size_limit_cap_mb) continue;
             const snapshot = switch (region.data) {
                 .simplified => |*data| lod_cache.cloneSourceData(data, entry.key_ptr.*.lod, self.allocator) catch |err| {
                     log.log.warn("Failed to snapshot LOD{} cache ({}, {}): {}", .{ @intFromEnum(entry.key_ptr.*.lod), entry.key_ptr.*.rx, entry.key_ptr.*.rz, err });
@@ -155,7 +162,6 @@ fn queueDirtyStores(self: *Self, max_count: usize) usize {
             };
             const key = entry.key_ptr.*;
             const revision = region.source_revision;
-            const store_size_cap_mb = if (self.cache_store.use_config_store_size_cap) self.config.getLODStoreSizeCapMB() else self.cache_store.store_size_cap_mb;
             region.store_write_queued = true;
             const accepted = self.cache_io.enqueueWrite(path, key, self.cacheKey(key), revision, snapshot, store_size_cap_mb) catch |err| blk: {
                 log.log.warn("Failed to queue LOD{} cache write ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
