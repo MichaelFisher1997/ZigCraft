@@ -405,6 +405,29 @@ test "ingestChunk upgrades worldgen region data and schedules a remesh" {
     try std.testing.expect(lchunk.store_dirty);
 }
 
+test "ingestChunk defers while a cancelled worker still pins source data" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    lchunk.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .empty, .daylight, .empty);
+    lchunk.state = .generated;
+    lchunk.pin();
+    defer lchunk.unpin();
+
+    var chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 64) : (y += 1) chunk.setBlock(0, y, 0, .stone);
+
+    mgr.ingestChunk(0, 0, &chunk, .edited);
+
+    try std.testing.expectEqual(@as(f32, 10.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.worldgen, lchunk.data.simplified.getColumnProvenance(0, 0));
+    try std.testing.expect(mgr.ingestion_queue.pending_ingestions.items.len > 0);
+}
+
 test "ingestChunk provenance authority: edited beats chunk_derived, worldgen cannot overwrite" {
     const allocator = std.testing.allocator;
     var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };

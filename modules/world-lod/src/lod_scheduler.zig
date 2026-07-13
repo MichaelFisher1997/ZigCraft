@@ -192,7 +192,10 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
         const existing = storage.get(cand.key);
         if (existing != null) diag.existing += 1;
-        const needs_queue = if (existing) |chunk| chunk.getState() == .missing else true;
+        // A cancelled worker keeps the region pinned until it observes its
+        // cancellation signal. Do not reset that signal by dispatching a new
+        // generation for the same region concurrently.
+        const needs_queue = if (existing) |chunk| chunk.getState() == .missing and !chunk.isPinned() else true;
         if (!needs_queue) continue;
 
         const chunk = if (existing) |c| c else blk: {
@@ -208,6 +211,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         if (ctx.defer_generation_dispatch) {
             chunk.setState(.queued_for_generation);
         } else {
+            chunk.resetCancellation();
             chunk.setState(.generating);
             queue.push(.{
                 .type = .chunk_generation,

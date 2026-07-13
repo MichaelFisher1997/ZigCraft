@@ -172,6 +172,7 @@ pub const LODManager = struct {
     profiling: @import("lod_stats.zig").LODProfilingCollector,
     cache_hits: u32,
     cache_misses: u32,
+    cancelled_jobs: u32,
 
     // Mutex for thread safety
     mutex: sync.RwLock,

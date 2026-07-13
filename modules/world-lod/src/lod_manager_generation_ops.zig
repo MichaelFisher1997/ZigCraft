@@ -210,6 +210,7 @@ fn dispatchGenerationCandidate(self: *Self, candidate: GenerationCandidate) !voi
         self.mutex.unlock();
         return;
     }
+    candidate.chunk.resetCancellation();
     candidate.chunk.setState(.generating);
     self.mutex.unlock();
 
@@ -261,6 +262,7 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
+            if (chunk.isPinned()) continue;
             if (chunk.getState() == .generated) {
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
@@ -299,6 +301,7 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
             continue;
         }
         mc.chunk.setState(.meshing);
+        mc.chunk.resetCancellation();
         self.job_dispatcher.queues[LODLevel.count - 1].push(.{
             .type = .chunk_meshing,
             .dist_sq = mc.encoded_priority,
@@ -446,6 +449,13 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
         return;
     };
 
+    // Reject invalidated work before any state reconciliation. A stale queued
+    // job must never demote a newer job for the same region.
+    if (chunk.job_token != job.data.chunk.job_token) {
+        self.mutex.unlock();
+        return;
+    }
+
     // Stale job check (too far from player)
     const player = self.loadPlayerChunkPos();
     const radius = job.data.chunk.lod_radius;
@@ -461,12 +471,6 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
             if (self.pending_region_count > 0) self.pending_region_count -= 1;
             chunk.setState(.missing);
         }
-        self.mutex.unlock();
-        return;
-    }
-
-    // Skip if token mismatch
-    if (chunk.job_token != job.data.chunk.job_token) {
         self.mutex.unlock();
         return;
     }
@@ -530,14 +534,14 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
                     };
 
                 // Generate heightmap data (expensive, done without lock).
-                // Pass the stop flag so teardown/pause can interrupt the
-                // multi-second coarse-LOD heightmap loop instead of
-                // forcing the worker-join to block until it finishes.
-                self.generator.generateHeightmapOnly(&data, chunk.region_x, chunk.region_z, lod_level, &self.job_dispatcher.stop_flag);
+                // Pass the region cancellation signal so pause and teleport
+                // can interrupt a multi-second coarse-LOD generation loop.
+                // Teardown sets both the manager flag and every region signal.
+                self.generator.generateHeightmapOnly(&data, chunk.region_x, chunk.region_z, lod_level, &chunk.cancel_requested);
 
                 // If generation was aborted, discard the partial data
                 // and leave the chunk in .missing so it re-generates later.
-                if (self.job_dispatcher.stop_flag.load(.acquire)) {
+                if (self.job_dispatcher.stop_flag.load(.acquire) or chunk.cancellationRequested()) {
                     data.deinit();
                     new_state = .missing;
                     self.mutex.lock();

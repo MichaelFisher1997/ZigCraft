@@ -309,6 +309,8 @@ pub const LODStats = struct {
     upgrades_pending: u32 = 0,
     downgrades_pending: u32 = 0,
     upload_failures: u32 = 0,
+    /// Worker and queued jobs invalidated before stale results could publish.
+    cancelled_jobs: u32 = 0,
 
     pub fn totalLoaded(self: *const LODStats) u32 {
         var total: u32 = 0;
@@ -347,6 +349,7 @@ pub const LODStats = struct {
         self.downgrades_pending = 0;
         self.upload_failures = 0;
         self.ingestion_backlog = 0;
+        self.cancelled_jobs = 0;
     }
 
     pub fn recordState(self: *LODStats, lod_idx: usize, state: LODState) void {

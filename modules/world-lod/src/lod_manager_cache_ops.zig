@@ -108,11 +108,6 @@ pub fn drainCacheCompletions(self: *Self) void {
                             dispatch_generation = true;
                         },
                     }
-                } else if (region.cache_read_queued and region.getState() == .queued_for_generation) {
-                    // The completion belongs to an invalidated token. Do not
-                    // apply it, but release the request gate so the current
-                    // revision can enqueue its own read next update.
-                    region.cache_read_queued = false;
                 }
             }
             self.mutex.unlock();
@@ -332,6 +327,7 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .profiling = .init(false),
         .cache_hits = 0,
         .cache_misses = 0,
+        .cancelled_jobs = 0,
         .mutex = .{},
         .gpu_bridge = undefined,
         .generator = .{ .ptr = undefined, .generate_heightmap_only = undefined, .maybe_recenter_cache = undefined, .seed = 42, .identity_hash = 99, .version = 7 },
