@@ -1,6 +1,7 @@
 //! Shared storage for compact LOD3/4 samples. Freed ranges are not reusable
 //! until the same completed frame slot is observed at a later frame serial.
 const std = @import("std");
+const sync = @import("sync");
 const rhi = @import("engine-rhi");
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const LODMeshResources = @import("lod_mesh_resources.zig").LODMeshResources;
@@ -18,6 +19,7 @@ pub const CompactLODPool = struct {
     };
 
     allocator: std.mem.Allocator,
+    mutex: sync.Mutex = .{},
     buffer_handle: rhi.BufferHandle = 0,
     capacity_bytes: usize,
     /// Live bytes. Retired bytes remain unavailable but are not live mesh data.
@@ -37,13 +39,17 @@ pub const CompactLODPool = struct {
     }
 
     pub fn deinit(self: *CompactLODPool, resources: LODMeshResources) void {
+        // Renderer shutdown is exclusive; locking a mutex immediately before
+        // invalidating its storage would make a deferred unlock impossible.
         if (self.buffer_handle != 0) resources.destroyBuffer(self.buffer_handle);
         self.free_ranges.deinit(self.allocator);
         self.retired.deinit(self.allocator);
         self.* = undefined;
     }
 
-    pub fn memoryStats(self: *const CompactLODPool) MemoryStats {
+    pub fn memoryStats(self: *CompactLODPool) MemoryStats {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         // A configured capacity is not GPU memory until the backing buffer is
         // successfully created. This prevents accounting a failed allocation.
         return .{
@@ -55,6 +61,11 @@ pub const CompactLODPool = struct {
     }
 
     pub fn upload(self: *CompactLODPool, mesh: *LODMesh, resources: LODMeshResources) rhi.RhiError!void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        mesh.mutex.lock();
+        defer mesh.mutex.unlock();
+
         const tile = mesh.compact_tile orelse return error.InvalidState;
         const bytes = std.mem.sliceAsBytes(tile.samples);
         if (bytes.len == 0 or bytes.len % 16 != 0) return error.InvalidState;
@@ -63,8 +74,6 @@ pub const CompactLODPool = struct {
         errdefer self.releaseRange(range) catch {};
         try resources.updateBuffer(self.buffer_handle, range.offset, bytes);
 
-        mesh.mutex.lock();
-        defer mesh.mutex.unlock();
         // A range must never be overwritten in place. Callers retire a compact
         // mesh before remeshing, so seeing one here proves a lifecycle bug.
         if (mesh.compact_sample_bytes != 0) return error.InvalidState;
@@ -84,9 +93,11 @@ pub const CompactLODPool = struct {
     /// draw. `collectRetired` only returns it after that slot is completed and
     /// reused at a strictly later serial.
     pub fn retireMesh(self: *CompactLODPool, mesh: *LODMesh, serial: u64, frame_slot: usize) void {
-        if (!mesh.isCompact()) return;
+        self.mutex.lock();
+        defer self.mutex.unlock();
         mesh.mutex.lock();
         defer mesh.mutex.unlock();
+        if (!mesh.compact) return;
         if (mesh.compact_sample_bytes != 0) {
             const range = Range{ .offset = @as(usize, mesh.compact_sample_offset) * 16, .size = mesh.compact_sample_bytes };
             self.retired.append(self.allocator, .{ .range = range, .serial = serial, .frame_slot = frame_slot }) catch {
@@ -107,6 +118,8 @@ pub const CompactLODPool = struct {
     /// the completed slot is supplied only after its frame fence has made it
     /// reusable. Older or duplicate serials cannot reclaim anything.
     pub fn collectRetired(self: *CompactLODPool, completed_serial: u64, completed_frame_slot: usize) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
         if (self.last_completed_serial) |last| {
             if (completed_serial <= last) return;
         }

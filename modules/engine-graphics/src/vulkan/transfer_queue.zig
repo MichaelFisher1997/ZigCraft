@@ -29,7 +29,6 @@ pub const StagingRing = struct {
     head: u64 = 0,
     tail: u64 = 0,
     used_total: u64 = 0,
-    frame_base: [rhi.MAX_FRAMES_IN_FLIGHT]u64,
     frame_used: [rhi.MAX_FRAMES_IN_FLIGHT]u64,
 
     pub fn init(device: *const VulkanDevice, capacity: u64) !StagingRing {
@@ -50,10 +49,8 @@ pub const StagingRing = struct {
             .head = 0,
             .tail = 0,
             .used_total = 0,
-            .frame_base = undefined,
             .frame_used = undefined,
         };
-        @memset(&ring.frame_base, 0);
         @memset(&ring.frame_used, 0);
         return ring;
     }
@@ -71,12 +68,10 @@ pub const StagingRing = struct {
         self.head = 0;
         self.tail = 0;
         self.used_total = 0;
-        @memset(&self.frame_base, 0);
         @memset(&self.frame_used, 0);
     }
 
     pub fn beginFrame(self: *StagingRing, frame_index: usize) void {
-        self.frame_base[frame_index] = self.head;
         self.frame_used[frame_index] = 0;
     }
 
@@ -366,7 +361,6 @@ test "staging ring distinguishes full from empty" {
     var ring = StagingRing{
         .mapped = &memory,
         .capacity = memory.len,
-        .frame_base = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
         .frame_used = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
     };
     ring.beginFrame(0);
@@ -383,7 +377,6 @@ test "staging ring reclaims wrapped frame regions" {
     var ring = StagingRing{
         .mapped = &memory,
         .capacity = memory.len,
-        .frame_base = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
         .frame_used = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
     };
     ring.beginFrame(0);

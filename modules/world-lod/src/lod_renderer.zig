@@ -865,6 +865,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             for (self.gpu_candidates.items) |candidate| {
                 if (candidate.lod_and_padding[1] != 0 and (if (layer == .fluid) candidate.water_command.count else candidate.terrain_command.count) != 0) has_compact = true;
             }
+            // Dormant scaffolding: candidate preparation currently rejects
+            // compact candidates until terrain/water have immutable per-layer
+            // descriptor sets. Keep this submission path for that follow-up.
             if (has_compact) {
                 if (!@hasDecl(@TypeOf(render_ctx), "drawCompactLODIndirectCount") or self.compact_pool.buffer_handle == 0) return false;
                 render_ctx.setLODCompactSampleBuffer(self.compact_pool.buffer_handle);

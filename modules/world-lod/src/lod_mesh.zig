@@ -164,6 +164,8 @@ pub const LODMesh = struct {
     pub fn isPooled(self: *const LODMesh) bool {
         return self.pooled;
     }
+    /// Representation selection is serialized by the LOD manager/renderer.
+    /// Code outside that invariant must hold `mutex` before reading `compact`.
     pub fn isCompact(self: *const LODMesh) bool {
         return self.compact;
     }
