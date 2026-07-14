@@ -28,6 +28,8 @@ const log = @import("engine-core").log;
 const lod_seam = @import("lod_seam.zig");
 const resources_mod = @import("lod_mesh_resources.zig");
 const geom = @import("lod_geometry.zig");
+const CompactLODTile = @import("lod_tile.zig").CompactLODTile;
+const CompactTileEdge = @import("lod_tile.zig").TileEdge;
 
 pub const EdgeDir = lod_seam.EdgeDir;
 pub const SeamConfig = lod_seam.SeamConfig;
@@ -99,6 +101,14 @@ pub const LODMesh = struct {
         pub const empty: DrawState = .{};
     };
 
+    pub const MemorySnapshot = struct {
+        capacity_bytes: usize,
+        pending_upload_bytes: usize,
+        pooled: bool,
+        compact: bool,
+        vertex_count: u32,
+    };
+
     /// GPU buffer handle
     buffer_handle: BufferHandle = 0,
     /// Number of vertices
@@ -117,6 +127,16 @@ pub const LODMesh = struct {
     pooled: bool = false,
     /// Pending vertices to upload
     pending_vertices: ?[]Vertex = null,
+    /// Present only while a compact tile awaits GPU upload.  The pool owns the
+    /// post-upload representation, so this is never an expanded Vertex array.
+    compact_tile: ?CompactLODTile = null,
+    compact: bool = false,
+    compact_sample_offset: u32 = 0,
+    compact_sample_bytes: usize = 0,
+    compact_index_count: u32 = 0,
+    compact_tile_width: u32 = 0,
+    compact_has_water: bool = false,
+    compact_draw_failed: bool = false,
     /// Allocator
     allocator: std.mem.Allocator,
     /// Mutex for thread safety
@@ -144,6 +164,54 @@ pub const LODMesh = struct {
     pub fn isPooled(self: *const LODMesh) bool {
         return self.pooled;
     }
+    pub fn isCompact(self: *const LODMesh) bool {
+        return self.compact;
+    }
+
+    pub fn compactDrawFailed(self: *LODMesh) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.compact_draw_failed;
+    }
+
+    pub fn markCompactDrawFailed(self: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.compact_draw_failed = true;
+        self.ready = false;
+    }
+
+    pub fn patchCompactNeighbor(self: *LODMesh, edge: CompactTileEdge, neighbor: *LODMesh) bool {
+        if (self == neighbor) return false;
+        const self_first = @intFromPtr(self) < @intFromPtr(neighbor);
+        const first = if (self_first) self else neighbor;
+        const second = if (self_first) neighbor else self;
+        first.mutex.lock();
+        defer first.mutex.unlock();
+        second.mutex.lock();
+        defer second.mutex.unlock();
+        const tile = if (self.compact_tile) |*value| value else return false;
+        const neighbor_tile = if (neighbor.compact_tile) |*value| value else return false;
+        tile.applyNeighborApron(edge, neighbor_tile) catch return false;
+        const opposite: CompactTileEdge = switch (edge) {
+            .west => .east,
+            .east => .west,
+            .north => .south,
+            .south => .north,
+        };
+        neighbor_tile.applyNeighborApron(opposite, tile) catch return false;
+        return true;
+    }
+
+    /// True when replacing this mesh must first retire renderer-owned storage.
+    /// A remesh may replace either an uploaded representation or source data
+    /// awaiting upload; both cases must discard the old representation first.
+    pub fn hasRepresentation(self: *LODMesh) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.compact or self.buffer_handle != 0 or self.pooled or
+            self.pending_vertices != null or self.capacity != 0 or self.ready;
+    }
 
     pub fn bufferHandle(self: *const LODMesh) BufferHandle {
         return self.buffer_handle;
@@ -166,7 +234,12 @@ pub const LODMesh = struct {
     }
 
     pub fn drawRange(self: *const LODMesh, layer: LODRenderLayer) ?DrawRange {
-        if (!self.ready or self.buffer_handle == 0) return null;
+        if (!self.ready) return null;
+        if (self.compact) return switch (layer) {
+            .terrain => if (self.compact_index_count > 0) .{ .offset = 0, .count = self.compact_index_count } else null,
+            .fluid => if (self.compact_has_water and self.compact_index_count > 0) .{ .offset = 0, .count = self.compact_index_count } else null,
+        };
+        if (self.buffer_handle == 0) return null;
         return switch (layer) {
             .terrain => if (self.opaque_vertex_count > 0)
                 .{ .offset = 0, .count = self.opaque_vertex_count }
@@ -253,7 +326,95 @@ pub const LODMesh = struct {
             self.allocator.free(p);
             self.pending_vertices = null;
         }
+        if (self.compact_tile) |*tile| tile.deinit();
+        self.compact_tile = null;
+        self.compact = false;
+        self.compact_sample_offset = 0;
+        self.compact_sample_bytes = 0;
+        self.compact_index_count = 0;
+        self.compact_tile_width = 0;
+        self.compact_has_water = false;
+        self.compact_draw_failed = false;
         self.ready = false;
+    }
+
+    pub fn buildCompactTile(self: *LODMesh, data: *const LODSimplifiedData) !void {
+        const tile = try CompactLODTile.initFromSimplified(self.allocator, self.lod_level, data);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.compact_tile) |*old| old.deinit();
+        self.compact_tile = tile;
+        self.compact = true;
+        const cells = (data.width - 1) * (data.width - 1);
+        self.compact_index_count = cells * 6;
+        self.compact_tile_width = data.width;
+        self.compact_has_water = false;
+        for (data.water) |water| {
+            if (water.is_surface and water.coverage > 0.001) {
+                self.compact_has_water = true;
+                break;
+            }
+        }
+        self.compact_draw_failed = false;
+        self.ready = false;
+    }
+
+    /// Releases an unuploaded compact source tile.  Shutdown paths call this
+    /// before handing a mesh to a type-erased backend, so a partial upload never
+    /// relies on a backend-specific destroy hook for CPU ownership.
+    pub fn releasePendingCompactTile(self: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.compact_tile) |*tile| tile.deinit();
+        self.compact_tile = null;
+    }
+
+    /// Clears compact-only state after its range has been retired by the
+    /// renderer, or when it never reached the renderer. This is deliberately
+    /// separate from `releasePendingCompactTile`: a CPU fallback must not leave
+    /// `compact` set, otherwise the normal vertex uploader will re-enter the
+    /// compact path with stale offsets.
+    pub fn clearCompactState(self: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.compact_tile) |*tile| tile.deinit();
+        self.compact_tile = null;
+        self.compact = false;
+        self.compact_sample_offset = 0;
+        self.compact_sample_bytes = 0;
+        self.compact_index_count = 0;
+        self.compact_tile_width = 0;
+        self.compact_has_water = false;
+        self.compact_draw_failed = false;
+        self.buffer_handle = 0;
+        self.vertex_count = 0;
+        self.opaque_vertex_count = 0;
+        self.water_vertex_offset = 0;
+        self.water_vertex_count = 0;
+        self.vertex_offset = 0;
+        self.capacity = 0;
+        self.pooled = false;
+        self.ready = false;
+    }
+
+    /// Idempotent cleanup after the renderer has retired/destroyed the GPU
+    /// object. This also makes lightweight test bridges safe: they need not
+    /// duplicate representation bookkeeping merely to exercise a remesh.
+    pub fn clearRetiredState(self: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.pending_vertices) |pending| self.allocator.free(pending);
+        self.pending_vertices = null;
+        if (self.compact_tile) |*tile| tile.deinit();
+        self.compact_tile = null;
+        self.clearDrawStateUnlocked();
+        self.compact = false;
+        self.compact_sample_offset = 0;
+        self.compact_sample_bytes = 0;
+        self.compact_index_count = 0;
+        self.compact_tile_width = 0;
+        self.compact_has_water = false;
+        self.compact_draw_failed = false;
     }
 
     pub fn clearPendingVertices(self: *LODMesh) void {
@@ -269,8 +430,29 @@ pub const LODMesh = struct {
     pub fn pendingUploadBytes(self: *LODMesh) usize {
         self.mutex.lock();
         defer self.mutex.unlock();
+        if (self.compact_tile) |tile| return std.mem.sliceAsBytes(tile.samples).len;
         const pending = self.pending_vertices orelse return 0;
         return std.mem.sliceAsBytes(pending).len;
+    }
+
+    /// Atomically snapshots the storage that this mesh currently owns or uses.
+    /// Pooled capacity is an allocation within the renderer-owned pool, not a
+    /// separate GPU buffer.
+    pub fn memorySnapshot(self: *LODMesh) MemorySnapshot {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return .{
+            .capacity_bytes = self.byteSize(),
+            .pending_upload_bytes = if (self.compact_tile) |tile|
+                std.mem.sliceAsBytes(tile.samples).len
+            else if (self.pending_vertices) |pending|
+                std.mem.sliceAsBytes(pending).len
+            else
+                0,
+            .pooled = self.pooled,
+            .compact = self.compact,
+            .vertex_count = self.vertex_count,
+        };
     }
 
     /// Build mesh from simplified LOD data (heightmap-based)

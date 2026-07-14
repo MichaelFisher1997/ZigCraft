@@ -86,6 +86,8 @@ pub const DrawMode = rhi_types.DrawMode;
 pub const ShaderStageFlags = rhi_types.ShaderStageFlags;
 pub const DrawIndirectCommand = rhi_types.DrawIndirectCommand;
 pub const InstanceData = rhi_types.InstanceData;
+pub const CompactLODDraw = rhi_types.CompactLODDraw;
+pub const CompactLODSampleWords = rhi_types.CompactLODSampleWords;
 pub const SkyParams = rhi_types.SkyParams;
 pub const SkyPushConstants = rhi_types.SkyPushConstants;
 pub const FrameRenderParams = rhi_types.FrameRenderParams;
@@ -428,6 +430,18 @@ pub const RenderContext = struct {
     pub fn drawIndexed(self: RenderContext, vbo: BufferHandle, ebo: BufferHandle, count: u32) void {
         self.encoder.drawIndexed(vbo, ebo, count);
     }
+    /// Draws a compact far-LOD grid through a storage-buffer vertex-pulling
+    /// pipeline.  The index buffer is reusable and no expanded Vertex array is
+    /// required for the tile.
+    pub fn drawCompactLOD(self: RenderContext, index_buffer: BufferHandle, index_count: u32, params: CompactLODDraw) bool {
+        return self.encoder.drawCompactLOD(index_buffer, index_count, params);
+    }
+    /// Draws GPU-compacted indexed compact-LOD commands. The compact instance
+    /// SSBO is indexed by each command's firstInstance; no CPU count readback
+    /// or per-draw push constants are used.
+    pub fn drawCompactLODIndirectCount(self: RenderContext, index_buffer: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32) bool {
+        return self.encoder.drawCompactLODIndirectCount(index_buffer, command_buffer, offset, count_buffer, count_offset, max_draw_count);
+    }
     /// Issues indirect draw commands from a GPU buffer.
     /// The indirect buffer must contain backend-compatible command records and remain valid through submission. Must be called from the render thread that owns the backend context.
     pub fn drawIndirect(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
@@ -465,6 +479,13 @@ pub const RenderContext = struct {
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setLODInstanceBuffer(handle);
+    }
+    /// Binds the shared compact LOD sample pool for subsequent vertex-pulling draws.
+    pub fn setLODCompactSampleBuffer(self: RenderContext, handle: BufferHandle) void {
+        self.state.setLODCompactSampleBuffer(handle);
+    }
+    pub fn setLODCompactInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
+        self.state.setLODCompactInstanceBuffer(handle);
     }
     /// Sets terrain pipeline bound on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
@@ -788,6 +809,8 @@ pub const IGraphicsCommandEncoder = struct {
         draw: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, mode: DrawMode) void,
         drawOffset: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, mode: DrawMode, offset: usize) void,
         drawIndexed: *const fn (ptr: *anyopaque, vbo: BufferHandle, ebo: BufferHandle, count: u32) void,
+        drawCompactLOD: *const fn (ptr: *anyopaque, index_buffer: BufferHandle, index_count: u32, params: CompactLODDraw) bool,
+        drawCompactLODIndirectCount: *const fn (ptr: *anyopaque, index_buffer: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32) bool,
         drawIndirect: *const fn (ptr: *anyopaque, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void,
         drawIndirectCount: *const fn (ptr: *anyopaque, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool,
         drawInstance: *const fn (ptr: *anyopaque, handle: BufferHandle, count: u32, instance_index: u32) void,
@@ -824,6 +847,12 @@ pub const IGraphicsCommandEncoder = struct {
     pub fn drawIndexed(self: IGraphicsCommandEncoder, vbo: BufferHandle, ebo: BufferHandle, count: u32) void {
         self.vtable.drawIndexed(self.ptr, vbo, ebo, count);
     }
+    pub fn drawCompactLOD(self: IGraphicsCommandEncoder, index_buffer: BufferHandle, index_count: u32, params: CompactLODDraw) bool {
+        return self.vtable.drawCompactLOD(self.ptr, index_buffer, index_count, params);
+    }
+    pub fn drawCompactLODIndirectCount(self: IGraphicsCommandEncoder, index_buffer: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32) bool {
+        return self.vtable.drawCompactLODIndirectCount(self.ptr, index_buffer, command_buffer, offset, count_buffer, count_offset, max_draw_count);
+    }
     /// Issues indirect draw commands from a GPU buffer.
     /// The indirect buffer must contain backend-compatible command records and remain valid through submission. Must be called from the render thread that owns the backend context.
     pub fn drawIndirect(self: IGraphicsCommandEncoder, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
@@ -852,6 +881,8 @@ pub const IRenderStateContext = struct {
         setModelMatrix: *const fn (ptr: *anyopaque, model: Mat4, color: Vec3, mask_radius: f32) void,
         setInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setLODInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+        setLODCompactSampleBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+        setLODCompactInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setTerrainPipelineBound: *const fn (ptr: *anyopaque, bound: bool) void,
         setSelectionMode: *const fn (ptr: *anyopaque, enabled: bool) void,
         updateGlobalUniforms: *const fn (ptr: *anyopaque, uniforms: GlobalUniforms, frame_params: FrameRenderParams) anyerror!void,
@@ -872,6 +903,13 @@ pub const IRenderStateContext = struct {
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setLODInstanceBuffer(self.ptr, handle);
+    }
+    /// Selects the immutable shared compact sample pool for LOD vertex pulling.
+    pub fn setLODCompactSampleBuffer(self: IRenderStateContext, handle: BufferHandle) void {
+        self.vtable.setLODCompactSampleBuffer(self.ptr, handle);
+    }
+    pub fn setLODCompactInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
+        self.vtable.setLODCompactInstanceBuffer(self.ptr, handle);
     }
     /// Sets terrain pipeline bound on the active graphics backend.
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.

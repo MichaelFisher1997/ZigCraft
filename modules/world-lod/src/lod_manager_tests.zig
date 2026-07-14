@@ -292,6 +292,17 @@ test "LODManager constants" {
     try std.testing.expect(LODLevel.count >= 2);
 }
 
+test "LODManager preserves the CPU heightfield fallback for far LODs" {
+    var config = LODConfig{ .mesh_path = .qem };
+    const manager = try buildIngestionManager(std.testing.allocator, &config);
+    defer manager.deinit();
+
+    // Far LODs must not inherit an optional mesh path. They retain the
+    // CPU-expanded heightfield route when a future renderer path is unavailable.
+    try std.testing.expectEqual(@import("engine-rhi").LODMeshPath.heightfield, manager.effectiveMeshPath(.lod3));
+    try std.testing.expectEqual(@import("engine-rhi").LODMeshPath.heightfield, manager.effectiveMeshPath(.lod4));
+}
+
 // ---------------------------------------------------------------------------
 // Chunk-derived LOD ingestion (issue #752 Phase 2)
 // ---------------------------------------------------------------------------

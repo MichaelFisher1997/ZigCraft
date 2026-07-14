@@ -125,7 +125,7 @@ The maintained fallback is the present CPU-generated `LODMesh` heightfield path,
 - Add compact-specific counters: submitted/uploaded tile bytes, resident/allocated/free/retired tile bytes, tile count by LOD/state, tile replacement count, apron-missing/fallback count, and CPU fallback reason. Keep expanded CPU mesh and compact tile memory distinct.
 - Add GPU timestamp scopes for compact terrain vertex/raster work and far water, plus optional vertex-pulling/expansion scope if a compute prototype exists. Report these separately from Phase 3 culling and the existing terrain pass.
 
-**Gate:** ABI tests pass; accounting includes live plus retired compact allocations; the feature is off by default; normal operation makes no GPU readback and no streaming `waitIdle`.
+**Gate:** ABI tests pass; accounting includes live plus retired compact allocations; `auto` is the default but must fail closed until the active driver is qualified, with explicit `off` and diagnostic `force` overrides; normal operation makes no GPU readback and no streaming `waitIdle`.
 
 ### B. Reusable-grid terrain prototype
 

@@ -18,7 +18,7 @@ pub fn createSwapchainUIResources(ctx: anytype) !void {
     lifecycle.destroySwapchainUIResources(ctx);
     errdefer lifecycle.destroySwapchainUIResources(ctx);
 
-    try ctx.render_pass_manager.createUISwapchainRenderPass(vk, ctx.swapchain.getImageFormat());
+    try ctx.render_pass_manager.createUISwapchainRenderPass(vk, ctx.swapchain.getImageFormat(), ctx.swapchain.swapchain.headless_mode);
     try ctx.render_pass_manager.createUISwapchainFramebuffers(vk, ctx.allocator, ctx.swapchain.getExtent(), ctx.swapchain.getImageViews());
 }
 
@@ -445,7 +445,7 @@ pub fn createWaterResources(ctx: anytype) !void {
 pub fn createPostProcessResources(ctx: anytype) !void {
     const vk = ctx.vulkan_device.vk_device;
 
-    try ctx.render_pass_manager.createPostProcessRenderPass(vk, ctx.swapchain.getImageFormat());
+    try ctx.render_pass_manager.createPostProcessRenderPass(vk, ctx.swapchain.getImageFormat(), ctx.swapchain.swapchain.headless_mode);
 
     const global_uniform_size: usize = @intCast(ctx.descriptors.global_ubos[0].size);
     try ctx.post_process.init(

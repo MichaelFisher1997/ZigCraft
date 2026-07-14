@@ -25,6 +25,7 @@ const WorkerPool = JobSystem.WorkerPool;
 const Job = JobSystem.Job;
 const RingBuffer = engine_core.ring_buffer.RingBuffer;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
+const lod_tile = @import("lod_tile.zig");
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
@@ -263,6 +264,14 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
             if (chunk.isPinned()) continue;
+            if (chunk.getState() == .renderable) {
+                if (self.meshes[i].get(entry.key_ptr.*)) |mesh| {
+                    if (mesh.isCompact() and mesh.compactDrawFailed()) {
+                        chunk.compact_disabled = true;
+                        chunk.setState(.generated);
+                    }
+                }
+            }
             if (chunk.getState() == .generated) {
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
@@ -272,6 +281,7 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                     return err;
                 };
             } else if (chunk.getState() == .mesh_ready) {
+                if (self.meshes[i].get(entry.key_ptr.*)) |mesh| patchCompactAprons(self, i, entry.key_ptr.*, mesh);
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
                 const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - player.cx, center_cz - player.cz, velocity, active_lod_count);
@@ -322,6 +332,14 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
             self.mutex.unlock();
             return err;
         };
+        // Never let a worker invoke RHI or release a live pooled range. Once
+        // the replacement job is guaranteed to be queued, detach the previous
+        // representation and retire it through the normal frame-delayed
+        // disposal queue. The worker will create a fresh mesh object.
+        const mesh_key = LODRegionKey{ .rx = mc.chunk.region_x, .rz = mc.chunk.region_z, .lod = @enumFromInt(mc.level) };
+        if (self.meshes[mc.level].fetchRemove(mesh_key)) |old_mesh| {
+            self.queueMeshDeletion(old_mesh.value);
+        }
         self.mutex.unlock();
     }
 
@@ -348,6 +366,20 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
             return err;
         };
         self.mutex.unlock();
+    }
+}
+
+fn patchCompactAprons(self: *Self, lod_index: usize, key: LODRegionKey, mesh: *LODMesh) void {
+    const neighbors = [_]struct { dx: i32, dz: i32, edge: lod_tile.TileEdge }{
+        .{ .dx = -1, .dz = 0, .edge = .west },
+        .{ .dx = 1, .dz = 0, .edge = .east },
+        .{ .dx = 0, .dz = -1, .edge = .north },
+        .{ .dx = 0, .dz = 1, .edge = .south },
+    };
+    for (neighbors) |neighbor| {
+        const neighbor_key = LODRegionKey{ .rx = key.rx + neighbor.dx, .rz = key.rz + neighbor.dz, .lod = key.lod };
+        const neighbor_mesh = self.meshes[lod_index].get(neighbor_key) orelse continue;
+        _ = mesh.patchCompactNeighbor(neighbor.edge, neighbor_mesh);
     }
 }
 
@@ -391,6 +423,19 @@ pub fn buildMeshForChunk(self: *Self, chunk: *LODChunk) !void {
     switch (chunk.data) {
         .simplified => |*data| {
             const bounds = chunk.worldBounds();
+            // LOD3/4 can use the diagnostic compact heightfield path while the
+            // expanded CPU-built GPU mesh remains the production fallback.
+            // Compact water is temporarily quarantined on RADV: the direct
+            // compact water vertex path can cause a rejected command stream on
+            // real saved worlds even with validation clean. Preserve water by
+            // routing wet regions through the maintained expanded CPU mesh.
+            if (shouldUseCompactTiles(self, chunk) and !hasRenderableWater(data)) {
+                mesh.buildCompactTile(data) catch |err| switch (err) {
+                    error.UnsupportedSourceFeatures => {},
+                    else => return err,
+                };
+                if (mesh.isCompact()) return;
+            }
             switch (self.effectiveMeshPath(chunk.lodLevel())) {
                 .heightfield => try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas),
                 .column_spans => try mesh.buildFromColumnSpans(data, bounds.min_x, bounds.min_z, self.atlas),
@@ -414,6 +459,45 @@ pub fn buildMeshForChunk(self: *Self, chunk: *LODChunk) !void {
             // No data to build mesh from
         },
     }
+}
+
+fn hasRenderableWater(data: *const LODSimplifiedData) bool {
+    for (data.water) |water| {
+        if (water.is_surface and water.coverage > 0.001) return true;
+    }
+    return false;
+}
+
+/// Converts an unrenderable compact upload to the established CPU heightfield
+/// route. The upload task pins `chunk`, so its simplified source is stable for
+/// this synchronous recovery and can immediately be requeued without a hole.
+pub fn fallbackCompactMeshToCpu(self: *Self, mesh: *LODMesh, chunk: *LODChunk) !void {
+    std.debug.assert(mesh.isCompact());
+    self.gpu_bridge.destroy(mesh);
+    mesh.clearRetiredState();
+    switch (chunk.data) {
+        .simplified => |*data| {
+            const bounds = chunk.worldBounds();
+            try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas);
+        },
+        else => return error.InvalidState,
+    }
+}
+
+fn shouldUseCompactTiles(self: *Self, chunk: *const LODChunk) bool {
+    if (chunk.compact_disabled) return false;
+    const lod = chunk.lodLevel();
+    if (lod != .lod3 and lod != .lod4) return false;
+    const mode = engine_core.getenv("ZIGCRAFT_LOD_COMPACT") orelse "auto";
+    if (std.ascii.eqlIgnoreCase(mode, "off")) return false;
+    // Capability checks prove that the required Vulkan entry points and
+    // resources exist, but the compact path still causes command-stream
+    // rejection on RADV in mixed wet/dry saved worlds. Auto therefore fails
+    // closed until driver qualification is represented by a real capability
+    // probe. `force` remains available for bounded diagnostics.
+    if (std.ascii.eqlIgnoreCase(mode, "auto")) return false;
+    if (std.ascii.eqlIgnoreCase(mode, "force")) return self.gpu_bridge.supportsCompact();
+    return false;
 }
 
 pub fn effectiveMeshPath(self: *Self, lod: LODLevel) lod_chunk.LODMeshPath {

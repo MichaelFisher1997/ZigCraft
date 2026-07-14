@@ -6,8 +6,8 @@ const lod_types = @import("lod_types.zig");
 const LODLevel = lod_types.LODLevel;
 const LODState = lod_types.LODState;
 
-/// Read-only, cumulative LOD profiling data. CPU durations measure only
-/// instrumented CPU work; they are not GPU timings or GPU-memory accounting.
+/// Read-only LOD profiling data. Durations are cumulative CPU timings; memory
+/// fields are current known allocations rather than GPU-driver measurements.
 pub const LODProfilingSnapshot = struct {
     enabled: bool = false,
     update_ms: f64 = 0,
@@ -24,6 +24,8 @@ pub const LODProfilingSnapshot = struct {
     eviction_ms: f64 = 0,
     worker_generation_ms: f64 = 0,
     worker_mesh_construction_ms: f64 = 0,
+    manager_lock_wait_ms: f64 = 0,
+    manager_lock_hold_ms: f64 = 0,
     upload_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     /// Upload-budget deferrals plus RHI upload-pressure errors.
@@ -34,10 +36,19 @@ pub const LODProfilingSnapshot = struct {
     /// Per-LOD visibility projection telemetry. These counters are cumulative
     /// and count a region once, even when terrain and water are both drawn.
     visibility_levels: [LODLevel.count]LODVisibilityLevelSnapshot = [_]LODVisibilityLevelSnapshot{.{}} ** LODLevel.count,
-    /// Known CPU vertex-capacity bytes retained by meshes awaiting deletion.
-    /// GPU pool allocations are deliberately not reported because they are not
-    /// available through the current RHI/LOD pool interface.
+    /// Current known GPU allocation bytes retained by meshes awaiting destruction.
     deferred_deletion_bytes: u64 = 0,
+    deferred_deletion_cpu_bytes: u64 = 0,
+    pool_gpu_capacity_bytes: u64 = 0,
+    pool_gpu_allocated_bytes: u64 = 0,
+    pool_gpu_slack_bytes: u64 = 0,
+    pool_cpu_shadow_bytes: u64 = 0,
+    compact_pool_capacity_bytes: u64 = 0,
+    compact_pool_allocated_bytes: u64 = 0,
+    compact_pool_free_bytes: u64 = 0,
+    compact_pool_retired_bytes: u64 = 0,
+    direct_mesh_gpu_bytes: u64 = 0,
+    known_memory_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
 };
@@ -112,6 +123,8 @@ pub const LODProfilingCollector = struct {
         eviction,
         worker_generation,
         worker_mesh_construction,
+        manager_lock_wait,
+        manager_lock_hold,
         wait_idle,
     };
 
@@ -128,6 +141,8 @@ pub const LODProfilingCollector = struct {
     eviction_ns: AtomicU64 = AtomicU64.init(0),
     worker_generation_ns: AtomicU64 = AtomicU64.init(0),
     worker_mesh_construction_ns: AtomicU64 = AtomicU64.init(0),
+    manager_lock_wait_ns: AtomicU64 = AtomicU64.init(0),
+    manager_lock_hold_ns: AtomicU64 = AtomicU64.init(0),
     wait_idle_ns: AtomicU64 = AtomicU64.init(0),
     upload_bytes: AtomicU64 = AtomicU64.init(0),
     pending_cpu_upload_bytes: AtomicU64 = AtomicU64.init(0),
@@ -137,6 +152,17 @@ pub const LODProfilingCollector = struct {
     coverage_count: AtomicU64 = AtomicU64.init(0),
     visibility_levels: [LODLevel.count]LODVisibilityLevelCounters = [_]LODVisibilityLevelCounters{.{}} ** LODLevel.count,
     deferred_deletion_bytes: AtomicU64 = AtomicU64.init(0),
+    deferred_deletion_cpu_bytes: AtomicU64 = AtomicU64.init(0),
+    pool_gpu_capacity_bytes: AtomicU64 = AtomicU64.init(0),
+    pool_gpu_allocated_bytes: AtomicU64 = AtomicU64.init(0),
+    pool_gpu_slack_bytes: AtomicU64 = AtomicU64.init(0),
+    pool_cpu_shadow_bytes: AtomicU64 = AtomicU64.init(0),
+    compact_pool_capacity_bytes: AtomicU64 = AtomicU64.init(0),
+    compact_pool_allocated_bytes: AtomicU64 = AtomicU64.init(0),
+    compact_pool_free_bytes: AtomicU64 = AtomicU64.init(0),
+    compact_pool_retired_bytes: AtomicU64 = AtomicU64.init(0),
+    direct_mesh_gpu_bytes: AtomicU64 = AtomicU64.init(0),
+    known_memory_bytes: AtomicU64 = AtomicU64.init(0),
     wait_idle_count: AtomicU64 = AtomicU64.init(0),
 
     pub fn init(enabled: bool) LODProfilingCollector {
@@ -165,6 +191,20 @@ pub const LODProfilingCollector = struct {
     pub fn setPendingCpuUploadBytes(self: *LODProfilingCollector, bytes: usize) void {
         if (!self.enabled) return;
         self.pending_cpu_upload_bytes.store(@intCast(bytes), .monotonic);
+    }
+
+    pub fn setMemoryAccounting(self: *LODProfilingCollector, pool_gpu_capacity: usize, pool_gpu_allocated: usize, pool_gpu_slack: usize, pool_cpu_shadow: usize, compact_pool_capacity: usize, compact_pool_allocated: usize, compact_pool_free: usize, compact_pool_retired: usize, direct_mesh_gpu: usize, known_memory: usize) void {
+        if (!self.enabled) return;
+        self.pool_gpu_capacity_bytes.store(@intCast(pool_gpu_capacity), .monotonic);
+        self.pool_gpu_allocated_bytes.store(@intCast(pool_gpu_allocated), .monotonic);
+        self.pool_gpu_slack_bytes.store(@intCast(pool_gpu_slack), .monotonic);
+        self.pool_cpu_shadow_bytes.store(@intCast(pool_cpu_shadow), .monotonic);
+        self.compact_pool_capacity_bytes.store(@intCast(compact_pool_capacity), .monotonic);
+        self.compact_pool_allocated_bytes.store(@intCast(compact_pool_allocated), .monotonic);
+        self.compact_pool_free_bytes.store(@intCast(compact_pool_free), .monotonic);
+        self.compact_pool_retired_bytes.store(@intCast(compact_pool_retired), .monotonic);
+        self.direct_mesh_gpu_bytes.store(@intCast(direct_mesh_gpu), .monotonic);
+        self.known_memory_bytes.store(@intCast(known_memory), .monotonic);
     }
 
     pub fn addStagingPressure(self: *LODProfilingCollector) void {
@@ -197,6 +237,15 @@ pub const LODProfilingCollector = struct {
         _ = self.deferred_deletion_bytes.fetchSub(@intCast(bytes), .monotonic);
     }
 
+    pub fn addDeferredDeletionCpuBytes(self: *LODProfilingCollector, bytes: usize) void {
+        self.add(&self.deferred_deletion_cpu_bytes, @intCast(bytes));
+    }
+
+    pub fn removeDeferredDeletionCpuBytes(self: *LODProfilingCollector, bytes: usize) void {
+        if (!self.enabled or bytes == 0) return;
+        _ = self.deferred_deletion_cpu_bytes.fetchSub(@intCast(bytes), .monotonic);
+    }
+
     pub fn addWaitIdle(self: *LODProfilingCollector) void {
         self.add(&self.wait_idle_count, 1);
     }
@@ -206,13 +255,18 @@ pub const LODProfilingCollector = struct {
     /// race-free and never contain torn values.
     pub fn reset(self: *LODProfilingCollector) void {
         inline for (.{
-            &self.update_ns,              &self.scheduling_ns,           &self.cache_ns,
-            &self.generation_dispatch_ns, &self.state_transition_ns,     &self.upload_prep_ns,
-            &self.upload_submission_ns,   &self.visibility_ns,           &self.coverage_ns,
-            &self.eviction_ns,            &self.worker_generation_ns,    &self.worker_mesh_construction_ns,
-            &self.wait_idle_ns,           &self.upload_bytes,            &self.pending_cpu_upload_bytes,
-            &self.staging_pressure_count, &self.visible_count,           &self.rejected_count,
-            &self.coverage_count,         &self.deferred_deletion_bytes, &self.wait_idle_count,
+            &self.update_ns,                   &self.scheduling_ns,                &self.cache_ns,
+            &self.generation_dispatch_ns,      &self.state_transition_ns,          &self.upload_prep_ns,
+            &self.upload_submission_ns,        &self.visibility_ns,                &self.coverage_ns,
+            &self.eviction_ns,                 &self.worker_generation_ns,         &self.worker_mesh_construction_ns,
+            &self.manager_lock_wait_ns,        &self.manager_lock_hold_ns,         &self.wait_idle_ns,
+            &self.upload_bytes,                &self.pending_cpu_upload_bytes,     &self.staging_pressure_count,
+            &self.visible_count,               &self.rejected_count,               &self.coverage_count,
+            &self.deferred_deletion_bytes,     &self.deferred_deletion_cpu_bytes,  &self.pool_gpu_capacity_bytes,
+            &self.pool_gpu_allocated_bytes,    &self.pool_gpu_slack_bytes,         &self.pool_cpu_shadow_bytes,
+            &self.compact_pool_capacity_bytes, &self.compact_pool_allocated_bytes, &self.compact_pool_free_bytes,
+            &self.compact_pool_retired_bytes,  &self.direct_mesh_gpu_bytes,        &self.known_memory_bytes,
+            &self.wait_idle_count,
         }) |counter| counter.store(0, .monotonic);
         for (&self.visibility_levels) |*level| level.reset();
     }
@@ -232,6 +286,8 @@ pub const LODProfilingCollector = struct {
             .eviction_ms = nsToMs(self.eviction_ns.load(.monotonic)),
             .worker_generation_ms = nsToMs(self.worker_generation_ns.load(.monotonic)),
             .worker_mesh_construction_ms = nsToMs(self.worker_mesh_construction_ns.load(.monotonic)),
+            .manager_lock_wait_ms = nsToMs(self.manager_lock_wait_ns.load(.monotonic)),
+            .manager_lock_hold_ms = nsToMs(self.manager_lock_hold_ns.load(.monotonic)),
             .upload_bytes = self.upload_bytes.load(.monotonic),
             .pending_cpu_upload_bytes = self.pending_cpu_upload_bytes.load(.monotonic),
             .staging_pressure_count = self.staging_pressure_count.load(.monotonic),
@@ -244,6 +300,17 @@ pub const LODProfilingCollector = struct {
                 break :blk levels;
             },
             .deferred_deletion_bytes = self.deferred_deletion_bytes.load(.monotonic),
+            .deferred_deletion_cpu_bytes = self.deferred_deletion_cpu_bytes.load(.monotonic),
+            .pool_gpu_capacity_bytes = self.pool_gpu_capacity_bytes.load(.monotonic),
+            .pool_gpu_allocated_bytes = self.pool_gpu_allocated_bytes.load(.monotonic),
+            .pool_gpu_slack_bytes = self.pool_gpu_slack_bytes.load(.monotonic),
+            .pool_cpu_shadow_bytes = self.pool_cpu_shadow_bytes.load(.monotonic),
+            .compact_pool_capacity_bytes = self.compact_pool_capacity_bytes.load(.monotonic),
+            .compact_pool_allocated_bytes = self.compact_pool_allocated_bytes.load(.monotonic),
+            .compact_pool_free_bytes = self.compact_pool_free_bytes.load(.monotonic),
+            .compact_pool_retired_bytes = self.compact_pool_retired_bytes.load(.monotonic),
+            .direct_mesh_gpu_bytes = self.direct_mesh_gpu_bytes.load(.monotonic),
+            .known_memory_bytes = self.known_memory_bytes.load(.monotonic),
             .wait_idle_count = self.wait_idle_count.load(.monotonic),
             .wait_idle_ms = nsToMs(self.wait_idle_ns.load(.monotonic)),
         };
@@ -263,6 +330,8 @@ pub const LODProfilingCollector = struct {
             .eviction => &self.eviction_ns,
             .worker_generation => &self.worker_generation_ns,
             .worker_mesh_construction => &self.worker_mesh_construction_ns,
+            .manager_lock_wait => &self.manager_lock_wait_ns,
+            .manager_lock_hold => &self.manager_lock_hold_ns,
             .wait_idle => &self.wait_idle_ns,
         };
     }
@@ -284,6 +353,21 @@ pub const LODStats = struct {
     uploading: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
 
     memory_used_mb: u32 = 0,
+    /// Exact known LOD CPU/GPU allocation total. `memory_used_mb` is retained
+    /// for compatibility and is this value rounded down to MiB.
+    memory_used_bytes: u64 = 0,
+    pool_gpu_capacity_bytes: u64 = 0,
+    pool_gpu_allocated_bytes: u64 = 0,
+    pool_gpu_slack_bytes: u64 = 0,
+    pool_cpu_shadow_bytes: u64 = 0,
+    compact_pool_capacity_bytes: u64 = 0,
+    compact_pool_allocated_bytes: u64 = 0,
+    compact_pool_free_bytes: u64 = 0,
+    compact_pool_retired_bytes: u64 = 0,
+    direct_mesh_gpu_bytes: u64 = 0,
+    pending_cpu_upload_bytes: u64 = 0,
+    deferred_deletion_gpu_bytes: u64 = 0,
+    deferred_deletion_cpu_bytes: u64 = 0,
     mesh_count: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     mesh_vertices: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
     gen_queue_depth: [LODLevel.count]u32 = [_]u32{0} ** LODLevel.count,
@@ -333,6 +417,19 @@ pub const LODStats = struct {
         self.mesh_ready = [_]u32{0} ** LODLevel.count;
         self.uploading = [_]u32{0} ** LODLevel.count;
         self.memory_used_mb = 0;
+        self.memory_used_bytes = 0;
+        self.pool_gpu_capacity_bytes = 0;
+        self.pool_gpu_allocated_bytes = 0;
+        self.pool_gpu_slack_bytes = 0;
+        self.pool_cpu_shadow_bytes = 0;
+        self.compact_pool_capacity_bytes = 0;
+        self.compact_pool_allocated_bytes = 0;
+        self.compact_pool_free_bytes = 0;
+        self.compact_pool_retired_bytes = 0;
+        self.direct_mesh_gpu_bytes = 0;
+        self.pending_cpu_upload_bytes = 0;
+        self.deferred_deletion_gpu_bytes = 0;
+        self.deferred_deletion_cpu_bytes = 0;
         self.mesh_count = [_]u32{0} ** LODLevel.count;
         self.mesh_vertices = [_]u32{0} ** LODLevel.count;
         self.gen_queue_depth = [_]u32{0} ** LODLevel.count;
@@ -365,8 +462,8 @@ pub const LODStats = struct {
     }
 
     pub fn addMemory(self: *LODStats, bytes: usize) void {
-        const mb = bytes / (1024 * 1024);
-        self.memory_used_mb += @intCast(mb);
+        self.memory_used_bytes += @intCast(bytes);
+        self.memory_used_mb = @intCast(self.memory_used_bytes / (1024 * 1024));
     }
 
     pub fn cacheHitRate(self: *const LODStats) f32 {
@@ -394,6 +491,8 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     collector.addCoverage();
     collector.addVisibilityLevel(.lod1, .{ .candidates = 3, .accepted = 1, .rejected_frustum = 1, .coverage_checks = 1 });
     collector.addDeferredDeletionBytes(32);
+    collector.addDeferredDeletionCpuBytes(16);
+    collector.setMemoryAccounting(256, 192, 64, 256, 1024, 320, 704, 0, 128, 1664);
     collector.addWaitIdle();
 
     const snapshot = collector.snapshot();
@@ -406,6 +505,16 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     try std.testing.expectEqual(@as(u64, 3), snapshot.visibility_levels[1].candidates);
     try std.testing.expectEqual(@as(u64, 1), snapshot.visibility_levels[1].rejected_frustum);
     try std.testing.expectEqual(@as(u64, 32), snapshot.deferred_deletion_bytes);
+    try std.testing.expectEqual(@as(u64, 16), snapshot.deferred_deletion_cpu_bytes);
+    try std.testing.expectEqual(@as(u64, 256), snapshot.pool_gpu_capacity_bytes);
+    try std.testing.expectEqual(@as(u64, 192), snapshot.pool_gpu_allocated_bytes);
+    try std.testing.expectEqual(@as(u64, 64), snapshot.pool_gpu_slack_bytes);
+    try std.testing.expectEqual(@as(u64, 256), snapshot.pool_cpu_shadow_bytes);
+    try std.testing.expectEqual(@as(u64, 1024), snapshot.compact_pool_capacity_bytes);
+    try std.testing.expectEqual(@as(u64, 320), snapshot.compact_pool_allocated_bytes);
+    try std.testing.expectEqual(@as(u64, 704), snapshot.compact_pool_free_bytes);
+    try std.testing.expectEqual(@as(u64, 128), snapshot.direct_mesh_gpu_bytes);
+    try std.testing.expectEqual(@as(u64, 1664), snapshot.known_memory_bytes);
     try std.testing.expectEqual(@as(u64, 1), snapshot.wait_idle_count);
 
     collector.reset();
@@ -413,6 +522,7 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.upload_bytes);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.visible_count);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.deferred_deletion_bytes);
+    try std.testing.expectEqual(@as(u64, 0), reset_snapshot.pool_gpu_capacity_bytes);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.visibility_levels[1].candidates);
 }
 

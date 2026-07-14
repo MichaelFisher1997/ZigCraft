@@ -1,0 +1,58 @@
+#version 450
+
+layout(location = 0) in vec3 vColor;
+layout(location = 1) flat in vec3 vNormal;
+layout(location = 2) in vec2 vTexCoord;
+layout(location = 3) flat in int vTileID;
+layout(location = 4) in float vDistance;
+layout(location = 5) in float vSkyLight;
+layout(location = 6) in vec3 vBlockLight;
+layout(location = 7) in vec3 vFragPosWorld;
+layout(location = 8) in float vViewDepth;
+layout(location = 9) in vec4 vClipPos;
+layout(location = 10) in float vMaskRadius;
+layout(location = 11) in float vLODFade;
+
+layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 0) uniform Global {
+    mat4 view_proj;
+    mat4 view_proj_prev;
+    vec4 cam_pos;
+    vec4 sun_dir;
+    vec4 sun_color;
+    vec4 fog_color;
+    vec4 reserved0;
+    vec4 params;
+    vec4 lighting;
+    vec4 render_flags;
+    vec4 shadow_params;
+    vec4 pbr_params;
+    vec4 volumetric_params;
+    vec4 viewport_size;
+    vec4 lpv_params;
+    vec4 lpv_origin;
+} global;
+
+void main() {
+    if (vMaskRadius >= 1.0 && length(vFragPosWorld.xz) < vMaskRadius) discard;
+    // Far water deliberately avoids scene-depth, reflection, SSR, atlas, and
+    // thickness reads. It uses stable low-frequency waves and atmospheric fog.
+    float wave = sin(vFragPosWorld.x * 0.012 + global.params.x * 0.55) *
+                 cos(vFragPosWorld.z * 0.010 - global.params.x * 0.43);
+    vec3 normal = normalize(vec3(wave * 0.08, 1.0, wave * 0.06));
+    vec3 light_dir = normalize(-global.sun_dir.xyz);
+    float diffuse = max(dot(normal, light_dir), 0.0);
+    float light_level = clamp(max(vSkyLight, max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b))), 0.35, 1.0);
+    vec3 base = mix(vec3(0.025, 0.16, 0.30), vec3(0.08, 0.38, 0.64), diffuse * 0.45);
+    base = mix(base, vColor, 0.12) * light_level;
+    base += global.sun_color.rgb * diffuse * global.params.w * 0.06;
+
+    if (global.params.z > 0.5) {
+        float fog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
+        fog = max(fog, smoothstep(280.0, 1100.0, vDistance) * 0.62);
+        base = mix(base, global.fog_color.rgb, fog);
+    }
+
+    outColor = vec4(base, 0.78 * clamp(vLODFade, 0.0, 1.0));
+}

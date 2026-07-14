@@ -32,7 +32,7 @@ pub const FXAASystem = struct {
     post_process_to_fxaa_render_pass: c.VkRenderPass = null,
     post_process_to_fxaa_framebuffer: c.VkFramebuffer = null,
 
-    pub fn init(self: *FXAASystem, device: *const VulkanDevice, allocator: Allocator, descriptor_pool: c.VkDescriptorPool, extent: c.VkExtent2D, format: c.VkFormat, sampler: c.VkSampler, swapchain_views: []const c.VkImageView) !void {
+    pub fn init(self: *FXAASystem, device: *const VulkanDevice, allocator: Allocator, descriptor_pool: c.VkDescriptorPool, extent: c.VkExtent2D, format: c.VkFormat, sampler: c.VkSampler, swapchain_views: []const c.VkImageView, headless: bool) !void {
         self.deinit(device.vk_device, allocator, descriptor_pool);
         const vk = device.vk_device;
 
@@ -72,7 +72,7 @@ pub const FXAASystem = struct {
         color_attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color_attachment.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
         color_attachment.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
-        color_attachment.finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        color_attachment.finalLayout = if (headless) c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL else c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
         var color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
         var subpass = std.mem.zeroes(c.VkSubpassDescription);

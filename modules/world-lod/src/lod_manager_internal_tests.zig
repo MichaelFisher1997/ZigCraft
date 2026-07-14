@@ -12,6 +12,7 @@ const world_core = @import("world-core");
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const Vec3 = @import("engine-math").Vec3;
 const Vertex = @import("engine-rhi").Vertex;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 const RingBuffer = @import("engine-core").ring_buffer.RingBuffer;
 const JobQueue = @import("engine-core").job_system.JobQueue;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
@@ -352,6 +353,7 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
         manager.allocator.destroy(manager.job_dispatcher.queues[i]);
     }
     for (manager.mesh_disposal.queue.items) |mesh| {
+        manager.gpu_bridge.destroy(mesh);
         manager.allocator.destroy(mesh);
     }
     manager.mesh_disposal.queue.deinit(manager.allocator);
@@ -359,6 +361,100 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
     manager.generation_candidates_scratch.deinit(manager.allocator);
     manager.mesh_candidates_scratch.deinit(manager.allocator);
     manager.upload_candidates_scratch.deinit(manager.allocator);
+}
+
+test "LODManager reports pool, direct, pending, and deferred memory separately" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const RendererMemory = struct {
+        fn stats(_: *anyopaque) lod_gpu.LODRendererMemoryStats {
+            return .{
+                .pool_gpu_capacity_bytes = 100,
+                .pool_gpu_allocated_bytes = 80,
+                .pool_gpu_slack_bytes = 20,
+                .pool_cpu_shadow_bytes = 100,
+            };
+        }
+    };
+    manager.renderer = .{
+        .render_fn = undefined,
+        .deinit_fn = undefined,
+        .ptr = undefined,
+        .memory_stats_fn = RendererMemory.stats,
+    };
+    manager.profiling = .init(true);
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    _ = try putTestRegion(&manager, key, .uploading);
+    const direct_mesh = try putTestPendingMesh(&manager, key, 3);
+    direct_mesh.capacity = 2;
+
+    const deferred = try testing.allocator.create(LODMesh);
+    deferred.* = LODMesh.init(testing.allocator, .lod1);
+    deferred.capacity = 4;
+    deferred.pending_vertices = try testing.allocator.alloc(Vertex, 5);
+    manager.queueMeshDeletion(deferred);
+
+    manager.updateStats();
+    const stats = manager.getStats();
+
+    const vertex_bytes = @sizeOf(Vertex);
+    const expected_direct_gpu = 6 * vertex_bytes;
+    const expected_pending = 8 * vertex_bytes;
+    const expected_known = 200 + expected_direct_gpu + expected_pending;
+    try testing.expectEqual(@as(u64, 100), stats.pool_gpu_capacity_bytes);
+    try testing.expectEqual(@as(u64, 80), stats.pool_gpu_allocated_bytes);
+    try testing.expectEqual(@as(u64, 20), stats.pool_gpu_slack_bytes);
+    try testing.expectEqual(@as(u64, 100), stats.pool_cpu_shadow_bytes);
+    try testing.expectEqual(@as(u64, expected_direct_gpu), stats.direct_mesh_gpu_bytes);
+    try testing.expectEqual(@as(u64, 3 * vertex_bytes), stats.pending_cpu_upload_bytes);
+    try testing.expectEqual(@as(u64, 4 * vertex_bytes), stats.deferred_deletion_gpu_bytes);
+    try testing.expectEqual(@as(u64, 5 * vertex_bytes), stats.deferred_deletion_cpu_bytes);
+    try testing.expectEqual(@as(u64, expected_known), stats.memory_used_bytes);
+    try testing.expectEqual(@as(u64, expected_known), stats.profiling.known_memory_bytes);
+    try testing.expectEqual(@as(u64, 4 * vertex_bytes), stats.profiling.deferred_deletion_bytes);
+    try testing.expectEqual(@as(u64, 5 * vertex_bytes), stats.profiling.deferred_deletion_cpu_bytes);
+}
+
+test "LODManager pool-exhaustion upload failure falls back to CPU heightfield and requeues LOD4" {
+    var config = LODConfig{ .max_uploads_per_frame = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+    atlas.tile_luminance = [_]TextureAtlas.BlockTileLuminance{TextureAtlas.BlockTileLuminance.uniform(1.0)} ** world_core.MAX_BLOCK_TYPES;
+    atlas.tile_colors = [_]TextureAtlas.BlockTileColor{TextureAtlas.BlockTileColor.uniform(0xffffff)} ** world_core.MAX_BLOCK_TYPES;
+    manager.atlas = &atlas;
+
+    const key = LODRegionKey{ .rx = 96, .rz = -96, .lod = .lod4 };
+    const chunk = try putTestRegion(&manager, key, .uploading);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod4) };
+    const mesh = try manager.getOrCreateMesh(key);
+    switch (chunk.data) {
+        .simplified => |*data| try mesh.buildCompactTile(data),
+        else => unreachable,
+    }
+    try manager.upload_queues[@intFromEnum(key.lod)].push(chunk);
+
+    // This mirrors a compact pool exhaustion during a large teleport: compact
+    // upload fails, while the ordinary CPU mesh upload remains available.
+    manager.gpu_bridge.on_upload = struct {
+        fn f(candidate: *LODMesh, _: *anyopaque) @import("engine-rhi").RhiError!void {
+            if (candidate.isCompact()) return error.OutOfMemory;
+        }
+    }.f;
+
+    manager.processUploadsWithBudget(std.math.maxInt(usize));
+    try testing.expect(!mesh.isCompact());
+    try testing.expect(mesh.pendingVerticesForTest() != null);
+    try testing.expectEqual(LODState.uploading, chunk.getState());
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[@intFromEnum(key.lod)].count());
+
+    manager.processUploadsWithBudget(std.math.maxInt(usize));
+    try testing.expectEqual(LODState.renderable, chunk.getState());
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {

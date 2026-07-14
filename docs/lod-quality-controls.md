@@ -63,6 +63,21 @@ Set `ZIGCRAFT_LOD_DIAG=1` to log LOD queue, render, and aggregate stats diagnost
 
 Runtime mesh path overrides are available while alternate mesh paths stabilize:
 
+- `ZIGCRAFT_LOD_COMPACT=off` explicitly keeps expanded CPU LOD meshes.
+- `ZIGCRAFT_LOD_COMPACT=auto` is the default and currently fails closed to
+  expanded GPU LOD meshes. API/resource capability checks alone are insufficient:
+  mixed compact and expanded regions can trigger RADV command-stream rejection.
+- `ZIGCRAFT_LOD_COMPACT=force` requests the same compact path for validation;
+  unrepresentable terrain, partial-water tiles, allocation pressure, and runtime
+  draw failures still fall back to a dedicated CPU-built GPU mesh rather than dropping a region.
+- Normal expanded LOD drawing remains GPU-backed by default. The separate
+  `ZIGCRAFT_LOD_GPU_CULLING=1` indirect-compaction optimization is opt-in and
+  currently applies only to expanded pooled meshes. Compact tiles intentionally
+  use CPU visibility plus direct GPU draws until terrain and water have immutable
+  per-layer instance descriptor sets.
+- Wet LOD3/4 regions currently remain on the expanded fallback mesh because the
+  compact water vertex path can trigger RADV command-stream rejection. Dry
+  regions use compact GPU terrain only in diagnostic `force` mode.
 - `ZIGCRAFT_LOD_MESH_PATH_QEM=1` forces the QEM decimation path.
 - `ZIGCRAFT_LOD_MESH_PATH_SPANS=1` forces the column/span mesh path.
 

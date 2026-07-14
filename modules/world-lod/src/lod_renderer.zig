@@ -38,6 +38,7 @@ const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const LODMeshResources = @import("lod_mesh.zig").LODMeshResources;
 const LODVertexPool = @import("lod_vertex_pool.zig").LODVertexPool;
+const CompactLODPool = @import("lod_compact_pool.zig").CompactLODPool;
 const CHUNK_SIZE_X = @import("world-core").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("world-core").CHUNK_SIZE_Z;
 const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
@@ -46,6 +47,7 @@ const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
 const LODRenderLayer = lod_gpu.LODRenderLayer;
+const LODRendererMemoryStats = lod_gpu.LODRendererMemoryStats;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const ChunkChecker = lod_gpu.ChunkChecker;
@@ -65,6 +67,68 @@ const ILODCullingSystem = rhi_types.ILODCullingSystem;
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 const LOD_UNMASKED_SENTINEL: f32 = 0.5;
+
+fn compactGridIndexCount(width: u32, include_skirts: bool) usize {
+    if (width < 2) return 0;
+    const top = @as(usize, width - 1) * @as(usize, width - 1) * 6;
+    const skirts = if (include_skirts) @as(usize, width - 1) * 4 * 6 else 0;
+    return top + skirts;
+}
+
+fn compactGridIndices(allocator: std.mem.Allocator, width: u32, include_skirts: bool) ![]u32 {
+    if (width < 2) return error.InvalidGrid;
+    const result = try allocator.alloc(u32, compactGridIndexCount(width, include_skirts));
+    var out: usize = 0;
+    var z: u32 = 0;
+    while (z + 1 < width) : (z += 1) {
+        var x: u32 = 0;
+        while (x + 1 < width) : (x += 1) {
+            const a = z * width + x;
+            const b = a + 1;
+            const c = a + width;
+            const d = c + 1;
+            result[out + 0] = a;
+            result[out + 1] = c;
+            result[out + 2] = b;
+            result[out + 3] = b;
+            result[out + 4] = c;
+            result[out + 5] = d;
+            out += 6;
+        }
+    }
+
+    if (include_skirts) {
+        const top_vertex_count = width * width;
+        const Edge = struct {
+            fn append(result_slice: []u32, output: *usize, top_a: u32, top_b: u32, bottom_a: u32, bottom_b: u32) void {
+                result_slice[output.* + 0] = top_a;
+                result_slice[output.* + 1] = bottom_a;
+                result_slice[output.* + 2] = top_b;
+                result_slice[output.* + 3] = top_b;
+                result_slice[output.* + 4] = bottom_a;
+                result_slice[output.* + 5] = bottom_b;
+                output.* += 6;
+            }
+        };
+        for (0..width - 1) |edge_index| {
+            const i: u32 = @intCast(edge_index);
+            // North and south.
+            Edge.append(result, &out, i, i + 1, top_vertex_count + i, top_vertex_count + i + 1);
+            const south_top = (width - 1) * width + i;
+            const south_bottom = top_vertex_count + width + i;
+            Edge.append(result, &out, south_top + 1, south_top, south_bottom + 1, south_bottom);
+            // West and east.
+            const west_top = i * width;
+            const west_bottom = top_vertex_count + width * 2 + i;
+            Edge.append(result, &out, west_top + width, west_top, west_bottom + 1, west_bottom);
+            const east_top = i * width + width - 1;
+            const east_bottom = top_vertex_count + width * 3 + i;
+            Edge.append(result, &out, east_top, east_top + width, east_bottom, east_bottom + 1);
+        }
+    }
+    std.debug.assert(out == result.len);
+    return result;
+}
 
 const RenderDiag = struct {
     meshes_seen: u32 = 0,
@@ -113,7 +177,11 @@ pub fn LODRenderer(comptime RHI: type) type {
         instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
         indirect_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
         vertex_pools: [LODLevel.count]LODVertexPool,
+        compact_pool: CompactLODPool,
+        /// Per compact LOD: terrain grid with edge skirts, then water top grid.
+        compact_index_buffers: [2][2]rhi_types.BufferHandle,
         frame_index: usize,
+        frame_serial: u64,
         enable_mdi: bool,
         gpu_culling_requested: bool,
         gpu_culling: ?ILODCullingSystem,
@@ -149,6 +217,16 @@ pub fn LODRenderer(comptime RHI: type) type {
             for (0..LODLevel.count) |i| {
                 vertex_pools[i] = LODVertexPool.init(allocator, @enumFromInt(@as(u3, @intCast(i))), 8 * 1024 * 1024);
             }
+            var compact_index_buffers = [_][2]rhi_types.BufferHandle{.{ 0, 0 }} ** 2;
+            errdefer for (&compact_index_buffers) |*lod_handles| for (lod_handles) |handle| if (handle != 0) resources.destroyBuffer(handle);
+            inline for (.{ LODLevel.lod3, LODLevel.lod4 }, 0..) |lod, idx| {
+                inline for (.{ true, false }, 0..) |include_skirts, layer_idx| {
+                    const indices = try compactGridIndices(allocator, @import("world-core").LODSimplifiedData.getGridSize(lod), include_skirts);
+                    defer allocator.free(indices);
+                    compact_index_buffers[idx][layer_idx] = try resources.createBuffer(std.mem.sliceAsBytes(indices).len, .index);
+                    try resources.uploadBuffer(compact_index_buffers[idx][layer_idx], std.mem.sliceAsBytes(indices));
+                }
+            }
 
             const gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false);
             var gpu_culling: ?ILODCullingSystem = null;
@@ -169,7 +247,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .instance_buffers = instance_buffers,
                 .indirect_buffers = indirect_buffers,
                 .vertex_pools = vertex_pools,
+                .compact_pool = CompactLODPool.init(allocator),
+                .compact_index_buffers = compact_index_buffers,
                 .frame_index = 0,
+                .frame_serial = 0,
                 .enable_mdi = !engine_core.envFlag("ZIGCRAFT_DISABLE_LOD_MDI", false),
                 .gpu_culling_requested = gpu_culling_requested,
                 .gpu_culling = gpu_culling,
@@ -203,6 +284,8 @@ pub fn LODRenderer(comptime RHI: type) type {
             for (0..LODLevel.count) |i| {
                 self.vertex_pools[i].deinit(mesh_resources);
             }
+            self.compact_pool.deinit(mesh_resources);
+            for (self.compact_index_buffers) |lod_handles| for (lod_handles) |handle| if (handle != 0) resources.destroyBuffer(handle);
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
             self.projection_regions.deinit(self.allocator);
@@ -234,6 +317,14 @@ pub fn LODRenderer(comptime RHI: type) type {
             stats: ?*LODStats,
             profiling: ?*LODProfilingCollector,
         ) void {
+            self.frame_serial = frame_serial;
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            self.frame_index = query.getFrameIndex();
+            // Reusing a frame slot means the RHI has completed that slot's
+            // fence. The compact pool additionally requires a newer monotonic
+            // frame serial before it returns any retired range to allocation.
+            self.compact_pool.collectRetired(frame_serial, self.frame_index);
+            for (&self.vertex_pools) |*pool| pool.collectRetired(frame_serial, self.frame_index);
             if (self.projection_frame == null or self.projection_frame.? != frame_serial) {
                 const timer = if (profiling) |profile| profile.begin() else null;
                 defer if (profiling) |profile| profile.end(.visibility, timer);
@@ -289,7 +380,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 self.projection_frame = null;
                 return;
             }
-            var all_pooled = true;
+            var all_standard_pooled = true;
             for (self.projection_regions.items) |visible| {
                 const lod_index = @intFromEnum(visible.key.lod);
                 const mesh = meshes[lod_index].get(visible.key) orelse continue;
@@ -297,19 +388,35 @@ pub fn LODRenderer(comptime RHI: type) type {
                 const terrain = mesh.drawRange(.terrain);
                 const fluid = mesh.drawRange(.fluid);
                 if ((terrain orelse fluid) == null) continue;
-                if (!mesh.isPooled()) all_pooled = false;
+                const compact = mesh.isCompact();
+                if (!compact and !mesh.isPooled()) all_standard_pooled = false;
+                // Compact terrain and water currently share one graphics descriptor
+                // binding for their compute-generated instance streams. Updating that
+                // descriptor for water before submission also changes the earlier
+                // terrain draws, allowing terrain commands to read uninitialized water
+                // instance words and fetch outside the compact sample buffer. RADV
+                // rejects that command stream. Keep compact rendering on the safe
+                // CPU-visibility/direct-GPU-draw path until the streams have immutable
+                // per-layer descriptor sets.
+                if (compact) {
+                    self.projection_frame = null;
+                    return;
+                }
                 const bounds = chunk.worldBounds();
+                const cell_size: f32 = if (compact) @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(visible.key.lod))) / @as(f32, @floatFromInt(mesh.compact_tile_width - 1)) else 0;
                 self.gpu_candidates.append(self.allocator, .{
                     .min_point = .{ @as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, bounds.min_y - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z, 0 },
                     .max_point = .{ @as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, bounds.max_y - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z, 0 },
                     .model = visible.model,
-                    .instance_params = .{ visible.mask_radius, visible.lod_fade, 0, 0 },
-                    .terrain_command = commandFor(mesh, terrain),
-                    .water_command = commandFor(mesh, fluid),
-                    .lod_and_padding = .{ @intCast(lod_index), 0, 0, 0 },
+                    .instance_params = .{ visible.mask_radius, visible.lod_fade, if (compact) cell_size else 0, if (compact) @max(16.0, cell_size * 2.0) else 0 },
+                    .compact_words = .{ mesh.compact_sample_offset, mesh.compact_tile_width, 0, 0 },
+                    .compact_metrics = .{ cell_size, @max(16.0, cell_size * 2.0), 0, 0 },
+                    .terrain_command = cullCommandFor(mesh, terrain, compact, true),
+                    .water_command = cullCommandFor(mesh, fluid, compact, false),
+                    .lod_and_padding = .{ @intCast(lod_index), if (compact) 1 else 0, 0, 0 },
                 }) catch return;
             }
-            if (self.gpu_candidates.items.len < self.gpu_culling_threshold or !all_pooled) {
+            if (self.gpu_candidates.items.len < self.gpu_culling_threshold or !all_standard_pooled) {
                 self.projection_frame = null;
                 return;
             }
@@ -604,6 +711,24 @@ pub fn LODRenderer(comptime RHI: type) type {
                 const mesh = all_meshes[lod_idx].get(visible.key) orelse continue;
                 const range = mesh.drawRange(layer) orelse continue;
                 if (!mesh.isReady() or range.count == 0) continue;
+                if (mesh.isCompact()) {
+                    if (self.renderCompactMesh(render_ctx, visible, mesh, layer)) {
+                        if (stats) |s| if (layer == .fluid) {
+                            s.fluid_drawn[lod_idx] += 1;
+                            s.fluid_instances[lod_idx] += 1;
+                        } else {
+                            s.drawn[lod_idx] += 1;
+                            s.instances[lod_idx] += 1;
+                        };
+                    } else {
+                        // Suppress this representation immediately so the CPU
+                        // projection keeps its parent fallback visible. The
+                        // manager consumes the failure and rebuilds a CPU mesh.
+                        mesh.markCompactDrawFailed();
+                        _ = self.renderParentFallback(all_meshes, visible, layer, render_ctx);
+                    }
+                    continue;
+                }
                 const lod_y_offset: f32 = if (layer == .fluid) 0.0 else -0.05;
                 var instance = rhi_types.InstanceData{ .model = visible.model, .mask_radius = visible.mask_radius, .lod_fade = visible.lod_fade, .padding = .{ 0, 0 } };
                 instance.model.data[3][1] += lod_y_offset;
@@ -648,26 +773,110 @@ pub fn LODRenderer(comptime RHI: type) type {
             return true;
         }
 
+        fn renderParentFallback(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, child: VisibleRegion, layer: LODRenderLayer, render_ctx: anytype) bool {
+            var child_key = child.key;
+            var child_model = child.model;
+            while (child_key.parentKey()) |parent_key| {
+                const child_size: i32 = @intCast(child_key.lod.chunksPerSide() * CHUNK_SIZE_X);
+                const parent_size: i32 = @intCast(parent_key.lod.chunksPerSide() * CHUNK_SIZE_X);
+                child_model.data[3][0] += @floatFromInt(parent_key.rx * parent_size - child_key.rx * child_size);
+                child_model.data[3][2] += @floatFromInt(parent_key.rz * parent_size - child_key.rz * child_size);
+                const mesh = all_meshes[@intFromEnum(parent_key.lod)].get(parent_key) orelse {
+                    child_key = parent_key;
+                    continue;
+                };
+                const range = mesh.drawRange(layer) orelse {
+                    child_key = parent_key;
+                    continue;
+                };
+                if (!mesh.isReady() or range.count == 0) {
+                    child_key = parent_key;
+                    continue;
+                }
+                const parent_visible = VisibleRegion{
+                    .key = parent_key,
+                    .model = child_model,
+                    .mask_radius = LOD_UNMASKED_SENTINEL,
+                    .lod_fade = 1.0,
+                };
+                if (mesh.isCompact()) {
+                    if (self.renderCompactMesh(render_ctx, parent_visible, mesh, layer)) return true;
+                    mesh.markCompactDrawFailed();
+                    child_key = parent_key;
+                    continue;
+                }
+                render_ctx.setModelMatrix(child_model, Vec3.one, LOD_UNMASKED_SENTINEL);
+                if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
+                    render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
+                } else {
+                    render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        fn renderCompactMesh(self: *Self, render_ctx: anytype, visible: VisibleRegion, mesh: *LODMesh, layer: LODRenderLayer) bool {
+            if (comptime !@hasDecl(@TypeOf(render_ctx), "drawCompactLOD")) return false;
+            const lod = mesh.lodLevel();
+            if (lod != .lod3 and lod != .lod4 or self.compact_pool.buffer_handle == 0) return false;
+            render_ctx.setLODCompactSampleBuffer(self.compact_pool.buffer_handle);
+            const layer_index: usize = if (layer == .fluid) 1 else 0;
+            const index_buffer = self.compact_index_buffers[@intFromEnum(lod) - @intFromEnum(LODLevel.lod3)][layer_index];
+            const index_count: u32 = @intCast(compactGridIndexCount(mesh.compact_tile_width, layer == .terrain));
+            return render_ctx.drawCompactLOD(index_buffer, index_count, .{
+                .model = visible.model,
+                .mask_radius = visible.mask_radius,
+                .lod_fade = visible.lod_fade,
+                .sample_offset = mesh.compact_sample_offset,
+                .width = mesh.compact_tile_width,
+                .cell_size = @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(lod))) / @as(f32, @floatFromInt(mesh.compact_tile_width - 1)),
+                .layer = if (layer == .fluid) 1 else 0,
+                .skirt_depth = @max(16.0, @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(lod))) / @as(f32, @floatFromInt(mesh.compact_tile_width - 1)) * 2.0),
+            });
+        }
+
         fn renderGpuCulledLayer(self: *Self, layer: LODRenderLayer, stats: ?*LODStats, render_ctx: anytype, query: anytype) bool {
             const frame = self.projection_frame orelse return false;
             if (self.gpu_culling_ready_frame != frame) return false;
             const gpu = self.gpu_culling orelse return false;
             if (!@hasDecl(@TypeOf(render_ctx), "drawIndirectCount") or !@hasDecl(@TypeOf(query), "supportsIndirectCount")) return false;
             if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount() or self.gpu_candidates.items.len < self.gpu_culling_threshold) return false;
+            var has_standard = false;
             for (self.gpu_candidates.items) |candidate| {
                 const lod_index = candidate.lod_and_padding[0];
                 if (lod_index >= LODLevel.count) return false;
                 const command = if (layer == .fluid) candidate.water_command else candidate.terrain_command;
-                if (command.vertexCount != 0 and self.vertex_pools[lod_index].buffer_handle == 0) return false;
+                if (candidate.lod_and_padding[1] == 0 and command.count != 0) {
+                    has_standard = true;
+                    if (self.vertex_pools[lod_index].buffer_handle == 0) return false;
+                }
             }
             const fi = self.frame_index;
-            render_ctx.setLODInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid));
-            const commands = gpu.indirectBuffer(fi, layer == .fluid);
+            render_ctx.setLODInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid, false));
+            const commands = gpu.indirectBuffer(fi, layer == .fluid, false);
             const counts = gpu.countBuffer(fi);
             const stride = @sizeOf(rhi_types.DrawIndirectCommand);
-            for (0..LODLevel.count) |lod_index| {
+            if (has_standard) for (0..LODLevel.count) |lod_index| {
                 if (self.vertex_pools[lod_index].buffer_handle == 0) continue;
                 if (!render_ctx.drawIndirectCount(self.vertex_pools[lod_index].buffer_handle, commands, lod_index * MAX_LOD_MDI_REGIONS * stride, counts, (if (layer == .fluid) LODLevel.count + lod_index else lod_index) * @sizeOf(u32), MAX_LOD_MDI_REGIONS, stride)) return false;
+            };
+            var has_compact = false;
+            for (self.gpu_candidates.items) |candidate| {
+                if (candidate.lod_and_padding[1] != 0 and (if (layer == .fluid) candidate.water_command.count else candidate.terrain_command.count) != 0) has_compact = true;
+            }
+            if (has_compact) {
+                if (!@hasDecl(@TypeOf(render_ctx), "drawCompactLODIndirectCount") or self.compact_pool.buffer_handle == 0) return false;
+                render_ctx.setLODCompactSampleBuffer(self.compact_pool.buffer_handle);
+                render_ctx.setLODCompactInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid, true));
+                const compact_commands = gpu.indirectBuffer(fi, layer == .fluid, true);
+                const compact_count_base: usize = if (layer == .fluid) LODLevel.count * 3 else LODLevel.count * 2;
+                inline for (.{ LODLevel.lod3, LODLevel.lod4 }) |lod| {
+                    const lod_index = @intFromEnum(lod);
+                    const index_buffer = self.compact_index_buffers[lod_index - @intFromEnum(LODLevel.lod3)][if (layer == .fluid) 1 else 0];
+                    if (index_buffer == 0) return false;
+                    if (!render_ctx.drawCompactLODIndirectCount(index_buffer, compact_commands, lod_index * MAX_LOD_MDI_REGIONS * @sizeOf(rhi_types.DrawIndexedIndirectCommand), counts, (compact_count_base + lod_index) * @sizeOf(u32), MAX_LOD_MDI_REGIONS)) return false;
+                }
             }
             if (stats) |s| {
                 // GPU counters remain device-local; keep submitted streams distinct
@@ -718,6 +927,10 @@ pub fn LODRenderer(comptime RHI: type) type {
             while (iter.next()) |entry| {
                 diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
+                // The legacy immediate path has no indexed compact submission
+                // context. Never reinterpret compact samples as expanded
+                // vertices; frame-based rendering owns compact draws.
+                if (mesh.isCompact()) continue;
                 const draw_range = mesh.drawRange(layer) orelse {
                     diag.not_ready += 1;
                     if (profiling) |profile| profile.addRejected();
@@ -963,16 +1176,22 @@ pub fn LODRenderer(comptime RHI: type) type {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
-                    if (!renderer.enable_mdi) {
-                        return mesh.upload(resources);
-                    }
+                    if (mesh.isCompact()) return renderer.compact_pool.upload(mesh, resources);
+                    // Expanded far CPU fallback meshes use dedicated buffers.
+                    // Growing a far shared pool republishes its whole shadow
+                    // and can exceed the bounded staging ring in one frame.
+                    if (!renderer.enable_mdi or mesh.lodLevel() == .lod3 or mesh.lodLevel() == .lod4) return mesh.upload(resources);
                     return renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].uploadMesh(mesh, resources);
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
+                    if (mesh.isCompact()) {
+                        renderer.compact_pool.retireMesh(mesh, renderer.frame_serial, renderer.frame_index);
+                        return;
+                    }
                     if (mesh.isPooled()) {
-                        renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].destroyMesh(mesh);
+                        renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].destroyMeshDeferred(mesh, renderer.frame_serial, renderer.frame_index);
                     } else {
                         mesh.deinit(resources);
                     }
@@ -981,13 +1200,44 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     renderer.rhi.waitIdle();
                 }
+                fn onSupportsCompact(ctx: *anyopaque) bool {
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    const RenderContext = @TypeOf(if (@hasDecl(RHI, "renderContext")) @as(RHI, undefined).renderContext() else @as(RHI, undefined));
+                    if (!@hasDecl(RenderContext, "drawCompactLOD") or !@hasDecl(RenderContext, "setLODCompactSampleBuffer")) return false;
+                    for (renderer.compact_index_buffers) |layers| for (layers) |handle| if (handle == 0) return false;
+                    return true;
+                }
             };
             return .{
                 .on_upload = Wrapper.onUpload,
                 .on_destroy = Wrapper.onDestroy,
                 .on_wait_idle = Wrapper.onWaitIdle,
                 .ctx = @ptrCast(self),
+                .on_supports_compact = Wrapper.onSupportsCompact,
             };
+        }
+
+        fn memoryStats(self: *Self) LODRendererMemoryStats {
+            var result = LODRendererMemoryStats{};
+            for (&self.vertex_pools) |*pool| {
+                const capacity = pool.gpuMemoryBytes();
+                const allocated = pool.allocatedBytes();
+                result.pool_gpu_capacity_bytes += capacity;
+                result.pool_gpu_allocated_bytes += allocated;
+                result.pool_gpu_slack_bytes += capacity - allocated;
+                // The pool keeps a full CPU copy so it can grow and compact
+                // without a GPU readback.
+                result.pool_cpu_shadow_bytes += capacity;
+            }
+            const compact = self.compact_pool.memoryStats();
+            result.pool_gpu_capacity_bytes += compact.capacity_bytes;
+            result.pool_gpu_allocated_bytes += compact.allocated_bytes;
+            result.pool_gpu_slack_bytes += compact.free_bytes;
+            result.compact_pool_capacity_bytes = compact.capacity_bytes;
+            result.compact_pool_allocated_bytes = compact.allocated_bytes;
+            result.compact_pool_free_bytes = compact.free_bytes;
+            result.compact_pool_retired_bytes = compact.retired_bytes;
+            return result;
         }
 
         /// Create a type-erased LODRenderInterface from this renderer.
@@ -1034,6 +1284,10 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.prepareFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
                 }
+                fn memoryStatsFn(self_ptr: *anyopaque) LODRendererMemoryStats {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    return renderer.memoryStats();
+                }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.deinit();
@@ -1043,6 +1297,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .render_fn = Wrapper.renderFn,
                 .render_frame_fn = Wrapper.renderFrameFn,
                 .prepare_frame_fn = Wrapper.prepareFrameFn,
+                .memory_stats_fn = Wrapper.memoryStatsFn,
                 .deinit_fn = Wrapper.deinitFn,
                 .ptr = self,
             };
@@ -1077,13 +1332,18 @@ fn supports_lod_indirect(comptime RenderCtx: type, comptime Query: type, comptim
         @hasDecl(Query, "supportsIndirectFirstInstance");
 }
 
-fn commandFor(mesh: *const LODMesh, range: ?LODMesh.DrawRange) rhi_types.DrawIndirectCommand {
-    const draw_range = range orelse return .{ .vertexCount = 0, .instanceCount = 0, .firstVertex = 0, .firstInstance = 0 };
+fn cullCommandFor(mesh: *const LODMesh, range: ?LODMesh.DrawRange, compact: bool, terrain: bool) rhi_types.LODCullCommand {
+    const draw_range = range orelse return .{ .count = 0, .instance_count = 0, .first = 0 };
+    if (compact) return .{
+        .count = @intCast(compactGridIndexCount(mesh.compact_tile_width, terrain)),
+        .instance_count = 1,
+        .first = 0,
+        .vertex_offset = 0,
+    };
     return .{
-        .vertexCount = draw_range.count,
-        .instanceCount = 1,
-        .firstVertex = mesh.firstVertex(draw_range),
-        .firstInstance = 0,
+        .count = draw_range.count,
+        .instance_count = 1,
+        .first = mesh.firstVertex(draw_range),
     };
 }
 

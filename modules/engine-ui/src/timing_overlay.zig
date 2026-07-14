@@ -64,6 +64,7 @@ pub const TimingOverlay = struct {
         drawGpuLine(ui, "SKY:", data.gpu.sky_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "OPAQUE:", data.gpu.opaque_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "LOD TERRAIN:", data.gpu.lod_terrain_pass_ms, label_x, value_x, &y, scale, muted);
+        drawGpuLine(ui, "LOD CULLING:", data.gpu.lod_culling_compute_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "LOD WATER:", data.gpu.lod_water_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "MAIN:", data.gpu.main_pass_ms, label_x, value_x, &y, scale, muted);
         drawGpuLine(ui, "BLOOM:", data.gpu.bloom_pass_ms, label_x, value_x, &y, scale, muted);
@@ -176,6 +177,21 @@ pub const WorldStats = struct {
 pub const LODStatsDisplay = struct {
     loaded: [LODLevel.count]u32,
     memory_used_mb: u32,
+    /// Current known LOD allocations. These are accounting gauges, not
+    /// GPU-driver memory measurements.
+    memory_used_bytes: u64 = 0,
+    pool_gpu_capacity_bytes: u64 = 0,
+    pool_gpu_allocated_bytes: u64 = 0,
+    pool_gpu_slack_bytes: u64 = 0,
+    pool_cpu_shadow_bytes: u64 = 0,
+    compact_pool_capacity_bytes: u64 = 0,
+    compact_pool_allocated_bytes: u64 = 0,
+    compact_pool_free_bytes: u64 = 0,
+    compact_pool_retired_bytes: u64 = 0,
+    direct_mesh_gpu_bytes: u64 = 0,
+    pending_cpu_upload_bytes: u64 = 0,
+    deferred_deletion_gpu_bytes: u64 = 0,
+    deferred_deletion_cpu_bytes: u64 = 0,
     profiling: LODProfilingDisplay = .{},
 };
 
@@ -195,6 +211,8 @@ pub const LODProfilingDisplay = struct {
     eviction_ms: f64 = 0,
     worker_generation_ms: f64 = 0,
     worker_mesh_construction_ms: f64 = 0,
+    manager_lock_wait_ms: f64 = 0,
+    manager_lock_hold_ms: f64 = 0,
     upload_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     staging_pressure_count: u64 = 0,
@@ -203,8 +221,21 @@ pub const LODProfilingDisplay = struct {
     coverage_count: u64 = 0,
     visibility_levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT,
     deferred_deletion_bytes: u64 = 0,
+    deferred_deletion_cpu_bytes: u64 = 0,
+    pool_gpu_capacity_bytes: u64 = 0,
+    pool_gpu_allocated_bytes: u64 = 0,
+    pool_gpu_slack_bytes: u64 = 0,
+    pool_cpu_shadow_bytes: u64 = 0,
+    compact_pool_capacity_bytes: u64 = 0,
+    compact_pool_allocated_bytes: u64 = 0,
+    compact_pool_free_bytes: u64 = 0,
+    compact_pool_retired_bytes: u64 = 0,
+    direct_mesh_gpu_bytes: u64 = 0,
+    known_memory_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
+    gpu_culling_overflows: u32 = 0,
+    gpu_culling_validation_mismatches: u32 = 0,
 };
 
 /// UI-neutral per-level visibility projection counters from world-lod.

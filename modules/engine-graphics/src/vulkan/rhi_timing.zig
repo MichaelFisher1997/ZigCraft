@@ -14,11 +14,12 @@ const GpuPass = enum {
     opaque_pass,
     lod_terrain,
     lod_water,
+    lod_culling_compute,
     bloom,
     fxaa,
     post_process,
 
-    pub const COUNT = 14;
+    pub const COUNT = 15;
 };
 
 pub const PASS_COUNT = GpuPass.COUNT;
@@ -36,6 +37,7 @@ fn mapPassName(name: []const u8) ?GpuPass {
     if (std.mem.eql(u8, name, "OpaquePass")) return .opaque_pass;
     if (std.mem.eql(u8, name, "LODTerrainPass")) return .lod_terrain;
     if (std.mem.eql(u8, name, "LODWaterPass")) return .lod_water;
+    if (std.mem.eql(u8, name, "LODGpuCullingComputeBarrier")) return .lod_culling_compute;
     if (std.mem.eql(u8, name, "BloomPass")) return .bloom;
     if (std.mem.eql(u8, name, "FXAAPass")) return .fxaa;
     if (std.mem.eql(u8, name, "PostProcessPass")) return .post_process;
@@ -107,6 +109,7 @@ pub fn processTimingResults(ctx: anytype) void {
     const opaque_ms = readPassMs(ctx, frame, .opaque_pass, period) orelse return;
     const lod_terrain = readPassMs(ctx, frame, .lod_terrain, period) orelse return;
     const lod_water = readPassMs(ctx, frame, .lod_water, period) orelse return;
+    const lod_culling_compute = readPassMs(ctx, frame, .lod_culling_compute, period) orelse return;
     const bloom = readPassMs(ctx, frame, .bloom, period) orelse return;
     const fxaa = readPassMs(ctx, frame, .fxaa, period) orelse return;
     const post_process = readPassMs(ctx, frame, .post_process, period) orelse return;
@@ -122,6 +125,7 @@ pub fn processTimingResults(ctx: anytype) void {
     ctx.timing.timing_results.opaque_pass_ms = opaque_ms;
     ctx.timing.timing_results.lod_terrain_pass_ms = lod_terrain;
     ctx.timing.timing_results.lod_water_pass_ms = lod_water;
+    ctx.timing.timing_results.lod_culling_compute_ms = lod_culling_compute;
     ctx.timing.timing_results.bloom_pass_ms = bloom;
     ctx.timing.timing_results.fxaa_pass_ms = fxaa;
     ctx.timing.timing_results.post_process_pass_ms = post_process;
@@ -138,7 +142,9 @@ pub fn processTimingResults(ctx: anytype) void {
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.ssao_pass_ms;
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.lpv_pass_ms;
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.main_pass_ms;
-    // LOD timings are nested in scene passes and must not be double-counted.
+    ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.lod_culling_compute_ms;
+    // LOD terrain/water timings are nested in scene passes and must not be
+    // double-counted. The culling compute pass above is independent.
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.bloom_pass_ms;
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.fxaa_pass_ms;
     ctx.timing.timing_results.total_gpu_ms += ctx.timing.timing_results.post_process_pass_ms;
@@ -147,4 +153,5 @@ pub fn processTimingResults(ctx: anytype) void {
 test "GPU timing maps LOD pass names" {
     try std.testing.expectEqual(GpuPass.lod_terrain, mapPassName("LODTerrainPass").?);
     try std.testing.expectEqual(GpuPass.lod_water, mapPassName("LODWaterPass").?);
+    try std.testing.expectEqual(GpuPass.lod_culling_compute, mapPassName("LODGpuCullingComputeBarrier").?);
 }

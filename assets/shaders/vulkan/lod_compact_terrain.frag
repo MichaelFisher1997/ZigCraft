@@ -1,0 +1,47 @@
+#version 450
+
+layout(location = 0) in vec3 vColor;
+layout(location = 1) flat in vec3 vNormal;
+layout(location = 4) in float vDistance;
+layout(location = 5) in float vSkyLight;
+layout(location = 6) in vec3 vBlockLight;
+layout(location = 7) in vec3 vFragPosWorld;
+layout(location = 11) in float vAO;
+layout(location = 14) in float vMaskRadius;
+layout(location = 16) in float vLODFade;
+layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 0) uniform Global {
+    mat4 view_proj;
+    mat4 view_proj_prev;
+    vec4 cam_pos;
+    vec4 sun_dir;
+    vec4 sun_color;
+    vec4 fog_color;
+    vec4 reserved0;
+    vec4 params;
+    vec4 lighting;
+    vec4 render_flags;
+    vec4 shadow_params;
+    vec4 pbr_params;
+    vec4 volumetric_params;
+    vec4 viewport_size;
+    vec4 lpv_params;
+    vec4 lpv_origin;
+} global;
+
+void main() {
+    if (vMaskRadius >= 1.0 && length(vFragPosWorld.xz) < vMaskRadius) discard;
+    vec3 normal = normalize(vNormal);
+    vec3 light_dir = normalize(global.sun_dir.xyz);
+    float diffuse = max(dot(normal, light_dir), 0.0);
+    float block_light = max(vBlockLight.r, max(vBlockLight.g, vBlockLight.b));
+    float illumination = clamp(max(vSkyLight * global.lighting.x, block_light) + diffuse * global.params.w * 0.45, 0.18, 1.15);
+    vec3 color = vColor * illumination * mix(0.72, 1.0, clamp(vAO, 0.0, 1.0));
+    if (global.params.z > 0.5) {
+        float fog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
+        fog = max(fog, smoothstep(300.0, 1200.0, vDistance) * 0.62);
+        color = mix(color, global.fog_color.rgb, fog);
+    }
+    outColor = vec4(color, 1.0);
+}

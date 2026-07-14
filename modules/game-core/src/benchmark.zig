@@ -5,6 +5,7 @@ const Player = @import("player.zig").Player;
 const Vec3 = @import("engine-math").Vec3;
 const GpuTimingResults = @import("engine-rhi").GpuTimingResults;
 const WorldStats = @import("engine-ui").WorldStats;
+const LODStatsDisplay = @import("engine-ui").LODStatsDisplay;
 const LODProfilingDisplay = @import("engine-ui").LODProfilingDisplay;
 const LODVisibilityLevelDisplay = @import("engine-ui").LODVisibilityLevelDisplay;
 const LOD_VISIBILITY_LEVEL_COUNT = @import("engine-ui").LOD_VISIBILITY_LEVEL_COUNT;
@@ -81,6 +82,7 @@ pub const FrameSample = struct {
     gpu_opaque_ms: f32,
     gpu_lod_terrain_ms: f32,
     gpu_lod_water_ms: f32,
+    gpu_lod_culling_ms: f32,
     gpu_total_ms: f32,
     draw_calls: u32,
     vertices: u64,
@@ -89,8 +91,8 @@ pub const FrameSample = struct {
     lod: LODFrameSample = .{},
 };
 
-/// One benchmark-frame delta derived from world-lod's cumulative telemetry.
-/// Pending upload and deferred deletion byte values are gauges, not counters.
+/// One benchmark-frame delta derived from world-lod telemetry. Timing and event
+/// fields are cumulative counters; every byte-accounting field is a gauge.
 pub const LODFrameSample = struct {
     enabled: bool = false,
     cpu_ms: f64 = 0,
@@ -105,6 +107,8 @@ pub const LODFrameSample = struct {
     eviction_ms: f64 = 0,
     worker_generation_ms: f64 = 0,
     worker_mesh_construction_ms: f64 = 0,
+    manager_lock_wait_ms: f64 = 0,
+    manager_lock_hold_ms: f64 = 0,
     upload_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     staging_pressure_count: u64 = 0,
@@ -113,8 +117,21 @@ pub const LODFrameSample = struct {
     coverage_count: u64 = 0,
     visibility_levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT,
     deferred_deletion_bytes: u64 = 0,
+    deferred_deletion_cpu_bytes: u64 = 0,
+    pool_gpu_capacity_bytes: u64 = 0,
+    pool_gpu_allocated_bytes: u64 = 0,
+    pool_gpu_slack_bytes: u64 = 0,
+    pool_cpu_shadow_bytes: u64 = 0,
+    compact_pool_capacity_bytes: u64 = 0,
+    compact_pool_allocated_bytes: u64 = 0,
+    compact_pool_free_bytes: u64 = 0,
+    compact_pool_retired_bytes: u64 = 0,
+    direct_mesh_gpu_bytes: u64 = 0,
+    known_memory_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
+    gpu_culling_overflows: u32 = 0,
+    gpu_culling_validation_mismatches: u32 = 0,
 };
 
 pub const SloThresholds = struct {
@@ -141,6 +158,7 @@ pub const GpuSummary = struct {
     opaque_avg: f64,
     lod_terrain_avg: f64,
     lod_water_avg: f64,
+    lod_culling_avg: f64,
     total_avg: f64,
 };
 
@@ -159,6 +177,8 @@ pub const LODCpuCategories = struct {
     visibility: TimingTotalAverage,
     coverage: TimingTotalAverage,
     eviction: TimingTotalAverage,
+    manager_lock_wait: TimingTotalAverage,
+    manager_lock_hold: TimingTotalAverage,
 };
 
 pub const LODWorkerSummary = struct {
@@ -172,11 +192,44 @@ pub const ByteGaugeSummary = struct {
     last_bytes: u64,
 };
 
+const ByteGaugeAccumulator = struct {
+    sum: f64 = 0,
+    max: u64 = 0,
+    last: u64 = 0,
+
+    fn add(self: *ByteGaugeAccumulator, value: u64) void {
+        self.sum += @floatFromInt(value);
+        self.max = @max(self.max, value);
+        self.last = value;
+    }
+
+    fn summarize(self: ByteGaugeAccumulator, frame_count: f64) ByteGaugeSummary {
+        return .{
+            .avg_bytes = self.sum / frame_count,
+            .max_bytes = self.max,
+            .last_bytes = self.last,
+        };
+    }
+};
+
 pub const LODMemorySummary = struct {
     upload_total_bytes: u64,
     upload_avg_bytes: f64,
     pending_cpu_upload_bytes: ByteGaugeSummary,
+    /// Compatibility alias for `deferred_deletion_gpu_bytes`.
     deferred_deletion_bytes: ByteGaugeSummary,
+    deferred_deletion_gpu_bytes: ByteGaugeSummary,
+    deferred_deletion_cpu_bytes: ByteGaugeSummary,
+    pool_gpu_capacity_bytes: ByteGaugeSummary,
+    pool_gpu_allocated_bytes: ByteGaugeSummary,
+    pool_gpu_slack_bytes: ByteGaugeSummary,
+    pool_cpu_shadow_bytes: ByteGaugeSummary,
+    compact_pool_capacity_bytes: ByteGaugeSummary,
+    compact_pool_allocated_bytes: ByteGaugeSummary,
+    compact_pool_free_bytes: ByteGaugeSummary,
+    compact_pool_retired_bytes: ByteGaugeSummary,
+    direct_mesh_gpu_bytes: ByteGaugeSummary,
+    known_memory_bytes: ByteGaugeSummary,
 };
 
 pub const LODVisibilitySummary = struct {
@@ -191,6 +244,8 @@ pub const LODPressureSummary = struct {
     wait_idle_count_total: u64,
     wait_idle_ms_total: f64,
     wait_idle_ms_avg: f64,
+    gpu_culling_overflows_max: u32 = 0,
+    gpu_culling_validation_mismatches_max: u32 = 0,
 };
 
 pub const LODBenchmarkSummary = struct {
@@ -209,6 +264,7 @@ pub const WorstFrame = struct {
     gpu_total_ms: f64,
     gpu_lod_terrain_ms: f64,
     gpu_lod_water_ms: f64,
+    gpu_lod_culling_ms: f64,
     dominant_gpu_pass: []const u8,
     dominant_gpu_pass_ms: f64,
     lod_cpu_ms: f64,
@@ -322,11 +378,11 @@ pub const BenchmarkRunner = struct {
 
     pub fn recordFrame(self: *BenchmarkRunner, dt: f32, fps: f32, gpu: GpuTimingResults, world_stats: ?WorldStats, draw_calls: u32, gpu_memory_mb: f32) !void {
         self.elapsed_s += dt;
-        const profiling = if (world_stats) |ws| blk: {
-            if (ws.lod) |ls| break :blk ls.profiling;
+        const lod_stats = if (world_stats) |ws| blk: {
+            if (ws.lod) |ls| break :blk ls;
             break :blk null;
         } else null;
-        const lod = lodFrameDelta(profiling, &self.previous_lod_profiling);
+        const lod = lodFrameDelta(lod_stats, &self.previous_lod_profiling);
         if (self.elapsed_s < self.warmup_s) return;
 
         const shadow_avg = averageArray(&gpu.shadow_pass_ms);
@@ -341,6 +397,7 @@ pub const BenchmarkRunner = struct {
             .gpu_opaque_ms = gpu.opaque_pass_ms,
             .gpu_lod_terrain_ms = gpu.lod_terrain_pass_ms,
             .gpu_lod_water_ms = gpu.lod_water_pass_ms,
+            .gpu_lod_culling_ms = gpu.lod_culling_compute_ms,
             .gpu_total_ms = gpu.total_gpu_ms,
             .draw_calls = draw_calls,
             .vertices = vertices,
@@ -384,6 +441,7 @@ pub const BenchmarkRunner = struct {
         var opaque_sum: f64 = 0;
         var lod_terrain_sum: f64 = 0;
         var lod_water_sum: f64 = 0;
+        var lod_culling_sum: f64 = 0;
         var total_sum: f64 = 0;
         var draw_sum: f64 = 0;
         var vertices_sum: f64 = 0;
@@ -403,13 +461,22 @@ pub const BenchmarkRunner = struct {
         var lod_eviction_ms: f64 = 0;
         var lod_worker_generation_ms: f64 = 0;
         var lod_worker_mesh_construction_ms: f64 = 0;
+        var lod_manager_lock_wait_ms: f64 = 0;
+        var lod_manager_lock_hold_ms: f64 = 0;
         var lod_upload_bytes: u64 = 0;
-        var lod_pending_cpu_upload_bytes_sum: f64 = 0;
-        var lod_pending_cpu_upload_bytes_max: u64 = 0;
-        var lod_pending_cpu_upload_bytes_last: u64 = 0;
-        var lod_deferred_deletion_bytes_sum: f64 = 0;
-        var lod_deferred_deletion_bytes_max: u64 = 0;
-        var lod_deferred_deletion_bytes_last: u64 = 0;
+        var lod_pending_cpu_upload_bytes = ByteGaugeAccumulator{};
+        var lod_deferred_deletion_gpu_bytes = ByteGaugeAccumulator{};
+        var lod_deferred_deletion_cpu_bytes = ByteGaugeAccumulator{};
+        var lod_pool_gpu_capacity_bytes = ByteGaugeAccumulator{};
+        var lod_pool_gpu_allocated_bytes = ByteGaugeAccumulator{};
+        var lod_pool_gpu_slack_bytes = ByteGaugeAccumulator{};
+        var lod_pool_cpu_shadow_bytes = ByteGaugeAccumulator{};
+        var lod_compact_pool_capacity_bytes = ByteGaugeAccumulator{};
+        var lod_compact_pool_allocated_bytes = ByteGaugeAccumulator{};
+        var lod_compact_pool_free_bytes = ByteGaugeAccumulator{};
+        var lod_compact_pool_retired_bytes = ByteGaugeAccumulator{};
+        var lod_direct_mesh_gpu_bytes = ByteGaugeAccumulator{};
+        var lod_known_memory_bytes = ByteGaugeAccumulator{};
         var lod_staging_pressure_count: u64 = 0;
         var lod_visible_count: u64 = 0;
         var lod_rejected_count: u64 = 0;
@@ -417,12 +484,15 @@ pub const BenchmarkRunner = struct {
         var lod_visibility_levels: [LOD_VISIBILITY_LEVEL_COUNT]LODVisibilityLevelDisplay = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT;
         var lod_wait_idle_count: u64 = 0;
         var lod_wait_idle_ms: f64 = 0;
+        var lod_gpu_culling_overflows_max: u32 = 0;
+        var lod_gpu_culling_validation_mismatches_max: u32 = 0;
         var worst_frame = WorstFrame{
             .frame_index = 0,
             .frame_ms = 0,
             .gpu_total_ms = 0,
             .gpu_lod_terrain_ms = 0,
             .gpu_lod_water_ms = 0,
+            .gpu_lod_culling_ms = 0,
             .dominant_gpu_pass = "none",
             .dominant_gpu_pass_ms = 0,
             .lod_cpu_ms = 0,
@@ -451,6 +521,7 @@ pub const BenchmarkRunner = struct {
             opaque_sum += sample.gpu_opaque_ms;
             lod_terrain_sum += sample.gpu_lod_terrain_ms;
             lod_water_sum += sample.gpu_lod_water_ms;
+            lod_culling_sum += sample.gpu_lod_culling_ms;
             total_sum += sample.gpu_total_ms;
             draw_sum += @floatFromInt(sample.draw_calls);
             vertices_sum += @floatFromInt(sample.vertices);
@@ -471,13 +542,22 @@ pub const BenchmarkRunner = struct {
             lod_eviction_ms += lod.eviction_ms;
             lod_worker_generation_ms += lod.worker_generation_ms;
             lod_worker_mesh_construction_ms += lod.worker_mesh_construction_ms;
+            lod_manager_lock_wait_ms += lod.manager_lock_wait_ms;
+            lod_manager_lock_hold_ms += lod.manager_lock_hold_ms;
             lod_upload_bytes +|= lod.upload_bytes;
-            lod_pending_cpu_upload_bytes_sum += @floatFromInt(lod.pending_cpu_upload_bytes);
-            lod_pending_cpu_upload_bytes_max = @max(lod_pending_cpu_upload_bytes_max, lod.pending_cpu_upload_bytes);
-            lod_pending_cpu_upload_bytes_last = lod.pending_cpu_upload_bytes;
-            lod_deferred_deletion_bytes_sum += @floatFromInt(lod.deferred_deletion_bytes);
-            lod_deferred_deletion_bytes_max = @max(lod_deferred_deletion_bytes_max, lod.deferred_deletion_bytes);
-            lod_deferred_deletion_bytes_last = lod.deferred_deletion_bytes;
+            lod_pending_cpu_upload_bytes.add(lod.pending_cpu_upload_bytes);
+            lod_deferred_deletion_gpu_bytes.add(lod.deferred_deletion_bytes);
+            lod_deferred_deletion_cpu_bytes.add(lod.deferred_deletion_cpu_bytes);
+            lod_pool_gpu_capacity_bytes.add(lod.pool_gpu_capacity_bytes);
+            lod_pool_gpu_allocated_bytes.add(lod.pool_gpu_allocated_bytes);
+            lod_pool_gpu_slack_bytes.add(lod.pool_gpu_slack_bytes);
+            lod_pool_cpu_shadow_bytes.add(lod.pool_cpu_shadow_bytes);
+            lod_compact_pool_capacity_bytes.add(lod.compact_pool_capacity_bytes);
+            lod_compact_pool_allocated_bytes.add(lod.compact_pool_allocated_bytes);
+            lod_compact_pool_free_bytes.add(lod.compact_pool_free_bytes);
+            lod_compact_pool_retired_bytes.add(lod.compact_pool_retired_bytes);
+            lod_direct_mesh_gpu_bytes.add(lod.direct_mesh_gpu_bytes);
+            lod_known_memory_bytes.add(lod.known_memory_bytes);
             lod_staging_pressure_count +|= lod.staging_pressure_count;
             lod_visible_count +|= lod.visible_count;
             lod_rejected_count +|= lod.rejected_count;
@@ -485,6 +565,8 @@ pub const BenchmarkRunner = struct {
             for (&lod_visibility_levels, lod.visibility_levels) |*total, level| addVisibilityLevel(total, level);
             lod_wait_idle_count +|= lod.wait_idle_count;
             lod_wait_idle_ms += lod.wait_idle_ms;
+            lod_gpu_culling_overflows_max = @max(lod_gpu_culling_overflows_max, lod.gpu_culling_overflows);
+            lod_gpu_culling_validation_mismatches_max = @max(lod_gpu_culling_validation_mismatches_max, lod.gpu_culling_validation_mismatches);
         }
 
         const count = @as(f64, @floatFromInt(@max(self.samples.items.len, 1)));
@@ -515,6 +597,7 @@ pub const BenchmarkRunner = struct {
                 .opaque_avg = opaque_sum / count,
                 .lod_terrain_avg = lod_terrain_sum / count,
                 .lod_water_avg = lod_water_sum / count,
+                .lod_culling_avg = lod_culling_sum / count,
                 .total_avg = total_sum / count,
             },
             .draw_calls_avg = draw_sum / count,
@@ -534,6 +617,8 @@ pub const BenchmarkRunner = struct {
                     .visibility = timingTotalAverage(lod_visibility_ms, count),
                     .coverage = timingTotalAverage(lod_coverage_ms, count),
                     .eviction = timingTotalAverage(lod_eviction_ms, count),
+                    .manager_lock_wait = timingTotalAverage(lod_manager_lock_wait_ms, count),
+                    .manager_lock_hold = timingTotalAverage(lod_manager_lock_hold_ms, count),
                 },
                 .workers = .{
                     .generation_total_ms = lod_worker_generation_ms,
@@ -542,16 +627,20 @@ pub const BenchmarkRunner = struct {
                 .memory_bytes = .{
                     .upload_total_bytes = lod_upload_bytes,
                     .upload_avg_bytes = @as(f64, @floatFromInt(lod_upload_bytes)) / count,
-                    .pending_cpu_upload_bytes = .{
-                        .avg_bytes = lod_pending_cpu_upload_bytes_sum / count,
-                        .max_bytes = lod_pending_cpu_upload_bytes_max,
-                        .last_bytes = lod_pending_cpu_upload_bytes_last,
-                    },
-                    .deferred_deletion_bytes = .{
-                        .avg_bytes = lod_deferred_deletion_bytes_sum / count,
-                        .max_bytes = lod_deferred_deletion_bytes_max,
-                        .last_bytes = lod_deferred_deletion_bytes_last,
-                    },
+                    .pending_cpu_upload_bytes = lod_pending_cpu_upload_bytes.summarize(count),
+                    .deferred_deletion_bytes = lod_deferred_deletion_gpu_bytes.summarize(count),
+                    .deferred_deletion_gpu_bytes = lod_deferred_deletion_gpu_bytes.summarize(count),
+                    .deferred_deletion_cpu_bytes = lod_deferred_deletion_cpu_bytes.summarize(count),
+                    .pool_gpu_capacity_bytes = lod_pool_gpu_capacity_bytes.summarize(count),
+                    .pool_gpu_allocated_bytes = lod_pool_gpu_allocated_bytes.summarize(count),
+                    .pool_gpu_slack_bytes = lod_pool_gpu_slack_bytes.summarize(count),
+                    .pool_cpu_shadow_bytes = lod_pool_cpu_shadow_bytes.summarize(count),
+                    .compact_pool_capacity_bytes = lod_compact_pool_capacity_bytes.summarize(count),
+                    .compact_pool_allocated_bytes = lod_compact_pool_allocated_bytes.summarize(count),
+                    .compact_pool_free_bytes = lod_compact_pool_free_bytes.summarize(count),
+                    .compact_pool_retired_bytes = lod_compact_pool_retired_bytes.summarize(count),
+                    .direct_mesh_gpu_bytes = lod_direct_mesh_gpu_bytes.summarize(count),
+                    .known_memory_bytes = lod_known_memory_bytes.summarize(count),
                 },
                 .visibility = .{
                     .visible_total = lod_visible_count,
@@ -564,6 +653,8 @@ pub const BenchmarkRunner = struct {
                     .wait_idle_count_total = lod_wait_idle_count,
                     .wait_idle_ms_total = lod_wait_idle_ms,
                     .wait_idle_ms_avg = lod_wait_idle_ms / count,
+                    .gpu_culling_overflows_max = lod_gpu_culling_overflows_max,
+                    .gpu_culling_validation_mismatches_max = lod_gpu_culling_validation_mismatches_max,
                 },
             },
         };
@@ -671,7 +762,7 @@ test "benchmark draw-call SLO scales for render-distance override" {
         .frame_ms = .{ .min = 0, .avg = 0, .max = 0, .p1 = 0, .p5 = 0, .p50 = 0, .p95 = 0, .p99 = 0 },
         .max_frame_ms = 0,
         .cpu_ms_avg = 0,
-        .gpu_ms = .{ .shadow_avg = 0, .opaque_avg = 0, .lod_terrain_avg = 0, .lod_water_avg = 0, .total_avg = 0 },
+        .gpu_ms = .{ .shadow_avg = 0, .opaque_avg = 0, .lod_terrain_avg = 0, .lod_water_avg = 0, .lod_culling_avg = 0, .total_avg = 0 },
         .draw_calls_avg = 0,
         .vertices_avg = 0,
         .chunks_rendered_avg = 0,
@@ -681,6 +772,7 @@ test "benchmark draw-call SLO scales for render-distance override" {
             .gpu_total_ms = 0,
             .gpu_lod_terrain_ms = 0,
             .gpu_lod_water_ms = 0,
+            .gpu_lod_culling_ms = 0,
             .dominant_gpu_pass = "none",
             .dominant_gpu_pass_ms = 0,
             .lod_cpu_ms = 0,
@@ -711,6 +803,8 @@ test "benchmark draw-call SLO scales for render-distance override" {
                 .visibility = .{ .total_ms = 0, .avg_ms = 0 },
                 .coverage = .{ .total_ms = 0, .avg_ms = 0 },
                 .eviction = .{ .total_ms = 0, .avg_ms = 0 },
+                .manager_lock_wait = .{ .total_ms = 0, .avg_ms = 0 },
+                .manager_lock_hold = .{ .total_ms = 0, .avg_ms = 0 },
             },
             .workers = .{ .generation_total_ms = 0, .mesh_construction_total_ms = 0 },
             .memory_bytes = .{
@@ -718,6 +812,18 @@ test "benchmark draw-call SLO scales for render-distance override" {
                 .upload_avg_bytes = 0,
                 .pending_cpu_upload_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
                 .deferred_deletion_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .deferred_deletion_gpu_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .deferred_deletion_cpu_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .pool_gpu_capacity_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .pool_gpu_allocated_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .pool_gpu_slack_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .pool_cpu_shadow_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .compact_pool_capacity_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .compact_pool_allocated_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .compact_pool_free_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .compact_pool_retired_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .direct_mesh_gpu_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+                .known_memory_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
             },
             .visibility = .{ .visible_total = 0, .rejected_total = 0, .coverage_total = 0, .levels = [_]LODVisibilityLevelDisplay{.{}} ** LOD_VISIBILITY_LEVEL_COUNT },
             .pressure = .{ .staging_pressure_total = 0, .wait_idle_count_total = 0, .wait_idle_ms_total = 0, .wait_idle_ms_avg = 0 },
@@ -741,6 +847,7 @@ test "benchmark reports LOD GPU timing, frame percentiles, and worst-frame attri
         .gpu_opaque_ms = 2,
         .gpu_lod_terrain_ms = 3,
         .gpu_lod_water_ms = 4,
+        .gpu_lod_culling_ms = 2,
         .gpu_total_ms = 8,
         .draw_calls = 10,
         .vertices = 100,
@@ -754,6 +861,7 @@ test "benchmark reports LOD GPU timing, frame percentiles, and worst-frame attri
         .gpu_opaque_ms = 2,
         .gpu_lod_terrain_ms = 9,
         .gpu_lod_water_ms = 4,
+        .gpu_lod_culling_ms = 5,
         .gpu_total_ms = 16,
         .draw_calls = 20,
         .vertices = 200,
@@ -766,6 +874,7 @@ test "benchmark reports LOD GPU timing, frame percentiles, and worst-frame attri
     try std.testing.expectApproxEqAbs(@as(f64, 19.5), results.frame_ms.p95, 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 8), results.gpu_ms.lod_terrain_avg, 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 4), results.gpu_ms.lod_water_avg, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.5), results.gpu_ms.lod_culling_avg, 0.001);
     try std.testing.expectEqual(@as(u32, 1), results.worst_frame.frame_index);
     try std.testing.expectEqualStrings("lod_terrain", results.worst_frame.dominant_gpu_pass);
     try std.testing.expectApproxEqAbs(@as(f64, 9), results.worst_frame.dominant_gpu_pass_ms, 0.001);
@@ -788,6 +897,19 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
                 .lod = .{
                     .loaded = .{ 0, 0, 0, 0, 0 },
                     .memory_used_mb = 0,
+                    .memory_used_bytes = profiling.known_memory_bytes,
+                    .pool_gpu_capacity_bytes = profiling.pool_gpu_capacity_bytes,
+                    .pool_gpu_allocated_bytes = profiling.pool_gpu_allocated_bytes,
+                    .pool_gpu_slack_bytes = profiling.pool_gpu_slack_bytes,
+                    .pool_cpu_shadow_bytes = profiling.pool_cpu_shadow_bytes,
+                    .compact_pool_capacity_bytes = profiling.compact_pool_capacity_bytes,
+                    .compact_pool_allocated_bytes = profiling.compact_pool_allocated_bytes,
+                    .compact_pool_free_bytes = profiling.compact_pool_free_bytes,
+                    .compact_pool_retired_bytes = profiling.compact_pool_retired_bytes,
+                    .direct_mesh_gpu_bytes = profiling.direct_mesh_gpu_bytes,
+                    .pending_cpu_upload_bytes = profiling.pending_cpu_upload_bytes,
+                    .deferred_deletion_gpu_bytes = profiling.deferred_deletion_bytes,
+                    .deferred_deletion_cpu_bytes = profiling.deferred_deletion_cpu_bytes,
                     .profiling = profiling,
                 },
             };
@@ -813,6 +935,8 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .eviction_ms = 1,
         .worker_generation_ms = 8,
         .worker_mesh_construction_ms = 4,
+        .manager_lock_wait_ms = 2,
+        .manager_lock_hold_ms = 4,
         .upload_bytes = 100,
         .pending_cpu_upload_bytes = 10,
         .staging_pressure_count = 3,
@@ -821,6 +945,17 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .coverage_count = 6,
         .visibility_levels = .{ .{}, .{ .candidates = 5, .accepted = 2, .rejected_frustum = 1, .coverage_checks = 4 }, .{}, .{}, .{} },
         .deferred_deletion_bytes = 30,
+        .deferred_deletion_cpu_bytes = 3,
+        .pool_gpu_capacity_bytes = 100,
+        .pool_gpu_allocated_bytes = 80,
+        .pool_gpu_slack_bytes = 20,
+        .pool_cpu_shadow_bytes = 100,
+        .compact_pool_capacity_bytes = 40,
+        .compact_pool_allocated_bytes = 30,
+        .compact_pool_free_bytes = 10,
+        .compact_pool_retired_bytes = 4,
+        .direct_mesh_gpu_bytes = 50,
+        .known_memory_bytes = 253,
         .wait_idle_count = 5,
         .wait_idle_ms = 3,
     }), 0, 0);
@@ -838,6 +973,8 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .eviction_ms = 2,
         .worker_generation_ms = 12,
         .worker_mesh_construction_ms = 6,
+        .manager_lock_wait_ms = 5,
+        .manager_lock_hold_ms = 7,
         .upload_bytes = 150,
         .pending_cpu_upload_bytes = 20,
         .staging_pressure_count = 4,
@@ -846,6 +983,17 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .coverage_count = 8,
         .visibility_levels = .{ .{}, .{ .candidates = 7, .accepted = 3, .rejected_frustum = 2, .coverage_checks = 6 }, .{}, .{}, .{} },
         .deferred_deletion_bytes = 40,
+        .deferred_deletion_cpu_bytes = 5,
+        .pool_gpu_capacity_bytes = 120,
+        .pool_gpu_allocated_bytes = 90,
+        .pool_gpu_slack_bytes = 30,
+        .pool_cpu_shadow_bytes = 120,
+        .compact_pool_capacity_bytes = 50,
+        .compact_pool_allocated_bytes = 40,
+        .compact_pool_free_bytes = 10,
+        .compact_pool_retired_bytes = 5,
+        .direct_mesh_gpu_bytes = 60,
+        .known_memory_bytes = 305,
         .wait_idle_count = 6,
         .wait_idle_ms = 5,
     }), 0, 0);
@@ -863,6 +1011,8 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .eviction_ms = 0.5,
         .worker_generation_ms = 3,
         .worker_mesh_construction_ms = 2,
+        .manager_lock_wait_ms = 1,
+        .manager_lock_hold_ms = 1,
         .upload_bytes = 20,
         .pending_cpu_upload_bytes = 5,
         .staging_pressure_count = 2,
@@ -871,6 +1021,17 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .coverage_count = 3,
         .visibility_levels = .{ .{}, .{ .candidates = 1, .accepted = 1, .rejected_chunk_coverage = 1, .coverage_checks = 1 }, .{}, .{}, .{} },
         .deferred_deletion_bytes = 8,
+        .deferred_deletion_cpu_bytes = 1,
+        .pool_gpu_capacity_bytes = 90,
+        .pool_gpu_allocated_bytes = 70,
+        .pool_gpu_slack_bytes = 20,
+        .pool_cpu_shadow_bytes = 90,
+        .compact_pool_capacity_bytes = 30,
+        .compact_pool_allocated_bytes = 20,
+        .compact_pool_free_bytes = 10,
+        .compact_pool_retired_bytes = 2,
+        .direct_mesh_gpu_bytes = 40,
+        .known_memory_bytes = 229,
         .wait_idle_count = 2,
         .wait_idle_ms = 0.5,
     }), 0, 0);
@@ -886,12 +1047,28 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
     try std.testing.expectEqual(@as(u64, 70), results.lod.memory_bytes.upload_total_bytes);
     try std.testing.expectEqual(@as(u64, 20), results.lod.memory_bytes.pending_cpu_upload_bytes.max_bytes);
     try std.testing.expectEqual(@as(u64, 8), results.lod.memory_bytes.deferred_deletion_bytes.last_bytes);
+    try std.testing.expectEqual(@as(u64, 40), results.lod.memory_bytes.deferred_deletion_gpu_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 1), results.lod.memory_bytes.deferred_deletion_cpu_bytes.last_bytes);
+    try std.testing.expectEqual(@as(u64, 120), results.lod.memory_bytes.pool_gpu_capacity_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 90), results.lod.memory_bytes.pool_gpu_capacity_bytes.last_bytes);
+    try std.testing.expectEqual(@as(u64, 90), results.lod.memory_bytes.pool_gpu_allocated_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 30), results.lod.memory_bytes.pool_gpu_slack_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 120), results.lod.memory_bytes.pool_cpu_shadow_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 50), results.lod.memory_bytes.compact_pool_capacity_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 40), results.lod.memory_bytes.compact_pool_allocated_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 10), results.lod.memory_bytes.compact_pool_free_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 2), results.lod.memory_bytes.compact_pool_retired_bytes.last_bytes);
+    try std.testing.expectEqual(@as(u64, 60), results.lod.memory_bytes.direct_mesh_gpu_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 305), results.lod.memory_bytes.known_memory_bytes.max_bytes);
+    try std.testing.expectEqual(@as(u64, 229), results.lod.memory_bytes.known_memory_bytes.last_bytes);
     try std.testing.expectEqual(@as(u64, 5), results.lod.visibility.visible_total);
     try std.testing.expectEqual(@as(u64, 2), results.lod.visibility.rejected_total);
     try std.testing.expectEqual(@as(u64, 5), results.lod.visibility.coverage_total);
     try std.testing.expectEqual(@as(u64, 3), results.lod.pressure.wait_idle_count_total);
     try std.testing.expectApproxEqAbs(@as(f64, 2.5), results.lod.pressure.wait_idle_ms_total, 0.001);
     try std.testing.expectEqual(@as(u64, 3), results.lod.pressure.staging_pressure_total);
+    try std.testing.expectApproxEqAbs(@as(f64, 4), results.lod.cpu_categories.manager_lock_wait.total_ms, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 4), results.lod.cpu_categories.manager_lock_hold.total_ms, 0.001);
     try std.testing.expectEqual(@as(u64, 3), results.lod.visibility.levels[1].candidates);
     try std.testing.expectEqual(@as(u64, 2), results.lod.visibility.levels[1].accepted);
     try std.testing.expectEqual(@as(u64, 1), results.lod.visibility.levels[1].rejected_frustum);
@@ -900,6 +1077,28 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
     try std.testing.expectEqual(@as(u32, 2), results.worst_frame.frame_index);
     try std.testing.expectEqualStrings("cache", results.worst_frame.dominant_lod_cpu_category);
     try std.testing.expectEqual(@as(u64, 20), results.worst_frame.lod_upload_bytes);
+
+    const json = try BenchmarkRunner.results_json(results, std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    inline for (.{
+        "manager_lock_wait",
+        "manager_lock_hold",
+        "pool_gpu_capacity_bytes",
+        "pool_gpu_allocated_bytes",
+        "pool_gpu_slack_bytes",
+        "pool_cpu_shadow_bytes",
+        "compact_pool_capacity_bytes",
+        "compact_pool_allocated_bytes",
+        "compact_pool_free_bytes",
+        "compact_pool_retired_bytes",
+        "direct_mesh_gpu_bytes",
+        "pending_cpu_upload_bytes",
+        "deferred_deletion_gpu_bytes",
+        "deferred_deletion_cpu_bytes",
+        "known_memory_bytes",
+    }) |field| {
+        try std.testing.expect(std.mem.indexOf(u8, json, field) != null);
+    }
 }
 
 test "benchmark scenarios have stable bounded poses" {
@@ -936,26 +1135,62 @@ fn timingTotalAverage(total_ms: f64, frame_count: f64) TimingTotalAverage {
 
 /// Calculates a per-frame telemetry sample. A reduced cumulative value means
 /// the LOD collector reset, so the current value is used instead of underflowing.
-fn lodFrameDelta(current: ?LODProfilingDisplay, previous: *?LODProfilingDisplay) LODFrameSample {
-    const snapshot = current orelse {
+fn lodFrameDelta(current: ?LODStatsDisplay, previous: *?LODProfilingDisplay) LODFrameSample {
+    const display = current orelse {
         previous.* = null;
         return .{};
     };
+    const snapshot = display.profiling;
     const last = previous.*;
     previous.* = snapshot;
 
     const gauges = struct {
         pending_cpu_upload_bytes: u64,
         deferred_deletion_bytes: u64,
+        deferred_deletion_cpu_bytes: u64,
+        pool_gpu_capacity_bytes: u64,
+        pool_gpu_allocated_bytes: u64,
+        pool_gpu_slack_bytes: u64,
+        pool_cpu_shadow_bytes: u64,
+        compact_pool_capacity_bytes: u64,
+        compact_pool_allocated_bytes: u64,
+        compact_pool_free_bytes: u64,
+        compact_pool_retired_bytes: u64,
+        direct_mesh_gpu_bytes: u64,
+        known_memory_bytes: u64,
     }{
-        .pending_cpu_upload_bytes = snapshot.pending_cpu_upload_bytes,
-        .deferred_deletion_bytes = snapshot.deferred_deletion_bytes,
+        .pending_cpu_upload_bytes = display.pending_cpu_upload_bytes,
+        .deferred_deletion_bytes = display.deferred_deletion_gpu_bytes,
+        .deferred_deletion_cpu_bytes = display.deferred_deletion_cpu_bytes,
+        .pool_gpu_capacity_bytes = display.pool_gpu_capacity_bytes,
+        .pool_gpu_allocated_bytes = display.pool_gpu_allocated_bytes,
+        .pool_gpu_slack_bytes = display.pool_gpu_slack_bytes,
+        .pool_cpu_shadow_bytes = display.pool_cpu_shadow_bytes,
+        .compact_pool_capacity_bytes = display.compact_pool_capacity_bytes,
+        .compact_pool_allocated_bytes = display.compact_pool_allocated_bytes,
+        .compact_pool_free_bytes = display.compact_pool_free_bytes,
+        .compact_pool_retired_bytes = display.compact_pool_retired_bytes,
+        .direct_mesh_gpu_bytes = display.direct_mesh_gpu_bytes,
+        .known_memory_bytes = display.memory_used_bytes,
     };
     if (!snapshot.enabled or last == null or !last.?.enabled) {
         return .{
             .enabled = snapshot.enabled,
             .pending_cpu_upload_bytes = gauges.pending_cpu_upload_bytes,
             .deferred_deletion_bytes = gauges.deferred_deletion_bytes,
+            .deferred_deletion_cpu_bytes = gauges.deferred_deletion_cpu_bytes,
+            .pool_gpu_capacity_bytes = gauges.pool_gpu_capacity_bytes,
+            .pool_gpu_allocated_bytes = gauges.pool_gpu_allocated_bytes,
+            .pool_gpu_slack_bytes = gauges.pool_gpu_slack_bytes,
+            .pool_cpu_shadow_bytes = gauges.pool_cpu_shadow_bytes,
+            .compact_pool_capacity_bytes = gauges.compact_pool_capacity_bytes,
+            .compact_pool_allocated_bytes = gauges.compact_pool_allocated_bytes,
+            .compact_pool_free_bytes = gauges.compact_pool_free_bytes,
+            .compact_pool_retired_bytes = gauges.compact_pool_retired_bytes,
+            .direct_mesh_gpu_bytes = gauges.direct_mesh_gpu_bytes,
+            .known_memory_bytes = gauges.known_memory_bytes,
+            .gpu_culling_overflows = snapshot.gpu_culling_overflows,
+            .gpu_culling_validation_mismatches = snapshot.gpu_culling_validation_mismatches,
         };
     }
 
@@ -976,6 +1211,8 @@ fn lodFrameDelta(current: ?LODProfilingDisplay, previous: *?LODProfilingDisplay)
         .eviction_ms = cumulativeTimingDelta(snapshot.eviction_ms, prior.eviction_ms),
         .worker_generation_ms = cumulativeTimingDelta(snapshot.worker_generation_ms, prior.worker_generation_ms),
         .worker_mesh_construction_ms = cumulativeTimingDelta(snapshot.worker_mesh_construction_ms, prior.worker_mesh_construction_ms),
+        .manager_lock_wait_ms = cumulativeTimingDelta(snapshot.manager_lock_wait_ms, prior.manager_lock_wait_ms),
+        .manager_lock_hold_ms = cumulativeTimingDelta(snapshot.manager_lock_hold_ms, prior.manager_lock_hold_ms),
         .upload_bytes = cumulativeCounterDelta(snapshot.upload_bytes, prior.upload_bytes),
         .pending_cpu_upload_bytes = gauges.pending_cpu_upload_bytes,
         .staging_pressure_count = cumulativeCounterDelta(snapshot.staging_pressure_count, prior.staging_pressure_count),
@@ -988,8 +1225,21 @@ fn lodFrameDelta(current: ?LODProfilingDisplay, previous: *?LODProfilingDisplay)
             break :blk levels;
         },
         .deferred_deletion_bytes = gauges.deferred_deletion_bytes,
+        .deferred_deletion_cpu_bytes = gauges.deferred_deletion_cpu_bytes,
+        .pool_gpu_capacity_bytes = gauges.pool_gpu_capacity_bytes,
+        .pool_gpu_allocated_bytes = gauges.pool_gpu_allocated_bytes,
+        .pool_gpu_slack_bytes = gauges.pool_gpu_slack_bytes,
+        .pool_cpu_shadow_bytes = gauges.pool_cpu_shadow_bytes,
+        .compact_pool_capacity_bytes = gauges.compact_pool_capacity_bytes,
+        .compact_pool_allocated_bytes = gauges.compact_pool_allocated_bytes,
+        .compact_pool_free_bytes = gauges.compact_pool_free_bytes,
+        .compact_pool_retired_bytes = gauges.compact_pool_retired_bytes,
+        .direct_mesh_gpu_bytes = gauges.direct_mesh_gpu_bytes,
+        .known_memory_bytes = gauges.known_memory_bytes,
         .wait_idle_count = cumulativeCounterDelta(snapshot.wait_idle_count, prior.wait_idle_count),
         .wait_idle_ms = cumulativeTimingDelta(snapshot.wait_idle_ms, prior.wait_idle_ms),
+        .gpu_culling_overflows = snapshot.gpu_culling_overflows,
+        .gpu_culling_validation_mismatches = snapshot.gpu_culling_validation_mismatches,
     };
 }
 
@@ -1032,6 +1282,10 @@ fn worstFrameForSample(index: usize, sample: FrameSample) WorstFrame {
         dominant_gpu_pass = "lod_water";
         dominant_gpu_pass_ms = sample.gpu_lod_water_ms;
     }
+    if (sample.gpu_lod_culling_ms > dominant_gpu_pass_ms) {
+        dominant_gpu_pass = "lod_culling";
+        dominant_gpu_pass_ms = sample.gpu_lod_culling_ms;
+    }
 
     const lod_attribution = dominantLodCpuCategory(sample.lod);
 
@@ -1041,6 +1295,7 @@ fn worstFrameForSample(index: usize, sample: FrameSample) WorstFrame {
         .gpu_total_ms = sample.gpu_total_ms,
         .gpu_lod_terrain_ms = sample.gpu_lod_terrain_ms,
         .gpu_lod_water_ms = sample.gpu_lod_water_ms,
+        .gpu_lod_culling_ms = sample.gpu_lod_culling_ms,
         .dominant_gpu_pass = dominant_gpu_pass,
         .dominant_gpu_pass_ms = dominant_gpu_pass_ms,
         .lod_cpu_ms = sample.lod.cpu_ms,

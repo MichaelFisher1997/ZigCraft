@@ -545,6 +545,11 @@ pub const LODManager = struct {
         return lod_manager_upload_ops.requeueUpload(self, lod_idx, chunk);
     }
 
+    /// Replaces a failed compact upload with the maintained CPU heightfield.
+    pub fn fallbackCompactMeshToCpu(self: *Self, mesh: *LODMesh, chunk: *LODChunk) !void {
+        return lod_manager_generation_ops.fallbackCompactMeshToCpu(self, mesh, chunk);
+    }
+
     /// Counts direct finer child regions that are currently renderable for a parent region.
     /// Used to decide parent fallback visibility and transition fades.
     pub fn countRenderableChildren(self: *Self, key: LODRegionKey) u8 {

@@ -142,7 +142,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         _ = markSwapchainRecreateFailed(ctx, "swapchain UI resources", err);
         return;
     };
-    ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews()) catch |err| {
+    ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews(), ctx.swapchain.swapchain.headless_mode) catch |err| {
         _ = markSwapchainRecreateFailed(ctx, "FXAA resources", err);
         return;
     };
