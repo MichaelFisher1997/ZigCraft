@@ -281,6 +281,77 @@
             runHook postInstall
           '';
         };
+
+        rmlui = pkgs.llvmPackages.libcxxStdenv.mkDerivation rec {
+          pname = "rmlui-core";
+          version = "6.2";
+
+          src = pkgs.fetchFromGitHub {
+            owner = "mikke89";
+            repo = "RmlUi";
+            rev = "2230d1a6e8e0848ed87a5761e2a5160b2a175ba4";
+            hash = "sha256-K/znksrli3/FQ+lHgZgMgefFrWAGbxKNvFIIqtybOMc=";
+          };
+
+          nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
+          buildInputs = [ pkgs.freetype ];
+
+          # The upstream top-level target normally pulls the optional debugger
+          # library too. ZigCraft consumes only Core through the C ABI bridge.
+          postPatch = ''
+            substituteInPlace Source/CMakeLists.txt --replace-fail 'add_subdirectory("Debugger")' ""
+            substituteInPlace CMakeLists.txt --replace-fail 'target_link_libraries(rmlui INTERFACE rmlui_core rmlui_debugger)' 'target_link_libraries(rmlui INTERFACE rmlui_core)'
+          '';
+
+          cmakeFlags = [
+            "-DBUILD_SHARED_LIBS=OFF"
+            "-DBUILD_TESTING=OFF"
+            "-DRMLUI_SAMPLES=OFF"
+            "-DRMLUI_FONT_ENGINE=freetype"
+            "-DRMLUI_LUA_BINDINGS=OFF"
+            "-DRMLUI_LOTTIE_PLUGIN=OFF"
+            "-DRMLUI_SVG_PLUGIN=OFF"
+            "-DRMLUI_PRECOMPILED_HEADERS=OFF"
+          ];
+        };
+
+        rmluiBridge = pkgs.llvmPackages.libcxxStdenv.mkDerivation {
+          pname = "zigcraft-rmlui-bridge";
+          version = "6.2";
+          src = ./.;
+
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.sdl3 pkgs.freetype rmlui ];
+          dontConfigure = true;
+
+          buildPhase = ''
+            runHook preBuild
+            $CXX -std=c++17 -DRMLUI_STATIC_LIB -O2 -fPIC -I$src/libs/rmlui_bridge -I${rmlui}/include $(pkg-config --cflags sdl3) \
+              -c $src/libs/rmlui_bridge/zigcraft_rmlui.cpp -o zigcraft_rmlui.o
+            ar rcs libzigcraft_rmlui_bridge.a zigcraft_rmlui.o
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/include/zigcraft $out/lib/pkgconfig
+            cp $src/libs/rmlui_bridge/zigcraft_rmlui.h $out/include/zigcraft/
+            cp libzigcraft_rmlui_bridge.a $out/lib/
+            cat > $out/lib/pkgconfig/zigcraft-rmlui-bridge.pc <<EOF
+            prefix=$out
+            libdir=$out/lib
+            includedir=$out/include
+
+            Name: ZigCraft RmlUi bridge
+            Description: C ABI bridge for RmlUi 6.2 Core and SDL3
+            Version: 6.2
+            Requires: sdl3 freetype2
+            Libs: -L$out/lib -lzigcraft_rmlui_bridge -L${rmlui}/lib -lrmlui
+            Cflags: -I$out/include
+            EOF
+            runHook postInstall
+          '';
+        };
       in
       {
         packages.default = pkgs.stdenv.mkDerivation {
@@ -300,6 +371,9 @@
             pkgs.vulkan-loader
             pkgs.vulkan-headers
             cimgui
+            rmluiBridge
+            rmlui
+            pkgs.freetype
           ];
 
           # Disable hardening to fix "__builtin_va_arg_pack" error during C import
@@ -314,13 +388,15 @@
           '';
 
           postFixup = ''
-            patchelf --add-rpath ${pkgs.lib.makeLibraryPath [ pkgs.sdl3 pkgs.vulkan-loader pkgs.stdenv.cc.cc.lib cimgui ]} $out/bin/zigcraft
+            patchelf --add-rpath ${pkgs.lib.makeLibraryPath [ pkgs.sdl3 pkgs.vulkan-loader pkgs.stdenv.cc.cc.lib cimgui rmluiBridge rmlui pkgs.freetype ]} $out/bin/zigcraft
             wrapProgram $out/bin/zigcraft \
-              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.vulkan-loader cimgui ]}
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.vulkan-loader cimgui rmluiBridge rmlui pkgs.freetype ]}
           '';
         };
 
         packages.cimgui = cimgui;
+        packages.rmlui = rmlui;
+        packages.rmlui-bridge = rmluiBridge;
 
         devShells = {
           default = pkgs.mkShell {
@@ -340,6 +416,9 @@
               pkgs.vulkan-headers
               pkgs.mesa
               cimgui
+              rmluiBridge
+              rmlui
+              pkgs.freetype
             ];
 
             shellHook = ''
@@ -362,6 +441,9 @@
               pkgs.vulkan-loader
               pkgs.vulkan-headers
               cimgui
+              rmluiBridge
+              rmlui
+              pkgs.freetype
             ];
 
             shellHook = ''
@@ -385,6 +467,9 @@
               pkgs.vulkan-headers
               pkgs.mesa
               cimgui
+              rmluiBridge
+              rmlui
+              pkgs.freetype
             ];
 
             shellHook = ''

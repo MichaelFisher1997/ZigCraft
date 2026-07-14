@@ -35,6 +35,7 @@ pub const descriptor_bindings_tests = @import("vulkan/descriptor_bindings_tests.
 pub const descriptor_manager_error_tests = @import("vulkan/descriptor_manager_error_tests.zig");
 pub const descriptor_manager_tests = @import("vulkan/descriptor_manager_tests.zig");
 pub const frame_manager_tests = @import("vulkan/frame_manager_tests.zig");
+pub const final_composition = @import("vulkan/final_composition.zig");
 pub const pipeline_manager_edge_tests = @import("vulkan/pipeline_manager_edge_tests.zig");
 pub const pipeline_manager_tests = @import("vulkan/pipeline_manager_tests.zig");
 pub const pipeline_specialized_edge_tests = @import("vulkan/pipeline_specialized_edge_tests.zig");

@@ -21,6 +21,22 @@ if [[ ! -f "$golden" ]]; then
     exit 2
 fi
 
+require_non_black_image() {
+    local image=$1
+    local label=$2
+    local mean
+    mean=$(magick "$image" -colorspace RGB -format '%[fx:mean]' info:)
+    if awk -v value="$mean" 'BEGIN { exit !(value <= 0.0001) }'; then
+        printf '%s is effectively black (mean %s); refusing an invalid visual comparison\n' "$label" "$mean" >&2
+        exit 1
+    fi
+}
+
+# A black baseline can make the test look healthy while proving nothing about
+# menu composition. Validate both inputs before calculating their difference.
+require_non_black_image "$golden" "Golden screenshot"
+require_non_black_image "$actual" "Actual screenshot"
+
 metric_output=$(magick compare -metric RMSE "$golden" "$actual" "$diff" 2>&1 || true)
 normalized=$(printf '%s\n' "$metric_output" | sed -n 's/.*(\([0-9.]*\)).*/\1/p')
 if [[ -z "$normalized" ]]; then

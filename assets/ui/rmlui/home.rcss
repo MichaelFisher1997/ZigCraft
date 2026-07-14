@@ -1,0 +1,340 @@
+body {
+  position: absolute;
+  display: block;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  color: #F4F8FC;
+  font-family: Inter Variable;
+  background-color: #000000BF;
+  overflow: hidden;
+}
+
+#page {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: 1360dp;
+  height: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 52dp 64dp;
+}
+
+#hero {
+  display: block;
+  width: 500dp;
+  min-width: 0;
+  margin-right: 56dp;
+}
+
+#brand {
+  display: block;
+  color: #F6FAFD;
+  font-size: 18dp;
+  font-weight: 600;
+  letter-spacing: 4dp;
+}
+
+#brand span {
+  color: #7DD8F0;
+  font-size: 12dp;
+  font-weight: normal;
+  letter-spacing: 1dp;
+}
+
+.eyebrow,
+.panel-kicker,
+.section-label {
+  display: block;
+  color: #83D9EF;
+  font-size: 12dp;
+  font-weight: 600;
+  letter-spacing: 2dp;
+  line-height: 1.25;
+}
+
+.eyebrow {
+  margin-top: 34dp;
+}
+
+h1 {
+  display: block;
+  margin: 10dp 0 16dp;
+  color: #F7FAFC;
+  font-size: 48dp;
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -1dp;
+}
+
+h1 span {
+  display: block;
+}
+
+.hero-compact {
+  display: none;
+}
+
+.lede {
+  display: block;
+  max-width: 460dp;
+  margin: 0;
+  color: #C7D4DD;
+  font-size: 16dp;
+  line-height: 1.45;
+}
+
+#navigation-panel {
+  display: block;
+  width: 460dp;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 26dp;
+  background-color: #07141FE0;
+  border: 1dp #BDE5F05C;
+  border-top: 1dp #E1F7FC8A;
+  border-radius: 10dp;
+}
+
+h2 {
+  display: block;
+  margin: 7dp 0 6dp;
+  color: #F5F8FB;
+  font-size: 26dp;
+  font-weight: 600;
+  line-height: 1.18;
+}
+
+.panel-copy {
+  display: block;
+  margin: 0 0 18dp;
+  color: #B9C8D1;
+  font-size: 13dp;
+  line-height: 1.4;
+}
+
+button {
+  display: block;
+  width: 100%;
+  min-height: 50dp;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 9dp 12dp;
+  color: #F3F7FA;
+  background-color: transparent;
+  border: 0dp transparent;
+  border-bottom: 1dp #A9DDEA26;
+  border-radius: 0dp;
+  font-family: Inter Variable;
+  text-align: left;
+  cursor: pointer;
+}
+
+button strong {
+  display: block;
+  color: #F3F8FB;
+  font-size: 14dp;
+  font-weight: 600;
+  letter-spacing: 1dp;
+  pointer-events: none;
+}
+
+button span {
+  display: block;
+  margin-top: 3dp;
+  color: #A9BBC6;
+  font-size: 12dp;
+  line-height: 1.25;
+  letter-spacing: 0dp;
+  pointer-events: none;
+}
+
+button:hover,
+button:focus {
+  background-color: #8BE4FF1C;
+  border: 0dp transparent;
+  border-left: 2dp #81D8F2;
+  border-bottom: 1dp #A9DDEA3D;
+}
+
+button:active {
+  background-color: #55CDEB3D;
+}
+
+button.primary {
+  min-height: 76dp;
+  margin-bottom: 16dp;
+  padding: 14dp 16dp;
+  background-color: #087F99D4;
+  border: 1dp #CFF8FFB8;
+  border-left: 3dp #E8FDFF;
+  border-radius: 8dp;
+}
+
+button.primary:hover,
+button.primary:focus {
+  background-color: #0A9AB6E8;
+  border: 1dp #F0FDFFE8;
+  border-left: 3dp #FFFFFF;
+}
+
+button.primary strong {
+  font-size: 18dp;
+  letter-spacing: 1dp;
+}
+
+button.primary span {
+  color: #D4F2F8;
+}
+
+.section-label {
+  margin: 0 0 5dp;
+  padding-bottom: 7dp;
+  border-bottom: 1dp #9CDDEF29;
+}
+
+#secondary-actions {
+  display: block;
+  background-color: transparent;
+  border: 0dp transparent;
+}
+
+#secondary-actions button {
+  display: block;
+}
+
+#secondary-actions button:hover,
+#secondary-actions button:focus {
+  background-color: #99E7FF1C;
+  border: 0dp transparent;
+  border-left: 2dp #74D3EE;
+  border-bottom: 1dp #9CDDEF3D;
+}
+
+button.quiet:hover,
+button.quiet:focus {
+  background-color: #EF7D931C;
+  border: 0dp transparent;
+  border-left: 2dp #D47C87;
+  border-bottom: 1dp #69454D;
+}
+
+@media (max-width: 1080dp) {
+  #page {
+    display: block;
+    padding: 30dp 36dp;
+  }
+
+  #hero {
+    display: block;
+    width: 460dp;
+    max-width: 100%;
+    margin: 0 auto 18dp;
+  }
+
+  .eyebrow {
+    margin-top: 18dp;
+  }
+
+  #navigation-panel {
+    display: block;
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 620dp) {
+  #page {
+    display: block;
+    padding: 20dp;
+  }
+
+  #hero {
+    display: block;
+    width: 100%;
+    margin: 0 0 14dp;
+  }
+
+  #brand {
+    font-size: 16dp;
+    letter-spacing: 3dp;
+  }
+
+  #brand span {
+    font-size: 12dp;
+  }
+
+  .eyebrow {
+    display: none;
+  }
+
+  h1 {
+    margin: 8dp 0 6dp;
+    font-size: 28dp;
+    line-height: 1.12;
+  }
+
+  .hero-full {
+    display: none;
+  }
+
+  .hero-compact {
+    display: block;
+  }
+
+  .lede {
+    max-width: 420dp;
+    font-size: 12dp;
+    line-height: 1.35;
+  }
+
+  #navigation-panel {
+    display: block;
+    width: 100%;
+    padding: 20dp;
+  }
+
+  h2 {
+    margin: 5dp 0 4dp;
+    font-size: 22dp;
+  }
+
+  .panel-copy {
+    margin-bottom: 12dp;
+    font-size: 12dp;
+  }
+
+  button.primary {
+    min-height: 68dp;
+    margin-bottom: 12dp;
+    padding: 12dp 14dp;
+  }
+
+  button.primary strong {
+    font-size: 16dp;
+  }
+
+  button {
+    min-height: 45dp;
+    padding: 7dp 10dp;
+  }
+
+  button strong {
+    font-size: 13dp;
+  }
+
+  button span {
+    font-size: 12dp;
+  }
+
+  .section-label {
+    margin-bottom: 3dp;
+    padding-bottom: 5dp;
+  }
+}

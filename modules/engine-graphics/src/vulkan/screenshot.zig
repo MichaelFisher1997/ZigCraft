@@ -3,19 +3,43 @@ const fs = @import("fs");
 const c = @import("c").c;
 const log = @import("engine-core").log;
 const Utils = @import("utils.zig");
-const VulkanContext = @import("rhi_context_types.zig").VulkanContext;
 
-pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
+/// A readback recorded after all composition (including UI) and completed once
+/// the frame submission fence signals.
+pub const PendingCapture = struct {
+    staging: ?Utils.VulkanBuffer = null,
+    path: []const u8 = &.{},
+    width: u32 = 0,
+    height: u32 = 0,
+    format: c.VkFormat = c.VK_FORMAT_UNDEFINED,
+    source_layout: c.VkImageLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+    source_image: c.VkImage = null,
+    frame_index: usize = 0,
+    path_owned: bool = false,
+};
+
+/// Queues a readback of the active frame. Frame orchestration records it after
+/// all composition, including UI and post-processing, has completed.
+pub fn requestCapture(ctx: anytype, path: []const u8) bool {
     const device = &ctx.vulkan_device;
-    const vk = device.vk_device;
 
+    if (!ctx.frames.frame_in_progress) {
+        log.log.err("screenshot: capture must be requested before endFrame", .{});
+        return false;
+    }
+    if (ctx.screenshot_capture.staging != null) {
+        log.log.err("screenshot: a capture is already pending", .{});
+        return false;
+    }
     if (ctx.swapchain.swapchain.images.items.len == 0) {
         log.log.err("screenshot: no swapchain images available", .{});
         return false;
     }
+    if (!ctx.swapchain.swapchain.screenshot_capture_supported) {
+        log.log.err("screenshot: active surface does not support transfer-source swapchain images", .{});
+        return false;
+    }
 
-    const image_index = ctx.frames.current_image_index;
-    const swapchain_image = ctx.swapchain.swapchain.images.items[image_index];
     const extent = ctx.swapchain.getExtent();
     const image_format = ctx.swapchain.getImageFormat();
     const width = extent.width;
@@ -32,51 +56,49 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
         log.log.err("screenshot: failed to create staging buffer", .{});
         return false;
     };
-    defer {
-        c.vkDestroyBuffer(vk, staging.buffer, null);
-        c.vkFreeMemory(vk, staging.memory, null);
+    const owned_path = ctx.allocator.dupe(u8, path) catch {
+        c.vkDestroyBuffer(device.vk_device, staging.buffer, null);
+        c.vkFreeMemory(device.vk_device, staging.memory, null);
+        log.log.err("screenshot: failed to retain output path", .{});
+        return false;
+    };
+    ctx.screenshot_capture = .{
+        .staging = staging,
+        .path = owned_path,
+        .width = width,
+        .height = height,
+        .format = image_format,
+        .frame_index = ctx.frames.current_frame,
+        .path_owned = true,
+    };
+
+    return true;
+}
+
+/// Appends the copy after final composition but before the command buffer is
+/// submitted or (on normal paths) the swapchain image is presented.
+pub fn recordCapture(ctx: anytype) void {
+    const capture = &ctx.screenshot_capture;
+    const staging = capture.staging orelse return;
+    const final_image = ctx.runtime.final_composed;
+    if (!final_image.isCurrentImage(ctx.frames.current_image_index)) {
+        log.log.err("screenshot: no final composed image is available for this frame", .{});
+        discardCapture(ctx);
+        return;
     }
 
-    var pool_info = std.mem.zeroes(c.VkCommandPoolCreateInfo);
-    pool_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.queueFamilyIndex = device.graphics_family;
-    pool_info.flags = c.VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-
-    var command_pool: c.VkCommandPool = null;
-    Utils.checkVk(c.vkCreateCommandPool(vk, &pool_info, null, &command_pool)) catch {
-        log.log.err("screenshot: failed to create command pool", .{});
-        return false;
-    };
-    defer c.vkDestroyCommandPool(vk, command_pool, null);
-
-    var cmd_alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
-    cmd_alloc_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_alloc_info.commandPool = command_pool;
-    cmd_alloc_info.level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_alloc_info.commandBufferCount = 1;
-
-    var cmd_buffer: c.VkCommandBuffer = null;
-    Utils.checkVk(c.vkAllocateCommandBuffers(vk, &cmd_alloc_info, &cmd_buffer)) catch {
-        log.log.err("screenshot: failed to allocate command buffer", .{});
-        return false;
-    };
-
-    var begin_info = std.mem.zeroes(c.VkCommandBufferBeginInfo);
-    begin_info.sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    _ = c.vkBeginCommandBuffer(cmd_buffer, &begin_info);
-
-    const is_headless = ctx.swapchain.swapchain.headless_mode;
-    const src_layout: c.VkImageLayout = if (is_headless) c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL else c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    capture.source_image = final_image.image;
+    capture.source_layout = final_image.layout;
+    const cmd_buffer = ctx.frames.getCurrentCommandBuffer();
     const dst_layout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
     var barrier = std.mem.zeroes(c.VkImageMemoryBarrier);
     barrier.sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.srcAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.oldLayout = src_layout;
+    barrier.oldLayout = capture.source_layout;
     barrier.newLayout = dst_layout;
-    barrier.image = swapchain_image;
+    barrier.image = capture.source_image;
     barrier.subresourceRange = .{
         .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
         .baseMipLevel = 0,
@@ -109,21 +131,43 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
         .layerCount = 1,
     };
     region.imageOffset = .{ .x = 0, .y = 0, .z = 0 };
-    region.imageExtent = .{ .width = width, .height = height, .depth = 1 };
+    region.imageExtent = .{ .width = capture.width, .height = capture.height, .depth = 1 };
 
     c.vkCmdCopyImageToBuffer(
         cmd_buffer,
-        swapchain_image,
+        capture.source_image,
         c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         staging.buffer,
         1,
         &region,
     );
 
+    var host_barrier = std.mem.zeroes(c.VkBufferMemoryBarrier);
+    host_barrier.sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    host_barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+    host_barrier.dstAccessMask = c.VK_ACCESS_HOST_READ_BIT;
+    host_barrier.srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    host_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
+    host_barrier.buffer = staging.buffer;
+    host_barrier.offset = 0;
+    host_barrier.size = c.VK_WHOLE_SIZE;
+    c.vkCmdPipelineBarrier(
+        cmd_buffer,
+        c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+        c.VK_PIPELINE_STAGE_HOST_BIT,
+        0,
+        0,
+        null,
+        1,
+        &host_barrier,
+        0,
+        null,
+    );
+
     barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
     barrier.dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.oldLayout = dst_layout;
-    barrier.newLayout = src_layout;
+    barrier.newLayout = capture.source_layout;
 
     c.vkCmdPipelineBarrier(
         cmd_buffer,
@@ -137,27 +181,17 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
         1,
         &barrier,
     );
+}
 
-    _ = c.vkEndCommandBuffer(cmd_buffer);
+/// Encodes the capture after the frame submission containing the copy has
+/// completed. Called by frame orchestration, never by application code.
+pub fn completeCapture(ctx: anytype) bool {
+    const capture = &ctx.screenshot_capture;
+    const staging = capture.staging orelse return true;
+    defer discardCapture(ctx);
 
-    var fence_info = std.mem.zeroes(c.VkFenceCreateInfo);
-    fence_info.sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    var fence: c.VkFence = null;
-    Utils.checkVk(c.vkCreateFence(vk, &fence_info, null, &fence)) catch {
-        log.log.err("screenshot: failed to create fence", .{});
-        return false;
-    };
-    defer c.vkDestroyFence(vk, fence, null);
-
-    var submit_info = std.mem.zeroes(c.VkSubmitInfo);
-    submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &cmd_buffer;
-
-    device.submitGuarded(submit_info, fence) catch |err| {
-        log.log.err("screenshot: vkQueueSubmit failed: {}", .{err});
-        return false;
-    };
+    const vk = ctx.vulkan_device.vk_device;
+    const fence = ctx.frames.in_flight_fences[capture.frame_index];
     const fence_result = c.vkWaitForFences(vk, 1, &fence, c.VK_TRUE, 5_000_000_000);
     if (fence_result != c.VK_SUCCESS) {
         log.log.err("screenshot: fence wait failed or timed out ({})", .{fence_result});
@@ -169,8 +203,17 @@ pub fn captureScreenshot(ctx: *VulkanContext, path: []const u8) bool {
         return false;
     };
     const bytes: [*]const u8 = @ptrCast(@alignCast(mapped_ptr));
+    return writeImage(bytes, capture.width, capture.height, capture.path, capture.format);
+}
 
-    return writeImage(bytes, width, height, path, image_format);
+pub fn discardCapture(ctx: anytype) void {
+    if (ctx.screenshot_capture.staging) |staging| {
+        if (staging.mapped_ptr != null) c.vkUnmapMemory(ctx.vulkan_device.vk_device, staging.memory);
+        c.vkDestroyBuffer(ctx.vulkan_device.vk_device, staging.buffer, null);
+        c.vkFreeMemory(ctx.vulkan_device.vk_device, staging.memory, null);
+    }
+    if (ctx.screenshot_capture.path_owned) ctx.allocator.free(ctx.screenshot_capture.path);
+    ctx.screenshot_capture = .{};
 }
 
 const ScreenshotFormat = enum {
@@ -231,9 +274,6 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
 
     const is_bgra = format == c.VK_FORMAT_B8G8R8A8_UNORM or format == c.VK_FORMAT_B8G8R8A8_SRGB;
     const needs_srgb_encode = format == c.VK_FORMAT_B8G8R8A8_UNORM or format == c.VK_FORMAT_R8G8B8A8_UNORM;
-    const red_index: usize = if (is_bgra) 2 else 0;
-    const blue_index: usize = if (is_bgra) 0 else 2;
-
     var y: u32 = 0;
     while (y < height) : (y += 1) {
         const row_start = @as(usize, y) * (row_bytes + 1);
@@ -242,12 +282,10 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
         while (x < width) : (x += 1) {
             const src_offset: usize = (@as(usize, y) * width + x) * 4;
             const dst_offset: usize = row_start + 1 + @as(usize, x) * 3;
-            const red = data[src_offset + red_index];
-            const green = data[src_offset + 1];
-            const blue = data[src_offset + blue_index];
-            raw[dst_offset] = if (needs_srgb_encode) linearByteToSrgb(red) else red;
-            raw[dst_offset + 1] = if (needs_srgb_encode) linearByteToSrgb(green) else green;
-            raw[dst_offset + 2] = if (needs_srgb_encode) linearByteToSrgb(blue) else blue;
+            const rgb = finalDisplayRgb(data[src_offset..][0..4], is_bgra);
+            raw[dst_offset] = if (needs_srgb_encode) linearByteToSrgb(rgb[0]) else rgb[0];
+            raw[dst_offset + 1] = if (needs_srgb_encode) linearByteToSrgb(rgb[1]) else rgb[1];
+            raw[dst_offset + 2] = if (needs_srgb_encode) linearByteToSrgb(rgb[2]) else rgb[2];
         }
     }
 
@@ -287,6 +325,16 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
     return true;
 }
 
+fn finalDisplayRgb(pixel: []const u8, is_bgra: bool) [3]u8 {
+    std.debug.assert(pixel.len >= 4);
+    return if (is_bgra) .{ pixel[2], pixel[1], pixel[0] } else .{ pixel[0], pixel[1], pixel[2] };
+}
+
+test "final display screenshot preserves BGRA UNORM byte encoding" {
+    try std.testing.expectEqual([3]u8{ 101, 47, 23 }, finalDisplayRgb(&.{ 23, 47, 101, 255 }, true));
+    try std.testing.expectEqual([3]u8{ 101, 47, 23 }, finalDisplayRgb(&.{ 101, 47, 23, 255 }, false));
+}
+
 fn linearByteToSrgb(value: u8) u8 {
     const linear = @as(f32, @floatFromInt(value)) / 255.0;
     const encoded = if (linear <= 0.0031308)
@@ -296,7 +344,7 @@ fn linearByteToSrgb(value: u8) u8 {
     return @intFromFloat(@round(std.math.clamp(encoded, 0.0, 1.0) * 255.0));
 }
 
-test "linear screenshot bytes encode to sRGB" {
+test "linear final target bytes encode to sRGB PNG values" {
     try std.testing.expectEqual(@as(u8, 0), linearByteToSrgb(0));
     try std.testing.expectEqual(@as(u8, 255), linearByteToSrgb(255));
     try std.testing.expectApproxEqAbs(@as(f32, 118.0), @as(f32, @floatFromInt(linearByteToSrgb(46))), 1.0);

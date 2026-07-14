@@ -6,6 +6,26 @@ const PostProcessPushConstants = post_process_system_pkg.PostProcessPushConstant
 const fxaa_system_pkg = @import("fxaa_system.zig");
 const FXAAPushConstants = fxaa_system_pkg.FXAAPushConstants;
 const setup = @import("rhi_resource_setup.zig");
+const screenshot = @import("screenshot.zig");
+const final_composition = @import("final_composition.zig");
+
+fn recordFinalComposedImage(ctx: anytype) void {
+    const image_index = ctx.frames.current_image_index;
+    if (image_index >= ctx.swapchain.swapchain.images.items.len) {
+        log.log.err("final composition: image index {} is out of range", .{image_index});
+        ctx.runtime.final_composed.clear();
+        return;
+    }
+    ctx.runtime.final_composed.set(
+        ctx.swapchain.swapchain.images.items[image_index],
+        image_index,
+        final_composition.displayLayout(ctx.swapchain.skip_present),
+    );
+}
+
+fn postProcessTargetsFXAA(ctx: anytype) bool {
+    return ctx.fxaa.enabled and ctx.fxaa.post_process_to_fxaa_render_pass != null and ctx.fxaa.post_process_to_fxaa_framebuffer != null;
+}
 
 pub fn beginGPassInternal(ctx: anytype) void {
     if (!ctx.frames.frame_in_progress or ctx.runtime.g_pass_active) return;
@@ -91,6 +111,8 @@ pub fn beginFXAAPassInternal(ctx: anytype) void {
         return;
     }
 
+    ensureNoRenderPassActiveInternal(ctx);
+
     const image_index = ctx.frames.current_image_index;
     if (image_index >= ctx.fxaa.framebuffers.items.len) {
         return;
@@ -99,16 +121,12 @@ pub fn beginFXAAPassInternal(ctx: anytype) void {
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     const extent = ctx.swapchain.getExtent();
 
-    var clear_value = std.mem.zeroes(c.VkClearValue);
-    clear_value.color.float32 = .{ 0.0, 0.0, 0.0, 1.0 };
-
     var rp_begin = std.mem.zeroes(c.VkRenderPassBeginInfo);
     rp_begin.sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp_begin.renderPass = ctx.fxaa.render_pass;
     rp_begin.framebuffer = ctx.fxaa.framebuffers.items[image_index];
     rp_begin.renderArea = .{ .offset = .{ .x = 0, .y = 0 }, .extent = extent };
-    rp_begin.clearValueCount = 1;
-    rp_begin.pClearValues = &clear_value;
+    rp_begin.clearValueCount = 0;
 
     c.vkCmdBeginRenderPass(command_buffer, &rp_begin, c.VK_SUBPASS_CONTENTS_INLINE);
 
@@ -144,11 +162,14 @@ pub fn beginFXAAPassInternal(ctx: anytype) void {
     ctx.fxaa.pass_active = true;
 }
 
-pub fn beginFXAAPassForUI(ctx: anytype) void {
+/// Begins an overlay pass on the already-composed display image. This state is
+/// intentionally not FXAA state: UI may be submitted after the FXAA pass has
+/// ended, and several UI begin/end pairs are valid in one frame.
+pub fn beginUISwapchainPassInternal(ctx: anytype, clear_output: bool) void {
     if (!ctx.frames.frame_in_progress) {
         return;
     }
-    if (ctx.fxaa.pass_active) return;
+    if (ctx.ui.ui_swapchain_pass_active) return;
     if (ctx.render_pass_manager.ui_swapchain_render_pass == null) {
         return;
     }
@@ -165,22 +186,16 @@ pub fn beginFXAAPassForUI(ctx: anytype) void {
 
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     const extent = ctx.swapchain.getExtent();
-    const ui_only_frame = ctx.runtime.draw_call_count == 0;
-
-    var clear_value = std.mem.zeroes(c.VkClearValue);
-    clear_value.color.float32 = .{ 0.0, 0.0, 0.0, 1.0 };
-
     var rp_begin = std.mem.zeroes(c.VkRenderPassBeginInfo);
     rp_begin.sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp_begin.renderPass = ctx.render_pass_manager.ui_swapchain_render_pass.?;
     rp_begin.framebuffer = ctx.render_pass_manager.ui_swapchain_framebuffers.items[image_index];
     rp_begin.renderArea = .{ .offset = .{ .x = 0, .y = 0 }, .extent = extent };
-    rp_begin.clearValueCount = 1;
-    rp_begin.pClearValues = &clear_value;
+    rp_begin.clearValueCount = 0;
 
     c.vkCmdBeginRenderPass(command_buffer, &rp_begin, c.VK_SUBPASS_CONTENTS_INLINE);
 
-    if (ui_only_frame) {
+    if (clear_output) {
         var clear_attachment = std.mem.zeroes(c.VkClearAttachment);
         clear_attachment.aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT;
         clear_attachment.colorAttachment = 0;
@@ -208,7 +223,8 @@ pub fn beginFXAAPassForUI(ctx: anytype) void {
     const scissor = c.VkRect2D{ .offset = .{ .x = 0, .y = 0 }, .extent = extent };
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-    ctx.fxaa.pass_active = true;
+    ctx.ui.ui_swapchain_pass_active = true;
+    ctx.ui.ui_swapchain_clears_output = clear_output;
 }
 
 pub fn endFXAAPassInternal(ctx: anytype) void {
@@ -218,6 +234,18 @@ pub fn endFXAAPassInternal(ctx: anytype) void {
     c.vkCmdEndRenderPass(command_buffer);
 
     ctx.fxaa.pass_active = false;
+    recordFinalComposedImage(ctx);
+}
+
+pub fn endUISwapchainPassInternal(ctx: anytype) void {
+    if (!ctx.ui.ui_swapchain_pass_active) return;
+
+    const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
+    c.vkCmdEndRenderPass(command_buffer);
+    ctx.ui.ui_swapchain_pass_active = false;
+    if (ctx.ui.ui_swapchain_clears_output) ctx.runtime.direct_ui_composed_this_frame = true;
+    ctx.ui.ui_swapchain_clears_output = false;
+    recordFinalComposedImage(ctx);
 }
 
 pub fn beginMainPassInternal(ctx: anytype) void {
@@ -328,7 +356,7 @@ pub fn beginPostProcessPassInternal(ctx: anytype) void {
     if (!ctx.post_process.pass_active) {
         ensureNoRenderPassActiveInternal(ctx);
 
-        const use_fxaa_output = ctx.fxaa.enabled and ctx.fxaa.post_process_to_fxaa_render_pass != null and ctx.fxaa.post_process_to_fxaa_framebuffer != null;
+        const use_fxaa_output = postProcessTargetsFXAA(ctx);
 
         var render_pass_info = std.mem.zeroes(c.VkRenderPassBeginInfo);
         render_pass_info.sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -400,6 +428,7 @@ pub fn endPostProcessPassInternal(ctx: anytype) void {
     const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
     c.vkCmdEndRenderPass(command_buffer);
     ctx.post_process.pass_active = false;
+    if (!postProcessTargetsFXAA(ctx)) recordFinalComposedImage(ctx);
 }
 
 pub fn ensureNoRenderPassActiveInternal(ctx: anytype) void {
@@ -410,6 +439,7 @@ pub fn ensureNoRenderPassActiveInternal(ctx: anytype) void {
     }
     if (ctx.runtime.g_pass_active) endGPassInternal(ctx);
     if (ctx.post_process.pass_active) endPostProcessPassInternal(ctx);
+    if (ctx.ui.ui_swapchain_pass_active) endUISwapchainPassInternal(ctx);
 }
 
 pub fn endFrame(ctx: anytype) void {
@@ -420,8 +450,11 @@ pub fn endFrame(ctx: anytype) void {
         const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
         ctx.shadow_system.endPass(command_buffer);
     }
+    // Defensively close a caller-owned overlay before opening a full-screen
+    // replacement pass. Normal UI submission closes it in end2DPass.
+    if (ctx.ui.ui_swapchain_pass_active) endUISwapchainPassInternal(ctx);
 
-    if (ctx.runtime.draw_call_count > 0 and !ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
+    if (ctx.runtime.draw_call_count > 0 and !ctx.runtime.direct_ui_composed_this_frame and !ctx.runtime.post_process_ran_this_frame and ctx.render_pass_manager.post_process_framebuffers.items.len > 0 and ctx.frames.current_image_index < ctx.render_pass_manager.post_process_framebuffers.items.len) {
         beginPostProcessPassInternal(ctx);
         if (ctx.post_process.pass_active) {
             const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];
@@ -435,6 +468,10 @@ pub fn endFrame(ctx: anytype) void {
         beginFXAAPassInternal(ctx);
     }
     if (ctx.fxaa.pass_active) endFXAAPassInternal(ctx);
+
+    // The UI path can trigger post-processing at endFrame, so append the
+    // readback only after every final-color pass has completed.
+    screenshot.recordCapture(ctx);
 
     const transfer_cb = ctx.resources.getTransferCommandBuffer();
 
@@ -470,12 +507,25 @@ pub fn endFrame(ctx: anytype) void {
 
     const transfer_sem = ctx.resources.getTransferSemaphore();
 
-    ctx.frames.endFrame(&ctx.swapchain, transfer_cb, transfer_sem) catch |err| {
+    var submitted = false;
+    if (ctx.frames.endFrame(&ctx.swapchain, transfer_cb, transfer_sem)) |_| {
+        submitted = true;
+    } else |err| {
         log.log.errWithTrace("endFrame failed: {}", .{err});
         if (err == error.GpuLost) {
             ctx.runtime.gpu_fault_detected = true;
         }
-    };
+    }
+
+    if (ctx.screenshot_capture.staging != null) {
+        if (submitted) {
+            if (!screenshot.completeCapture(ctx)) {
+                log.log.err("SCREENSHOT: Failed to encode final composed frame", .{});
+            }
+        } else {
+            screenshot.discardCapture(ctx);
+        }
+    }
 
     if (transfer_cb != null) {
         ctx.resources.resetTransferState();

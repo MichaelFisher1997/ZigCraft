@@ -95,6 +95,8 @@ pub const ShadowParams = rhi_types.ShadowParams;
 pub const Color = rhi_types.Color;
 pub const Rect = rhi_types.Rect;
 pub const UVRect = rhi_types.UVRect;
+pub const UiVertex = rhi_types.UiVertex;
+pub const UiScissor = rhi_types.UiScissor;
 pub const GpuTimingResults = rhi_types.GpuTimingResults;
 pub const ICullingSystem = culling.ICullingSystem;
 
@@ -647,7 +649,12 @@ pub const IUIContext = struct {
         drawTextureRegion: *const fn (ptr: *anyopaque, texture: TextureHandle, rect: Rect, uv: UVRect, color: Color) void,
         drawDepthTexture: *const fn (ptr: *anyopaque, texture: TextureHandle, rect: Rect) void,
         bindPipeline: *const fn (ptr: *anyopaque, textured: bool) void,
+        drawIndexedGeometry: *const fn (ptr: *anyopaque, vertices: []const UiVertex, indices: []const u32, texture: TextureHandle, translation: [2]f32) void = unsupportedDrawIndexedGeometry,
+        setScissorRegion: *const fn (ptr: *anyopaque, region: UiScissor) void = unsupportedSetScissorRegion,
     };
+
+    fn unsupportedDrawIndexedGeometry(_: *anyopaque, _: []const UiVertex, _: []const u32, _: TextureHandle, _: [2]f32) void {}
+    fn unsupportedSetScissorRegion(_: *anyopaque, _: UiScissor) void {}
 
     /// Begins the immediate-mode UI pass for a framebuffer of `width` by `height` pixels.
     /// UI draw calls must be issued between this call and `endPass` on the render thread.
@@ -683,6 +690,16 @@ pub const IUIContext = struct {
     /// Call inside an active UI pass before issuing dependent draw calls. Must be called from the render thread that owns the backend context.
     pub fn bindPipeline(self: IUIContext, textured: bool) void {
         self.vtable.bindPipeline(self.ptr, textured);
+    }
+    /// Draws arbitrary indexed UI geometry. A zero texture handle selects the
+    /// untextured pipeline; non-zero handles are sampled and modulated by the
+    /// per-vertex RGBA color. `translation` is in UI pixels.
+    pub fn drawIndexedGeometry(self: IUIContext, vertices: []const UiVertex, indices: []const u32, texture: TextureHandle, translation: [2]f32) void {
+        self.vtable.drawIndexedGeometry(self.ptr, vertices, indices, texture, translation);
+    }
+    /// Sets the dynamic pixel scissor for subsequent indexed UI geometry.
+    pub fn setScissorRegion(self: IUIContext, region: UiScissor) void {
+        self.vtable.setScissorRegion(self.ptr, region);
     }
 };
 
@@ -768,6 +785,15 @@ pub const UIRenderer = struct {
     /// Call inside an active UI pass before issuing dependent draw calls. Must be called from the render thread that owns the backend context.
     pub fn bindPipeline(self: UIRenderer, textured: bool) void {
         self.ctx.bindPipeline(textured);
+    }
+    /// Draws retained indexed geometry, including RmlUi meshes, in the active
+    /// UI pass. A zero texture handle selects the untextured pipeline.
+    pub fn drawIndexedGeometry(self: UIRenderer, vertices: []const UiVertex, indices: []const u32, texture: TextureHandle, translation: [2]f32) void {
+        self.ctx.drawIndexedGeometry(vertices, indices, texture, translation);
+    }
+    /// Sets the dynamic pixel scissor for following retained UI geometry.
+    pub fn setScissorRegion(self: UIRenderer, region: UiScissor) void {
+        self.ctx.setScissorRegion(region);
     }
 };
 
@@ -1553,8 +1579,9 @@ pub const IScreenshotContext = struct {
         captureFrame: *const fn (ctx: *anyopaque, path: []const u8) bool,
     };
 
-    /// Captures the current framebuffer to the requested output path.
-    /// The path must be writable and capture resources must be available for the active backend. Must be called from the render thread that owns the backend context.
+    /// Requests a capture of the final composed framebuffer, including UI, to
+    /// the requested path. Must be called after UI rendering and before
+    /// `endFrame`; encoding completes as part of frame submission.
     pub fn captureFrame(self: IScreenshotContext, path: []const u8) bool {
         return self.vtable.captureFrame(self.ptr, path);
     }

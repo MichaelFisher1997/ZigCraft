@@ -1,5 +1,6 @@
 const std = @import("std");
 const rhi = @import("engine-rhi").rhi;
+const Mat4 = @import("engine-math").Mat4;
 const UISystem = @import("ui_system.zig").UISystem;
 const ShadowSystemWrapper = rhi.ShadowSystemWrapper;
 const Font = @import("font.zig");
@@ -14,6 +15,8 @@ pub const DebugShadowOverlay = struct {
         debug_shadow_seam_diag: bool = false,
     };
 
+    /// Submits shadow-map preview draw calls to an active caller-owned UI pass.
+    /// The caller must pair `ui.begin()` and `ui.end()` around this call.
     pub fn draw(
         ui: *UISystem,
         shadow: ShadowSystemWrapper,
@@ -22,9 +25,6 @@ pub const DebugShadowOverlay = struct {
         config: Config,
         cascade_splits: []const f32,
     ) void {
-        ui.begin();
-        defer ui.end();
-
         const label_height: f32 = 16.0;
 
         for (0..rhi.SHADOW_CASCADE_COUNT) |i| {
@@ -71,3 +71,76 @@ pub const DebugShadowOverlay = struct {
         }
     }
 };
+
+test "DebugShadowOverlay draws within the caller-owned UI pass" {
+    const MockUI = struct {
+        begin_count: u32 = 0,
+        end_count: u32 = 0,
+        depth_texture_count: u32 = 0,
+
+        const VTABLE = rhi.IUIContext.VTable{
+            .beginPass = beginPass,
+            .endPass = endPass,
+            .drawRect = drawRect,
+            .drawTexture = drawTexture,
+            .drawTextureRegion = drawTextureRegion,
+            .drawDepthTexture = drawDepthTexture,
+            .bindPipeline = bindPipeline,
+        };
+
+        fn renderer(self: *@This()) rhi.UIRenderer {
+            return .{ .ctx = .{ .ptr = self, .vtable = &VTABLE } };
+        }
+
+        fn beginPass(ptr: *anyopaque, _: f32, _: f32) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.begin_count += 1;
+        }
+
+        fn endPass(ptr: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.end_count += 1;
+        }
+
+        fn drawRect(_: *anyopaque, _: rhi.Rect, _: rhi.Color) void {}
+        fn drawTexture(_: *anyopaque, _: rhi.TextureHandle, _: rhi.Rect) void {}
+        fn drawTextureRegion(_: *anyopaque, _: rhi.TextureHandle, _: rhi.Rect, _: rhi.UVRect, _: rhi.Color) void {}
+        fn drawDepthTexture(ptr: *anyopaque, _: rhi.TextureHandle, _: rhi.Rect) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.depth_texture_count += 1;
+        }
+        fn bindPipeline(_: *anyopaque, _: bool) void {}
+    };
+
+    const MockShadow = struct {
+        const VTABLE = rhi.IShadowContext.VTable{
+            .beginPass = beginPass,
+            .endPass = endPass,
+            .updateUniforms = updateUniforms,
+            .getShadowMapHandle = getShadowMapHandle,
+        };
+
+        fn wrapper(self: *@This()) ShadowSystemWrapper {
+            return .{ .ctx = .{ .ptr = self, .vtable = &VTABLE } };
+        }
+
+        fn beginPass(_: *anyopaque, _: u32, _: Mat4) void {}
+        fn endPass(_: *anyopaque) void {}
+        fn updateUniforms(_: *anyopaque, _: rhi.ShadowParams) anyerror!void {}
+        fn getShadowMapHandle(_: *anyopaque, cascade_index: u32) rhi.TextureHandle {
+            return cascade_index + 1;
+        }
+    };
+
+    var mock_ui = MockUI{};
+    var ui = try UISystem.init(mock_ui.renderer(), 1280, 720);
+    var mock_shadow = MockShadow{};
+
+    ui.begin();
+    DebugShadowOverlay.draw(&ui, mock_shadow.wrapper(), 1280, 720, .{ .show_labels = false }, &.{});
+    ui.end();
+
+    try std.testing.expectEqual(@as(u32, 1), mock_ui.begin_count);
+    try std.testing.expectEqual(@as(u32, 1), mock_ui.end_count);
+    try std.testing.expectEqual(@as(u32, rhi.SHADOW_CASCADE_COUNT), mock_ui.depth_texture_count);
+}

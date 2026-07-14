@@ -75,6 +75,9 @@ pub fn recover(ctx: anytype) !void {
     ctx.shadow_system.pass_active = false;
     ctx.runtime.g_pass_active = false;
     ctx.runtime.ssao_pass_active = false;
+    ctx.runtime.final_composed.clear();
+    ctx.ui.ui_swapchain_pass_active = false;
+    ctx.ui.ui_swapchain_clears_output = false;
     ctx.runtime.recovering = true;
     defer ctx.runtime.recovering = false;
     ctx.draw.descriptors_updated = false;

@@ -132,6 +132,14 @@ pub fn destroySwapchainUIPipelines(ctx: anytype) void {
         c.vkDestroyPipeline(vk, ctx.pipeline_manager.ui_swapchain_tex_pipeline, null);
         ctx.pipeline_manager.ui_swapchain_tex_pipeline = null;
     }
+    if (ctx.pipeline_manager.rml_ui_swapchain_pipeline != null) {
+        c.vkDestroyPipeline(vk, ctx.pipeline_manager.rml_ui_swapchain_pipeline, null);
+        ctx.pipeline_manager.rml_ui_swapchain_pipeline = null;
+    }
+    if (ctx.pipeline_manager.rml_ui_swapchain_tex_pipeline != null) {
+        c.vkDestroyPipeline(vk, ctx.pipeline_manager.rml_ui_swapchain_tex_pipeline, null);
+        ctx.pipeline_manager.rml_ui_swapchain_tex_pipeline = null;
+    }
 }
 
 pub fn destroySwapchainUIResources(ctx: anytype) void {
@@ -230,6 +238,22 @@ pub fn transitionImagesToShaderRead(ctx: anytype, images: []const c.VkImage, is_
 }
 
 pub fn transitionImagesToPresent(ctx: anytype, images: []const c.VkImage) !void {
+    return transitionImagesFromUndefined(ctx, images, c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0);
+}
+
+/// Headless final-composition passes load and retain this layout between
+/// frames, so the offscreen image needs an explicit first-use transition.
+pub fn transitionImagesToColorAttachment(ctx: anytype, images: []const c.VkImage) !void {
+    return transitionImagesFromUndefined(
+        ctx,
+        images,
+        c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    );
+}
+
+fn transitionImagesFromUndefined(ctx: anytype, images: []const c.VkImage, layout: c.VkImageLayout, dst_stage: c.VkPipelineStageFlags, dst_access: c.VkAccessFlags) !void {
     if (ctx.runtime.recovering) return;
 
     var alloc_info = std.mem.zeroes(c.VkCommandBufferAllocateInfo);
@@ -252,16 +276,16 @@ pub fn transitionImagesToPresent(ctx: anytype, images: []const c.VkImage) !void 
         barriers[i] = std.mem.zeroes(c.VkImageMemoryBarrier);
         barriers[i].sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barriers[i].oldLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
-        barriers[i].newLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        barriers[i].newLayout = layout;
         barriers[i].srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
         barriers[i].dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
         barriers[i].image = images[i];
         barriers[i].subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
         barriers[i].srcAccessMask = 0;
-        barriers[i].dstAccessMask = 0;
+        barriers[i].dstAccessMask = dst_access;
     }
 
-    c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, null, 0, null, @intCast(count), &barriers[0]);
+    c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, dst_stage, 0, 0, null, 0, null, @intCast(count), &barriers[0]);
 
     try Utils.checkVk(c.vkEndCommandBuffer(cmd));
 

@@ -8,6 +8,39 @@ const hotbar = @import("hotbar.zig");
 const region_pkg = @import("world-worldgen").region;
 const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
 
+const TELEMETRY_PANEL_Y: f32 = 50.0;
+const TELEMETRY_ROW_OFFSET: f32 = 5.0;
+const TELEMETRY_ROW_HEIGHT: f32 = 20.0;
+
+const TelemetryRow = enum(u8) {
+    position,
+    chunks,
+    visible,
+    lods,
+    queued_gen,
+    queued_mesh,
+    pending_upload,
+    time,
+    sun,
+    role,
+    gpu_faults,
+};
+
+fn telemetryRowY(row: TelemetryRow) f32 {
+    return TELEMETRY_PANEL_Y + TELEMETRY_ROW_OFFSET +
+        @as(f32, @floatFromInt(@intFromEnum(row))) * TELEMETRY_ROW_HEIGHT;
+}
+
+fn rgba8(r: u8, g: u8, b: u8, a: u8) Color {
+    const scale = 1.0 / 255.0;
+    return Color.rgba(
+        @as(f32, @floatFromInt(r)) * scale,
+        @as(f32, @floatFromInt(g)) * scale,
+        @as(f32, @floatFromInt(b)) * scale,
+        @as(f32, @floatFromInt(a)) * scale,
+    );
+}
+
 pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_pack: ?[]const u8, fps: f32, screen_w: f32, screen_h: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool) !void {
     const world = session.world.interface();
     const telemetry = world.telemetry();
@@ -20,57 +53,56 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
     if (session.debug_show_fps) {
         ui.drawRect(.{ .x = 10, .y = 10, .width = 80, .height = 30 }, Color.rgba(0, 0, 0, 0.7));
         Font.drawNumber(ui, @intFromFloat(fps), 15, 15, Color.white);
-    }
 
-    const stats = telemetry.getStats();
-    const rs = telemetry.getRenderStats();
-    const pc = worldToChunkFromFloat(session.camera.position.x, session.camera.position.z);
-    const hy: f32 = 50.0;
-    const fault_count = session.rhi.query().getFaultCount();
-    const hud_h: f32 = if (fault_count > 0) 230 else 210;
-    ui.drawRect(.{ .x = 10, .y = hy, .width = 220, .height = hud_h }, Color.rgba(0, 0, 0, 0.6));
-    Font.drawText(ui, "POS:", 15, hy + 5, 1.5, Color.white);
-    Font.drawNumber(ui, pc.chunk_x, 120, hy + 5, Color.white);
-    Font.drawNumber(ui, pc.chunk_z, 170, hy + 5, Color.white);
-    Font.drawText(ui, "CHUNKS:", 15, hy + 25, 1.5, Color.white);
-    Font.drawNumber(ui, @intCast(stats.chunks_loaded), 140, hy + 25, Color.white);
-    Font.drawText(ui, "VISIBLE:", 15, hy + 45, 1.5, Color.white);
-    Font.drawNumber(ui, @intCast(rs.chunks_rendered), 140, hy + 45, Color.white);
+        const stats = telemetry.getStats();
+        const rs = telemetry.getRenderStats();
+        const pc = worldToChunkFromFloat(session.camera.position.x, session.camera.position.z);
+        const fault_count = session.rhi.query().getFaultCount();
+        const hud_h: f32 = if (fault_count > 0) 230 else 210;
+        ui.drawRect(.{ .x = 10, .y = TELEMETRY_PANEL_Y, .width = 220, .height = hud_h }, Color.rgba(0, 0, 0, 0.6));
+        Font.drawText(ui, "POS:", 15, telemetryRowY(.position), 1.5, Color.white);
+        Font.drawNumber(ui, pc.chunk_x, 120, telemetryRowY(.position), Color.white);
+        Font.drawNumber(ui, pc.chunk_z, 170, telemetryRowY(.position), Color.white);
+        Font.drawText(ui, "CHUNKS:", 15, telemetryRowY(.chunks), 1.5, Color.white);
+        Font.drawNumber(ui, @intCast(stats.chunks_loaded), 140, telemetryRowY(.chunks), Color.white);
+        Font.drawText(ui, "VISIBLE:", 15, telemetryRowY(.visible), 1.5, Color.white);
+        Font.drawNumber(ui, @intCast(rs.chunks_rendered), 140, telemetryRowY(.visible), Color.white);
 
-    if (telemetry.getLODStats()) |ls| {
-        Font.drawText(ui, "LODS:", 15, hy + 65, 1.5, Color.rgba(0.5, 0.8, 1.0, 1.0));
-        Font.drawNumber(ui, @intCast(ls.totalLoaded()), 140, hy + 65, Color.rgba(0.5, 0.8, 1.0, 1.0));
-    }
+        if (telemetry.getLODStats()) |ls| {
+            Font.drawText(ui, "LODS:", 15, telemetryRowY(.lods), 1.5, Color.rgba(0.5, 0.8, 1.0, 1.0));
+            Font.drawNumber(ui, @intCast(ls.totalLoaded()), 140, telemetryRowY(.lods), Color.rgba(0.5, 0.8, 1.0, 1.0));
+        }
 
-    Font.drawText(ui, "QUEUED GEN:", 15, hy + 85, 1.5, Color.white);
-    Font.drawNumber(ui, @intCast(stats.gen_queue), 140, hy + 85, Color.white);
-    Font.drawText(ui, "QUEUED MESH:", 15, hy + 105, 1.5, Color.white);
-    Font.drawNumber(ui, @intCast(stats.mesh_queue), 140, hy + 105, Color.white);
-    Font.drawText(ui, "PENDING UP:", 15, hy + 125, 1.5, Color.white);
-    Font.drawNumber(ui, @intCast(stats.upload_queue), 140, hy + 125, Color.white);
-    const h = session.atmosphere.getHours();
-    const hr = @as(i32, @intFromFloat(h));
-    const mn = @as(i32, @intFromFloat((h - @as(f32, @floatFromInt(hr))) * 60.0));
-    Font.drawText(ui, "TIME:", 15, hy + 145, 1.5, Color.white);
-    Font.drawNumber(ui, hr, 100, hy + 145, Color.white);
-    Font.drawText(ui, ":", 125, hy + 145, 1.5, Color.white);
-    Font.drawNumber(ui, mn, 140, hy + 145, Color.white);
-    Font.drawText(ui, "SUN:", 15, hy + 165, 1.5, Color.white);
-    Font.drawNumber(ui, @intFromFloat(session.atmosphere.sun_intensity * 100.0), 100, hy + 165, Color.white);
+        Font.drawText(ui, "QUEUED GEN:", 15, telemetryRowY(.queued_gen), 1.5, Color.white);
+        Font.drawNumber(ui, @intCast(stats.gen_queue), 140, telemetryRowY(.queued_gen), Color.white);
+        Font.drawText(ui, "QUEUED MESH:", 15, telemetryRowY(.queued_mesh), 1.5, Color.white);
+        Font.drawNumber(ui, @intCast(stats.mesh_queue), 140, telemetryRowY(.queued_mesh), Color.white);
+        Font.drawText(ui, "PENDING UP:", 15, telemetryRowY(.pending_upload), 1.5, Color.white);
+        Font.drawNumber(ui, @intCast(stats.upload_queue), 140, telemetryRowY(.pending_upload), Color.white);
+        const h = session.atmosphere.getHours();
+        const hr = @as(i32, @intFromFloat(h));
+        const mn = @as(i32, @intFromFloat((h - @as(f32, @floatFromInt(hr))) * 60.0));
+        Font.drawText(ui, "TIME:", 15, telemetryRowY(.time), 1.5, Color.white);
+        Font.drawNumber(ui, hr, 100, telemetryRowY(.time), Color.white);
+        Font.drawText(ui, ":", 125, telemetryRowY(.time), 1.5, Color.white);
+        Font.drawNumber(ui, mn, 140, telemetryRowY(.time), Color.white);
+        Font.drawText(ui, "SUN:", 15, telemetryRowY(.sun), 1.5, Color.white);
+        Font.drawNumber(ui, @intFromFloat(session.atmosphere.sun_intensity * 100.0), 100, telemetryRowY(.sun), Color.white);
 
-    const px_i: i32 = @intFromFloat(session.camera.position.x);
-    const pz_i: i32 = @intFromFloat(session.camera.position.z);
-    const region = telemetry.getRegionInfo(px_i, pz_i);
-    const c3 = region_pkg.getRoleColor(region.role);
-    Font.drawText(ui, "ROLE:", 15, hy + 185, 1.5, Color.rgba(c3[0], c3[1], c3[2], 1.0));
-    var buf: [32]u8 = undefined;
-    const label = std.fmt.bufPrint(&buf, "{s}", .{@tagName(region.role)}) catch "???";
-    Font.drawText(ui, label, 100, hy + 165, 1.5, Color.white);
+        const px_i: i32 = @intFromFloat(session.camera.position.x);
+        const pz_i: i32 = @intFromFloat(session.camera.position.z);
+        const region = telemetry.getRegionInfo(px_i, pz_i);
+        const c3 = region_pkg.getRoleColor(region.role);
+        Font.drawText(ui, "ROLE:", 15, telemetryRowY(.role), 1.5, Color.rgba(c3[0], c3[1], c3[2], 1.0));
+        var buf: [32]u8 = undefined;
+        const label = std.fmt.bufPrint(&buf, "{s}", .{@tagName(region.role)}) catch "???";
+        Font.drawText(ui, label, 100, telemetryRowY(.role), 1.5, Color.white);
 
-    if (fault_count > 0) {
-        var buf_f: [32]u8 = undefined;
-        const fault_text = std.fmt.bufPrint(&buf_f, "GPU FAULTS: {d}", .{fault_count}) catch "GPU FAULTS: ???";
-        Font.drawText(ui, fault_text, 15, hy + 185, 1.5, Color.red);
+        if (fault_count > 0) {
+            var buf_f: [32]u8 = undefined;
+            const fault_text = std.fmt.bufPrint(&buf_f, "GPU FAULTS: {d}", .{fault_count}) catch "GPU FAULTS: ???";
+            Font.drawText(ui, fault_text, 15, telemetryRowY(.gpu_faults), 1.5, Color.red);
+        }
     }
 
     if (session.debug_show_block_info) {
@@ -124,7 +156,26 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
     }
 
     if (session.creative_mode) {
-        Font.drawText(ui, "CREATIVE", screen_w - 100, 10, 1.5, Color.rgba(100, 200, 255, 200));
-        if (session.player.fly_mode) Font.drawText(ui, "FLYING", screen_w - 80, 25, 1.5, Color.rgba(150, 255, 150, 200));
+        Font.drawText(ui, "CREATIVE", screen_w - 100, 10, 1.5, rgba8(100, 200, 255, 200));
+        if (session.player.fly_mode) Font.drawText(ui, "FLYING", screen_w - 80, 25, 1.5, rgba8(150, 255, 150, 200));
     }
+}
+
+test "telemetry rows do not overlap" {
+    const testing = std.testing;
+
+    try testing.expect(telemetryRowY(.sun) < telemetryRowY(.role));
+    try testing.expect(telemetryRowY(.role) < telemetryRowY(.gpu_faults));
+    try testing.expectEqual(@as(f32, 235.0), telemetryRowY(.role));
+    try testing.expectEqual(@as(f32, 255.0), telemetryRowY(.gpu_faults));
+}
+
+test "rgba8 normalizes color channels" {
+    const testing = std.testing;
+    const color = rgba8(100, 200, 255, 200);
+
+    try testing.expectApproxEqAbs(@as(f32, 100.0 / 255.0), color.r, 0.000_001);
+    try testing.expectApproxEqAbs(@as(f32, 200.0 / 255.0), color.g, 0.000_001);
+    try testing.expectApproxEqAbs(@as(f32, 1.0), color.b, 0.000_001);
+    try testing.expectApproxEqAbs(@as(f32, 200.0 / 255.0), color.a, 0.000_001);
 }

@@ -8,6 +8,7 @@ const shader_registry = @import("shader_registry.zig");
 const build_options = @import("engine_graphics_options");
 const bindings = @import("descriptor_bindings.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
+const final_composition = @import("final_composition.zig");
 
 const DEPTH_FORMAT = c.VK_FORMAT_D32_SFLOAT;
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
@@ -18,7 +19,7 @@ pub fn createSwapchainUIResources(ctx: anytype) !void {
     lifecycle.destroySwapchainUIResources(ctx);
     errdefer lifecycle.destroySwapchainUIResources(ctx);
 
-    try ctx.render_pass_manager.createUISwapchainRenderPass(vk, ctx.swapchain.getImageFormat());
+    try ctx.render_pass_manager.createUISwapchainRenderPass(vk, ctx.swapchain.getImageFormat(), final_composition.displayLayout(ctx.swapchain.skip_present));
     try ctx.render_pass_manager.createUISwapchainFramebuffers(vk, ctx.allocator, ctx.swapchain.getExtent(), ctx.swapchain.getImageViews());
 }
 
@@ -445,7 +446,7 @@ pub fn createWaterResources(ctx: anytype) !void {
 pub fn createPostProcessResources(ctx: anytype) !void {
     const vk = ctx.vulkan_device.vk_device;
 
-    try ctx.render_pass_manager.createPostProcessRenderPass(vk, ctx.swapchain.getImageFormat());
+    try ctx.render_pass_manager.createPostProcessRenderPass(vk, ctx.swapchain.getImageFormat(), final_composition.displayLayout(ctx.swapchain.skip_present));
 
     const global_uniform_size: usize = @intCast(ctx.descriptors.global_ubos[0].size);
     try ctx.post_process.init(

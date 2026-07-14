@@ -71,6 +71,25 @@ test "readLevelDat defaults missing last_played to zero" {
     try testing.expectEqual(@as(i64, 0), level.last_played);
 }
 
+test "readLevelDat falls back for an out-of-range generator index" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{ .sub_path = "level.dat", .data = "{\"name\":\"Old World\",\"seed\":7,\"generator_index\":999}" });
+    const level = world_list.readLevelDat(testing.allocator, tmp.dir) orelse return error.MissingLevelDat;
+    defer testing.allocator.free(level.name);
+
+    try testing.expectEqual(@as(usize, 0), level.generator_index);
+}
+
+test "readLevelDat rejects a negative seed" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(.{ .sub_path = "level.dat", .data = "{\"name\":\"Broken\",\"seed\":-1,\"generator_index\":0}" });
+    try testing.expectEqual(@as(?world_list.LevelDat, null), world_list.readLevelDat(testing.allocator, tmp.dir));
+}
+
 test "scanWorldsInHome returns empty for absent home" {
     const entries = try world_list.scanWorldsInHome(testing.allocator, "/definitely/not/a/zigcraft/home");
     defer freeWorldEntries(testing.allocator, entries);

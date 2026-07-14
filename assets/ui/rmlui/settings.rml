@@ -1,0 +1,31 @@
+<rml>
+  <head>
+    <title>ZigCraft Settings</title>
+    <link type="text/rcss" href="menu.rcss" />
+  </head>
+  <body>
+    <div class="page">
+      <div class="shell wide">
+        <div class="header">
+          <div class="kicker">PREFERENCES</div>
+          <h1>Settings</h1>
+          <p class="copy">Changes apply immediately and are saved when you leave.</p>
+          <div class="header-meta">LIVE SETTINGS</div>
+        </div>
+        <div class="content">
+          <div class="tabs">
+            <button id="tab-display" class="active">DISPLAY</button>
+            <button id="tab-camera">CAMERA</button>
+            <button id="tab-world">WORLD</button>
+            <button id="tab-rendering">RENDERING</button>
+          </div>
+          <div id="settings-list" class="settings-list"></div>
+        </div>
+        <div class="footer">
+          <span class="status">Changes apply immediately.</span>
+          <div class="footer-right"><button id="done" class="primary">DONE</button></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</rml>

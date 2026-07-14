@@ -30,6 +30,7 @@ pub const VulkanSwapchain = struct {
     headless_mode: bool = false,
     headless_image: c.VkImage = null,
     headless_memory: c.VkDeviceMemory = null,
+    screenshot_capture_supported: bool = false,
 
     // Resolution scaling
     pixel_width: u32 = 0,
@@ -120,6 +121,7 @@ pub const VulkanSwapchain = struct {
         if (self.headless_mode) {
             log.log.info("VulkanSwapchain: Initializing in HEADLESS mode (offscreen)", .{});
             self.image_format = c.VK_FORMAT_B8G8R8A8_UNORM;
+            self.screenshot_capture_supported = true;
             self.extent = .{ .width = 1920, .height = 1080 };
             self.pixel_width = 1920;
             self.pixel_height = 1080;
@@ -232,7 +234,9 @@ pub const VulkanSwapchain = struct {
         swapchain_info.imageColorSpace = surface_format.colorSpace;
         swapchain_info.imageExtent = self.extent;
         swapchain_info.imageArrayLayers = 1;
-        swapchain_info.imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        self.screenshot_capture_supported = (cap.supportedUsageFlags & c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+        swapchain_info.imageUsage = @as(u32, @intCast(c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) |
+            (if (self.screenshot_capture_supported) @as(u32, @intCast(c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) else 0);
         swapchain_info.imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE;
         swapchain_info.preTransform = cap.currentTransform;
         // Select a supported composite alpha mode (prefer opaque, but fall back if unsupported)
