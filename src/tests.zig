@@ -47,7 +47,9 @@ test {
     _ = @import("engine-graphics").utils_tests;
     _ = @import("vulkan_tests.zig");
     _ = @import("engine-graphics").rhi_tests;
+    _ = @import("engine-graphics").lod_culling_system;
     _ = @import("engine-rhi").rhi_contract_tests;
+    _ = @import("engine-rhi").culling;
     _ = @import("engine-clouds").cloud_system;
     _ = @import("engine-shadows").shadow_cascade_tests;
     _ = @import("engine-graphics").shadow_tests;
@@ -68,10 +70,6 @@ test {
     _ = @import("world-worldgen").terrain_modifier_tests;
     _ = @import("world-worldgen").terrain_shape_generator_tests;
     _ = @import("world-worldgen").terrain_report;
-    _ = @import("world-lod").lod_manager_tests;
-    _ = @import("world-lod").lod_manager_internal_tests;
-    _ = @import("world-lod").lod_seam;
-    _ = @import("world-lod").lod_renderer;
     _ = @import("engine-atmosphere").atmosphere_tests;
     _ = @import("game-core").settings_tests;
     _ = @import("game-core").input_settings;

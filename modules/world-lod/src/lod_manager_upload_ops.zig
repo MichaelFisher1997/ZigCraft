@@ -86,6 +86,7 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
     var uploaded_bytes: usize = 0;
 
     while (uploads < max_uploads) {
+        const prep_timer = self.profiling.begin();
         var task: ?UploadTask = null;
         var completed_without_upload = false;
         var made_progress = false;
@@ -102,7 +103,8 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
                 const key = chunk.key();
                 if (self.meshes[i].get(key)) |mesh| {
                     const pending_bytes = mesh.pendingUploadBytes();
-                    if (wouldExceedUploadBudget(uploaded_bytes, pending_bytes, upload_budget_bytes, uploads)) {
+                    if (wouldExceedUploadBudget(uploaded_bytes, pending_bytes, upload_budget_bytes)) {
+                        self.profiling.addStagingPressure();
                         self.requeueUpload(i, chunk);
                         stop_processing = true;
                         break;
@@ -125,16 +127,52 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         }
         self.mutex.unlock();
 
-        if (stop_processing or !made_progress) break;
-        if (completed_without_upload) continue;
+        if (stop_processing or !made_progress) {
+            self.profiling.end(.upload_prep, prep_timer);
+            break;
+        }
+        if (completed_without_upload) {
+            self.profiling.end(.upload_prep, prep_timer);
+            continue;
+        }
 
-        const upload_task = task orelse continue;
+        const upload_task = task orelse {
+            self.profiling.end(.upload_prep, prep_timer);
+            continue;
+        };
+        self.profiling.end(.upload_prep, prep_timer);
+        const submission_timer = self.profiling.begin();
         self.gpu_bridge.upload(upload_task.mesh) catch |err| {
+            self.profiling.end(.upload_submission, submission_timer);
             log.log.warn("LOD{} mesh upload failed (will retry): {}", .{ upload_task.lod_idx, err });
+            // Compact allocation/update failures must not strand a far region
+            // in .mesh_ready. Rebuild its stable CPU heightfield while the
+            // upload task still pins the source, then put it straight back on
+            // the upload queue. This also covers LOD4.
+            if (upload_task.mesh.isCompact()) {
+                self.fallbackCompactMeshToCpu(upload_task.mesh, upload_task.chunk) catch |fallback_err| {
+                    log.log.warn("LOD{} compact fallback build failed; retaining retryable compact payload: {}", .{ upload_task.lod_idx, fallback_err });
+                    self.mutex.lock();
+                    self.stats.upload_failures += 1;
+                    uploads += 1;
+                    self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
+                    upload_task.chunk.unpin();
+                    self.mutex.unlock();
+                    return;
+                };
+                self.mutex.lock();
+                self.stats.upload_failures += 1;
+                uploads += 1;
+                self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
+                upload_task.chunk.unpin();
+                self.mutex.unlock();
+                continue;
+            }
             self.mutex.lock();
             self.stats.upload_failures += 1;
             uploads += 1;
             if (isUploadPressureError(err)) {
+                self.profiling.addStagingPressure();
                 self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
                 upload_task.chunk.unpin();
                 self.mutex.unlock();
@@ -145,8 +183,10 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
             self.mutex.unlock();
             continue;
         };
+        self.profiling.end(.upload_submission, submission_timer);
 
         uploaded_bytes += upload_task.pending_bytes;
+        self.profiling.addUploadBytes(upload_task.pending_bytes);
         self.mutex.lock();
         self.markRegionRenderable(upload_task.key, upload_task.chunk);
         uploads += 1;
@@ -190,6 +230,7 @@ pub fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void
 pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
     if (chunk.isRenderable()) return;
     chunk.markRenderable(self.countRenderableChildren(key));
+    if (self.pending_region_count > 0) self.pending_region_count -= 1;
     if (self.regionContributesGeometry(key, chunk)) {
         self.adjustParentReadyChildren(key, 1);
     }
@@ -219,6 +260,7 @@ pub fn demoteRegionForRemesh(self: *Self, key: LODRegionKey, chunk: *LODChunk) v
     if (chunk.getState() == .renderable) {
         self.noteRegionRemoved(key, chunk);
         chunk.setState(.generated);
+        self.pending_region_count += 1;
     } else if (chunk.getState() == .mesh_ready) {
         chunk.setState(.generated);
     }

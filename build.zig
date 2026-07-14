@@ -18,6 +18,7 @@ const BuildOptions = struct {
     window_no_focus: bool,
     shadow_test_variant: []const u8,
     benchmark_preset: []const u8,
+    benchmark_scenario: []const u8,
     benchmark_duration: u32,
     benchmark_output: []const u8,
     benchmark_render_distance: i32,
@@ -65,7 +66,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const opts = defineBuildOptions(b);
+    const opts = defineBuildOptions(b, optimize);
     const modules = defineModules(b, target, optimize, opts);
     defineBuildSteps(b, target, optimize, opts, modules);
 }
@@ -418,6 +419,7 @@ fn defineBuildSteps(
     const window_video_driver = opts.window_video_driver;
     const window_no_focus = opts.window_no_focus;
     const benchmark_preset = opts.benchmark_preset;
+    const benchmark_scenario = opts.benchmark_scenario;
     const benchmark_duration = opts.benchmark_duration;
     const benchmark_output = opts.benchmark_output;
     const sanitize_c = opts.sanitize_c;
@@ -512,9 +514,11 @@ fn defineBuildSteps(
     benchmark_options.addOption([]const u8, "shadow_test_variant", "dug-cave");
     benchmark_options.addOption(bool, "benchmark", true);
     benchmark_options.addOption([]const u8, "benchmark_preset", benchmark_preset);
+    benchmark_options.addOption([]const u8, "benchmark_scenario", benchmark_scenario);
     benchmark_options.addOption(u32, "benchmark_duration", benchmark_duration);
     benchmark_options.addOption([]const u8, "benchmark_output", benchmark_output);
     benchmark_options.addOption(i32, "benchmark_render_distance", opts.benchmark_render_distance);
+    benchmark_options.addOption([]const u8, "benchmark_build_mode", @tagName(optimize));
 
     const benchmark_root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -558,6 +562,18 @@ fn defineBuildSteps(
     benchmark_run_cmd.step.dependOn(b.getInstallStep());
     benchmark_run_cmd.step.dependOn(&shader_cmd.step);
     benchmark_run_cmd.setCwd(b.path("."));
+    benchmark_run_cmd.setEnvironmentVariable("ZIGCRAFT_LOD_PROFILE", "1");
+    // Benchmark presets must scale large persistent world buffers coherently,
+    // not only shader quality. This keeps their documented VRAM SLO meaningful
+    // on high-VRAM devices where runtime defaults otherwise reserve maximum
+    // pools regardless of the selected preset.
+    if (std.mem.eql(u8, benchmark_preset, "low")) {
+        benchmark_run_cmd.setEnvironmentVariable("ZIGCRAFT_VERTEX_CAPACITY_MB", "96");
+        benchmark_run_cmd.setEnvironmentVariable("ZIGCRAFT_GPU_BLOCK_BUDGET_MB", "96");
+    } else if (std.mem.eql(u8, benchmark_preset, "medium")) {
+        benchmark_run_cmd.setEnvironmentVariable("ZIGCRAFT_VERTEX_CAPACITY_MB", "96");
+        benchmark_run_cmd.setEnvironmentVariable("ZIGCRAFT_GPU_BLOCK_BUDGET_MB", "96");
+    }
 
     const benchmark_step = b.step("benchmark", "Run benchmark harness");
     benchmark_step.dependOn(&benchmark_run_cmd.step);
@@ -662,6 +678,89 @@ fn defineBuildSteps(
     run_exe_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     run_exe_tests.step.dependOn(&shader_cmd.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    // world-lod gates its dedicated test modules on builtin.is_test. Importing
+    // the production module into src/tests.zig leaves that module compiled with
+    // is_test=false, so run it as a test root as well.
+    const world_lod_test_root = b.createModule(.{
+        .root_source_file = b.path("modules/world-lod/src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_c = sanitize_c,
+    });
+    addSharedImports(world_lod_test_root, modules.zig_math, modules.zig_noise, modules.fs_module, modules.sync_module, modules.c_module, options);
+    world_lod_test_root.addImport("engine-core", modules.engine_core);
+    world_lod_test_root.addImport("engine-assets", modules.engine_assets);
+    world_lod_test_root.addImport("engine-graphics", modules.engine_graphics);
+    world_lod_test_root.addImport("engine-math", modules.engine_math);
+    world_lod_test_root.addImport("engine-rhi", modules.engine_rhi);
+    world_lod_test_root.addImport("world-meshing", modules.world_meshing);
+    world_lod_test_root.addImport("world-core", modules.world_core);
+    world_lod_test_root.addImport("world-persistence", modules.world_persistence);
+    world_lod_test_root.addImport("world-worldgen", modules.world_worldgen);
+    world_lod_test_root.addOptions("world_lod_options", opts.world_lod_options);
+
+    const world_lod_tests = b.addTest(.{
+        .root_module = world_lod_test_root,
+        .filters = test_filters,
+    });
+    const run_world_lod_tests = b.addRunArtifact(world_lod_tests);
+    run_world_lod_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
+    test_step.dependOn(&run_world_lod_tests.step);
+
+    const benchmark_phase5_gate_root = b.createModule(.{
+        .root_source_file = b.path("phase5_benchmark_gate_tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_c = sanitize_c,
+    });
+    benchmark_phase5_gate_root.addImport("game-core", game_core);
+    benchmark_phase5_gate_root.addImport("engine-rhi", modules.engine_rhi);
+    const benchmark_phase5_gate_tests = b.addTest(.{
+        .root_module = benchmark_phase5_gate_root,
+        .filters = test_filters,
+    });
+    const run_benchmark_phase5_gate_tests = b.addRunArtifact(benchmark_phase5_gate_tests);
+    run_benchmark_phase5_gate_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
+    test_step.dependOn(&run_benchmark_phase5_gate_tests.step);
+
+    const phase5_lod_gate_root = b.createModule(.{
+        .root_source_file = b.path("modules/world-lod/src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_c = sanitize_c,
+    });
+    addSharedImports(phase5_lod_gate_root, modules.zig_math, modules.zig_noise, modules.fs_module, modules.sync_module, modules.c_module, options);
+    phase5_lod_gate_root.addImport("engine-core", modules.engine_core);
+    phase5_lod_gate_root.addImport("engine-assets", modules.engine_assets);
+    phase5_lod_gate_root.addImport("engine-graphics", modules.engine_graphics);
+    phase5_lod_gate_root.addImport("engine-math", modules.engine_math);
+    phase5_lod_gate_root.addImport("engine-rhi", modules.engine_rhi);
+    phase5_lod_gate_root.addImport("world-meshing", modules.world_meshing);
+    phase5_lod_gate_root.addImport("world-core", modules.world_core);
+    phase5_lod_gate_root.addImport("world-persistence", modules.world_persistence);
+    phase5_lod_gate_root.addImport("world-worldgen", modules.world_worldgen);
+    phase5_lod_gate_root.addOptions("world_lod_options", opts.world_lod_options);
+    const phase5_lod_gate_tests = b.addTest(.{
+        .root_module = phase5_lod_gate_root,
+        .filters = &.{"LODManager preserves the CPU heightfield fallback for far LODs"},
+    });
+    const run_phase5_lod_gate_tests = b.addRunArtifact(phase5_lod_gate_tests);
+    run_phase5_lod_gate_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
+
+    const phase5_benchmark_config = b.addSystemCommand(&.{ "bash", "scripts/check_phase5_benchmark_config.sh" });
+    phase5_benchmark_config.setCwd(b.path("."));
+
+    const phase5_visual_smoke = b.addSystemCommand(&.{ "bash", "scripts/run_phase5_visual_smoke.sh" });
+    phase5_visual_smoke.setCwd(b.path("."));
+
+    const phase5_gate_step = b.step("phase5-gate", "Validate Phase 5 LOD fallback and policy");
+    phase5_gate_step.dependOn(&run_benchmark_phase5_gate_tests.step);
+    phase5_gate_step.dependOn(&run_phase5_lod_gate_tests.step);
+    phase5_gate_step.dependOn(&phase5_benchmark_config.step);
+
+    const phase5_visual_gate_step = b.step("phase5-visual-gate", "Capture compact off/auto scenes and reject empty or divergent output");
+    phase5_visual_gate_step.dependOn(&phase5_visual_smoke.step);
 
     const engine_math_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     engine_math_fuzz_root.addImport("zig-math", zig_math);
@@ -788,7 +887,7 @@ fn defineBuildSteps(
     defineShaderValidation(b, test_step);
 }
 
-fn defineBuildOptions(b: *std.Build) BuildOptions {
+fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOptions {
     const options = b.addOptions();
     const enable_debug_shadows = b.option(bool, "debug_shadows", "Enable debug shadow visualization resources") orelse false;
     options.addOption(bool, "debug_shadows", enable_debug_shadows);
@@ -859,9 +958,20 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
 
     const benchmark = b.option(bool, "benchmark", "Enable benchmark mode") orelse false;
     options.addOption(bool, "benchmark", benchmark);
+    // Benchmark runs opt into LOD CPU/pressure collection without requiring a
+    // process-wide environment mutation. Normal runs remain opt-in through
+    // ZIGCRAFT_LOD_PROFILE.
+    world_lod_options.addOption(bool, "benchmark_lod_profile", benchmark);
 
     const benchmark_preset = b.option([]const u8, "benchmark-preset", "Graphics preset to benchmark (low, medium, high, ultra, extreme)") orelse "medium";
     options.addOption([]const u8, "benchmark_preset", benchmark_preset);
+
+    const benchmark_scenario = b.option([]const u8, "benchmark-scenario", "Benchmark pose scenario (stationary, traversal, rapid-turn, teleport-eviction)") orelse "traversal";
+    if (!isBenchmarkScenario(benchmark_scenario)) {
+        std.log.err("unsupported -Dbenchmark-scenario value '{s}' (expected stationary, traversal, rapid-turn, or teleport-eviction)", .{benchmark_scenario});
+        b.invalid_user_input = true;
+    }
+    options.addOption([]const u8, "benchmark_scenario", benchmark_scenario);
 
     const benchmark_duration = b.option(u32, "benchmark-duration", "Benchmark duration in seconds") orelse 60;
     options.addOption(u32, "benchmark_duration", benchmark_duration);
@@ -871,6 +981,7 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
 
     const benchmark_render_distance = b.option(i32, "benchmark-render-distance", "Override benchmark render and LOD horizon distance; 0 uses selected preset") orelse 0;
     options.addOption(i32, "benchmark_render_distance", benchmark_render_distance);
+    options.addOption([]const u8, "benchmark_build_mode", @tagName(optimize));
 
     const sanitize = b.option([]const u8, "sanitize", "Sanitizer profile for test builds (none, address)") orelse "none";
     const sanitize_c = resolveSanitizeC(b, sanitize);
@@ -893,11 +1004,19 @@ fn defineBuildOptions(b: *std.Build) BuildOptions {
         .window_no_focus = window_no_focus,
         .shadow_test_variant = shadow_test_variant,
         .benchmark_preset = benchmark_preset,
+        .benchmark_scenario = benchmark_scenario,
         .benchmark_duration = benchmark_duration,
         .benchmark_output = benchmark_output,
         .benchmark_render_distance = benchmark_render_distance,
         .sanitize_c = sanitize_c,
     };
+}
+
+fn isBenchmarkScenario(scenario: []const u8) bool {
+    return std.mem.eql(u8, scenario, "stationary") or
+        std.mem.eql(u8, scenario, "traversal") or
+        std.mem.eql(u8, scenario, "rapid-turn") or
+        std.mem.eql(u8, scenario, "teleport-eviction");
 }
 
 fn resolveSanitizeC(b: *std.Build, sanitize: []const u8) ?std.zig.SanitizeC {

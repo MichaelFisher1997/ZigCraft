@@ -13,6 +13,7 @@ const rhi_mod = @import("engine-rhi").rhi;
 const ResourceManager = rhi_mod.ResourceManager;
 const RenderContext = rhi_mod.RenderContext;
 const IDeviceQuery = rhi_mod.IDeviceQuery;
+const IDeviceTiming = rhi_mod.IDeviceTiming;
 const LODManager = @import("world-lod").LODManager;
 const LODRenderLayer = @import("world-lod").LODRenderLayer;
 const math = @import("engine-math");
@@ -53,6 +54,11 @@ pub fn chooseVertexCapacityMb(vram_mb: usize, strict_safe_mode: bool) usize {
 pub fn chooseGpuBlockCapacity(vram_mb: usize) usize {
     const block_budget_mb: usize = if (vram_mb >= 8192) 512 else if (vram_mb >= 6144) 384 else if (vram_mb >= 4096) 256 else 128;
     const max_by_budget = (block_budget_mb * MB) / GPU_BLOCK_SLOT_SIZE;
+    return @min(MAX_MDI_CHUNKS, max_by_budget);
+}
+
+fn gpuBlockCapacityForBudgetMb(budget_mb: usize) usize {
+    const max_by_budget = (budget_mb * MB) / GPU_BLOCK_SLOT_SIZE;
     return @min(MAX_MDI_CHUNKS, max_by_budget);
 }
 
@@ -103,6 +109,7 @@ pub const WorldRenderer = struct {
     rm: ResourceManager,
     render_ctx: RenderContext,
     query: IDeviceQuery,
+    timing: IDeviceTiming,
     culling_screen_size: rhi_mod.RenderResolution,
 
     vertex_allocator: *GlobalVertexAllocator,
@@ -153,8 +160,9 @@ pub const WorldRenderer = struct {
 
         const vram_bytes = query.getDeviceLocalVramBytes();
         const vram_mb = vram_bytes / (1024 * 1024);
-        const vertex_capacity_mb = chooseVertexCapacityMb(vram_mb, strict_safe_mode);
-        const gpu_block_capacity = chooseGpuBlockCapacity(vram_mb);
+        const vertex_capacity_mb = runtime_env.envInt("ZIGCRAFT_VERTEX_CAPACITY_MB", chooseVertexCapacityMb(vram_mb, strict_safe_mode));
+        const gpu_block_budget_mb = runtime_env.envInt("ZIGCRAFT_GPU_BLOCK_BUDGET_MB", 0);
+        const gpu_block_capacity = if (gpu_block_budget_mb > 0) gpuBlockCapacityForBudgetMb(gpu_block_budget_mb) else chooseGpuBlockCapacity(vram_mb);
 
         log.log.info("VRAM budget: {}MB | vertex_allocator: {}MB | gpu_block_buffer: {} slots", .{ vram_mb, vertex_capacity_mb, gpu_block_capacity });
 
@@ -221,6 +229,7 @@ pub const WorldRenderer = struct {
             .rm = rm,
             .render_ctx = render_ctx,
             .query = query,
+            .timing = rhi.timing(),
             .culling_screen_size = culling_screen_size,
             .vertex_allocator = vertex_allocator,
             .visible_chunks = .empty,
@@ -321,10 +330,14 @@ pub const WorldRenderer = struct {
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
                 if (layer != .fluid) {
-                    lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
+                    self.timing.beginPassTiming("LODTerrainPass");
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
+                    self.timing.endPassTiming("LODTerrainPass");
                 }
                 if (layer != .terrain and parseEnabledEnv(getenv("ZIGCRAFT_LOD_WATER"), true)) {
-                    lod_mgr.render(view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
+                    self.timing.beginPassTiming("LODWaterPass");
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
+                    self.timing.endPassTiming("LODWaterPass");
                 }
             }
         }

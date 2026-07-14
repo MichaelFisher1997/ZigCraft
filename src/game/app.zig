@@ -15,6 +15,7 @@ const InputMapper = @import("game-core").InputMapper;
 const RenderSystem = @import("engine-graphics").RenderSystem;
 const AudioSystemManager = @import("audio_system_manager.zig").AudioSystemManager;
 const BenchmarkRunner = @import("game-core").BenchmarkRunner;
+const BENCHMARK_WORLD_SEED = @import("game-core").BENCHMARK_WORLD_SEED;
 const json_presets = @import("game-core").settings.json_presets;
 
 const SettingsManager = @import("game-core").SettingsManager;
@@ -136,6 +137,11 @@ pub const App = struct {
         if (build_options.auto_preset.len > 0) {
             _ = applyNamedPreset(settings_manager.ptr(), build_options.auto_preset, "AUTO PRESET");
         }
+        if (build_options.screenshot_path.len > 0) {
+            // Captures are regression artifacts, not a replay of persisted
+            // developer visualization toggles.
+            settings_manager.settings.wireframe_enabled = false;
+        }
         if (build_options.shadow_test_scene) {
             applyShadowTestPreset(settings_manager.ptr());
         }
@@ -200,9 +206,20 @@ pub const App = struct {
 
         var benchmark_runner: ?*BenchmarkRunner = null;
         if (build_options.benchmark) {
+            // Benchmarks include GPU pass breakdowns, including LOD passes.
+            render_system.getRHI().timing().setTimingEnabled(true);
             const runner = try allocator.create(BenchmarkRunner);
             const benchmark_duration_s: f32 = @as(f32, @floatFromInt(build_options.benchmark_duration));
-            runner.* = try BenchmarkRunner.init(allocator, build_options.benchmark_preset, settings_manager.settings.render_distance, benchmark_duration_s, build_options.benchmark_output);
+            runner.* = try BenchmarkRunner.init(
+                allocator,
+                build_options.benchmark_preset,
+                build_options.benchmark_scenario,
+                settings_manager.settings.render_distance,
+                benchmark_duration_s,
+                BENCHMARK_WORLD_SEED,
+                build_options.benchmark_build_mode,
+                build_options.benchmark_output,
+            );
             benchmark_runner = runner;
         }
 
@@ -232,7 +249,7 @@ pub const App = struct {
         };
         errdefer app.screen_manager.deinit();
 
-        if (build_options.smoke_test or build_options.screenshot_path.len > 0 or build_options.benchmark) {
+        if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             app.render_system.getRHI().timing().setTimingEnabled(true);
         }
 
@@ -253,7 +270,7 @@ pub const App = struct {
             }
         } else if (build_options.benchmark) {
             log.log.info("BENCHMARK MODE: Deferring world launch until swapchain settles", .{});
-            app.pending_world_launch = .{ .seed = 12345, .generator_index = 0 };
+            app.pending_world_launch = .{ .seed = BENCHMARK_WORLD_SEED, .generator_index = 0 };
             if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
         } else if (resolveAutoWorldGenerator()) |generator_index| {
             log.log.info("AUTO WORLD MODE: Deferring '{s}' world launch until swapchain settles", .{build_options.auto_world});
@@ -479,7 +496,12 @@ pub const App = struct {
                 self.pending_world_launch == null and stats.chunks_rendered > 0 and stats.gen_queue == 0 and stats.mesh_queue == 0 and stats.upload_queue == 0
             else
                 false;
-            if (!requires_world_ready or world_ready) {
+            // The world statistics can settle one frame before the render graph
+            // has emitted its first scene draw. Require a rendered frame as
+            // well; otherwise the headless UI-only fallback clears the output
+            // black and a screenshot can race that transient frame.
+            const rendered_frame = self.render_system.getRHI().query().getDrawCallCount() > 0;
+            if ((!requires_world_ready or world_ready) and (!requires_world_ready or rendered_frame)) {
                 self.screenshot_settle_frames += 1;
             } else {
                 self.screenshot_settle_frames = 0;
@@ -494,28 +516,38 @@ pub const App = struct {
                 } else |_| {}
             }
 
+            const capture_ready = self.smoke_test_frames >= target_frames and self.screenshot_settle_frames >= 30;
             const screenshot_delay_ready = build_options.screenshot_path.len > 0 and build_options.screenshot_delay_seconds > 0;
-            const should_finish = if (screenshot_delay_ready) blk: {
-                const target_loaded = self.pending_world_launch == null and self.screen_manager.stack.items.len > 0;
-                if (!target_loaded) break :blk false;
-
+            const should_finish = if (screenshot_delay_ready and capture_ready) blk: {
+                // A delay is additional settling time, not a replacement for
+                // readiness. The old branch captured after wall time alone,
+                // often while the auto world was still displaying its black
+                // loading frame in unthrottled headless runs.
                 const start = self.screenshot_delay_start orelse start: {
                     self.screenshot_delay_start = self.time.elapsed;
                     break :start self.time.elapsed;
                 };
                 const delay_s: f32 = @floatFromInt(build_options.screenshot_delay_seconds);
                 break :blk self.time.elapsed - start >= delay_s;
-            } else self.smoke_test_frames >= target_frames and self.screenshot_settle_frames >= 30;
+            } else capture_ready and !screenshot_delay_ready;
 
-            if (build_options.screenshot_path.len > 0 and requires_world_ready and self.smoke_test_frames >= target_frames + 1800 and self.screenshot_settle_frames < 30) {
+            // Headless frames are intentionally unthrottled. A frame-count
+            // timeout can therefore expire before generation workers receive
+            // meaningful CPU time; use a wall-time bound instead.
+            if (build_options.screenshot_path.len > 0 and requires_world_ready and self.time.elapsed >= 90.0 and !capture_ready) {
                 return error.ScreenshotWorldNotReady;
             }
 
             if (should_finish) {
                 if (build_options.screenshot_path.len > 0) {
+                    if (world_stats) |stats| if (stats.lod) |lod| {
+                        log.log.warn("COMPACT_CAPTURE: allocated={} capacity={}", .{ lod.compact_pool_allocated_bytes, lod.compact_pool_capacity_bytes });
+                        std.debug.print("COMPACT_CAPTURE: allocated={} capacity={}\n", .{ lod.compact_pool_allocated_bytes, lod.compact_pool_capacity_bytes });
+                    };
                     log.log.info("SCREENSHOT: Capturing frame to '{s}'", .{build_options.screenshot_path});
                     if (!self.render_system.getRHI().screenshot().captureFrame(build_options.screenshot_path)) {
                         log.log.err("SCREENSHOT: Failed to capture screenshot", .{});
+                        return error.ScreenshotCaptureFailed;
                     }
                 }
                 log.log.info("SMOKE TEST COMPLETE: {} frames rendered. Exiting.", .{target_frames});

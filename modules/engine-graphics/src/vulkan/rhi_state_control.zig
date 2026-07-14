@@ -57,6 +57,10 @@ pub fn supportsIndirectFirstInstance(ctx: anytype) bool {
     return ctx.vulkan_device.draw_indirect_first_instance;
 }
 
+pub fn supportsIndirectCount(ctx: anytype) bool {
+    return ctx.vulkan_device.draw_indirect_count;
+}
+
 pub fn recover(ctx: anytype) !void {
     if (!ctx.runtime.gpu_fault_detected) return;
 

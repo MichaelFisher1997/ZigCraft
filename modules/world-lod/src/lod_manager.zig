@@ -72,6 +72,7 @@ const lod_manager_ingestion_ops = @import("lod_manager_ingestion_ops.zig");
 const lod_manager_generation_ops = @import("lod_manager_generation_ops.zig");
 const lod_manager_upload_ops = @import("lod_manager_upload_ops.zig");
 const lod_manager_eviction_ops = @import("lod_manager_eviction_ops.zig");
+const CacheIoPipeline = @import("lod_cache_io.zig").CacheIoPipeline;
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const ChunkCoordKey = lod_manager_context.ChunkCoordKey;
 const ChunkCoordKeyContext = lod_manager_context.ChunkCoordKeyContext;
@@ -94,6 +95,8 @@ const LODTransition = struct {
 pub const LODCacheStore = struct {
     cache_dir_path: ?[]const u8 = null,
     logged_legacy_cache_notice: bool = false,
+    store_size_cap_mb: u32 = lod_store.DEFAULT_STORE_SIZE_CAP_MB,
+    use_config_store_size_cap: bool = false,
     store_mutex: sync.Mutex = .{},
 };
 
@@ -166,8 +169,10 @@ pub const LODManager = struct {
 
     // Stats
     stats: LODStats,
+    profiling: @import("lod_stats.zig").LODProfilingCollector,
     cache_hits: u32,
     cache_misses: u32,
+    cancelled_jobs: u32,
 
     // Mutex for thread safety
     mutex: sync.RwLock,
@@ -198,6 +203,11 @@ pub const LODManager = struct {
     // Optional source-data persistence store.
     cache_store: LODCacheStore,
 
+    // Dedicated, bounded single-worker cache I/O pipeline. It is intentionally
+    // separate from the generation pool so disk latency cannot occupy terrain
+    // generation workers or the update path.
+    cache_io: *CacheIoPipeline,
+
     // Keep cleanup behavior testable, but allow the live world to opt out.
     cleanup_covered_regions: bool = true,
 
@@ -214,6 +224,11 @@ pub const LODManager = struct {
     mesh_candidates_scratch: std.ArrayListUnmanaged(MeshCandidate) = .empty,
     upload_candidates_scratch: std.ArrayListUnmanaged(UploadCandidate) = .empty,
 
+    // Number of regions admitted to the generation/mesh/upload pipeline. This
+    // is maintained at lifecycle boundaries so scheduling does not need to
+    // recount every region map before each admission pass.
+    pending_region_count: usize = 0,
+
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;
 
@@ -228,7 +243,7 @@ pub const LODManager = struct {
 
     /// Test-only lightweight manager state. Cache ownership starts disabled;
     /// tests that need persistence should call enableCache() and free it after.
-    pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) Self {
+    pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) !Self {
         return lod_manager_cache_ops.initCacheTestManager(allocator, cache_dir_path);
     }
 
@@ -292,6 +307,17 @@ pub const LODManager = struct {
         return lod_manager_core.render(self, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer);
     }
 
+    /// Renders a frame-aware LOD layer. The monotonic WorldRenderer serial
+    /// allows terrain and water to share one visibility projection.
+    pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+        return lod_manager_core.renderFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer);
+    }
+
+    /// Prepares same-frame GPU LOD culling before active graphics passes.
+    pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+        return lod_manager_core.prepareFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    }
+
     /// Enables persistent source-data caching for LOD regions below `save_dir_path`.
     /// Allocates and stores the cache path; errors indicate allocation or filesystem setup failure.
     pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
@@ -302,6 +328,23 @@ pub const LODManager = struct {
     /// Intended for the world update/shutdown path; IO failures are logged and leave data eligible for retry.
     pub fn flushDirtyStores(self: *Self) void {
         return lod_manager_cache_ops.flushDirtyStores(self);
+    }
+
+    /// Explicitly waits for accepted cache I/O and applies its completions.
+    /// This is for shutdown/tests; frame updates never block on cache I/O.
+    pub fn flushCacheIO(self: *Self) void {
+        return lod_manager_cache_ops.flushCacheIO(self);
+    }
+
+    /// Applies completed cache reads/writes without waiting for worker I/O.
+    pub fn drainCacheCompletions(self: *Self) void {
+        return lod_manager_cache_ops.drainCacheCompletions(self);
+    }
+
+    /// Shutdown-only cache flush. This may block until the bounded worker has
+    /// serialized and persisted accepted snapshots.
+    pub fn shutdownCacheIO(self: *Self) void {
+        return lod_manager_cache_ops.shutdownCacheIO(self);
     }
 
     /// Builds the persistent cache key for an LOD region using generator identity and LOD coordinates.
@@ -380,6 +423,12 @@ pub const LODManager = struct {
     /// The input data is borrowed for the call; persistence failures are logged for later diagnosis.
     pub fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
         return lod_manager_cache_ops.saveCachedSourceData(self, key, data);
+    }
+
+    /// Dispatches a generation fallback after an asynchronous cache miss.
+    /// Cache completion processing is the only caller; it never performs I/O.
+    pub fn dispatchCacheMiss(self: *Self, key: LODRegionKey, token: u32) void {
+        return lod_manager_generation_ops.dispatchCacheMiss(self, key, token);
     }
 
     /// Installs the callback used to resolve full-detail chunks for ingestion retries.
@@ -494,6 +543,11 @@ pub const LODManager = struct {
     /// The chunk remains manager-owned and must stay pinned as required by the caller path.
     pub fn requeueUpload(self: *Self, lod_idx: usize, chunk: *LODChunk) void {
         return lod_manager_upload_ops.requeueUpload(self, lod_idx, chunk);
+    }
+
+    /// Replaces a failed compact upload with the maintained CPU heightfield.
+    pub fn fallbackCompactMeshToCpu(self: *Self, mesh: *LODMesh, chunk: *LODChunk) !void {
+        return lod_manager_generation_ops.fallbackCompactMeshToCpu(self, mesh, chunk);
     }
 
     /// Counts direct finer child regions that are currently renderable for a parent region.

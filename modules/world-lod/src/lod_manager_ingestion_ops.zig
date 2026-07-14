@@ -133,7 +133,8 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
                 // Defer if a mesh/generation/upload job is mid-flight for
                 // this region: writing source data concurrently with a
                 // mesh job reading it (under the shared lock) would race.
-                if (lod_chunk_ptr.getState() == .generating or
+                if (lod_chunk_ptr.isPinned() or
+                    lod_chunk_ptr.getState() == .generating or
                     lod_chunk_ptr.getState() == .meshing or
                     lod_chunk_ptr.getState() == .uploading)
                 {
@@ -145,8 +146,7 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
                 const min_z: i32 = lod_chunk_ptr.region_z * region_size;
                 const written = lod_ingest.downsampleChunkIntoRegion(chunk, cx, cz, data, min_x, min_z, region_size, provenance);
                 if (written == 0) continue;
-                lod_chunk_ptr.dirty = true;
-                lod_chunk_ptr.store_dirty = true;
+                lod_chunk_ptr.markSourceDirty();
                 lod_chunk_ptr.updateHeightBoundsFromData();
                 // Force a remesh of already-rendered regions so the new
                 // chunk-derived data becomes visible.

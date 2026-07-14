@@ -191,6 +191,10 @@ jobs:
           log-file: unit-test-${{ matrix.optimize }}.log
           command: nix develop .#ci-unit --command zig build -Doptimize=${{ matrix.optimize }} test
 
+      - name: Run Phase 5 compact LOD gate
+        if: needs.changes.outputs.code_changes == 'true' && matrix.optimize == 'Debug'
+        run: nix develop .#ci-unit --command zig build phase5-gate
+
       - name: Upload unit test log
         if: failure()
         uses: actions/upload-artifact@v7
@@ -221,7 +225,7 @@ jobs:
       contents: read
       id-token: write
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 45
+    timeout-minutes: 75
     needs: [changes, unit-test]
     steps:
       - uses: actions/checkout@v4
@@ -273,6 +277,18 @@ jobs:
           WAYLAND_DISPLAY: headless
           ZIGCRAFT_SMOKE_FRAMES: "3"
           ZIGCRAFT_SAFE_MODE: "1"
+
+      - name: Run Phase 5 compact visual gate
+        if: needs.changes.outputs.code_changes == 'true'
+        uses: ./.github/actions/run-with-log
+        with:
+          name: Phase 5 Visual Gate
+          timeout: 20m
+          log-file: phase5-visual-gate.log
+          command: nix develop .#ci-graphics --command zig build phase5-visual-gate
+        env:
+          XDG_RUNTIME_DIR: /tmp/runtime-runner
+          WAYLAND_DISPLAY: headless
 
       - name: Fail on Vulkan validation log errors
         if: needs.changes.outputs.code_changes == 'true'

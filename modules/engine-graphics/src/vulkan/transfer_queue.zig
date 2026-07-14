@@ -28,6 +28,7 @@ pub const StagingRing = struct {
     capacity: u64 = 0,
     head: u64 = 0,
     tail: u64 = 0,
+    used_total: u64 = 0,
     frame_base: [rhi.MAX_FRAMES_IN_FLIGHT]u64,
     frame_used: [rhi.MAX_FRAMES_IN_FLIGHT]u64,
 
@@ -48,6 +49,7 @@ pub const StagingRing = struct {
             .capacity = capacity,
             .head = 0,
             .tail = 0,
+            .used_total = 0,
             .frame_base = undefined,
             .frame_used = undefined,
         };
@@ -68,6 +70,7 @@ pub const StagingRing = struct {
         self.capacity = 0;
         self.head = 0;
         self.tail = 0;
+        self.used_total = 0;
         @memset(&self.frame_base, 0);
         @memset(&self.frame_used, 0);
     }
@@ -78,13 +81,14 @@ pub const StagingRing = struct {
     }
 
     pub fn reclaimFrame(self: *StagingRing, frame_index: usize) void {
-        self.tail = self.frame_base[frame_index] + self.frame_used[frame_index];
-        if (self.tail >= self.capacity) self.tail -= self.capacity;
+        const reclaimed = @min(self.frame_used[frame_index], self.used_total);
+        self.tail = (self.tail + reclaimed) % self.capacity;
+        self.used_total -= reclaimed;
+        self.frame_used[frame_index] = 0;
     }
 
     pub fn allocated(self: *StagingRing) u64 {
-        if (self.head >= self.tail) return self.head - self.tail;
-        return self.capacity - self.tail + self.head;
+        return self.used_total;
     }
 
     pub fn available(self: *StagingRing) u64 {
@@ -95,10 +99,12 @@ pub const StagingRing = struct {
         if (size == 0) return null;
 
         const aligned_head = std.mem.alignForward(u64, self.head, ALIGNMENT);
+        const alignment_padding = aligned_head - self.head;
         var padded_to_end: u64 = 0;
 
         const try_offset = blk: {
             if (aligned_head + size <= self.capacity) {
+                if (alignment_padding + size > self.available()) return null;
                 break :blk aligned_head;
             }
             padded_to_end = self.capacity - self.head;
@@ -117,7 +123,9 @@ pub const StagingRing = struct {
 
         const new_head = try_offset + size;
         self.head = if (new_head >= self.capacity) 0 else new_head;
-        self.frame_used[frame_index] += size + padded_to_end;
+        const consumed = size + padded_to_end + if (padded_to_end == 0) alignment_padding else 0;
+        self.frame_used[frame_index] += consumed;
+        self.used_total += consumed;
 
         return slice;
     }
@@ -352,3 +360,42 @@ pub const TransferQueue = struct {
         try self.submitAndWait(vk_device, queue_mutex);
     }
 };
+
+test "staging ring distinguishes full from empty" {
+    var memory: [1024]u8 = undefined;
+    var ring = StagingRing{
+        .mapped = &memory,
+        .capacity = memory.len,
+        .frame_base = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
+        .frame_used = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
+    };
+    ring.beginFrame(0);
+    try std.testing.expect(ring.allocate(512, 0) != null);
+    try std.testing.expect(ring.allocate(512, 0) != null);
+    try std.testing.expectEqual(@as(u64, memory.len), ring.allocated());
+    try std.testing.expect(ring.allocate(1, 0) == null);
+    ring.reclaimFrame(0);
+    try std.testing.expectEqual(@as(u64, 0), ring.allocated());
+}
+
+test "staging ring reclaims wrapped frame regions" {
+    var memory: [1024]u8 = undefined;
+    var ring = StagingRing{
+        .mapped = &memory,
+        .capacity = memory.len,
+        .frame_base = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
+        .frame_used = [_]u64{0} ** rhi.MAX_FRAMES_IN_FLIGHT,
+    };
+    ring.beginFrame(0);
+    try std.testing.expect(ring.allocate(400, 0) != null);
+    ring.beginFrame(1);
+    try std.testing.expect(ring.allocate(400, 1) != null);
+    ring.reclaimFrame(0);
+    ring.beginFrame(0);
+    try std.testing.expect(ring.allocate(400, 0) != null);
+    try std.testing.expectEqual(@as(u64, 1024), ring.allocated());
+    ring.reclaimFrame(1);
+    ring.reclaimFrame(0);
+    try std.testing.expectEqual(@as(u64, 0), ring.allocated());
+    try std.testing.expectEqual(ring.head, ring.tail);
+}

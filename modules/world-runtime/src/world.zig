@@ -985,6 +985,14 @@ pub const World = struct {
         WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .all);
     }
 
+    /// Render-graph prepass entry point: dispatch LOD compute before a graphics
+    /// render pass becomes active. Normal rendering remains a CPU fallback.
+    pub fn prepareLODCulling(self: *World, view_proj: Mat4, camera_pos: Vec3) void {
+        if (self.lod) |lod| {
+            lod.manager.prepareFrame(self.renderer.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(&self.storage), null);
+        }
+    }
+
     /// Renders opaque terrain and world geometry for the current camera.
     /// Fluid and transparent passes are intentionally excluded.
     pub fn renderOpaque(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
@@ -1164,10 +1172,16 @@ pub const World = struct {
     };
 
     const WORLD_RENDER_VIEW_VTABLE = GraphicsWorldRenderView.VTable{
+        .prepareLODCulling = iprepareLODCulling,
         .render = irender,
         .renderOpaque = irenderOpaque,
         .renderFluid = irenderFluid,
     };
+
+    fn iprepareLODCulling(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.prepareLODCulling(view_proj, camera_pos);
+    }
 
     fn iupdate(ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void {
         const self: *World = @ptrCast(@alignCast(ptr));

@@ -304,8 +304,9 @@ test "Player block mutation errors are handled" {
             return undefined;
         }
         fn graphicsRenderView(ptr: *anyopaque) @import("engine-rhi").IWorldRenderView {
-            return .{ .ptr = ptr, .vtable = &.{ .render = render, .renderOpaque = render, .renderFluid = render } };
+            return .{ .ptr = ptr, .vtable = &.{ .prepareLODCulling = prepareLODCulling, .render = render, .renderOpaque = render, .renderFluid = render } };
         }
+        fn prepareLODCulling(_: *anyopaque, _: @import("engine-math").Mat4, _: Vec3) void {}
         fn getGpuMeshDispatch(_: *anyopaque) @import("world-runtime").GpuMeshDispatch {
             return .{ .dispatch_fn = null, .dispatch_ctx = null };
         }

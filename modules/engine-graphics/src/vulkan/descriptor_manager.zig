@@ -46,6 +46,8 @@ pub const DescriptorManager = struct {
     shadow_ubos_mapped: [rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque,
 
     dummy_instance_ssbo: VulkanBuffer,
+    dummy_compact_lod_ssbo: VulkanBuffer,
+    dummy_compact_lod_instance_ssbo: VulkanBuffer,
 
     // Dummy textures
     dummy_texture: rhi.TextureHandle,
@@ -67,6 +69,8 @@ pub const DescriptorManager = struct {
             .shadow_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]VulkanBuffer),
             .shadow_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
             .dummy_instance_ssbo = std.mem.zeroes(VulkanBuffer),
+            .dummy_compact_lod_ssbo = std.mem.zeroes(VulkanBuffer),
+            .dummy_compact_lod_instance_ssbo = std.mem.zeroes(VulkanBuffer),
             .dummy_texture = 0,
             .dummy_texture_3d = 0,
             .dummy_normal_texture = 0,
@@ -89,6 +93,14 @@ pub const DescriptorManager = struct {
         }
 
         self.dummy_instance_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
+            self.deinit();
+            return err;
+        };
+        self.dummy_compact_lod_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
+            self.deinit();
+            return err;
+        };
+        self.dummy_compact_lod_instance_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
             self.deinit();
             return err;
         };
@@ -181,6 +193,10 @@ pub const DescriptorManager = struct {
             .{ .binding = 14, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
             // 15: Scene depth texture (for water refraction)
             .{ .binding = 15, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
+            // 16: Compact LOD sample SSBO, consumed only by vertex-pulling shaders.
+            .{ .binding = 16, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT },
+            // 17: Compact LOD indirect instance SSBO.
+            .{ .binding = 17, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT },
         };
 
         var layout_info = std.mem.zeroes(c.VkDescriptorSetLayoutCreateInfo);
@@ -226,6 +242,8 @@ pub const DescriptorManager = struct {
                 .offset = 0,
                 .range = 256,
             };
+            var buffer_info_compact = c.VkDescriptorBufferInfo{ .buffer = self.dummy_compact_lod_ssbo.buffer, .offset = 0, .range = 256 };
+            var buffer_info_compact_instance = c.VkDescriptorBufferInfo{ .buffer = self.dummy_compact_lod_instance_ssbo.buffer, .offset = 0, .range = 256 };
 
             var writes = [_]c.VkWriteDescriptorSet{
                 .{
@@ -252,6 +270,8 @@ pub const DescriptorManager = struct {
                     .descriptorCount = 1,
                     .pBufferInfo = &buffer_info_instance,
                 },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[i], .dstBinding = 16, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[i], .dstBinding = 17, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact_instance },
                 .{
                     .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet = self.lod_descriptor_sets[i],
@@ -276,6 +296,8 @@ pub const DescriptorManager = struct {
                     .descriptorCount = 1,
                     .pBufferInfo = &buffer_info_instance,
                 },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.lod_descriptor_sets[i], .dstBinding = 16, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.lod_descriptor_sets[i], .dstBinding = 17, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact_instance },
             };
             c.vkUpdateDescriptorSets(vulkan_device.vk_device, writes.len, &writes[0], 0, null);
         }
@@ -305,6 +327,16 @@ pub const DescriptorManager = struct {
             if (self.dummy_instance_ssbo.mapped_ptr != null) c.vkUnmapMemory(device, self.dummy_instance_ssbo.memory);
             c.vkDestroyBuffer(device, self.dummy_instance_ssbo.buffer, null);
             c.vkFreeMemory(device, self.dummy_instance_ssbo.memory, null);
+        }
+        if (self.dummy_compact_lod_ssbo.buffer != null) {
+            if (self.dummy_compact_lod_ssbo.mapped_ptr != null) c.vkUnmapMemory(device, self.dummy_compact_lod_ssbo.memory);
+            c.vkDestroyBuffer(device, self.dummy_compact_lod_ssbo.buffer, null);
+            c.vkFreeMemory(device, self.dummy_compact_lod_ssbo.memory, null);
+        }
+        if (self.dummy_compact_lod_instance_ssbo.buffer != null) {
+            if (self.dummy_compact_lod_instance_ssbo.mapped_ptr != null) c.vkUnmapMemory(device, self.dummy_compact_lod_instance_ssbo.memory);
+            c.vkDestroyBuffer(device, self.dummy_compact_lod_instance_ssbo.buffer, null);
+            c.vkFreeMemory(device, self.dummy_compact_lod_instance_ssbo.memory, null);
         }
 
         if (self.descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(device, self.descriptor_set_layout, null);

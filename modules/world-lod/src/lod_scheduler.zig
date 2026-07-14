@@ -192,7 +192,10 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
         const existing = storage.get(cand.key);
         if (existing != null) diag.existing += 1;
-        const needs_queue = if (existing) |chunk| chunk.getState() == .missing else true;
+        // A cancelled worker keeps the region pinned until it observes its
+        // cancellation signal. Do not reset that signal by dispatching a new
+        // generation for the same region concurrently.
+        const needs_queue = if (existing) |chunk| chunk.getState() == .missing and !chunk.isPinned() else true;
         if (!needs_queue) continue;
 
         const chunk = if (existing) |c| c else blk: {
@@ -208,6 +211,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         if (ctx.defer_generation_dispatch) {
             chunk.setState(.queued_for_generation);
         } else {
+            chunk.resetCancellation();
             chunk.setState(.generating);
             queue.push(.{
                 .type = .chunk_generation,
@@ -306,6 +310,7 @@ test "LOD scheduling queues LOD0 generation jobs" {
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var pending_regions: usize = 0;
     var coverage_ctx: u8 = 0;
     const Coverage = struct {
         fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
@@ -328,10 +333,12 @@ test "LOD scheduling queues LOD0 generation jobs" {
         .coverage_ptr = &coverage_ctx,
         .are_all_chunks_loaded = Coverage.neverCovered,
         .radius_reduction = &radius_reduction,
+        .pending_regions = &pending_regions,
     }, .lod0, Vec3.zero, null, null);
 
     const queue = queue_ptrs[LODLevel.count - 1];
     try std.testing.expect(queue.count() > 0);
+    try std.testing.expectEqual(queue.count(), pending_regions);
     const job = queue.pop().?;
     try std.testing.expectEqual(engine_core.job_system.JobType.chunk_generation, job.type);
     try std.testing.expectEqual(@as(u3, 0), job.data.chunk.lod_level);

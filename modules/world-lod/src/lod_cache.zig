@@ -14,7 +14,8 @@ const BlockType = world_core.BlockType;
 const BiomeId = world_core.BiomeId;
 
 pub const MAGIC: u32 = 0x5A4C4F44; // "ZLOD"
-pub const CACHE_VERSION: u8 = 10;
+pub const CACHE_VERSION: u8 = 11;
+const CACHE_VERSION_V10: u8 = 10;
 pub const CACHE_VERSION_V1: u8 = 1;
 pub const HEADER_SIZE: usize = 42;
 
@@ -36,6 +37,8 @@ pub const CacheError = error{
     InvalidBiome,
     InvalidBlock,
     InvalidSpanCount,
+    InvalidProvenance,
+    MissingProvenance,
     ChecksumMismatch,
 };
 
@@ -70,13 +73,37 @@ fn payloadSize(count: usize) usize {
 
 pub fn serializedSize(data: *const LODSimplifiedData) usize {
     const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
-    var total = HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE;
+    var total = HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE + count;
     if (data.hasVerticalSpans()) {
-        total += count; // provenance bytes
         total += count; // vertical span counts
         total += count * world_core.MAX_LOD_VERTICAL_SPANS * SPAN_WIRE_SIZE;
     }
     return total;
+}
+
+/// Creates an allocator-owned snapshot suitable for handing to an asynchronous
+/// serializer. Source data remains owned by the LOD region and may be edited
+/// as soon as this returns.
+pub fn cloneSourceData(data: *const LODSimplifiedData, lod: LODLevel, allocator: std.mem.Allocator) !LODSimplifiedData {
+    var copy = if (data.hasVerticalSpans())
+        try LODSimplifiedData.initWithVerticalSpans(allocator, lod)
+    else
+        try LODSimplifiedData.init(allocator, lod);
+    errdefer copy.deinit();
+
+    copy.version = data.version;
+    @memcpy(copy.heightmap, data.heightmap);
+    @memcpy(copy.biomes, data.biomes);
+    @memcpy(copy.top_blocks, data.top_blocks);
+    @memcpy(copy.colors, data.colors);
+    @memcpy(copy.material_layers, data.material_layers);
+    @memcpy(copy.water, data.water);
+    @memcpy(copy.lighting, data.lighting);
+    @memcpy(copy.vegetation, data.vegetation);
+    @memcpy(copy.provenance, data.provenance);
+    if (data.vertical_span_counts) |counts| @memcpy(copy.vertical_span_counts.?, counts);
+    if (data.vertical_spans) |spans| @memcpy(copy.vertical_spans.?, spans);
+    return copy;
 }
 
 fn writeF32(buf: []u8, value: f32) void {
@@ -277,13 +304,13 @@ pub fn serialize(data: *const LODSimplifiedData, key: Key, allocator: std.mem.Al
     const has_spans = data.hasVerticalSpans();
     buf[off] = if (has_spans) 1 else 0;
     off += 1;
+    for (data.provenance) |provenance| {
+        buf[off] = @intFromEnum(provenance);
+        off += 1;
+    }
     if (has_spans) {
         const counts = data.vertical_span_counts.?;
         const spans = data.vertical_spans.?;
-        for (data.provenance) |provenance| {
-            buf[off] = @intFromEnum(provenance);
-            off += 1;
-        }
         @memcpy(buf[off..][0..count], counts);
         off += count;
         for (spans) |span| {
@@ -306,7 +333,7 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
     off += 4;
 
     const version = bytes[off];
-    if (version != CACHE_VERSION and version != CACHE_VERSION_V1) return CacheError.UnsupportedVersion;
+    if (version != CACHE_VERSION and version != CACHE_VERSION_V10 and version != CACHE_VERSION_V1) return CacheError.UnsupportedVersion;
     off += 1;
     const lod_byte = bytes[off];
     off += 1;
@@ -338,13 +365,22 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
 
     var has_spans = false;
     var expected = v1_expected;
-    if (version == CACHE_VERSION) {
+    if (version == CACHE_VERSION or version == CACHE_VERSION_V10) {
         if (bytes.len < v1_expected + SPAN_FLAGS_WIRE_SIZE) return CacheError.DataTooShort;
         has_spans = bytes[v1_expected] != 0;
         expected = v1_expected + SPAN_FLAGS_WIRE_SIZE;
-        if (has_spans) expected += count + count + count * world_core.MAX_LOD_VERTICAL_SPANS * SPAN_WIRE_SIZE;
+        if (version == CACHE_VERSION) expected += count;
+        if (has_spans) {
+            if (version == CACHE_VERSION_V10) expected += count;
+            expected += count + count * world_core.MAX_LOD_VERTICAL_SPANS * SPAN_WIRE_SIZE;
+        }
     }
     if (bytes.len < expected) return CacheError.DataTooShort;
+
+    // Older span-less payloads never recorded source authority. Treat them as
+    // stale instead of silently converting edited/chunk-derived columns back
+    // to worldgen data; the cache pipeline will regenerate them safely.
+    if ((version == CACHE_VERSION_V1) or (version == CACHE_VERSION_V10 and !has_spans)) return CacheError.MissingProvenance;
 
     var data = if (has_spans) try LODSimplifiedData.initWithVerticalSpans(allocator, key.lod) else try LODSimplifiedData.init(allocator, key.lod);
     errdefer data.deinit();
@@ -382,21 +418,23 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
         off += 18;
     }
 
-    if (version == CACHE_VERSION) {
+    if (version == CACHE_VERSION or version == CACHE_VERSION_V10) {
         const flags = bytes[off];
         off += 1;
         if ((flags & ~@as(u8, 1)) != 0) return CacheError.InvalidSpanCount;
-        if (has_spans) {
+        if (version == CACHE_VERSION or has_spans) {
             for (data.provenance) |*provenance| {
                 const byte = bytes[off];
                 provenance.* = switch (byte) {
                     0 => .worldgen,
                     1 => .chunk_derived,
                     2 => .edited,
-                    else => return CacheError.InvalidSpanCount,
+                    else => return CacheError.InvalidProvenance,
                 };
                 off += 1;
             }
+        }
+        if (has_spans) {
             const counts = data.vertical_span_counts.?;
             @memcpy(counts, bytes[off..][0..count]);
             off += count;
@@ -498,18 +536,18 @@ test "LOD cache round-trip preserves vertical spans" {
     try testing.expect(decoded.hasVerticalSpans());
     try testing.expectEqual(data.vertical_span_counts.?.len, decoded.vertical_span_counts.?.len);
     try testing.expectEqualSlices(u8, data.vertical_span_counts.?, decoded.vertical_span_counts.?);
-    try testing.expectEqual(data.vertical_spans.?.len, decoded.vertical_spans.?.len);
-    try testing.expectEqualSlices(u8, std.mem.sliceAsBytes(data.vertical_spans.?), std.mem.sliceAsBytes(decoded.vertical_spans.?));
+    try testing.expectEqual(lower, decoded.getVerticalSpan(2, 3, 0).?);
+    try testing.expectEqual(upper, decoded.getVerticalSpan(2, 3, 1).?);
 }
 
-test "LOD cache round-trip preserves column provenance" {
-    var data = try LODSimplifiedData.initWithVerticalSpans(testing.allocator, .lod1);
+test "LOD cache round-trip preserves span-less column provenance" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod3);
     defer data.deinit();
 
     data.setColumnProvenance(2, 3, .chunk_derived);
     data.setColumnProvenance(4, 5, .edited);
 
-    const key = Key{ .seed = 1234, .generator_identity_hash = 99, .generator_version = 7, .rx = -2, .rz = 3, .lod = .lod1 };
+    const key = Key{ .seed = 1234, .generator_identity_hash = 99, .generator_version = 7, .rx = -2, .rz = 3, .lod = .lod3 };
     const bytes = try serialize(&data, key, testing.allocator);
     defer testing.allocator.free(bytes);
 
@@ -521,7 +559,7 @@ test "LOD cache round-trip preserves column provenance" {
     try testing.expectEqual(ColumnProvenance.worldgen, decoded.getColumnProvenance(0, 0));
 }
 
-test "LOD cache accepts v1 payload as span-less data" {
+test "LOD cache rejects legacy span-less payload without provenance" {
     var data = try LODSimplifiedData.init(testing.allocator, .lod2);
     defer data.deinit();
     data.setColumn(1, 1, 91.0, .mountains, .{ .surface = .stone, .subsurface = .dirt, .foundation = .stone }, 0xFF445566, .empty, .daylight, .empty);
@@ -537,13 +575,27 @@ test "LOD cache accepts v1 payload as span-less data" {
     std.mem.writeInt(u32, v1_bytes[6..][0..4], 0, .little);
     std.mem.writeInt(u32, v1_bytes[6..][0..4], computeCrc(v1_bytes), .little);
 
-    var decoded = try deserialize(v1_bytes, key, testing.allocator);
-    defer decoded.deinit();
+    try testing.expectError(CacheError.MissingProvenance, deserialize(v1_bytes, key, testing.allocator));
+}
 
-    try testing.expect(!decoded.hasVerticalSpans());
-    const idx = 1 + data.width;
-    try testing.expectEqual(data.heightmap[idx], decoded.heightmap[idx]);
-    try testing.expectEqual(data.biomes[idx], decoded.biomes[idx]);
+test "LOD cache rejects v10 span-less payload without provenance" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod3);
+    defer data.deinit();
+
+    const key = Key{ .seed = 4, .generator_identity_hash = 5, .generator_version = 6, .rx = 1, .rz = -2, .lod = .lod3 };
+    const current_bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(current_bytes);
+    const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
+    const legacy_size = current_bytes.len - count;
+    const legacy_bytes = try testing.allocator.alloc(u8, legacy_size);
+    defer testing.allocator.free(legacy_bytes);
+    const provenance_offset = HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE;
+    @memcpy(legacy_bytes[0..provenance_offset], current_bytes[0..provenance_offset]);
+    legacy_bytes[4] = CACHE_VERSION_V10;
+    std.mem.writeInt(u32, legacy_bytes[6..][0..4], 0, .little);
+    std.mem.writeInt(u32, legacy_bytes[6..][0..4], computeCrc(legacy_bytes), .little);
+
+    try testing.expectError(CacheError.MissingProvenance, deserialize(legacy_bytes, key, testing.allocator));
 }
 
 test "LOD cache rejects checksum mismatch" {
@@ -556,6 +608,22 @@ test "LOD cache rejects checksum mismatch" {
     bytes[bytes.len - 1] ^= 0x01;
 
     try testing.expectError(CacheError.ChecksumMismatch, deserialize(bytes, key, testing.allocator));
+}
+
+test "LOD cache reports invalid provenance" {
+    var data = try LODSimplifiedData.init(testing.allocator, .lod2);
+    defer data.deinit();
+
+    const key = Key{ .seed = 1, .generator_identity_hash = 2, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod2 };
+    const bytes = try serialize(&data, key, testing.allocator);
+    defer testing.allocator.free(bytes);
+    const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
+    const provenance_offset = HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE;
+    bytes[provenance_offset] = 3;
+    std.mem.writeInt(u32, bytes[6..][0..4], 0, .little);
+    std.mem.writeInt(u32, bytes[6..][0..4], computeCrc(bytes), .little);
+
+    try testing.expectError(CacheError.InvalidProvenance, deserialize(bytes, key, testing.allocator));
 }
 
 test "LOD cache rejects mismatched cache key" {
@@ -585,4 +653,9 @@ test "LOD cache checksum covers key header fields" {
 test "LOD cache payload size follows named wire fields" {
     try testing.expectEqual(@as(usize, 50), payloadSize(1));
     try testing.expectEqual(@as(usize, HEADER_SIZE + 50 * 4), HEADER_SIZE + payloadSize(4));
+
+    var data = try LODSimplifiedData.init(testing.allocator, .lod0);
+    defer data.deinit();
+    const count = @as(usize, @intCast(data.width)) * @as(usize, @intCast(data.width));
+    try testing.expectEqual(HEADER_SIZE + payloadSize(count) + SPAN_FLAGS_WIRE_SIZE + count, serializedSize(&data));
 }

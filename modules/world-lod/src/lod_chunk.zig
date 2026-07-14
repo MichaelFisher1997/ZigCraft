@@ -161,6 +161,11 @@ pub const LODChunk = struct {
     /// Pin count for preventing unload during async work
     pin_count: std.atomic.Value(u32),
 
+    /// Per-region cancellation signal for worker jobs invalidated by pause,
+    /// teleport, or horizon changes. Unlike the manager teardown flag, this
+    /// remains set until a new job is explicitly dispatched for the region.
+    cancel_requested: std.atomic.Value(bool),
+
     /// Chunk data - either full detail or simplified
     data: union(enum) {
         /// LOD0: Full chunk data (pointer to existing Chunk)
@@ -192,6 +197,21 @@ pub const LODChunk = struct {
     /// or edit). The manager writes the region container to disk lazily.
     store_dirty: bool,
 
+    /// Monotonic source revision used to reject stale cache write completions.
+    source_revision: u32,
+
+    /// Cache pipeline state. These flags are owned by the manager update
+    /// thread and prevent duplicate requests without pinning region memory.
+    cache_read_queued: bool,
+    store_write_queued: bool,
+    /// Suppresses retries for a snapshot that cannot fit the current store
+    /// cap. A source revision or cap increase makes it eligible again.
+    store_size_limited: bool,
+    store_size_limit_cap_mb: u32,
+    /// Sticky for this region lifetime after a compact runtime submission
+    /// failure, preventing an auto/force rebuild loop.
+    compact_disabled: bool,
+
     /// Creates an empty LOD region record in the missing state.
     /// Source data, mesh handles, readiness counts, and transition state are initialized to safe defaults.
     pub fn init(rx: i32, rz: i32, lod: LODLevel) LODChunk {
@@ -202,6 +222,7 @@ pub const LODChunk = struct {
             .state = .missing,
             .job_token = 0,
             .pin_count = std.atomic.Value(u32).init(0),
+            .cancel_requested = std.atomic.Value(bool).init(false),
             .data = .{ .empty = {} },
             .mesh_handle = 0,
             .min_height = 0.0,
@@ -210,6 +231,12 @@ pub const LODChunk = struct {
             .transition_frames_remaining = 0,
             .dirty = false,
             .store_dirty = false,
+            .source_revision = 0,
+            .cache_read_queued = false,
+            .store_write_queued = false,
+            .store_size_limited = false,
+            .store_size_limit_cap_mb = 0,
+            .compact_disabled = false,
         };
     }
 
@@ -241,6 +268,18 @@ pub const LODChunk = struct {
     /// This is an atomic read suitable for eviction checks.
     pub fn isPinned(self: *const LODChunk) bool {
         return self.pin_count.load(.monotonic) > 0;
+    }
+
+    pub fn requestCancellation(self: *LODChunk) void {
+        self.cancel_requested.store(true, .release);
+    }
+
+    pub fn resetCancellation(self: *LODChunk) void {
+        self.cancel_requested.store(false, .release);
+    }
+
+    pub fn cancellationRequested(self: *const LODChunk) bool {
+        return self.cancel_requested.load(.acquire);
     }
 
     /// Returns the immutable map key corresponding to this chunk's region coordinates and LOD level.
@@ -341,6 +380,8 @@ pub const LODChunk = struct {
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;
+        self.store_size_limited = false;
+        self.source_revision +%= 1;
     }
 
     /// Sets the ready-child count directly, clamped to four direct children.

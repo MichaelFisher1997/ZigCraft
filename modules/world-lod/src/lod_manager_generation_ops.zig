@@ -25,6 +25,7 @@ const WorkerPool = JobSystem.WorkerPool;
 const Job = JobSystem.Job;
 const RingBuffer = engine_core.ring_buffer.RingBuffer;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
+const lod_tile = @import("lod_tile.zig");
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
@@ -73,16 +74,6 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
     const radii = self.config.getRadii();
     const active_lod_count = lod_chunk.activeLODCount(self.config);
     const use_vertical_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(lod) == .column_spans;
-    var pending_regions: usize = 0;
-    for (0..active_lod_count) |i| {
-        var iter = self.regions[i].iterator();
-        while (iter.next()) |entry| {
-            switch (entry.value_ptr.*.getState()) {
-                .missing, .renderable => {},
-                else => pending_regions += 1,
-            }
-        }
-    }
     self.mutex.unlock();
 
     const Coverage = struct {
@@ -109,7 +100,7 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
         // Route every region through the bounded admission path, whether or
         // not persistent LOD caching is enabled.
         .defer_generation_dispatch = true,
-        .pending_regions = &pending_regions,
+        .pending_regions = &self.pending_region_count,
         .use_vertical_spans = use_vertical_spans,
     }, lod, velocity, chunk_checker, checker_ctx);
 }
@@ -120,7 +111,8 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
     candidates.clearRetainingCapacity();
 
     const player = self.loadPlayerChunkPos();
-    const cache_enabled = self.cacheEnabled();
+    const cache_path = self.cacheDirPathSnapshot();
+    defer if (cache_path) |path| self.allocator.free(path);
     var active_lod_count: usize = 0;
 
     self.mutex.lock();
@@ -162,68 +154,88 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
 
     var cache_reads: usize = 0;
     for (candidates.items) |candidate| {
-        var cached_data: ?LODSimplifiedData = null;
-        var attempted_cache = false;
-        if (cache_enabled and cache_reads < MAX_CACHE_LOADS_PER_UPDATE) {
-            cache_reads += 1;
-            attempted_cache = true;
-            cached_data = self.loadCachedSourceData(candidate.key);
-            if (cached_data) |*cached| {
-                if (candidate.want_spans and !cached.hasVerticalSpans()) {
-                    cached.deinit();
-                    cached_data = null;
+        if (cache_path) |path| {
+            if (cache_reads < MAX_CACHE_LOADS_PER_UPDATE) {
+                cache_reads += 1;
+                self.mutex.lock();
+                if (candidate.chunk.getState() == .queued_for_generation and candidate.chunk.job_token == candidate.job_token and !candidate.chunk.cache_read_queued) {
+                    candidate.chunk.cache_read_queued = true;
+                    const accepted = self.cache_io.enqueueRead(path, candidate.key, self.cacheKey(candidate.key), candidate.job_token) catch false;
+                    if (accepted) {
+                        self.mutex.unlock();
+                        continue;
+                    }
+                    candidate.chunk.cache_read_queued = false;
                 }
+                self.mutex.unlock();
             }
         }
 
-        if (cached_data) |data| {
-            self.recordCacheHit();
-            self.mutex.lock();
-            if (candidate.chunk.getState() == .queued_for_generation and candidate.chunk.job_token == candidate.job_token) {
-                candidate.chunk.data = .{ .simplified = data };
-                candidate.chunk.updateHeightBoundsFromData();
-                candidate.chunk.setState(.generated);
-            } else {
-                var stale_data = data;
-                stale_data.deinit();
-            }
-            self.mutex.unlock();
-            continue;
-        }
-
-        if (attempted_cache) self.recordCacheMiss();
-
-        self.mutex.lock();
-        if (candidate.chunk.getState() != .queued_for_generation or candidate.chunk.job_token != candidate.job_token) {
-            self.mutex.unlock();
-            continue;
-        }
-        candidate.chunk.setState(.generating);
-        self.mutex.unlock();
-
-        self.job_dispatcher.queues[LODLevel.count - 1].push(.{
-            .type = .chunk_generation,
-            .dist_sq = candidate.encoded_priority,
-            .data = .{
-                .chunk = .{
-                    .x = candidate.chunk.region_x,
-                    .z = candidate.chunk.region_z,
-                    .job_token = candidate.job_token,
-                    .lod_level = candidate.level,
-                    .coord_scale = candidate.coord_scale,
-                    .lod_radius = candidate.lod_radius,
-                    .use_vertical_spans = candidate.want_spans,
-                },
-            },
-        }) catch |err| {
-            self.mutex.lock();
-            if (candidate.chunk.getState() == .generating and candidate.chunk.job_token == candidate.job_token) {
-                candidate.chunk.setState(.queued_for_generation);
-            }
-            self.mutex.unlock();
-            return err;
-        };
+        dispatchGenerationCandidate(self, candidate) catch |err| return err;
     }
+}
+
+pub fn dispatchCacheMiss(self: *Self, key: LODRegionKey, token: u32) void {
+    const lod_idx = @intFromEnum(key.lod);
+    const player = self.loadPlayerChunkPos();
+    self.mutex.lock();
+    const chunk = self.regions[lod_idx].get(key) orelse {
+        self.mutex.unlock();
+        return;
+    };
+    if (chunk.getState() != .queued_for_generation or chunk.job_token != token) {
+        self.mutex.unlock();
+        return;
+    }
+    const active_lod_count = lod_chunk.activeLODCount(self.config);
+    const scale: i32 = @intCast(key.lod.chunksPerSide());
+    const candidate = GenerationCandidate{
+        .key = key,
+        .chunk = chunk,
+        .encoded_priority = lod_scheduler.encodePriority(key.lod, key.rx * scale + @divFloor(scale, 2) - player.cx, key.rz * scale + @divFloor(scale, 2) - player.cz, Vec3.zero, active_lod_count),
+        .level = @intCast(lod_idx),
+        .coord_scale = scale,
+        .job_token = token,
+        .lod_radius = self.config.getRadii()[lod_idx],
+        .want_spans = self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(key.lod) == .column_spans,
+    };
+    self.mutex.unlock();
+    dispatchGenerationCandidate(self, candidate) catch |err| {
+        log.log.warn("Failed to dispatch cache-miss LOD{} generation ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+    };
+}
+
+fn dispatchGenerationCandidate(self: *Self, candidate: GenerationCandidate) !void {
+    self.mutex.lock();
+    if (candidate.chunk.getState() != .queued_for_generation or candidate.chunk.job_token != candidate.job_token or candidate.chunk.cache_read_queued) {
+        self.mutex.unlock();
+        return;
+    }
+    candidate.chunk.resetCancellation();
+    candidate.chunk.setState(.generating);
+    self.mutex.unlock();
+
+    const dispatch_timer = self.profiling.begin();
+    self.job_dispatcher.queues[LODLevel.count - 1].push(.{
+        .type = .chunk_generation,
+        .dist_sq = candidate.encoded_priority,
+        .data = .{ .chunk = .{
+            .x = candidate.chunk.region_x,
+            .z = candidate.chunk.region_z,
+            .job_token = candidate.job_token,
+            .lod_level = candidate.level,
+            .coord_scale = candidate.coord_scale,
+            .lod_radius = candidate.lod_radius,
+            .use_vertical_spans = candidate.want_spans,
+        } },
+    }) catch |err| {
+        self.profiling.end(.generation_dispatch, dispatch_timer);
+        self.mutex.lock();
+        if (candidate.chunk.getState() == .generating and candidate.chunk.job_token == candidate.job_token) candidate.chunk.setState(.queued_for_generation);
+        self.mutex.unlock();
+        return err;
+    };
+    self.profiling.end(.generation_dispatch, dispatch_timer);
 }
 
 /// Process state transitions (generated -> meshing -> ready)
@@ -251,19 +263,25 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
+            if (chunk.isPinned()) continue;
+            if (chunk.getState() == .renderable) {
+                if (self.meshes[i].get(entry.key_ptr.*)) |mesh| {
+                    if (mesh.isCompact() and mesh.compactDrawFailed()) {
+                        chunk.compact_disabled = true;
+                        chunk.setState(.generated);
+                    }
+                }
+            }
             if (chunk.getState() == .generated) {
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
                 const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - player.cx, center_cz - player.cz, velocity, active_lod_count);
-                // Append before flipping state so an allocation failure
-                // leaves the chunk in .generated (re-tried next tick)
-                // instead of stuck in .meshing with no queued job.
                 mesh_candidates.append(self.allocator, .{ .chunk = chunk, .encoded_priority = encoded_priority, .level = level, .coord_scale = scale, .job_token = chunk.job_token, .lod_radius = radii[i] }) catch |err| {
                     self.mutex.unlock();
                     return err;
                 };
-                chunk.setState(.meshing);
             } else if (chunk.getState() == .mesh_ready) {
+                if (self.meshes[i].get(entry.key_ptr.*)) |mesh| patchCompactAprons(self, i, entry.key_ptr.*, mesh);
                 const center_cx = chunk.region_x * scale + @divFloor(scale, 2);
                 const center_cz = chunk.region_z * scale + @divFloor(scale, 2);
                 const encoded_priority = lod_scheduler.encodePriority(lod, center_cx - player.cx, center_cz - player.cz, velocity, active_lod_count);
@@ -271,7 +289,6 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                     self.mutex.unlock();
                     return err;
                 };
-                chunk.setState(.uploading);
             }
         }
     }
@@ -285,6 +302,16 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         }
     }.lt);
     for (mesh_candidates.items) |mc| {
+        // Transition and enqueue atomically with respect to workers. A worker
+        // may pop immediately, but cannot inspect the chunk until this short
+        // manager critical section publishes the matching state.
+        self.mutex.lock();
+        if (mc.chunk.getState() != .generated or mc.chunk.job_token != mc.job_token) {
+            self.mutex.unlock();
+            continue;
+        }
+        mc.chunk.setState(.meshing);
+        mc.chunk.resetCancellation();
         self.job_dispatcher.queues[LODLevel.count - 1].push(.{
             .type = .chunk_meshing,
             .dist_sq = mc.encoded_priority,
@@ -299,13 +326,21 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                 },
             },
         }) catch |err| {
-            self.mutex.lock();
             if (mc.chunk.getState() == .meshing and mc.chunk.job_token == mc.job_token) {
                 mc.chunk.setState(.generated);
             }
             self.mutex.unlock();
             return err;
         };
+        // Never let a worker invoke RHI or release a live pooled range. Once
+        // the replacement job is guaranteed to be queued, detach the previous
+        // representation and retire it through the normal frame-delayed
+        // disposal queue. The worker will create a fresh mesh object.
+        const mesh_key = LODRegionKey{ .rx = mc.chunk.region_x, .rz = mc.chunk.region_z, .lod = @enumFromInt(mc.level) };
+        if (self.meshes[mc.level].fetchRemove(mesh_key)) |old_mesh| {
+            self.queueMeshDeletion(old_mesh.value);
+        }
+        self.mutex.unlock();
     }
 
     // Uploads go to per-level FIFO queues. Sort by the same encoded priority
@@ -317,14 +352,34 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
         }
     }.lt);
     for (upload_candidates.items) |uc| {
+        self.mutex.lock();
+        if (uc.chunk.getState() != .mesh_ready) {
+            self.mutex.unlock();
+            continue;
+        }
+        uc.chunk.setState(.uploading);
         self.upload_queues[uc.level].push(uc.chunk) catch |err| {
-            self.mutex.lock();
             if (uc.chunk.getState() == .uploading) {
                 uc.chunk.setState(.mesh_ready);
             }
             self.mutex.unlock();
             return err;
         };
+        self.mutex.unlock();
+    }
+}
+
+fn patchCompactAprons(self: *Self, lod_index: usize, key: LODRegionKey, mesh: *LODMesh) void {
+    const neighbors = [_]struct { dx: i32, dz: i32, edge: lod_tile.TileEdge }{
+        .{ .dx = -1, .dz = 0, .edge = .west },
+        .{ .dx = 1, .dz = 0, .edge = .east },
+        .{ .dx = 0, .dz = -1, .edge = .north },
+        .{ .dx = 0, .dz = 1, .edge = .south },
+    };
+    for (neighbors) |neighbor| {
+        const neighbor_key = LODRegionKey{ .rx = key.rx + neighbor.dx, .rz = key.rz + neighbor.dz, .lod = key.lod };
+        const neighbor_mesh = self.meshes[lod_index].get(neighbor_key) orelse continue;
+        _ = mesh.patchCompactNeighbor(neighbor.edge, neighbor_mesh);
     }
 }
 
@@ -350,6 +405,13 @@ pub fn getOrCreateMesh(self: *Self, key: LODRegionKey) !*LODMesh {
 
 /// Build mesh for an LOD chunk (called after generation completes)
 pub fn buildMeshForChunk(self: *Self, chunk: *LODChunk) !void {
+    // A meshing worker pins its chunk while it owns the immutable source data.
+    // Ingestion defers writes to .meshing chunks and eviction skips pinned
+    // chunks, so retaining the manager lock through mesh construction is both
+    // unnecessary and a substantial source of contention.
+    std.debug.assert(chunk.isPinned());
+    std.debug.assert(chunk.getState() == .meshing);
+
     const key = LODRegionKey{
         .rx = chunk.region_x,
         .rz = chunk.region_z,
@@ -358,14 +420,22 @@ pub fn buildMeshForChunk(self: *Self, chunk: *LODChunk) !void {
 
     const mesh = try self.getOrCreateMesh(key);
 
-    // Access chunk.data under shared lock - the data is read-only during meshing
-    // and the chunk is pinned, so we just need to ensure visibility
-    self.mutex.lockShared();
-    defer self.mutex.unlockShared();
-
     switch (chunk.data) {
         .simplified => |*data| {
             const bounds = chunk.worldBounds();
+            // LOD3/4 can use the diagnostic compact heightfield path while the
+            // expanded CPU-built GPU mesh remains the production fallback.
+            // Compact water is temporarily quarantined on RADV: the direct
+            // compact water vertex path can cause a rejected command stream on
+            // real saved worlds even with validation clean. Preserve water by
+            // routing wet regions through the maintained expanded CPU mesh.
+            if (shouldUseCompactTiles(self, chunk) and !hasRenderableWater(data)) {
+                mesh.buildCompactTile(data) catch |err| switch (err) {
+                    error.UnsupportedSourceFeatures => {},
+                    else => return err,
+                };
+                if (mesh.isCompact()) return;
+            }
             switch (self.effectiveMeshPath(chunk.lodLevel())) {
                 .heightfield => try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas),
                 .column_spans => try mesh.buildFromColumnSpans(data, bounds.min_x, bounds.min_z, self.atlas),
@@ -389,6 +459,45 @@ pub fn buildMeshForChunk(self: *Self, chunk: *LODChunk) !void {
             // No data to build mesh from
         },
     }
+}
+
+fn hasRenderableWater(data: *const LODSimplifiedData) bool {
+    for (data.water) |water| {
+        if (water.is_surface and water.coverage > 0.001) return true;
+    }
+    return false;
+}
+
+/// Converts an unrenderable compact upload to the established CPU heightfield
+/// route. The upload task pins `chunk`, so its simplified source is stable for
+/// this synchronous recovery and can immediately be requeued without a hole.
+pub fn fallbackCompactMeshToCpu(self: *Self, mesh: *LODMesh, chunk: *LODChunk) !void {
+    std.debug.assert(mesh.isCompact());
+    self.gpu_bridge.destroy(mesh);
+    mesh.clearRetiredState();
+    switch (chunk.data) {
+        .simplified => |*data| {
+            const bounds = chunk.worldBounds();
+            try mesh.buildFromSimplifiedData(data, bounds.min_x, bounds.min_z, self.atlas);
+        },
+        else => return error.InvalidState,
+    }
+}
+
+fn shouldUseCompactTiles(self: *Self, chunk: *const LODChunk) bool {
+    if (chunk.compact_disabled) return false;
+    const lod = chunk.lodLevel();
+    if (lod != .lod3 and lod != .lod4) return false;
+    const mode = engine_core.getenv("ZIGCRAFT_LOD_COMPACT") orelse "auto";
+    if (std.ascii.eqlIgnoreCase(mode, "off")) return false;
+    // Capability checks prove that the required Vulkan entry points and
+    // resources exist, but the compact path still causes command-stream
+    // rejection on RADV in mixed wet/dry saved worlds. Auto therefore fails
+    // closed until driver qualification is represented by a real capability
+    // probe. `force` remains available for bounded diagnostics.
+    if (std.ascii.eqlIgnoreCase(mode, "auto")) return false;
+    if (std.ascii.eqlIgnoreCase(mode, "force")) return self.gpu_bridge.supportsCompact();
+    return false;
 }
 
 pub fn effectiveMeshPath(self: *Self, lod: LODLevel) lod_chunk.LODMeshPath {
@@ -424,6 +533,13 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
         return;
     };
 
+    // Reject invalidated work before any state reconciliation. A stale queued
+    // job must never demote a newer job for the same region.
+    if (chunk.job_token != job.data.chunk.job_token) {
+        self.mutex.unlock();
+        return;
+    }
+
     // Stale job check (too far from player)
     const player = self.loadPlayerChunkPos();
     const radius = job.data.chunk.lod_radius;
@@ -436,14 +552,9 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
 
     if (!job_key.chunkBounds().intersectsRadius(player.cx, player.cz, radius)) {
         if (chunk.getState() == .generating or chunk.getState() == .meshing) {
+            if (self.pending_region_count > 0) self.pending_region_count -= 1;
             chunk.setState(.missing);
         }
-        self.mutex.unlock();
-        return;
-    }
-
-    // Skip if token mismatch
-    if (chunk.job_token != job.data.chunk.job_token) {
         self.mutex.unlock();
         return;
     }
@@ -477,13 +588,18 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
 
     switch (job_type) {
         .chunk_generation => {
+            const generation_timer = self.profiling.begin();
+            defer self.profiling.end(.worker_generation, generation_timer);
             // Initialize simplified data if needed
             if (needs_data_init) {
                 var data = if (use_vertical_spans)
                     LODSimplifiedData.initWithVerticalSpans(self.allocator, lod_level) catch {
                         new_state = .missing;
                         self.mutex.lock();
-                        if (chunk.job_token == job.data.chunk.job_token) chunk.setState(new_state);
+                        if (chunk.job_token == job.data.chunk.job_token) {
+                            if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                            chunk.setState(new_state);
+                        }
                         chunk.unpin();
                         self.mutex.unlock();
                         return;
@@ -492,25 +608,31 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
                     LODSimplifiedData.init(self.allocator, lod_level) catch {
                         new_state = .missing;
                         self.mutex.lock();
-                        if (chunk.job_token == job.data.chunk.job_token) chunk.setState(new_state);
+                        if (chunk.job_token == job.data.chunk.job_token) {
+                            if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                            chunk.setState(new_state);
+                        }
                         chunk.unpin();
                         self.mutex.unlock();
                         return;
                     };
 
                 // Generate heightmap data (expensive, done without lock).
-                // Pass the stop flag so teardown/pause can interrupt the
-                // multi-second coarse-LOD heightmap loop instead of
-                // forcing the worker-join to block until it finishes.
-                self.generator.generateHeightmapOnly(&data, chunk.region_x, chunk.region_z, lod_level, &self.job_dispatcher.stop_flag);
+                // Pass the region cancellation signal so pause and teleport
+                // can interrupt a multi-second coarse-LOD generation loop.
+                // Teardown sets both the manager flag and every region signal.
+                self.generator.generateHeightmapOnly(&data, chunk.region_x, chunk.region_z, lod_level, &chunk.cancel_requested);
 
                 // If generation was aborted, discard the partial data
                 // and leave the chunk in .missing so it re-generates later.
-                if (self.job_dispatcher.stop_flag.load(.acquire)) {
+                if (self.job_dispatcher.stop_flag.load(.acquire) or chunk.cancellationRequested()) {
                     data.deinit();
                     new_state = .missing;
                     self.mutex.lock();
-                    if (chunk.job_token == job.data.chunk.job_token) chunk.setState(new_state);
+                    if (chunk.job_token == job.data.chunk.job_token) {
+                        if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                        chunk.setState(new_state);
+                    }
                     chunk.unpin();
                     self.mutex.unlock();
                     return;
@@ -520,13 +642,15 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
                 self.mutex.lock();
                 chunk.data = .{ .simplified = data };
                 chunk.updateHeightBoundsFromData();
-                chunk.store_dirty = true;
+                chunk.markSourceDirty();
                 self.mutex.unlock();
             }
             success = true;
             new_state = .generated;
         },
         .chunk_meshing => {
+            const mesh_timer = self.profiling.begin();
+            defer self.profiling.end(.worker_mesh_construction, mesh_timer);
             // Build mesh (expensive, done without lock)
             // Note: buildMeshForChunk -> getOrCreateMesh acquires its own lock
             self.buildMeshForChunk(chunk) catch |err| {
