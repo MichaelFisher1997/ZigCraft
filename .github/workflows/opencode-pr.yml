@@ -79,9 +79,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ github.token }}
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         with:
-          model: kimi-for-coding/k2p7
+          model: zhipuai-coding-plan/glm-5.2
+          variant: max
           use_github_token: true
           prompt: ${{ env.PROMPT }}
 
