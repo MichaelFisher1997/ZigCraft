@@ -121,4 +121,6 @@ test {
     _ = @import("engine-ui").debug_shadow_overlay;
     _ = @import("game-core").hotbar;
     _ = @import("game-core").session_hud;
+    _ = @import("game-ui").singleplayer_wizard;
+    _ = @import("game-ui").rml_markup;
 }

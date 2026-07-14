@@ -77,6 +77,13 @@ ZigCraftRmlUiDocument *zigcraft_rmlui_context_load_document_memory(
 void zigcraft_rmlui_document_show(ZigCraftRmlUiDocument *document);
 void zigcraft_rmlui_document_hide(ZigCraftRmlUiDocument *document);
 void zigcraft_rmlui_document_close(ZigCraftRmlUi *rmlui, ZigCraftRmlUiDocument *document);
+bool zigcraft_rmlui_document_set_inner_rml(ZigCraftRmlUiDocument *document, const char *element_id, const char *rml);
+bool zigcraft_rmlui_document_set_class(ZigCraftRmlUiDocument *document, const char *element_id, const char *class_name, bool active);
+bool zigcraft_rmlui_document_set_property(ZigCraftRmlUiDocument *document, const char *element_id, const char *property_name, const char *value);
+size_t zigcraft_rmlui_document_get_value(ZigCraftRmlUiDocument *document, const char *element_id, char *buffer, size_t buffer_size);
+bool zigcraft_rmlui_document_set_value(ZigCraftRmlUiDocument *document, const char *element_id, const char *value);
+bool zigcraft_rmlui_document_set_disabled(ZigCraftRmlUiDocument *document, const char *element_id, bool disabled);
+bool zigcraft_rmlui_document_focus(ZigCraftRmlUiDocument *document, const char *element_id, bool focus_visible);
 
 // Returns true when RmlUi did not consume the event. The event can still be
 // dispatched to the rest of the game when this returns true.

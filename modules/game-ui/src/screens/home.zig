@@ -7,7 +7,7 @@ const Rect = Theme.Rect;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
 const EngineContext = Screen.EngineContext;
-const SingleplayerScreen = @import("singleplayer.zig").SingleplayerScreen;
+const WorldListScreen = @import("world_list.zig").WorldListScreen;
 const SettingsScreen = @import("settings.zig").SettingsScreen;
 const ResourcePacksScreen = @import("resource_packs.zig").ResourcePacksScreen;
 const EnvironmentScreen = @import("environment.zig").EnvironmentScreen;
@@ -114,52 +114,52 @@ pub const HomeScreen = struct {
 };
 
 fn drawLaunchPanel(ui: *UISystem, self: *HomeScreen, screen_w: f32, screen_h: f32, scale: f32, compact: bool, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, ctx: EngineContext) !void {
-    const panel_w: f32 = if (compact) @min(screen_w - 40.0 * scale, 680.0 * scale) else @min(screen_w * 0.46, 820.0 * scale);
-    const panel_h: f32 = if (compact) @min(520.0 * scale, screen_h * 0.62) else 520.0 * scale;
-    const panel_x: f32 = if (compact) (screen_w - panel_w) * 0.5 else screen_w - panel_w - 82.0 * scale;
-    const panel_y: f32 = if (compact) @min(screen_h * 0.40, screen_h - panel_h - 24.0 * scale) else screen_h * 0.22;
+    const panel_w: f32 = @min(screen_w - 40.0 * scale, 460.0 * scale);
+    const panel_h: f32 = @min(540.0 * scale, screen_h - 48.0 * scale);
+    const panel_x: f32 = if (compact) (screen_w - panel_w) * 0.5 else screen_w - panel_w - 64.0 * scale;
+    const panel_y: f32 = if (compact) screen_h - panel_h - 24.0 * scale else (screen_h - panel_h) * 0.5;
     const panel = Rect{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h };
-    const gap: f32 = 12.0 * scale;
 
     Theme.drawGlassPanel(ui, panel, scale);
 
-    Font.drawText(ui, "START", panel.x + 30.0 * scale, panel.y + 20.0 * scale, 0.86 * scale, Theme.signal);
-    Font.drawText(ui, "Choose an activity", panel.x + 30.0 * scale, panel.y + 45.0 * scale, 0.98 * scale, Theme.text);
+    Font.drawText(ui, "WORLD MENU", panel.x + 26.0 * scale, panel.y + 18.0 * scale, 0.86 * scale, Theme.signal);
+    Font.drawText(ui, "Choose your adventure", panel.x + 26.0 * scale, panel.y + 43.0 * scale, 1.42 * scale, Theme.title);
 
-    var y = panel.y + 84.0 * scale;
-    const x = panel.x + 30.0 * scale;
-    const w = panel.width - 60.0 * scale;
+    var y = panel.y + 82.0 * scale;
+    const x = panel.x + 26.0 * scale;
+    const w = panel.width - 52.0 * scale;
     const confirm = ctx.input_mapper.isActionPressed(ctx.input, .ui_confirm);
 
-    const play_h: f32 = 112.0 * scale;
-    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = w, .height = play_h }, "PLAY", "Create a world or continue from a local save.", "ENTER", mouse_x, mouse_y, mouse_clicked, true, self.focused_action == 0, scale) or (confirm and self.focused_action == 0)) {
-        const sp_screen = try SingleplayerScreen.init(ctx.allocator, ctx);
-        errdefer sp_screen.deinit(sp_screen);
-        ctx.screen_manager.pushScreen(sp_screen.screen());
+    const play_h: f32 = 86.0 * scale;
+    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = w, .height = play_h }, "WORLD LIBRARY", "Choose, create, or continue a local world.", "ENTER", mouse_x, mouse_y, mouse_clicked, true, self.focused_action == 0, scale) or (confirm and self.focused_action == 0)) {
+        const world_list_screen = try WorldListScreen.init(ctx.allocator, ctx);
+        errdefer world_list_screen.deinit(world_list_screen);
+        ctx.screen_manager.pushScreen(world_list_screen.screen());
     }
-    y += play_h + 22.0 * scale;
-    Theme.drawSectionLabel(ui, x, y, "CUSTOMIZE", scale);
-    y += 34.0 * scale;
+    y += play_h + 18.0 * scale;
+    Theme.drawSectionLabel(ui, x, y, "GAME OPTIONS", scale);
+    y += 30.0 * scale;
 
-    const card_w = (w - gap) * 0.5;
-    const card_h: f32 = 88.0 * scale;
-    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = card_w, .height = card_h }, "RESOURCE PACKS", "Change block textures.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 1, scale) or (confirm and self.focused_action == 1)) {
+    const card_h: f32 = 62.0 * scale;
+    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = w, .height = card_h }, "RESOURCE PACKS", "Change block textures.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 1, scale) or (confirm and self.focused_action == 1)) {
         const rp_screen = try ResourcePacksScreen.init(ctx.allocator, ctx);
         errdefer rp_screen.deinit(rp_screen);
         ctx.screen_manager.pushScreen(rp_screen.screen());
     }
-    if (Theme.drawActionCard(ui, .{ .x = x + card_w + gap, .y = y, .width = card_w, .height = card_h }, "SKY & LIGHTING", "Choose environment light.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 2, scale) or (confirm and self.focused_action == 2)) {
+    y += card_h;
+    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = w, .height = card_h }, "SKY & LIGHTING", "Choose environment light.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 2, scale) or (confirm and self.focused_action == 2)) {
         const env_screen = try EnvironmentScreen.init(ctx.allocator, ctx);
         errdefer env_screen.deinit(env_screen);
         ctx.screen_manager.pushScreen(env_screen.screen());
     }
-    y += card_h + gap;
-    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = card_w, .height = card_h }, "SETTINGS", "Display, controls, and graphics.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 3, scale) or (confirm and self.focused_action == 3)) {
+    y += card_h;
+    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = w, .height = card_h }, "SETTINGS", "Display, controls, and graphics.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 3, scale) or (confirm and self.focused_action == 3)) {
         const settings_screen = try SettingsScreen.init(ctx.allocator, ctx);
         errdefer settings_screen.deinit(settings_screen);
         ctx.screen_manager.pushScreen(settings_screen.screen());
     }
-    if (Theme.drawActionCard(ui, .{ .x = x + card_w + gap, .y = y, .width = card_w, .height = card_h }, "EXIT", "Close ZigCraft safely.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 4, scale) or (confirm and self.focused_action == 4)) {
+    y += card_h;
+    if (Theme.drawActionCard(ui, .{ .x = x, .y = y, .width = w, .height = card_h }, "EXIT", "Close ZigCraft safely.", "", mouse_x, mouse_y, mouse_clicked, false, self.focused_action == 4, scale) or (confirm and self.focused_action == 4)) {
         ctx.input.setShouldQuit(true);
     }
 }

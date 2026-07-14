@@ -1,0 +1,52 @@
+<rml>
+  <head>
+    <title>ZigCraft Create World</title>
+    <link type="text/rcss" href="menu.rcss" />
+  </head>
+  <body>
+    <div class="page">
+      <div class="shell medium">
+        <div class="header">
+          <div class="kicker">NEW WORLD</div>
+          <h1>CREATE WORLD</h1>
+          <p id="wizard-subtitle" class="copy">Name the world and choose how its seed is generated.</p>
+        </div>
+
+        <div class="content">
+          <div class="steps">
+            <div id="step-details" class="step active">01 DETAILS</div>
+            <div id="step-terrain" class="step">02 TERRAIN</div>
+            <div id="step-review" class="step">03 REVIEW</div>
+          </div>
+
+          <div class="wizard-body">
+            <div id="details-page" class="wizard-page active">
+              <label for="world-name">WORLD NAME</label>
+              <input id="world-name" type="text" maxlength="32" placeholder="ENTER A WORLD NAME" />
+              <label for="world-seed">SEED</label>
+              <div class="input-row">
+                <div class="input-grow"><input id="world-seed" type="text" maxlength="32" placeholder="LEAVE BLANK FOR RANDOM" /></div>
+                <button id="random-seed">RANDOMIZE</button>
+              </div>
+              <span class="help">A blank seed creates a new random world.</span>
+            </div>
+
+            <div id="terrain-page" class="wizard-page">
+              <p class="copy">Pick the generator that will shape this world.</p>
+              <div id="terrain-rows" class="cards"></div>
+            </div>
+
+            <div id="review-page" class="wizard-page">
+              <div id="review-summary" class="summary"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <button id="wizard-back">CANCEL</button>
+          <div class="footer-right"><button id="wizard-continue" class="primary">CONTINUE</button></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</rml>

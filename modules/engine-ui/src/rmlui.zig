@@ -126,6 +126,49 @@ pub const RmlUi = struct {
         if (available) c.zigcraft_rmlui_document_show(document.native);
     }
 
+    pub fn hideDocument(self: *RmlUi, document: Document) void {
+        _ = self;
+        if (available) c.zigcraft_rmlui_document_hide(document.native);
+    }
+
+    pub fn setInnerRml(self: *RmlUi, document: Document, element_id: [*:0]const u8, markup: [*:0]const u8) bool {
+        _ = self;
+        return available and c.zigcraft_rmlui_document_set_inner_rml(document.native, element_id, markup);
+    }
+
+    pub fn setClass(self: *RmlUi, document: Document, element_id: [*:0]const u8, class_name: [*:0]const u8, active: bool) bool {
+        _ = self;
+        return available and c.zigcraft_rmlui_document_set_class(document.native, element_id, class_name, active);
+    }
+
+    pub fn setProperty(self: *RmlUi, document: Document, element_id: [*:0]const u8, property_name: [*:0]const u8, value: [*:0]const u8) bool {
+        _ = self;
+        return available and c.zigcraft_rmlui_document_set_property(document.native, element_id, property_name, value);
+    }
+
+    pub fn getValue(self: *RmlUi, document: Document, element_id: [*:0]const u8, buffer: []u8) ?[]const u8 {
+        _ = self;
+        if (!available or buffer.len == 0) return null;
+        const value_len = c.zigcraft_rmlui_document_get_value(document.native, element_id, buffer.ptr, buffer.len);
+        if (value_len >= buffer.len) return null;
+        return buffer[0..value_len];
+    }
+
+    pub fn setValue(self: *RmlUi, document: Document, element_id: [*:0]const u8, value: [*:0]const u8) bool {
+        _ = self;
+        return available and c.zigcraft_rmlui_document_set_value(document.native, element_id, value);
+    }
+
+    pub fn setDisabled(self: *RmlUi, document: Document, element_id: [*:0]const u8, disabled: bool) bool {
+        _ = self;
+        return available and c.zigcraft_rmlui_document_set_disabled(document.native, element_id, disabled);
+    }
+
+    pub fn focus(self: *RmlUi, document: Document, element_id: [*:0]const u8, focus_visible: bool) bool {
+        _ = self;
+        return available and c.zigcraft_rmlui_document_focus(document.native, element_id, focus_visible);
+    }
+
     pub fn closeDocument(self: *RmlUi, document: Document) void {
         if (available) {
             c.zigcraft_rmlui_document_close(self.runtime, document.native);

@@ -1,0 +1,28 @@
+<rml>
+  <head>
+    <title>ZigCraft Environment</title>
+    <link type="text/rcss" href="menu.rcss" />
+  </head>
+  <body>
+    <div class="page">
+      <div class="shell medium">
+        <div class="header">
+          <div class="kicker">LIGHT PROBE</div>
+          <h1>Environment</h1>
+          <p class="copy">Choose the sky probe that lights the scene. Changes apply immediately.</p>
+          <div id="status" class="header-meta">READY</div>
+        </div>
+        <div class="content">
+          <div class="pane">
+            <div class="pane-header"><span class="section-label">AVAILABLE ENVIRONMENTS</span></div>
+            <div id="environment-list" class="pane-body"></div>
+          </div>
+        </div>
+        <div class="footer">
+          <span class="status">HDR and EXR files in the working directory are listed here.</span>
+          <div class="footer-right"><button id="back">BACK</button></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</rml>

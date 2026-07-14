@@ -1,0 +1,25 @@
+<rml>
+  <head>
+    <title>ZigCraft Paused</title>
+    <link type="text/rcss" href="menu.rcss" />
+  </head>
+  <body>
+    <div class="page">
+      <div class="shell compact">
+        <div class="header">
+          <div class="kicker">SESSION</div>
+          <h1>Paused</h1>
+          <p class="copy">Resume or leave the current world.</p>
+        </div>
+        <div class="content">
+          <div class="detail-actions">
+            <button id="resume" class="primary">RESUME</button>
+            <button id="settings">SETTINGS</button>
+            <button id="quit-to-title" class="danger">QUIT TO TITLE</button>
+          </div>
+        </div>
+        <div class="footer"><span class="status">ESC / BACK TO RESUME</span></div>
+      </div>
+    </div>
+  </body>
+</rml>

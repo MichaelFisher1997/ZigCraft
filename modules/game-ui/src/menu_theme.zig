@@ -94,9 +94,9 @@ pub fn drawShell(ui: *UISystem, rect: Rect, scale: f32, kicker: []const u8, head
     drawGlassPanel(ui, rect, scale);
     ui.drawRect(.{ .x = rect.x + padding, .y = rect.y + header_h - 1.0 * scale, .width = rect.width - padding * 2.0, .height = 1.0 * scale }, Color.rgba(signal.r, signal.g, signal.b, 0.28));
 
-    Font.drawText(ui, kicker, rect.x + padding, rect.y + 17.0 * scale, 0.82 * scale, signal);
+    Font.drawText(ui, kicker, rect.x + padding, rect.y + 17.0 * scale, 0.90 * scale, signal);
     Font.drawText(ui, heading, rect.x + padding, rect.y + 39.0 * scale, 2.80 * scale, title);
-    Font.drawText(ui, subtitle, rect.x + padding, rect.y + header_h - 20.0 * scale, 0.98 * scale, text);
+    Font.drawText(ui, subtitle, rect.x + padding, rect.y + header_h - 20.0 * scale, 1.05 * scale, text);
 
     ui.drawRect(.{ .x = rect.x + padding, .y = rect.y + rect.height - footer_h, .width = rect.width - padding * 2.0, .height = 1.0 * scale }, Color.rgba(signal.r, signal.g, signal.b, 0.20));
 
@@ -209,7 +209,7 @@ pub fn drawTextInput(ui: *UISystem, rect: Rect, value: []const u8, placeholder: 
 
 pub fn drawSectionLabel(ui: *UISystem, x: f32, y: f32, label: []const u8, scale: f32) void {
     ui.drawRect(.{ .x = x, .y = y + 7.0 * scale, .width = 24.0 * scale, .height = 2.0 * scale }, signal);
-    Font.drawText(ui, label, x + 36.0 * scale, y, 0.78 * scale, muted);
+    Font.drawText(ui, label, x + 36.0 * scale, y, 0.88 * scale, muted);
 }
 
 pub fn drawOptionRow(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, label_scale: f32, selected: bool, scale: f32) void {
@@ -219,7 +219,7 @@ pub fn drawOptionRow(ui: *UISystem, rect: Rect, label: []const u8, description: 
     if (selected) ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = 2.0 * scale, .height = rect.height }, edge);
     ui.drawRect(.{ .x = rect.x, .y = rect.y + rect.height - 1.0 * scale, .width = rect.width, .height = 1.0 * scale }, Color.rgba(edge.r, edge.g, edge.b, if (selected) 0.42 else 0.18));
     Font.drawText(ui, label, rect.x + 20.0 * scale, rect.y + 10.0 * scale, label_scale, if (selected) title else text);
-    if (description.len > 0) Font.drawText(ui, description, rect.x + 20.0 * scale, rect.y + 35.0 * scale, @max(label_scale * 0.62, 0.72 * scale), muted);
+    if (description.len > 0) Font.drawText(ui, description, rect.x + 20.0 * scale, rect.y + 35.0 * scale, @max(label_scale * 0.72, 0.96 * scale), muted);
 }
 
 pub fn drawValueText(ui: *UISystem, rect: Rect, value: []const u8, text_scale: f32, scale: f32) void {
@@ -249,8 +249,8 @@ pub fn drawModal(ui: *UISystem, screen_w: f32, screen_h: f32, rect: Rect, scale:
     ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = 42.0 * scale }, Color.rgba(edge.r, edge.g, edge.b, 0.14));
     ui.drawRect(.{ .x = rect.x, .y = rect.y + 42.0 * scale, .width = rect.width, .height = 1.0 * scale }, Color.rgba(edge.r, edge.g, edge.b, 0.56));
     ui.drawRectOutline(rect, Color.rgba(edge.r, edge.g, edge.b, 0.64), 1.0 * scale);
-    Font.drawTextCentered(ui, heading, rect.x + rect.width * 0.5, rect.y + 14.0 * scale, 1.52 * scale, title);
-    if (subtitle.len > 0) Font.drawTextCentered(ui, subtitle, rect.x + rect.width * 0.5, rect.y + 64.0 * scale, 0.88 * scale, muted);
+    Font.drawTextCentered(ui, heading, rect.x + rect.width * 0.5, rect.y + 14.0 * scale, 1.70 * scale, title);
+    if (subtitle.len > 0) Font.drawTextCentered(ui, subtitle, rect.x + rect.width * 0.5, rect.y + 64.0 * scale, 1.00 * scale, muted);
 }
 
 fn buttonColors(style: ButtonStyle, hovered: bool) struct { bg: Color, top: Color, bottom: Color, border: Color, accent: Color, text: Color, shadow_color: Color } {

@@ -88,35 +88,21 @@ pub const SettingsScreen = struct {
 
         Theme.drawBackdrop(ui, screen_w, screen_h, ui_scale, .settings);
 
-        const margin: f32 = 48.0 * ui_scale;
-        const page_w: f32 = @min(screen_w - margin * 2.0, 1460.0 * ui_scale);
-        const page_x = (screen_w - page_w) * 0.5;
-        const page_top = @max(38.0 * ui_scale, (screen_h - 900.0 * ui_scale) * 0.5);
-        const header_h: f32 = 132.0 * ui_scale;
-        const footer_h: f32 = 72.0 * ui_scale;
-        const workspace_y = page_top + header_h;
-        const workspace_h = @min(650.0 * ui_scale, screen_h - workspace_y - footer_h - 30.0 * ui_scale);
+        const margin: f32 = 34.0 * ui_scale;
+        const panel_w: f32 = @min(screen_w - margin * 2.0, 1080.0 * ui_scale);
+        const panel_h: f32 = @min(screen_h - margin * 2.0, 760.0 * ui_scale);
+        const panel_x = (screen_w - panel_w) * 0.5;
+        const panel_y = (screen_h - panel_h) * 0.5;
+        const shell = Theme.drawShell(ui, .{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h }, ui_scale, "PREFERENCES", "SETTINGS", "Changes apply immediately and save when you leave.");
 
-        Font.drawText(ui, "PREFERENCES", page_x, page_top, 0.88 * ui_scale, Theme.signal);
-        Font.drawText(ui, "Make ZigCraft yours.", page_x, page_top + 28.0 * ui_scale, 4.2 * ui_scale, Theme.title);
-        Font.drawText(ui, "Changes apply immediately and are saved when you leave.", page_x, page_top + 88.0 * ui_scale, 1.02 * ui_scale, Theme.muted);
-        Theme.drawGlassPanel(ui, .{ .x = page_x - 20.0 * ui_scale, .y = workspace_y - 20.0 * ui_scale, .width = page_w + 40.0 * ui_scale, .height = workspace_h + 104.0 * ui_scale }, ui_scale);
+        const nav_h = 48.0 * ui_scale;
+        drawTabs(ui, self, shell.content.x, shell.content.y, shell.content.width, nav_h, false, mouse_x, mouse_y, mouse_clicked, ui_scale);
 
-        const sidebar_layout = page_w >= 900.0 * ui_scale;
-        const nav_w: f32 = if (sidebar_layout) 220.0 * ui_scale else page_w;
-        const nav_h: f32 = if (sidebar_layout) workspace_h else 46.0 * ui_scale;
-        drawTabs(ui, self, page_x, workspace_y, nav_w, nav_h, sidebar_layout, mouse_x, mouse_y, mouse_clicked, ui_scale);
-
-        const body = if (sidebar_layout) Rect{
-            .x = page_x + nav_w + 38.0 * ui_scale,
-            .y = workspace_y,
-            .width = page_w - nav_w - 38.0 * ui_scale,
-            .height = workspace_h,
-        } else Rect{
-            .x = page_x,
-            .y = workspace_y + nav_h + 20.0 * ui_scale,
-            .width = page_w,
-            .height = workspace_h - nav_h - 20.0 * ui_scale,
+        const body = Rect{
+            .x = shell.content.x,
+            .y = shell.content.y + nav_h + 18.0 * ui_scale,
+            .width = shell.content.width,
+            .height = shell.content.height - nav_h - 18.0 * ui_scale,
         };
         const inner = Rect{
             .x = body.x + 4.0 * ui_scale,
@@ -143,7 +129,7 @@ pub const SettingsScreen = struct {
         }
 
         const done_w: f32 = 176.0 * ui_scale;
-        if (Theme.drawButton(ui, .{ .x = page_x + page_w - done_w, .y = workspace_y + workspace_h + 18.0 * ui_scale, .width = done_w, .height = 52.0 * ui_scale }, "DONE", button_scale, mouse_x, mouse_y, mouse_clicked, .primary, ui_scale)) {
+        if (Theme.drawButton(ui, .{ .x = shell.content.x + shell.content.width - done_w, .y = shell.footer_y, .width = done_w, .height = 46.0 * ui_scale }, "DONE", button_scale, mouse_x, mouse_y, mouse_clicked, .primary, ui_scale)) {
             ctx.saveSettings();
             ctx.screen_manager.popScreen();
         }
@@ -168,7 +154,7 @@ const ColumnLayout = struct {
 };
 
 fn columnLayout(inner: Rect, scale: f32) ColumnLayout {
-    const two_column = inner.width > 760.0 * scale;
+    const two_column = false;
     const gap: f32 = 18.0 * scale;
     const col_w: f32 = if (two_column) (inner.width - gap) * 0.5 else inner.width;
     return .{
@@ -186,7 +172,7 @@ fn drawTabs(ui: *UISystem, self: *SettingsScreen, x: f32, y: f32, w: f32, h: f32
     const tab_w = if (vertical) w else (w - gap * @as(f32, @floatFromInt(tabs.len - 1))) / @as(f32, @floatFromInt(tabs.len));
     const tab_h = if (vertical) 58.0 * scale else h;
     if (vertical) {
-        Font.drawText(ui, "SETTINGS", x, y, 0.76 * scale, Theme.muted);
+        Font.drawText(ui, "SETTINGS", x, y, 0.90 * scale, Theme.muted);
         ui.drawRect(.{ .x = x, .y = y + 24.0 * scale, .width = w, .height = 1.0 * scale }, Theme.outline);
     }
     for (tabs, 0..) |tab, i| {
@@ -203,7 +189,7 @@ fn drawTabs(ui: *UISystem, self: *SettingsScreen, x: f32, y: f32, w: f32, h: f32
     }
     if (vertical) {
         ui.drawRect(.{ .x = x + w + 10.0 * scale, .y = y, .width = 1.0 * scale, .height = h }, Theme.outline);
-        Font.drawText(ui, "ARROWS  Switch section", x, y + h - 18.0 * scale, 0.68 * scale, Theme.dim);
+        Font.drawText(ui, "ARROWS  Switch section", x, y + h - 18.0 * scale, 0.84 * scale, Theme.dim);
     }
 }
 
@@ -352,7 +338,11 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
 
     const left_content_h = renderingContentHeight(left_sections.len, baseline_rows.len + material_settings.len + shadow_settings.len, row_h, row_gap, section_h, scale) + warning_h;
     const right_content_h = renderingContentHeight(right_sections.len, image_settings.len + atmosphere_settings.len + dynamic_resolution_settings.len, row_h, row_gap, section_h, scale);
-    const total_content_h = @max(left_content_h, right_content_h);
+    const column_gap: f32 = 28.0 * scale;
+    const total_content_h = if (layout.two_column)
+        @max(left_content_h, right_content_h)
+    else
+        left_content_h + column_gap + right_content_h;
     const max_scroll = @max(0.0, total_content_h - inner.height);
     self.render_scroll_offset -= ctx.input.getScrollDelta().y * 36.0 * scale;
     self.render_scroll_offset = @max(0.0, @min(self.render_scroll_offset, max_scroll));
@@ -361,7 +351,7 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
     const top = inner.y;
     const bottom = inner.y + inner.height;
     var y_left = layout.top_y - self.render_scroll_offset;
-    var y_right = (if (layout.two_column) layout.top_y else layout.top_y + left_content_h + 28.0 * scale) - self.render_scroll_offset;
+    var y_right = (if (layout.two_column) layout.top_y else layout.top_y + left_content_h + column_gap) - self.render_scroll_offset;
 
     drawRenderSection(ui, layout.left_x, y_left, left_sections[0], top, bottom, scale);
     y_left += section_h;
@@ -378,7 +368,7 @@ fn drawRenderingTab(ui: *UISystem, self: *SettingsScreen, ctx: EngineContext, se
         if (rowVisible(y_left, warning_h, top, bottom)) {
             ui.drawRect(.{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = 30.0 * scale }, Color.rgba(0.28, 0.040, 0.030, 0.80));
             ui.drawRect(.{ .x = layout.left_x, .y = y_left, .width = 5.0 * scale, .height = 30.0 * scale }, Theme.danger);
-            Font.drawText(ui, "EXTREME DISTANCE CAN DESTABILIZE GPUS BELOW 8GB VRAM", layout.left_x + 16.0 * scale, y_left + 8.0 * scale, 0.78 * scale, Theme.title);
+            Font.drawText(ui, "EXTREME DISTANCE CAN DESTABILIZE GPUS BELOW 8GB VRAM", layout.left_x + 16.0 * scale, y_left + 8.0 * scale, 0.90 * scale, Theme.title);
         }
         y_left += warning_h;
     }
@@ -540,7 +530,7 @@ fn drawSettingRow(ui: *UISystem, comptime name: []const u8, settings: *Settings,
 
     if (comptime std.mem.eql(u8, name, "lpv_quality_preset")) {
         const legend = SettingsUi.getLPVQualityLegend(settings.lpv_quality_preset);
-        Font.drawText(ui, legend, row.x + row.width - 338.0 * scale, row.y + row.height - 16.0 * scale, 0.68 * scale, Theme.signal);
+        Font.drawText(ui, legend, row.x + row.width - 338.0 * scale, row.y + row.height - 16.0 * scale, 0.82 * scale, Theme.signal);
     }
 
     if (val_ptr.* != old_val) {

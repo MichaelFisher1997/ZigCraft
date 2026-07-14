@@ -11,7 +11,7 @@ const TextureAtlas = @import("engine-graphics").TextureAtlas;
 const BLOCK_TEXTURE_DEFINITIONS = @import("game-core").BLOCK_TEXTURE_DEFINITIONS;
 
 const PANEL_WIDTH_MAX = 900.0;
-const PANEL_HEIGHT_MAX = 760.0;
+const PANEL_HEIGHT_MAX = 660.0;
 
 pub const ResourcePacksScreen = struct {
     context: ResourcePacksContext,
@@ -78,8 +78,8 @@ pub const ResourcePacksScreen = struct {
         Theme.drawListRail(ui, shell.content, ui_scale);
         const row_x = shell.content.x + 18.0 * ui_scale;
         const row_w = shell.content.width - 36.0 * ui_scale;
-        const row_h = 56.0 * ui_scale;
-        const btn_scale = 1.18 * ui_scale;
+        const row_h = 64.0 * ui_scale;
+        const btn_scale = 1.12 * ui_scale;
         const packs = manager.getPackNames();
         const content_h = @as(f32, @floatFromInt(packs.len + 1)) * (row_h + 10.0 * ui_scale) + 26.0 * ui_scale;
         const max_scroll = @max(0.0, content_h - shell.content.height);
@@ -90,7 +90,7 @@ pub const ResourcePacksScreen = struct {
 
         const is_default = std.mem.eql(u8, settings.texture_pack, "default");
         if (y + row_h >= shell.content.y and y <= shell.content.y + shell.content.height) {
-            if (drawPackButton(ui, row_x, y, row_w, row_h, "DEFAULT / BUILT-IN", "Base texture atlas shipped with ZigCraft.", is_default, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
+            if (drawPackButton(ui, row_x, y, row_w, row_h, "DEFAULT / BUILT-IN", "Base texture atlas shipped with ZigCraft.", is_default, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
                 if (!is_default) {
                     try settings_pkg.persistence.setTexturePack(settings, ctx.allocator, "default");
                     try manager.setActivePack("default");
@@ -110,7 +110,7 @@ pub const ResourcePacksScreen = struct {
             }
             const is_selected = std.mem.eql(u8, settings.texture_pack, pack.name);
             const label = std.fmt.bufPrint(&buffer, "{s}", .{pack.name}) catch "PACK";
-            if (drawPackButton(ui, row_x, y, row_w, row_h, label, "External pack discovered by the resource manager.", is_selected, btn_scale, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
+            if (drawPackButton(ui, row_x, y, row_w, row_h, label, "External pack discovered by the resource manager.", is_selected, mouse_x, mouse_y, mouse_clicked, ui_scale)) {
                 if (!is_selected) {
                     try settings_pkg.persistence.setTexturePack(settings, ctx.allocator, pack.name);
                     try manager.setActivePack(pack.name);
@@ -150,11 +150,20 @@ pub const ResourcePacksScreen = struct {
     }
 };
 
-fn drawPackButton(ui: *UISystem, x: f32, y: f32, w: f32, h: f32, label: []const u8, description: []const u8, selected: bool, btn_scale: f32, mx: f32, my: f32, clicked: bool, scale: f32) bool {
+fn drawPackButton(ui: *UISystem, x: f32, y: f32, w: f32, h: f32, label: []const u8, description: []const u8, selected: bool, mx: f32, my: f32, clicked: bool, scale: f32) bool {
     const row = Theme.Rect{ .x = x, .y = y, .width = w, .height = h };
-    Theme.drawOptionRow(ui, row, label, description, 1.04 * scale, selected, scale);
-    const action_w = 150.0 * scale;
-    const action_x = x + w - action_w - 12.0 * scale;
-    const action_clicked = Theme.drawButton(ui, .{ .x = action_x, .y = y + 9.0 * scale, .width = action_w, .height = h - 18.0 * scale }, if (selected) "ACTIVE" else "USE PACK", btn_scale, mx, my, clicked, if (selected) .primary else .secondary, scale);
-    return action_clicked or (clicked and row.contains(mx, my));
+    const label_scale = 1.14 * scale;
+    const active_scale = 0.90 * scale;
+    const active_w = if (selected) Font.measureTextWidthWithUI(ui, "ACTIVE", active_scale) + 20.0 * scale else 0.0;
+    const max_label_w = row.width - 40.0 * scale - active_w;
+    const label_w = Font.measureTextWidthWithUI(ui, label, label_scale);
+    const fitted_label_scale = if (label_w > max_label_w and label_w > 0.0) label_scale * (max_label_w / label_w) else label_scale;
+
+    Theme.drawOptionRow(ui, row, "", "", label_scale, selected or row.contains(mx, my), scale);
+    Font.drawText(ui, label, x + 20.0 * scale, y + 10.0 * scale, fitted_label_scale, if (selected) Theme.title else Theme.text);
+    Font.drawText(ui, description, x + 20.0 * scale, y + 39.0 * scale, 0.96 * scale, Theme.muted);
+    if (selected) {
+        Font.drawText(ui, "ACTIVE", x + w - active_w, y + 17.0 * scale, active_scale, Theme.signal);
+    }
+    return clicked and row.contains(mx, my);
 }

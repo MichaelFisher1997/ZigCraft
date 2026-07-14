@@ -12,6 +12,8 @@ const Camera = @import("engine-camera").Camera;
 const RenderSystem = @import("engine-graphics").RenderSystem;
 const render_graph_pkg = @import("engine-graphics").render_graph;
 const PausedScreen = @import("paused.zig").PausedScreen;
+const RmlPausedScreen = @import("rml_paused.zig").RmlPausedScreen;
+const rmlui = @import("engine-ui").rmlui;
 const DebugShadowOverlay = @import("engine-ui").DebugShadowOverlay;
 const DebugLPVOverlay = @import("engine-ui").DebugLPVOverlay;
 const DebugUI = @import("engine-ui").DebugUI;
@@ -200,9 +202,15 @@ pub const WorldScreen = struct {
         }
 
         if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
-            const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
-            errdefer paused_screen.deinit(paused_screen);
-            ctx.screen_manager.pushScreen(paused_screen.screen());
+            if (rmlui.available and ctx.ui_manager.getRmlUi() != null) {
+                const paused_screen = try RmlPausedScreen.init(ctx.allocator, self.parent_context);
+                errdefer paused_screen.deinit(paused_screen);
+                ctx.screen_manager.pushScreen(paused_screen.screen());
+            } else {
+                const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
+                errdefer paused_screen.deinit(paused_screen);
+                ctx.screen_manager.pushScreen(paused_screen.screen());
+            }
             return true;
         }
 

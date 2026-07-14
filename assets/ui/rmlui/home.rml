@@ -8,38 +8,31 @@
       <div id="hero">
         <div id="brand">ZIGCRAFT <span>0.1</span></div>
         <div class="eyebrow">PROCEDURAL VOXEL SANDBOX</div>
-        <h1><span>BUILD BEYOND</span><em>THE HORIZON.</em></h1>
-        <p class="lede">Shape a living world, tune every detail, and make the landscape your own.</p>
-        <div id="hero-meta">
-          <span>LOCAL WORLDS</span><b>•</b>
-          <span>VULKAN RENDERER</span><b>•</b>
-          <span>BUILT WITH ZIG</span>
+        <h1>
+          <span class="hero-full">Build your next world.</span>
+          <span class="hero-compact">Build a world.</span>
+        </h1>
+        <p class="lede">Create a place to explore, shape it block by block, and return whenever you are ready.</p>
+      </div>
+
+      <div id="navigation-panel">
+        <div class="panel-kicker">WORLD MENU</div>
+        <h2>Choose your adventure</h2>
+        <p class="panel-copy">Open a world or tailor the game before you begin.</p>
+
+        <button id="play" class="primary">
+          <strong>WORLD LIBRARY</strong>
+          <span>Choose, create, or continue a world.</span>
+        </button>
+
+        <div class="section-label">GAME OPTIONS</div>
+        <div id="secondary-actions">
+          <button id="resource-packs"><strong>RESOURCE PACKS</strong><span>Change block textures and visual style.</span></button>
+          <button id="environment"><strong>SKY &amp; LIGHTING</strong><span>Set the atmosphere for your worlds.</span></button>
+          <button id="settings"><strong>SETTINGS</strong><span>Adjust graphics, controls, and display.</span></button>
+          <button id="exit" class="quiet"><strong>EXIT</strong><span>Return to the desktop.</span></button>
         </div>
       </div>
-      <div id="launch-wrap">
-        <div id="launch-panel">
-          <div id="glass-highlight"></div>
-          <div class="panel-kicker">MAIN MENU</div>
-          <h2>Where to next?</h2>
-          <p class="panel-copy">Start a new world or refine the experience before you jump in.</p>
-
-          <button id="play" class="primary">
-            <strong>PLAY</strong>
-            <span>CREATE OR CONTINUE A WORLD</span>
-            <b>ENTER</b>
-          </button>
-
-          <div class="section-label">CUSTOMIZE</div>
-          <div id="secondary-actions">
-            <button id="resource-packs"><strong>RESOURCE PACKS</strong><span>Change block textures</span><b>01</b></button>
-            <button id="environment"><strong>SKY &amp; LIGHTING</strong><span>Choose the environment</span><b>02</b></button>
-            <button id="settings"><strong>SETTINGS</strong><span>Display, controls, and graphics</span><b>03</b></button>
-            <button id="exit" class="quiet"><strong>EXIT</strong><span>Return to desktop</span><b>04</b></button>
-          </div>
-          <div class="panel-footer"><span>ARROWS / TAB</span> NAVIGATE <span>ENTER</span> SELECT</div>
-        </div>
-      </div>
-      <div id="footer">ZIGCRAFT <span>•</span> EARLY DEVELOPMENT BUILD</div>
     </div>
   </body>
 </rml>

@@ -2,6 +2,7 @@
 #include "zigcraft_rmlui.h"
 
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -348,6 +349,71 @@ void zigcraft_rmlui_document_close(ZigCraftRmlUi *rmlui, ZigCraftRmlUiDocument *
     if (!rmlui || !document) return;
     remove_actions_for_document(rmlui, document);
     as_document(document)->Close();
+}
+
+bool zigcraft_rmlui_document_set_inner_rml(ZigCraftRmlUiDocument *document, const char *element_id, const char *rml) {
+    if (!document || !element_id || !rml) return false;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    if (!element) return false;
+    element->SetInnerRML(rml);
+    return true;
+}
+
+bool zigcraft_rmlui_document_set_class(ZigCraftRmlUiDocument *document, const char *element_id, const char *class_name, bool active) {
+    if (!document || !element_id || !class_name) return false;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    if (!element) return false;
+    element->SetClass(class_name, active);
+    return true;
+}
+
+bool zigcraft_rmlui_document_set_property(ZigCraftRmlUiDocument *document, const char *element_id, const char *property_name, const char *value) {
+    if (!document || !element_id || !property_name || !value) return false;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    return element && element->SetProperty(property_name, value);
+}
+
+size_t zigcraft_rmlui_document_get_value(ZigCraftRmlUiDocument *document, const char *element_id, char *buffer, size_t buffer_size) {
+    if (!document || !element_id) return 0;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    if (!element) return 0;
+    auto *control = rmlui_dynamic_cast<Rml::ElementFormControl *>(element);
+    if (!control) return 0;
+    const Rml::String value = control->GetValue();
+    if (buffer && buffer_size > 0) {
+        const size_t copy_size = std::min(value.size(), buffer_size - 1);
+        std::copy_n(value.data(), copy_size, buffer);
+        buffer[copy_size] = '\0';
+    }
+    return value.size();
+}
+
+bool zigcraft_rmlui_document_set_value(ZigCraftRmlUiDocument *document, const char *element_id, const char *value) {
+    if (!document || !element_id || !value) return false;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    if (!element) return false;
+    auto *control = rmlui_dynamic_cast<Rml::ElementFormControl *>(element);
+    if (!control) return false;
+    control->SetValue(value);
+    return true;
+}
+
+bool zigcraft_rmlui_document_set_disabled(ZigCraftRmlUiDocument *document, const char *element_id, bool disabled) {
+    if (!document || !element_id) return false;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    if (!element) return false;
+    if (auto *control = rmlui_dynamic_cast<Rml::ElementFormControl *>(element)) {
+        control->SetDisabled(disabled);
+    } else {
+        element->SetClass("disabled", disabled);
+    }
+    return true;
+}
+
+bool zigcraft_rmlui_document_focus(ZigCraftRmlUiDocument *document, const char *element_id, bool focus_visible) {
+    if (!document || !element_id) return false;
+    Rml::Element *element = as_document(document)->GetElementById(element_id);
+    return element && element->Focus(focus_visible);
 }
 
 bool zigcraft_rmlui_process_sdl_event(
