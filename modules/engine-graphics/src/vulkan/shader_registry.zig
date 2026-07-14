@@ -32,6 +32,10 @@ pub const UI_FRAG = "assets/shaders/vulkan/ui.frag.spv";
 pub const UI_TEX_VERT = "assets/shaders/vulkan/ui_tex.vert.spv";
 pub const UI_TEX_FRAG = "assets/shaders/vulkan/ui_tex.frag.spv";
 
+pub const UI_RML_VERT = "assets/shaders/vulkan/ui_rml.vert.spv";
+pub const UI_RML_FRAG = "assets/shaders/vulkan/ui_rml.frag.spv";
+pub const UI_RML_TEX_FRAG = "assets/shaders/vulkan/ui_rml_tex.frag.spv";
+
 pub const DEBUG_SHADOW_VERT = "assets/shaders/vulkan/debug_shadow.vert.spv";
 pub const DEBUG_SHADOW_FRAG = "assets/shaders/vulkan/debug_shadow.frag.spv";
 

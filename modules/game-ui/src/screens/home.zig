@@ -24,6 +24,7 @@ pub const HomeScreen = struct {
         .deinit = deinit,
         .update = update,
         .draw = draw,
+        .drawBackground = drawBackground,
         .onEnter = onEnter,
         .getWorldStats = getWorldStats,
         .isReadyForPresentation = isReadyForPresentation,
@@ -61,7 +62,7 @@ pub const HomeScreen = struct {
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
-        try WorldScreen.draw(self.preview, ui);
+        try drawBackground(ptr, ui);
 
         ui.begin();
         defer ui.end();
@@ -91,6 +92,11 @@ pub const HomeScreen = struct {
         self.context.input.setMouseCapture(@ptrCast(self.context.window_manager.window), false);
     }
 
+    fn drawBackground(ptr: *anyopaque, ui: *UISystem) !void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        try WorldScreen.draw(self.preview, ui);
+    }
+
     fn getWorldStats(ptr: *anyopaque) ?@import("engine-ui").WorldStats {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         return self.preview.getWorldStats();
@@ -115,9 +121,7 @@ fn drawLaunchPanel(ui: *UISystem, self: *HomeScreen, screen_w: f32, screen_h: f3
     const panel = Rect{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h };
     const gap: f32 = 12.0 * scale;
 
-    ui.drawRect(.{ .x = panel.x + 14.0 * scale, .y = panel.y + 16.0 * scale, .width = panel.width, .height = panel.height }, Color.rgba(0, 0, 0, 0.48));
-    ui.drawRect(panel, Theme.panel);
-    ui.drawRectOutline(panel, Theme.outline, 1.0 * scale);
+    Theme.drawGlassPanel(ui, panel, scale);
 
     Font.drawText(ui, "START", panel.x + 30.0 * scale, panel.y + 20.0 * scale, 0.86 * scale, Theme.signal);
     Font.drawText(ui, "Choose an activity", panel.x + 30.0 * scale, panel.y + 45.0 * scale, 0.98 * scale, Theme.text);

@@ -40,6 +40,7 @@ test {
     _ = @import("engine-graphics").descriptor_manager_error_tests;
     _ = @import("engine-graphics").shader_registry_tests;
     _ = @import("engine-graphics").frame_manager_tests;
+    _ = @import("engine-graphics").final_composition;
     _ = @import("engine-graphics").render_pass_manager_tests;
     _ = @import("engine-graphics").rhi_frame_orchestration_tests;
     _ = @import("engine-graphics").rhi_pass_orchestration_tests;
@@ -116,4 +117,8 @@ test {
     _ = @import("engine-input").input_tests;
     _ = @import("text_input_tests.zig");
     _ = @import("engine-ui").font;
+    _ = @import("engine-ui").rmlui;
+    _ = @import("engine-ui").debug_shadow_overlay;
+    _ = @import("game-core").hotbar;
+    _ = @import("game-core").session_hud;
 }

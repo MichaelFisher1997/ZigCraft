@@ -32,7 +32,7 @@ pub const FXAASystem = struct {
     post_process_to_fxaa_render_pass: c.VkRenderPass = null,
     post_process_to_fxaa_framebuffer: c.VkFramebuffer = null,
 
-    pub fn init(self: *FXAASystem, device: *const VulkanDevice, allocator: Allocator, descriptor_pool: c.VkDescriptorPool, extent: c.VkExtent2D, format: c.VkFormat, sampler: c.VkSampler, swapchain_views: []const c.VkImageView) !void {
+    pub fn init(self: *FXAASystem, device: *const VulkanDevice, allocator: Allocator, descriptor_pool: c.VkDescriptorPool, extent: c.VkExtent2D, format: c.VkFormat, sampler: c.VkSampler, swapchain_views: []const c.VkImageView, final_layout: c.VkImageLayout) !void {
         self.deinit(device.vk_device, allocator, descriptor_pool);
         const vk = device.vk_device;
 
@@ -69,10 +69,12 @@ pub const FXAASystem = struct {
         var color_attachment = std.mem.zeroes(c.VkAttachmentDescription);
         color_attachment.format = format;
         color_attachment.samples = c.VK_SAMPLE_COUNT_1_BIT;
+        // FXAA is a full-screen replacement pass, never an overlay. It must
+        // not load stale menu pixels from a prior composition.
         color_attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color_attachment.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
-        color_attachment.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
-        color_attachment.finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        color_attachment.initialLayout = final_layout;
+        color_attachment.finalLayout = final_layout;
 
         var color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
         var subpass = std.mem.zeroes(c.VkSubpassDescription);

@@ -16,6 +16,7 @@ pub const PausedScreen = struct {
         .deinit = deinit,
         .update = update,
         .draw = draw,
+        .drawBackground = drawBackground,
         .onEnter = onEnter,
         .onExit = onExit,
     };
@@ -59,9 +60,7 @@ pub const PausedScreen = struct {
         const mouse_clicked = ctx.input.isMouseButtonPressed(.left);
         const ui_scale = Theme.scaleFor(screen_h, ctx.settings.ui_scale);
 
-        ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0.002, 0.006, 0.010, 0.72));
         Theme.drawBackdrop(ui, screen_w, screen_h, ui_scale, .paused);
-        ui.drawRect(.{ .x = 0, .y = 0, .width = screen_w, .height = screen_h }, Color.rgba(0, 0, 0, 0.36));
 
         const panel_w = @min(520.0 * ui_scale, screen_w - 80.0 * ui_scale);
         const panel_h = @min(420.0 * ui_scale, screen_h - 32.0 * ui_scale);
@@ -95,6 +94,11 @@ pub const PausedScreen = struct {
     pub fn onEnter(ptr: *anyopaque) void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         self.context.input.setMouseCapture(self.context.window_manager.window, false);
+    }
+
+    fn drawBackground(ptr: *anyopaque, ui: *UISystem) !void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        try self.context.screen_manager.drawParentScreen(ptr, ui);
     }
 
     pub fn onExit(ptr: *anyopaque) void {

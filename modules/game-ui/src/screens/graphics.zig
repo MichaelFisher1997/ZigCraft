@@ -56,6 +56,7 @@ pub const GraphicsScreen = struct {
         const settings = ctx.settings;
         const rs = ctx.render_settings;
 
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 

@@ -7,7 +7,7 @@ const WindowManager = @import("engine-core").WindowManager;
 const Input = @import("engine-input").Input;
 const Time = @import("engine-core").Time;
 const UISystemManager = @import("engine-ui").UISystemManager;
-const imgui_backend = @import("engine-ui").imgui_backend;
+const rmlui = @import("engine-ui").rmlui;
 const WorldStats = @import("engine-ui").WorldStats;
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
@@ -27,6 +27,7 @@ const screen_pkg = @import("game-ui").screen;
 const ScreenManager = screen_pkg.ScreenManager;
 const EngineContext = screen_pkg.EngineContext;
 const HomeScreen = @import("game-ui").HomeScreen;
+const RmlHomeScreen = @import("game-ui").RmlHomeScreen;
 const WorldScreen = @import("game-ui").WorldScreen;
 const RenderSettingsAdapter = @import("engine-rhi").RenderSettingsAdapter;
 const runtime_env = @import("engine-core").runtime_env;
@@ -36,10 +37,6 @@ pub const BLOCK_TEXTURE_DEFINITIONS = @import("game-core").BLOCK_TEXTURE_DEFINIT
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
     return std.mem.span(value);
-}
-
-fn processImGuiEvent(event: *const c.SDL_Event) void {
-    if (imgui_backend.available) imgui_backend.Backend.processEvent(event);
 }
 
 fn applySettingsToRhi(ctx: *const anyopaque, rhi: *RHI) void {
@@ -191,7 +188,6 @@ pub const App = struct {
         log.log.info("App.init: initializing UISystemManager", .{});
         var ui_manager = try UISystemManager.init(allocator, render_system.getRHI().uiRenderer(), render_system.getRHI().resourceManager(), render_system.getRHI(), &wm, input.window_width, input.window_height, build_options.smoke_test);
         errdefer ui_manager.deinit(render_system.getRHI().resourceManager());
-        input.setRawEventProcessor(processImGuiEvent);
 
         const input_mapper = InputSettings.loadAndReturnMapper(allocator);
 
@@ -231,12 +227,15 @@ pub const App = struct {
             .reveal_window_when_menu_ready = preload_menu_preview,
         };
         errdefer app.screen_manager.deinit();
+        // `app` is heap allocated now. Bind the raw event sink only after the
+        // final UISystemManager address is stable, avoiding a callback into the
+        // temporary manager value used during initialization.
+        app.input.setRawEventProcessor(.{ .context = &app.ui_manager, .process = UISystemManager.processRawEvent });
 
         if (build_options.smoke_test or build_options.screenshot_path.len > 0 or build_options.benchmark) {
             app.render_system.getRHI().timing().setTimingEnabled(true);
         }
 
-        const engine_ctx = app.engineContext();
         if (build_options.shadow_test_scene) {
             log.log.info("SHADOW TEST SCENE: Deferring deterministic test world launch", .{});
             app.pending_world_launch = .{ .seed = 12345, .generator_index = worldgen_registry.findGeneratorIndex("test") orelse 0 };
@@ -248,8 +247,7 @@ pub const App = struct {
                 if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
             } else {
                 log.log.info("SCREENSHOT MODE: Loading menu for screenshot capture to '{s}'", .{build_options.screenshot_path});
-                const home_screen = try HomeScreen.init(allocator, engine_ctx);
-                app.screen_manager.setScreen(home_screen.screen());
+                app.screen_manager.setScreen(try app.createHomeScreen());
             }
         } else if (build_options.benchmark) {
             log.log.info("BENCHMARK MODE: Deferring world launch until swapchain settles", .{});
@@ -264,8 +262,7 @@ pub const App = struct {
             app.pending_world_launch = .{ .seed = 12345, .generator_index = 0 };
             if (runtime_env.strictSafeModeAutoEnabled()) app.direct_launch_resize_guard_frames = 240;
         } else {
-            const home_screen = try HomeScreen.init(allocator, engine_ctx);
-            app.screen_manager.setScreen(home_screen.screen());
+            app.screen_manager.setScreen(try app.createHomeScreen());
         }
 
         return app;
@@ -274,9 +271,9 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         self.render_system.waitIdle();
 
-        self.ui_manager.deinit(self.render_system.getRHI().resourceManager());
-
+        self.input.setRawEventProcessor(null);
         self.screen_manager.deinit();
+        self.ui_manager.deinit(self.render_system.getRHI().resourceManager());
         if (self.benchmark_runner) |runner| {
             runner.deinit();
             self.allocator.destroy(runner);
@@ -347,11 +344,11 @@ pub const App = struct {
             self.pending_world_launch = null;
             self.direct_launch_resize_guard_frames = 0;
             self.resize_debounce_frames = 0;
-            const home_screen = HomeScreen.init(self.allocator, self.engineContext()) catch |home_err| {
+            const home_screen = self.createHomeScreen() catch |home_err| {
                 log.log.err("Failed to initialize home screen after world launch failure: {}", .{home_err});
                 return home_err;
             };
-            self.screen_manager.setScreen(home_screen.screen());
+            self.screen_manager.setScreen(home_screen);
             return;
         };
         self.screen_manager.setScreen(world_screen.screen());
@@ -359,6 +356,15 @@ pub const App = struct {
         self.direct_launch_resize_guard_frames = 0;
         self.resize_debounce_frames = 0;
         self.render_system.getRHI().renderContext().requestSwapchainRecreate();
+    }
+
+    fn createHomeScreen(self: *App) !screen_pkg.IScreen {
+        if (rmlui.available and self.ui_manager.getRmlUi() != null) {
+            const screen = try RmlHomeScreen.init(self.allocator, self.engineContext());
+            return screen.screen();
+        }
+        const screen = try HomeScreen.init(self.allocator, self.engineContext());
+        return screen.screen();
     }
 
     pub fn runSingleFrame(self: *App) !void {
@@ -399,7 +405,12 @@ pub const App = struct {
 
         self.ui_manager.handleTimingToggle(self.input_mapper.interface().isActionPressed(self.input.interface(), .toggle_timing_overlay), &self.time, self.render_system.getRHI());
 
-        self.ui_manager.resize(window_width, window_height);
+        // UI geometry is rendered in swapchain pixels. SDL input dimensions can
+        // remain logical on HiDPI desktops, which previously confined RmlUi to
+        // the top-left quarter of the framebuffer.
+        const ui_width = if (swapchain_extent[0] > 0) swapchain_extent[0] else window_width;
+        const ui_height = if (swapchain_extent[1] > 0) swapchain_extent[1] else window_height;
+        self.ui_manager.resize(ui_width, ui_height);
 
         self.render_system.setViewport(window_width, window_height);
 
@@ -453,25 +464,9 @@ pub const App = struct {
         const cpu_ms = self.time.delta_time * 1000.0;
         try self.ui_manager.draw(&self.screen_manager, self.render_system.getRHI(), world_stats, cpu_ms, self.time.fps);
 
-        self.render_system.endFrame();
-        self.revealMenuWindowWhenReady();
-
-        if (build_options.benchmark) {
-            if (self.benchmark_runner) |runner| {
-                const gpu_timing = self.render_system.getRHI().timing().getTimingResults();
-                const rhi = self.render_system.getRHI();
-                const draw_calls = rhi.query().getDrawCallCount();
-                const gpu_memory_mb = if (rhi.device) |device| gpuMemoryMb(device.getStats()) else 0;
-                try runner.recordFrame(self.time.delta_time, self.time.fps, gpu_timing, world_stats, draw_calls, gpu_memory_mb);
-
-                if (runner.isComplete()) {
-                    try runner.writeResults();
-                    log.log.info("BENCHMARK COMPLETE: {} frames written to '{s}'", .{ runner.samples.items.len, runner.output_path });
-                    self.input.should_quit = true;
-                }
-            }
-        }
-
+        // Capture is recorded before endFrame so Vulkan appends its copy after
+        // the UI pass, but before normal presentation releases the image.
+        var finish_screenshot_run = false;
         if (build_options.smoke_test or build_options.screenshot_path.len > 0) {
             self.smoke_test_frames += 1;
             const requires_world_ready = build_options.shadow_test_scene or build_options.auto_world.len > 0;
@@ -513,14 +508,37 @@ pub const App = struct {
 
             if (should_finish) {
                 if (build_options.screenshot_path.len > 0) {
-                    log.log.info("SCREENSHOT: Capturing frame to '{s}'", .{build_options.screenshot_path});
+                    log.log.info("SCREENSHOT: Requesting final composed frame to '{s}'", .{build_options.screenshot_path});
                     if (!self.render_system.getRHI().screenshot().captureFrame(build_options.screenshot_path)) {
-                        log.log.err("SCREENSHOT: Failed to capture screenshot", .{});
+                        log.log.err("SCREENSHOT: Failed to request screenshot", .{});
                     }
                 }
-                log.log.info("SMOKE TEST COMPLETE: {} frames rendered. Exiting.", .{target_frames});
-                self.input.should_quit = true;
+                finish_screenshot_run = true;
             }
+        }
+
+        self.render_system.endFrame();
+        self.revealMenuWindowWhenReady();
+
+        if (build_options.benchmark) {
+            if (self.benchmark_runner) |runner| {
+                const gpu_timing = self.render_system.getRHI().timing().getTimingResults();
+                const rhi = self.render_system.getRHI();
+                const draw_calls = rhi.query().getDrawCallCount();
+                const gpu_memory_mb = if (rhi.device) |device| gpuMemoryMb(device.getStats()) else 0;
+                try runner.recordFrame(self.time.delta_time, self.time.fps, gpu_timing, world_stats, draw_calls, gpu_memory_mb);
+
+                if (runner.isComplete()) {
+                    try runner.writeResults();
+                    log.log.info("BENCHMARK COMPLETE: {} frames written to '{s}'", .{ runner.samples.items.len, runner.output_path });
+                    self.input.should_quit = true;
+                }
+            }
+        }
+
+        if (finish_screenshot_run) {
+            log.log.info("SMOKE TEST COMPLETE: frame rendered and screenshot submitted. Exiting.", .{});
+            self.input.should_quit = true;
         }
 
         self.limitFrameRateIfNeeded();

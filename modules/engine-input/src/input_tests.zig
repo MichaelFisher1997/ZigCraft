@@ -8,6 +8,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Input = @import("engine-input").Input;
+const c = @import("c").c;
 
 test "recordKeyDown registers key as both pressed and down" {
     var input = Input.init(testing.allocator);
@@ -90,4 +91,29 @@ test "recordMouseWheel accumulates per frame (regression for #711)" {
     input.beginFrame();
     try testing.expectEqual(@as(f32, 0.0), input.scroll_x);
     try testing.expectEqual(@as(f32, 0.0), input.scroll_y);
+}
+
+test "raw event processor retains its explicit context" {
+    const Receiver = struct {
+        calls: u32 = 0,
+
+        fn process(context: *anyopaque, _: *const c.SDL_Event) bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.calls += 1;
+            return true;
+        }
+    };
+
+    var input = Input.init(testing.allocator);
+    defer input.deinit();
+    var receiver = Receiver{};
+    input.setRawEventProcessor(.{ .context = &receiver, .process = Receiver.process });
+
+    var event = std.mem.zeroes(c.SDL_Event);
+    try testing.expect(input.dispatchRawEvent(&event));
+    try testing.expectEqual(@as(u32, 1), receiver.calls);
+
+    input.setRawEventProcessor(null);
+    try testing.expect(!input.dispatchRawEvent(&event));
+    try testing.expectEqual(@as(u32, 1), receiver.calls);
 }

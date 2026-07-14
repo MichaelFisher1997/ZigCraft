@@ -5,6 +5,7 @@ const log = @import("engine-core").log;
 const build_options = @import("engine_graphics_options");
 const bindings = @import("descriptor_bindings.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
+const final_composition = @import("final_composition.zig");
 const setup = @import("rhi_resource_setup.zig");
 
 pub fn recreatePendingShadowResources(ctx: anytype) void {
@@ -82,6 +83,10 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         lifecycle.transitionImagesToPresent(ctx, ctx.swapchain.swapchain.images.items) catch |err| {
             log.log.warn("Failed to transition swapchain images to PRESENT: {}", .{err});
         };
+    } else {
+        lifecycle.transitionImagesToColorAttachment(ctx, ctx.swapchain.swapchain.images.items) catch |err| {
+            log.log.warn("Failed to transition headless image to COLOR_ATTACHMENT: {}", .{err});
+        };
     }
 
     lifecycle.createHDRResources(ctx) catch |err| {
@@ -142,7 +147,7 @@ pub fn recreateSwapchainInternal(ctx: anytype) void {
         _ = markSwapchainRecreateFailed(ctx, "swapchain UI resources", err);
         return;
     };
-    ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews()) catch |err| {
+    ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews(), final_composition.displayLayout(ctx.swapchain.skip_present)) catch |err| {
         _ = markSwapchainRecreateFailed(ctx, "FXAA resources", err);
         return;
     };
@@ -225,8 +230,12 @@ pub fn prepareFrameState(ctx: anytype) void {
     ctx.shadow_system.pass_active = false;
     ctx.runtime.post_process_ran_this_frame = false;
     ctx.runtime.fxaa_ran_this_frame = false;
+    ctx.runtime.direct_ui_composed_this_frame = false;
+    ctx.runtime.final_composed.clear();
     ctx.taa.ran_this_frame = false;
     ctx.ui.ui_using_swapchain = false;
+    ctx.ui.ui_swapchain_pass_active = false;
+    ctx.ui.ui_swapchain_clears_output = false;
 
     ctx.draw.terrain_pipeline_bound = false;
     ctx.shadow_system.pipeline_bound = false;
@@ -260,6 +269,9 @@ pub fn prepareFrameState(ctx: anytype) void {
     ctx.ui.ui_active_textured = false;
     ctx.ui.ui_active_texture = 0;
     ctx.ui.ui_active_tint = .{ 0.0, 0.0, 0.0, 0.0 };
+    ctx.ui.rml_vertex_offset = 0;
+    ctx.ui.rml_index_offset = 0;
+    ctx.ui.legacy_pipeline_bound = false;
     ctx.ui.ui_tex_descriptor_next[ctx.frames.current_frame] = 0;
     if (comptime build_options.debug_shadows) {
         ctx.debug_shadow.descriptor_next[ctx.frames.current_frame] = 0;

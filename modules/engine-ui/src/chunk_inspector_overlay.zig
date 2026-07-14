@@ -20,6 +20,8 @@ pub const ChunkInspectorOverlay = struct {
         self.enabled = !self.enabled;
     }
 
+    /// Submits inspector draw calls to an active caller-owned UI pass.
+    /// The caller must pair `ui.begin()` and `ui.end()` around this call.
     pub fn draw(self: *ChunkInspectorOverlay, ui: *UISystem, render_stats: ChunkRenderStats, counts: ChunkStateCounts, world_state: WorldStateData) void {
         if (!self.enabled) return;
 

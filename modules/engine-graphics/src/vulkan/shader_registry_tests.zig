@@ -36,6 +36,9 @@ test "all shader paths follow SPIR-V naming convention" {
         shader_registry.UI_FRAG,
         shader_registry.UI_TEX_VERT,
         shader_registry.UI_TEX_FRAG,
+        shader_registry.UI_RML_VERT,
+        shader_registry.UI_RML_FRAG,
+        shader_registry.UI_RML_TEX_FRAG,
         shader_registry.DEBUG_SHADOW_VERT,
         shader_registry.DEBUG_SHADOW_FRAG,
     };
@@ -90,6 +93,11 @@ test "vertex and fragment shader pairs exist for complete pipelines" {
     // UI Textured
     try testing.expect(std.mem.endsWith(u8, shader_registry.UI_TEX_VERT, ".vert.spv"));
     try testing.expect(std.mem.endsWith(u8, shader_registry.UI_TEX_FRAG, ".frag.spv"));
+
+    // RmlUi retained geometry
+    try testing.expect(std.mem.endsWith(u8, shader_registry.UI_RML_VERT, ".vert.spv"));
+    try testing.expect(std.mem.endsWith(u8, shader_registry.UI_RML_FRAG, ".frag.spv"));
+    try testing.expect(std.mem.endsWith(u8, shader_registry.UI_RML_TEX_FRAG, ".frag.spv"));
 
     // Debug Shadow
     try testing.expect(std.mem.endsWith(u8, shader_registry.DEBUG_SHADOW_VERT, ".vert.spv"));

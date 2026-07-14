@@ -90,6 +90,24 @@ pub const TextureAtlasHandles = struct {
     env: TextureHandle,
 };
 
+/// Vertex format used by retained UI geometry such as RmlUi meshes.
+///
+/// `color` is stored in RGBA byte order so it maps directly to an
+/// `R8G8B8A8_UNORM` vertex attribute on graphics backends.
+pub const UiVertex = extern struct {
+    position: [2]f32,
+    color: [4]u8,
+    uv: [2]f32,
+};
+
+/// Pixel-aligned clipping rectangle for retained UI geometry.
+pub const UiScissor = struct {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+};
+
 pub const Vertex = extern struct {
     pos: [3]f32,
     color: u32,

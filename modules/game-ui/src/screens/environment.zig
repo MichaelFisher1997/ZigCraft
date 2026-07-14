@@ -64,6 +64,7 @@ pub const EnvironmentScreen = struct {
         const ctx = self.context;
         const settings = ctx.settings;
 
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 

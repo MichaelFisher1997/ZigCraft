@@ -249,6 +249,7 @@ pub const WorldListScreen = struct {
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 

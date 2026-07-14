@@ -55,6 +55,7 @@ pub const ResourcePacksScreen = struct {
         const settings = ctx.settings;
         const manager = ctx.render_system.getResourcePackManager();
 
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 

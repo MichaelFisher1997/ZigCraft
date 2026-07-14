@@ -78,6 +78,7 @@ pub const SingleplayerScreen = struct {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
 
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 
@@ -121,9 +122,7 @@ pub const SingleplayerScreen = struct {
         if (!compact) drawCreateSteps(ui, .{ .x = page_x, .y = body_y, .width = rail_w, .height = body_h }, ui_scale);
 
         const form_rect = Rect{ .x = form_x, .y = body_y, .width = form_w, .height = body_h };
-        ui.drawRect(.{ .x = form_rect.x + 9.0 * ui_scale, .y = form_rect.y + 10.0 * ui_scale, .width = form_rect.width, .height = form_rect.height }, Color.rgba(0, 0, 0, 0.38));
-        ui.drawRect(form_rect, Color.rgba(0.045, 0.070, 0.090, 0.98));
-        ui.drawRect(.{ .x = form_rect.x, .y = form_rect.y, .width = 7.0 * ui_scale, .height = form_rect.height }, Theme.signal);
+        Theme.drawGlassPanel(ui, form_rect, ui_scale);
 
         const content_x = form_rect.x + 34.0 * ui_scale;
         const content_w = form_rect.width - 68.0 * ui_scale;
@@ -214,8 +213,8 @@ pub const SingleplayerScreen = struct {
 
 fn drawWorldSummary(ui: *UISystem, rect: Rect, selected_generator_index: usize, seed: []const u8, scale: f32) void {
     const g_info = registry.getGeneratorInfo(selected_generator_index);
-    ui.drawRect(rect, Color.rgba(0.035, 0.145, 0.185, 0.98));
-    ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = 8.0 * scale }, Theme.signal);
+    Theme.drawGlassPanel(ui, rect, scale);
+    ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = rect.width, .height = 2.0 * scale }, Theme.signal);
     Font.drawText(ui, "READY TO CREATE", rect.x + 28.0 * scale, rect.y + 30.0 * scale, 0.78 * scale, Color.rgba(0.72, 0.92, 1.0, 1.0));
     Font.drawText(ui, g_info.name, rect.x + 28.0 * scale, rect.y + 68.0 * scale, 1.82 * scale, Theme.title);
     Font.drawText(ui, g_info.description, rect.x + 28.0 * scale, rect.y + 110.0 * scale, 0.86 * scale, Theme.text);
@@ -236,7 +235,7 @@ fn drawSummaryFact(ui: *UISystem, x: f32, y: f32, label: []const u8, value: []co
 }
 
 fn drawCreateSteps(ui: *UISystem, rect: Rect, scale: f32) void {
-    ui.drawRect(rect, Color.rgba(0.024, 0.038, 0.052, 0.92));
+    Theme.drawGlassPanel(ui, rect, scale);
     const labels = [_][]const u8{ "DETAILS", "TERRAIN", "REVIEW" };
     for (labels, 0..) |label, i| {
         const y = rect.y + 30.0 * scale + @as(f32, @floatFromInt(i)) * 82.0 * scale;
@@ -251,8 +250,9 @@ fn drawCreateSteps(ui: *UISystem, rect: Rect, scale: f32) void {
 fn drawTerrainTile(ui: *UISystem, rect: Rect, label: []const u8, description: []const u8, index: usize, selected: bool, scale: f32) void {
     const accents = [_]Color{ Theme.signal, Color.rgba(0.42, 0.78, 0.56, 1.0), Color.rgba(0.88, 0.52, 0.38, 1.0), Color.rgba(0.62, 0.54, 0.94, 1.0) };
     const accent = accents[index % accents.len];
-    ui.drawRect(rect, if (selected) Color.rgba(accent.r * 0.24, accent.g * 0.24, accent.b * 0.24, 1.0) else Color.rgba(0.025, 0.044, 0.060, 1.0));
-    ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = 8.0 * scale, .height = rect.height }, accent);
+    ui.drawRect(rect, if (selected) Color.rgba(accent.r, accent.g, accent.b, 0.18) else Color.rgba(0.60, 0.91, 1.0, 0.03));
+    ui.drawRect(.{ .x = rect.x, .y = rect.y, .width = if (selected) 3.0 * scale else 2.0 * scale, .height = rect.height }, accent);
+    ui.drawRect(.{ .x = rect.x, .y = rect.y + rect.height - 1.0 * scale, .width = rect.width, .height = 1.0 * scale }, Color.rgba(accent.r, accent.g, accent.b, if (selected) 0.42 else 0.18));
     Font.drawText(ui, label, rect.x + 22.0 * scale, rect.y + 17.0 * scale, 1.08 * scale, Theme.title);
     Font.drawText(ui, description, rect.x + 22.0 * scale, rect.y + 48.0 * scale, 0.68 * scale, Theme.muted);
     if (selected) Font.drawText(ui, "SELECTED", rect.x + rect.width - 82.0 * scale, rect.y + 18.0 * scale, 0.62 * scale, accent);

@@ -8,11 +8,13 @@ const MockScreen = struct {
     enter_count: u32 = 0,
     exit_count: u32 = 0,
     deinit_count: u32 = 0,
+    background_draw_count: u32 = 0,
     last_dt: f32 = 0.0,
 
     const vtable = screen_mod.IScreen.VTable{
         .deinit = deinit,
         .update = update,
+        .drawBackground = drawBackground,
         .onEnter = onEnter,
         .onExit = onExit,
         .getWorldStats = getWorldStats,
@@ -34,6 +36,11 @@ const MockScreen = struct {
         const self = cast(ptr);
         self.update_count += 1;
         self.last_dt = dt;
+    }
+
+    fn drawBackground(ptr: *anyopaque, ui: *@import("engine-ui").UISystem) anyerror!void {
+        _ = ui;
+        cast(ptr).background_draw_count += 1;
     }
 
     fn onEnter(ptr: *anyopaque) void {
@@ -182,4 +189,22 @@ test "ScreenManager interface queues screen transitions" {
 
     try testing.expectEqual(@as(usize, 1), manager.stack.items.len);
     try testing.expectEqual(@as(u32, 1), first.enter_count);
+}
+
+test "ScreenManager draws the nearest background provider below a child" {
+    var manager = screen_mod.ScreenManager.init(testing.allocator);
+    defer manager.deinit();
+    var parent = MockScreen{};
+    var child = MockScreen{};
+
+    manager.pushScreen(parent.asScreen());
+    try manager.update(0.1);
+    manager.pushScreen(child.asScreen());
+    try manager.update(0.1);
+
+    var ui: @import("engine-ui").UISystem = undefined;
+    try manager.drawBackgroundFor(&child, &ui);
+
+    try testing.expectEqual(@as(u32, 1), parent.background_draw_count);
+    try testing.expectEqual(@as(u32, 0), child.background_draw_count);
 }

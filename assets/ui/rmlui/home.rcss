@@ -1,0 +1,369 @@
+body {
+  position: absolute;
+  display: block;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  color: #F4F8FC;
+  font-family: Inter Variable;
+  background-color: #000000BF;
+  overflow: hidden;
+}
+
+#page {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 52dp 68dp 60dp;
+}
+
+#hero {
+  display: block;
+  width: 560dp;
+  min-width: 0;
+  margin-right: 64dp;
+}
+
+#brand {
+  position: absolute;
+  display: block;
+  top: 42dp;
+  left: 72dp;
+  color: #F6FAFD;
+  font-size: 19dp;
+  letter-spacing: 5dp;
+}
+
+#brand span {
+  margin-left: 8dp;
+  color: #67C9EA;
+  font-size: 10dp;
+  letter-spacing: 1dp;
+}
+
+.eyebrow,
+.panel-kicker,
+.section-label {
+  display: block;
+  color: #67C9EA;
+  font-size: 11dp;
+  letter-spacing: 3dp;
+}
+
+h1 {
+  display: block;
+  margin: 14dp 0 20dp;
+  color: #F7FAFC;
+  font-size: 56dp;
+  line-height: 1.03;
+  letter-spacing: -1dp;
+}
+
+h1 span,
+h1 em {
+  display: block;
+}
+
+h1 em {
+  color: #85D8F2;
+  font-style: normal;
+}
+
+.lede {
+  display: block;
+  width: 500dp;
+  margin: 0;
+  color: #C4D1DC;
+  font-size: 17dp;
+  line-height: 1.45;
+}
+
+#hero-meta {
+  display: flex;
+  margin-top: 30dp;
+  color: #87A1B0;
+  font-size: 9dp;
+  letter-spacing: 1dp;
+}
+
+#hero-meta span {
+  color: #9BB2BF;
+}
+
+#hero-meta b {
+  margin: 0 10dp;
+  color: #4DB6D8;
+  font-weight: normal;
+}
+
+#launch-wrap {
+  position: relative;
+  display: block;
+  width: 430dp;
+  max-width: 100%;
+}
+
+#launch-panel {
+  position: relative;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 28dp 28dp 22dp;
+  background-color: #06131FDE;
+  border: 1dp #C7F2FF61;
+  border-top: 1dp #F0FCFF9E;
+  border-radius: 14dp;
+}
+
+#glass-highlight {
+  position: absolute;
+  display: block;
+  left: 20dp;
+  right: 20dp;
+  top: 0;
+  height: 1dp;
+  background-color: #F2FCFF85;
+  pointer-events: none;
+}
+
+h2 {
+  display: block;
+  margin: 8dp 0 7dp;
+  color: #F5F8FB;
+  font-size: 28dp;
+  line-height: 1.15;
+}
+
+.panel-copy {
+  display: block;
+  margin: 0 0 20dp;
+  color: #B6C5CE;
+  font-size: 13dp;
+  line-height: 1.4;
+}
+
+button {
+  display: block;
+  width: 100%;
+  min-height: 58dp;
+  box-sizing: border-box;
+  margin: 0 0 10dp;
+  padding: 14dp 16dp;
+  color: #F3F7FA;
+  background-color: #BCEFFF0A;
+  border: 0dp transparent;
+  border-radius: 7dp;
+  font-family: Inter Variable;
+  text-align: left;
+  cursor: pointer;
+}
+
+button strong {
+  display: block;
+  color: #F3F8FB;
+  font-size: 14dp;
+  font-weight: 600;
+  letter-spacing: 1dp;
+  pointer-events: none;
+}
+
+button span {
+  display: block;
+  margin-top: 5dp;
+  color: #91A9B8;
+  font-size: 9dp;
+  letter-spacing: 1dp;
+  pointer-events: none;
+}
+
+button:hover,
+button:focus {
+  background-color: #8BE4FF21;
+  border: 0dp transparent;
+  border-left: 3dp #81D8F2;
+}
+
+button:active {
+  background-color: #55CDEB3D;
+}
+
+button.primary {
+  position: relative;
+  min-height: 76dp;
+  padding: 16dp 18dp;
+  background-color: #087F99D4;
+  border: 1dp #CFF8FFB8;
+  border-left: 3dp #E8FDFF;
+  border-radius: 8dp;
+}
+
+button.primary:hover,
+button.primary:focus {
+  background-color: #0A9AB6E8;
+  border: 1dp #F0FDFFE8;
+  border-left: 3dp #FFFFFF;
+}
+
+button.primary strong {
+  font-size: 19dp;
+  letter-spacing: 2dp;
+}
+
+button.primary span {
+  color: #C9EDF4;
+}
+
+button.primary b {
+  position: absolute;
+  right: 18dp;
+  top: 18dp;
+  padding: 5dp 7dp;
+  color: #D8F5FC;
+  background-color: #031B27A3;
+  border: 1dp #D5F8FF8A;
+  border-radius: 4dp;
+  font-size: 8dp;
+  font-weight: normal;
+  letter-spacing: 1dp;
+  pointer-events: none;
+}
+
+.section-label {
+  margin: 17dp 0 4dp;
+  padding-bottom: 8dp;
+  border-bottom: 1dp #9CDDEF29;
+}
+
+#secondary-actions {
+  display: block;
+  background-color: transparent;
+  border: 0dp transparent;
+}
+
+#secondary-actions button {
+  position: relative;
+  min-height: 52dp;
+  margin: 0;
+  padding: 10dp 48dp 9dp 10dp;
+  background-color: transparent;
+  border: 0dp transparent;
+  border-bottom: 1dp #9CDDEF24;
+  border-radius: 0dp;
+}
+
+#secondary-actions button:hover,
+#secondary-actions button:focus {
+  background-color: #99E7FF1C;
+  border: 0dp transparent;
+  border-left: 2dp #74D3EE;
+  border-bottom: 1dp #9CDDEF3D;
+}
+
+#secondary-actions button strong {
+  font-size: 13dp;
+}
+
+#secondary-actions button span {
+  margin-top: 3dp;
+  color: #829AA8;
+  font-size: 9dp;
+  letter-spacing: 0dp;
+}
+
+#secondary-actions button b {
+  position: absolute;
+  right: 15dp;
+  top: 17dp;
+  color: #6F91A3;
+  font-size: 9dp;
+  font-weight: normal;
+  letter-spacing: 1dp;
+  pointer-events: none;
+}
+
+button.quiet {
+  background-color: transparent;
+}
+
+button.quiet:hover,
+button.quiet:focus {
+  background-color: #EF7D931C;
+  border: 0dp transparent;
+  border-left: 2dp #D47C87;
+  border-bottom: 1dp #69454D;
+}
+
+.panel-footer {
+  display: block;
+  margin-top: 7dp;
+  padding-top: 12dp;
+  color: #6F8796;
+  border-top: 1dp #9CDDEF24;
+  font-size: 8dp;
+  letter-spacing: 1dp;
+  text-align: center;
+}
+
+.panel-footer span {
+  color: #A9C6D6;
+  padding: 0 4dp;
+}
+
+#footer {
+  position: absolute;
+  display: block;
+  left: 72dp;
+  bottom: 30dp;
+  color: #708997;
+  font-size: 9dp;
+  letter-spacing: 2dp;
+}
+
+#footer span {
+  color: #4DB6D8;
+  padding: 0 7dp;
+}
+
+@media (max-width: 1180dp) {
+  body { overflow: hidden; }
+  #page {
+    justify-content: center;
+    padding: 68dp 36dp 44dp;
+  }
+  #brand { top: 28dp; left: 36dp; }
+  #hero { width: 0; margin-right: 0; }
+  #hero .eyebrow,
+  #hero h1,
+  #hero .lede,
+  #hero-meta { display: none; }
+  #launch-wrap {
+    width: 430dp;
+    margin-top: 0;
+  }
+  #launch-panel { width: 100%; }
+  #footer {
+    left: 36dp;
+    bottom: 24dp;
+  }
+}
+
+@media (max-width: 620dp) {
+  #page { padding: 68dp 24dp 24dp; }
+  #brand { top: 24dp; left: 24dp; }
+  #launch-panel { padding: 24dp 24dp 20dp; }
+  h2 { font-size: 26dp; }
+  .panel-copy { margin-bottom: 17dp; }
+  button.primary { min-height: 72dp; }
+  #secondary-actions button { min-height: 49dp; }
+  #secondary-actions button b { top: 15dp; }
+  .panel-footer { display: none; }
+  #footer { display: none; }
+}

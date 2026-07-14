@@ -73,6 +73,7 @@ pub const SettingsScreen = struct {
         const settings = ctx.settings;
         const rs = ctx.render_settings;
 
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 
@@ -99,6 +100,7 @@ pub const SettingsScreen = struct {
         Font.drawText(ui, "PREFERENCES", page_x, page_top, 0.88 * ui_scale, Theme.signal);
         Font.drawText(ui, "Make ZigCraft yours.", page_x, page_top + 28.0 * ui_scale, 4.2 * ui_scale, Theme.title);
         Font.drawText(ui, "Changes apply immediately and are saved when you leave.", page_x, page_top + 88.0 * ui_scale, 1.02 * ui_scale, Theme.muted);
+        Theme.drawGlassPanel(ui, .{ .x = page_x - 20.0 * ui_scale, .y = workspace_y - 20.0 * ui_scale, .width = page_w + 40.0 * ui_scale, .height = workspace_h + 104.0 * ui_scale }, ui_scale);
 
         const sidebar_layout = page_w >= 900.0 * ui_scale;
         const nav_w: f32 = if (sidebar_layout) 220.0 * ui_scale else page_w;
