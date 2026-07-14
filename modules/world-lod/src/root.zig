@@ -24,6 +24,7 @@ pub const lod_vertex_pool = @import("lod_vertex_pool.zig");
 pub const lod_stats = @import("lod_stats.zig");
 pub const lod_store = @import("lod_store.zig");
 pub const lod_tile = @import("lod_tile.zig");
+pub const lod_compact_pool = @import("lod_compact_pool.zig");
 pub const world_lod = @import("world_lod.zig");
 
 pub const LODChunk = lod_chunk.LODChunk;

@@ -61,6 +61,63 @@ Use the same preset and render-distance override for before/after comparison.
 For example, append `-Dbenchmark-preset=high -Dbenchmark-render-distance=16`
 to both commands. Unknown scenario values fail at build configuration time.
 
+## LOD telemetry JSON
+
+Benchmark results include an opt-in `lod` object when LOD profiling is enabled.
+`lod.cpu_categories.manager_lock_wait` and
+`lod.cpu_categories.manager_lock_hold` report cumulative CPU timing deltas as
+`total_ms` and per-sampled-frame `avg_ms`, just like the other CPU categories.
+
+`lod.memory_bytes` reports LOD accounting gauges as `avg_bytes`, `max_bytes`,
+and `last_bytes`; these are current known allocations, not GPU-driver memory
+measurements. The gauge fields are:
+
+- `pending_cpu_upload_bytes`
+- `deferred_deletion_gpu_bytes` and `deferred_deletion_cpu_bytes`
+- `pool_gpu_capacity_bytes`, `pool_gpu_allocated_bytes`,
+  `pool_gpu_slack_bytes`, and `pool_cpu_shadow_bytes`
+- `compact_pool_capacity_bytes`, `compact_pool_allocated_bytes`,
+  `compact_pool_free_bytes`, and `compact_pool_retired_bytes`
+- `direct_mesh_gpu_bytes` and `known_memory_bytes`
+
+`deferred_deletion_bytes` remains as a compatibility alias of the GPU deferred
+deletion gauge. In contrast, `upload_total_bytes`, visibility totals, and
+pressure counts are cumulative counter deltas over sampled frames; they must
+not be interpreted as allocation gauges.
+
+## Phase 5 production gate
+
+Run the lightweight policy gate with:
+
+```bash
+nix develop --command zig build phase5-gate
+```
+
+It verifies that the build accepts exactly the four scenarios above (and rejects
+an unbounded name), that the runtime parser recognizes the same bounded set,
+that LOD3/LOD4 retain the CPU heightfield fallback when an optional mesh path
+is selected, and that the tables in this document and
+[`../lod-quality-controls.md`](../lod-quality-controls.md) match the runtime
+benchmark SLO and LOD-preset budgets.
+
+The compact visual smoke gate is intentionally a separate graphics target. It
+captures the same deterministic dry `flat` auto-world scene with
+`ZIGCRAFT_LOD_COMPACT=off` and `force`, writing `compact-off.png`,
+`compact-auto.png`, per-capture logs, and `metrics.json` to
+`zig-out/phase5-visual-smoke/`. It rejects missing, black, or visually empty
+captures, requires non-zero compact pool residency in the forced capture, and
+rejects gross coarse-sampled divergence above 0.70. This deliberately avoids a pixel-exact golden; override its broad
+health thresholds only for diagnosed platform differences with
+`PHASE5_VISUAL_MIN_NON_BLACK`, `PHASE5_VISUAL_MIN_LUMA_RANGE`,
+`PHASE5_VISUAL_MIN_LUMA_BINS`, and
+`PHASE5_VISUAL_MAX_NMAE`.
+
+Run only this slower graphics check with:
+
+```bash
+nix develop --command zig build phase5-visual-gate
+```
+
 ## Visual baseline capture matrix
 
 When a LOD rendering change needs visual evidence, capture before and after

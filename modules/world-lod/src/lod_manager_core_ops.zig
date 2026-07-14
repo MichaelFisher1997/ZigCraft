@@ -180,11 +180,15 @@ pub fn deinit(self: *Self) void {
     // map-open leave it false so LOD generation runs uninterrupted.
     self.job_dispatcher.stop_flag.store(true, .release);
 
+    const cancellation_lock_wait_timer = self.profiling.begin();
     self.mutex.lock();
+    self.profiling.end(.manager_lock_wait, cancellation_lock_wait_timer);
+    const cancellation_lock_hold_timer = self.profiling.begin();
     for (0..LODLevel.count) |i| {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| entry.value_ptr.*.requestCancellation();
     }
+    self.profiling.end(.manager_lock_hold, cancellation_lock_hold_timer);
     self.mutex.unlock();
 
     // Stop and cleanup queues
@@ -212,6 +216,7 @@ pub fn deinit(self: *Self) void {
         // Cleanup meshes
         var mesh_iter = self.meshes[i].iterator();
         while (mesh_iter.next()) |entry| {
+            entry.value_ptr.*.releasePendingCompactTile();
             self.gpu_bridge.destroy(entry.value_ptr.*);
             self.allocator.destroy(entry.value_ptr.*);
         }
@@ -382,7 +387,11 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
 
 /// Get current statistics
 pub fn getStats(self: *Self) LODStats {
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
     var snapshot = self.stats;
     snapshot.profiling = self.profiling.snapshot();
@@ -502,7 +511,11 @@ pub fn isInRange(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
 /// NOTE: Acquires a shared lock on LODManager. LODRenderer must NOT attempt to acquire
 /// a write lock on LODManager during rendering to avoid deadlocks.
 pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
 
     const visibility_timer = self.profiling.begin();
@@ -514,14 +527,22 @@ pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?Ch
 /// LOD renderer projects visibility once for a serial and reuses safe value
 /// snapshots for the terrain and water submissions.
 pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
 
     self.renderer.renderFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
 pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
     self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
 }

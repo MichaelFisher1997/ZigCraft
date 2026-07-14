@@ -57,6 +57,11 @@ pub fn chooseGpuBlockCapacity(vram_mb: usize) usize {
     return @min(MAX_MDI_CHUNKS, max_by_budget);
 }
 
+fn gpuBlockCapacityForBudgetMb(budget_mb: usize) usize {
+    const max_by_budget = (budget_mb * MB) / GPU_BLOCK_SLOT_SIZE;
+    return @min(MAX_MDI_CHUNKS, max_by_budget);
+}
+
 pub const RenderStats = struct {
     chunks_total: u32 = 0,
     chunks_rendered: u32 = 0,
@@ -155,8 +160,9 @@ pub const WorldRenderer = struct {
 
         const vram_bytes = query.getDeviceLocalVramBytes();
         const vram_mb = vram_bytes / (1024 * 1024);
-        const vertex_capacity_mb = chooseVertexCapacityMb(vram_mb, strict_safe_mode);
-        const gpu_block_capacity = chooseGpuBlockCapacity(vram_mb);
+        const vertex_capacity_mb = runtime_env.envInt("ZIGCRAFT_VERTEX_CAPACITY_MB", chooseVertexCapacityMb(vram_mb, strict_safe_mode));
+        const gpu_block_budget_mb = runtime_env.envInt("ZIGCRAFT_GPU_BLOCK_BUDGET_MB", 0);
+        const gpu_block_capacity = if (gpu_block_budget_mb > 0) gpuBlockCapacityForBudgetMb(gpu_block_budget_mb) else chooseGpuBlockCapacity(vram_mb);
 
         log.log.info("VRAM budget: {}MB | vertex_allocator: {}MB | gpu_block_buffer: {} slots", .{ vram_mb, vertex_capacity_mb, gpu_block_capacity });
 

@@ -414,6 +414,8 @@ fn createLODCullingSystem(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, max
 
 fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
     return screenshot.captureScreenshot(ctx, path);
 }
 
@@ -484,6 +486,16 @@ fn setInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
 fn setLODInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     render_state.setLODInstanceBuffer(ctx, handle);
+}
+
+fn setLODCompactSampleBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setLODCompactSampleBuffer(ctx, handle);
+}
+
+fn setLODCompactInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setLODCompactInstanceBuffer(ctx, handle);
 }
 
 fn setTerrainPipelineBound(ctx_ptr: *anyopaque, bound: bool) void {
@@ -688,6 +700,18 @@ fn drawIndexed(ctx_ptr: *anyopaque, vbo_handle: rhi.BufferHandle, ebo_handle: rh
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
     draw_submission.drawIndexed(ctx, vbo_handle, ebo_handle, count);
+}
+
+fn drawCompactLOD(ctx_ptr: *anyopaque, index_handle: rhi.BufferHandle, index_count: u32, params: rhi.CompactLODDraw) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    return draw_submission.drawCompactLOD(ctx, index_handle, index_count, params);
+}
+
+fn drawCompactLODIndirectCount(ctx_ptr: *anyopaque, index_handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, count_buffer: rhi.BufferHandle, count_offset: usize, max_draw_count: u32) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return draw_submission.drawCompactLODIndirectCount(ctx, index_handle, command_buffer, offset, count_buffer, count_offset, max_draw_count);
 }
 
 fn drawIndirect(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
@@ -1063,6 +1087,8 @@ const VULKAN_STATE_CONTEXT_VTABLE = rhi.IRenderStateContext.VTable{
     .setModelMatrix = setModelMatrix,
     .setInstanceBuffer = setInstanceBuffer,
     .setLODInstanceBuffer = setLODInstanceBuffer,
+    .setLODCompactSampleBuffer = setLODCompactSampleBuffer,
+    .setLODCompactInstanceBuffer = setLODCompactInstanceBuffer,
     .setTerrainPipelineBound = setTerrainPipelineBound,
     .setSelectionMode = setSelectionMode,
     .updateGlobalUniforms = updateGlobalUniforms,
@@ -1080,6 +1106,8 @@ const VULKAN_COMMAND_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{
     .draw = draw,
     .drawOffset = drawOffset,
     .drawIndexed = drawIndexed,
+    .drawCompactLOD = drawCompactLOD,
+    .drawCompactLODIndirectCount = drawCompactLODIndirectCount,
     .drawIndirect = drawIndirect,
     .drawIndirectCount = drawIndirectCount,
     .drawInstance = drawInstance,

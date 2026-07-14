@@ -100,13 +100,13 @@ pub const CompactLODSample = struct {
             },
             .color = unsignedField(bits, 69, u32) & 0x00ff_ffff,
             .lighting = .{
-                .sky_light = unsignedField(bits, 93, u8),
-                .block_light = unsignedField(bits, 97, u8),
-                .ambient_occlusion = @as(f32, @floatFromInt(unsignedField(bits, 101, u8))) / 63.0,
+                .sky_light = unsignedField(bits, 93, u8) & 0x0f,
+                .block_light = unsignedField(bits, 97, u8) & 0x0f,
+                .ambient_occlusion = @as(f32, @floatFromInt(unsignedField(bits, 101, u8) & 0x3f)) / 63.0,
             },
             .vegetation = .{
-                .tree_coverage = @as(f32, @floatFromInt(unsignedField(bits, 107, u8))) / 63.0,
-                .avg_tree_height = @as(f32, @floatFromInt(unsignedField(bits, 113, u8))) / VEGETATION_HEIGHT_SCALE,
+                .tree_coverage = @as(f32, @floatFromInt(unsignedField(bits, 107, u8) & 0x3f)) / 63.0,
+                .avg_tree_height = @as(f32, @floatFromInt(unsignedField(bits, 113, u8) & 0xff)) / VEGETATION_HEIGHT_SCALE,
                 .offset_x = 0.0,
                 .offset_z = 0.0,
                 .trunk = .air,
@@ -174,6 +174,10 @@ pub const CompactLODTile = struct {
         if (lod_level != .lod3 and lod_level != .lod4) return TileError.InvalidLod;
         if (source.width != LODSimplifiedData.getGridSize(lod_level)) return TileError.InvalidSourceData;
         if (hasUnsupportedVerticalSpans(source)) return TileError.UnsupportedSourceFeatures;
+        // The compact water path has no shoreline coverage geometry. Rendering
+        // a fractional cell as a full quad leaks water onto dry land, so keep
+        // the established CPU heightfield path for these tiles.
+        if (hasUnsupportedWaterTopology(source)) return TileError.UnsupportedSourceFeatures;
 
         const source_count = squareCount(source.width) orelse return TileError.InvalidSourceData;
         if (source.heightmap.len != source_count or
@@ -352,8 +356,8 @@ fn packSourceColumn(source: *const LODSimplifiedData, index: usize) CompactLODSa
     const layers = source.material_layers[index];
 
     var bits: u128 = 0;
-    bits |= @as(u128, @bitCast(quantizeTerrainHeight(terrainHeightForColumn(source, index))));
-    bits |= @as(u128, @bitCast(water_height)) << 16;
+    bits |= @as(u128, @as(u16, @bitCast(quantizeTerrainHeight(terrainHeightForColumn(source, index)))));
+    bits |= @as(u128, @as(u16, @bitCast(water_height))) << 16;
     bits |= @as(u128, if (water.is_surface) quantizeRange(water.depth, DEPTH_SCALE, 255) else 0) << 32;
     bits |= @as(u128, if (water.is_surface) quantizeUnit(water.coverage, 255) else 0) << 40;
     bits |= @as(u128, reduceMaterial(layers.surface)) << 48;
@@ -378,14 +382,12 @@ fn quantizeTerrainHeight(value: f32) i16 {
 }
 
 fn terrainHeightForColumn(source: *const LODSimplifiedData, index: usize) f32 {
-    const height = source.heightmap[index];
+    const terrain = source.heightmap[index];
     const water = source.water[index];
-    if (!water.is_surface or water.coverage <= 0.0) return height;
-    const floor_height = if (water.depth > 0.0)
-        @max(0.0, water.surface_height - water.depth)
-    else
-        water.surface_height;
-    return @min(height, floor_height);
+    if (!water.is_surface or water.coverage <= 0.0 or terrain < water.surface_height) return terrain;
+    // Some coarse source columns encode the water surface as their height. Keep
+    // the independently summarized floor in that ambiguous case.
+    return if (water.depth > 0.0) @max(0.0, water.surface_height - water.depth) else water.surface_height;
 }
 
 fn hasUnsupportedVerticalSpans(source: *const LODSimplifiedData) bool {
@@ -405,6 +407,23 @@ fn hasUnsupportedVerticalSpans(source: *const LODSimplifiedData) bool {
                 if (span.min_height > 0.01) return true;
             }
         }
+    }
+    return false;
+}
+
+fn hasUnsupportedWaterTopology(source: *const LODSimplifiedData) bool {
+    var has_water = false;
+    var has_dry = false;
+    for (source.water) |water| {
+        if (water.is_surface and water.coverage > 0.001 and water.coverage < 0.999) return true;
+        if (water.is_surface and water.coverage >= 0.999) {
+            has_water = true;
+        } else {
+            has_dry = true;
+        }
+        // The reusable full grid cannot reject an individual shoreline cell at
+        // primitive granularity. Mixed wet/dry tiles retain the CPU water mesh.
+        if (has_water and has_dry) return true;
     }
     return false;
 }
@@ -474,11 +493,30 @@ fn apronToSourceCoordinate(apron_coordinate: u32, width: u32) u32 {
     return @min(apron_coordinate - 1, width - 1);
 }
 
+test "CompactLODSample golden vector decodes signed 128-bit height fields" {
+    // terrain=-12.5, water=7.25. The upper word also proves that decode does
+    // not accidentally truncate the packed u128 before reading later fields.
+    var bits: u128 = 0;
+    bits |= @as(u128, @as(u16, @bitCast(@as(i16, -100))));
+    bits |= @as(u128, @as(u16, @bitCast(@as(i16, 58)))) << 16;
+    bits |= @as(u128, 9) << 32;
+    bits |= @as(u128, 255) << 40;
+    bits |= @as(u128, 15) << 93;
+    var bytes: [16]u8 = undefined;
+    std.mem.writeInt(u64, bytes[0..8], @truncate(bits), .little);
+    std.mem.writeInt(u64, bytes[8..16], @truncate(bits >> 64), .little);
+    const decoded = (CompactLODSample{ .bytes = bytes }).decode();
+    try std.testing.expectEqual(@as(f32, -12.5), decoded.terrain_height);
+    try std.testing.expectEqual(@as(f32, 7.25), decoded.water.surface_height);
+    try std.testing.expectEqual(@as(u8, 15), decoded.lighting.sky_light);
+}
+
 test "CompactLODTile round trips its versioned little-endian payload" {
     const allocator = std.testing.allocator;
     var source = try LODSimplifiedData.init(allocator, .lod3);
     defer source.deinit();
-    source.setColumn(2, 3, 123.125, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0xaabb_ccdd, .{ .is_surface = true, .surface_height = 124.25, .depth = 3.5, .coverage = 0.75 }, .{ .sky_light = 15, .block_light = 7, .ambient_occlusion = 0.5 }, .{ .tree_coverage = 0.5, .avg_tree_height = 12.5, .offset_x = 0.25, .offset_z = 0.75, .trunk = .wood, .leaves = .leaves });
+    for (source.water) |*water| water.* = .{ .is_surface = true, .surface_height = 124.25, .depth = 3.5, .coverage = 1.0 };
+    source.setColumn(2, 3, 123.125, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0xaabb_ccdd, .{ .is_surface = true, .surface_height = 124.25, .depth = 3.5, .coverage = 1.0 }, .{ .sky_light = 15, .block_light = 7, .ambient_occlusion = 0.5 }, .{ .tree_coverage = 0.5, .avg_tree_height = 12.5, .offset_x = 0.25, .offset_z = 0.75, .trunk = .wood, .leaves = .leaves });
     source.setColumnProvenance(2, 3, .edited);
 
     var tile = try CompactLODTile.initFromSimplified(allocator, .lod3, &source);
@@ -500,6 +538,7 @@ test "CompactLODTile clamps and rounds quantized source values deterministically
     const allocator = std.testing.allocator;
     var source = try LODSimplifiedData.init(allocator, .lod4);
     defer source.deinit();
+    for (source.water) |*water| water.* = .{ .is_surface = true, .surface_height = 9999.0, .depth = 9999.0, .coverage = 1.0 };
     source.setColumn(0, 0, 1.07, .plains, LODMaterialLayers.default(.stone), 0, .{ .is_surface = true, .surface_height = 9999.0, .depth = 9999.0, .coverage = 2.0 }, .{ .sky_light = 255, .block_light = 99, .ambient_occlusion = -1.0 }, .{ .tree_coverage = 2.0, .avg_tree_height = 999.0, .offset_x = 0.0, .offset_z = 0.0, .trunk = .air, .leaves = .air });
     source.setHeight(1, 0, -9999.0);
 
@@ -515,6 +554,18 @@ test "CompactLODTile clamps and rounds quantized source values deterministically
     try std.testing.expectEqual(@as(f32, 0.0), first.lighting.ambient_occlusion);
     try std.testing.expectEqual(@as(f32, 127.5), first.vegetation.avg_tree_height);
     try std.testing.expectEqual(@as(f32, -4096.0), second.terrain_height);
+}
+
+test "CompactLODTile rejects partial water so CPU shore geometry is retained" {
+    var source = try LODSimplifiedData.init(std.testing.allocator, .lod4);
+    defer source.deinit();
+    source.setColumn(1, 1, 64.0, .plains, LODMaterialLayers.default(.sand), 0, .{
+        .is_surface = true,
+        .surface_height = 65.0,
+        .depth = 1.0,
+        .coverage = 0.5,
+    }, .daylight, .empty);
+    try std.testing.expectError(TileError.UnsupportedSourceFeatures, CompactLODTile.initFromSimplified(std.testing.allocator, .lod4, &source));
 }
 
 test "CompactLODTile uses the water-height sentinel for dry columns" {
@@ -585,6 +636,7 @@ test "CompactLODTile stores terrain floor separately from water surface" {
     const allocator = std.testing.allocator;
     var source = try LODSimplifiedData.init(allocator, .lod4);
     defer source.deinit();
+    for (source.water) |*water| water.* = .{ .is_surface = true, .surface_height = 64.0, .depth = 10.0, .coverage = 1.0 };
     source.setColumn(1, 1, 64.0, .ocean, .{ .surface = .water, .subsurface = .sand, .foundation = .stone }, 0, .{ .is_surface = true, .surface_height = 64.0, .depth = 10.0, .coverage = 1.0 }, .daylight, .empty);
     var tile = try CompactLODTile.initFromSimplified(allocator, .lod4, &source);
     defer tile.deinit();

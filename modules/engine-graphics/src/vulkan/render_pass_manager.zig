@@ -16,6 +16,11 @@ const Utils = @import("utils.zig");
 /// Depth format used throughout the renderer
 pub const DEPTH_FORMAT = c.VK_FORMAT_D32_SFLOAT;
 
+/// Layout of a swapchain-like output after its final render pass.
+pub fn swapchainOutputLayout(headless: bool) c.VkImageLayout {
+    return if (headless) c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL else c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+}
+
 /// Render pass manager handles all render pass and framebuffer resources
 pub const RenderPassManager = struct {
     allocator: ?std.mem.Allocator = null,
@@ -357,8 +362,11 @@ pub const RenderPassManager = struct {
         try Utils.checkVk(c.vkCreateRenderPass(vk_device, &rp_info, null, &self.g_render_pass));
     }
 
-    /// Create post-process render pass
-    pub fn createPostProcessRenderPass(self: *RenderPassManager, vk_device: c.VkDevice, swapchain_format: c.VkFormat) !void {
+    /// Create post-process render pass.
+    ///
+    /// Headless output remains color-attachment optimal so screenshots can
+    /// transition it to a transfer source without pretending it was presented.
+    pub fn createPostProcessRenderPass(self: *RenderPassManager, vk_device: c.VkDevice, swapchain_format: c.VkFormat, headless: bool) !void {
         if (self.post_process_render_pass) |rp| {
             c.vkDestroyRenderPass(vk_device, rp, null);
             self.post_process_render_pass = null;
@@ -367,12 +375,16 @@ pub const RenderPassManager = struct {
         var color_attachment = std.mem.zeroes(c.VkAttachmentDescription);
         color_attachment.format = swapchain_format;
         color_attachment.samples = c.VK_SAMPLE_COUNT_1_BIT;
-        color_attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD;
+        // The offscreen image is not acquired from WSI. Its first use has an
+        // undefined layout, and this pass fills every pixel, so discard and
+        // clear it rather than claiming a nonexistent PRESENT transition.
+        color_attachment.loadOp = if (headless) c.VK_ATTACHMENT_LOAD_OP_CLEAR else c.VK_ATTACHMENT_LOAD_OP_LOAD;
         color_attachment.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
         color_attachment.stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color_attachment.stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color_attachment.initialLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        color_attachment.finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        const output_layout = swapchainOutputLayout(headless);
+        color_attachment.initialLayout = if (headless) c.VK_IMAGE_LAYOUT_UNDEFINED else output_layout;
+        color_attachment.finalLayout = output_layout;
 
         var color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
 
@@ -401,8 +413,8 @@ pub const RenderPassManager = struct {
         try Utils.checkVk(c.vkCreateRenderPass(vk_device, &rp_info, null, &self.post_process_render_pass));
     }
 
-    /// Create UI swapchain render pass
-    pub fn createUISwapchainRenderPass(self: *RenderPassManager, vk_device: c.VkDevice, swapchain_format: c.VkFormat) !void {
+    /// Create UI swapchain render pass.
+    pub fn createUISwapchainRenderPass(self: *RenderPassManager, vk_device: c.VkDevice, swapchain_format: c.VkFormat, headless: bool) !void {
         if (self.ui_swapchain_render_pass) |rp| {
             c.vkDestroyRenderPass(vk_device, rp, null);
             self.ui_swapchain_render_pass = null;
@@ -415,8 +427,9 @@ pub const RenderPassManager = struct {
         color_attachment.storeOp = c.VK_ATTACHMENT_STORE_OP_STORE;
         color_attachment.stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         color_attachment.stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color_attachment.initialLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        color_attachment.finalLayout = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        const output_layout = swapchainOutputLayout(headless);
+        color_attachment.initialLayout = output_layout;
+        color_attachment.finalLayout = output_layout;
 
         var color_ref = c.VkAttachmentReference{ .attachment = 0, .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
 

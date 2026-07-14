@@ -145,6 +145,29 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         self.gpu_bridge.upload(upload_task.mesh) catch |err| {
             self.profiling.end(.upload_submission, submission_timer);
             log.log.warn("LOD{} mesh upload failed (will retry): {}", .{ upload_task.lod_idx, err });
+            // Compact allocation/update failures must not strand a far region
+            // in .mesh_ready. Rebuild its stable CPU heightfield while the
+            // upload task still pins the source, then put it straight back on
+            // the upload queue. This also covers LOD4.
+            if (upload_task.mesh.isCompact()) {
+                self.fallbackCompactMeshToCpu(upload_task.mesh, upload_task.chunk) catch |fallback_err| {
+                    log.log.warn("LOD{} compact fallback build failed; retaining retryable compact payload: {}", .{ upload_task.lod_idx, fallback_err });
+                    self.mutex.lock();
+                    self.stats.upload_failures += 1;
+                    uploads += 1;
+                    self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
+                    upload_task.chunk.unpin();
+                    self.mutex.unlock();
+                    return;
+                };
+                self.mutex.lock();
+                self.stats.upload_failures += 1;
+                uploads += 1;
+                self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
+                upload_task.chunk.unpin();
+                self.mutex.unlock();
+                continue;
+            }
             self.mutex.lock();
             self.stats.upload_failures += 1;
             uploads += 1;

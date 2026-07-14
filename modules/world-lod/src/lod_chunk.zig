@@ -208,6 +208,9 @@ pub const LODChunk = struct {
     /// cap. A source revision or cap increase makes it eligible again.
     store_size_limited: bool,
     store_size_limit_cap_mb: u32,
+    /// Sticky for this region lifetime after a compact runtime submission
+    /// failure, preventing an auto/force rebuild loop.
+    compact_disabled: bool,
 
     /// Creates an empty LOD region record in the missing state.
     /// Source data, mesh handles, readiness counts, and transition state are initialized to safe defaults.
@@ -233,6 +236,7 @@ pub const LODChunk = struct {
             .store_write_queued = false,
             .store_size_limited = false,
             .store_size_limit_cap_mb = 0,
+            .compact_disabled = false,
         };
     }
 

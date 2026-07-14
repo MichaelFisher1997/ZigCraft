@@ -30,6 +30,8 @@ pub const LODGPUBridge = struct {
     on_wait_idle: *const fn (ctx: *anyopaque) void,
     /// Opaque context pointer (typically the concrete RHI instance).
     ctx: *anyopaque,
+    /// Optional capability probe for compact storage-buffer vertex pulling.
+    on_supports_compact: ?*const fn (ctx: *anyopaque) bool = null,
 
     fn hasInvalidCtx(self: LODGPUBridge) bool {
         const ctx_addr = @intFromPtr(self.ctx);
@@ -65,6 +67,12 @@ pub const LODGPUBridge = struct {
         self.assertValidCtx();
         self.on_wait_idle(self.ctx);
     }
+
+    pub fn supportsCompact(self: LODGPUBridge) bool {
+        if (self.hasInvalidCtx()) return false;
+        const probe = self.on_supports_compact orelse return false;
+        return probe(self.ctx);
+    }
 };
 
 /// Type aliases used by LODRenderInterface for mesh/region maps.
@@ -77,6 +85,19 @@ pub const ChunkChecker = *const fn (chunk_x: i32, chunk_z: i32, ctx: *anyopaque)
 pub const LODRenderLayer = enum {
     terrain,
     fluid,
+};
+
+/// Renderer-owned LOD pool accounting. Pool allocation and slack are reported
+/// separately because every pool buffer also has a same-sized CPU shadow.
+pub const LODRendererMemoryStats = struct {
+    pool_gpu_capacity_bytes: usize = 0,
+    pool_gpu_allocated_bytes: usize = 0,
+    pool_gpu_slack_bytes: usize = 0,
+    pool_cpu_shadow_bytes: usize = 0,
+    compact_pool_capacity_bytes: usize = 0,
+    compact_pool_allocated_bytes: usize = 0,
+    compact_pool_free_bytes: usize = 0,
+    compact_pool_retired_bytes: usize = 0,
 };
 
 /// Type-erased interface for LOD rendering.
@@ -129,6 +150,7 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         max_distance_chunks: ?i32,
     ) void = null,
+    memory_stats_fn: ?*const fn (self_ptr: *anyopaque) LODRendererMemoryStats = null,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
     /// Opaque pointer to the concrete renderer.
@@ -181,5 +203,10 @@ pub const LODRenderInterface = struct {
 
     pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
         if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    }
+
+    pub fn memoryStats(self: LODRenderInterface) LODRendererMemoryStats {
+        if (self.memory_stats_fn) |memory_stats| return memory_stats(self.ptr);
+        return .{};
     }
 };

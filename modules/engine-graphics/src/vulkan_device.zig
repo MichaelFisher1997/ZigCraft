@@ -79,6 +79,7 @@ pub const VulkanDevice = struct {
     draw_indirect_first_instance: bool = false,
     draw_indirect_count: bool = false,
     vkCmdDrawIndirectCountKHR: ?*const fn (c.VkCommandBuffer, c.VkBuffer, c.VkDeviceSize, c.VkBuffer, c.VkDeviceSize, u32, u32) callconv(.c) void = null,
+    vkCmdDrawIndexedIndirectCountKHR: ?*const fn (c.VkCommandBuffer, c.VkBuffer, c.VkDeviceSize, c.VkBuffer, c.VkDeviceSize, u32, u32) callconv(.c) void = null,
     timestamp_period: f32 = 1.0,
 
     pub fn init(allocator: std.mem.Allocator, window: *c.SDL_Window) !VulkanDevice {
@@ -402,7 +403,11 @@ pub const VulkanDevice = struct {
             const proc = c.vkGetDeviceProcAddr(self.vk_device, "vkCmdDrawIndirectCountKHR");
             if (proc) |function| {
                 self.vkCmdDrawIndirectCountKHR = @ptrCast(function);
-                self.draw_indirect_count = true;
+                const indexed_proc = c.vkGetDeviceProcAddr(self.vk_device, "vkCmdDrawIndexedIndirectCountKHR");
+                if (indexed_proc) |indexed_function| {
+                    self.vkCmdDrawIndexedIndirectCountKHR = @ptrCast(indexed_function);
+                    self.draw_indirect_count = true;
+                }
             }
         }
 

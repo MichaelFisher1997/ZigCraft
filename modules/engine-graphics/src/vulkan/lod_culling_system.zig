@@ -18,23 +18,26 @@ const LODCullingSystem = struct {
     capacity: usize,
     candidates: [FRAME_COUNT]Utils.VulkanBuffer,
     counters: [FRAME_COUNT]rhi.BufferHandle,
-    counter_readbacks: [FRAME_COUNT]Utils.VulkanBuffer,
-    terrain_ids: [FRAME_COUNT]Utils.VulkanBuffer,
-    water_ids: [FRAME_COUNT]Utils.VulkanBuffer,
     terrain_instances: [FRAME_COUNT]rhi.BufferHandle,
     water_instances: [FRAME_COUNT]rhi.BufferHandle,
     terrain_indirect: [FRAME_COUNT]rhi.BufferHandle,
     water_indirect: [FRAME_COUNT]rhi.BufferHandle,
+    compact_terrain_instances: [FRAME_COUNT]rhi.BufferHandle,
+    compact_water_instances: [FRAME_COUNT]rhi.BufferHandle,
+    compact_terrain_indirect: [FRAME_COUNT]rhi.BufferHandle,
+    compact_water_indirect: [FRAME_COUNT]rhi.BufferHandle,
+    visible_ids: [FRAME_COUNT]rhi.BufferHandle,
+    validation_readback: [FRAME_COUNT]Utils.VulkanBuffer,
+    validation_expected: [FRAME_COUNT][MAX_LOD_LEVELS * 4]u32 = [_][MAX_LOD_LEVELS * 4]u32{[_]u32{0} ** (MAX_LOD_LEVELS * 4)} ** FRAME_COUNT,
+    validation_expected_ids: [FRAME_COUNT][]u32,
+    validation_pending: [FRAME_COUNT]bool = [_]bool{false} ** FRAME_COUNT,
+    validation_enabled: bool,
+    diagnostics_state: culling.LODCullDiagnostics = .{},
     descriptor_pool: c.VkDescriptorPool = null,
     descriptor_layout: c.VkDescriptorSetLayout = null,
     descriptor_sets: [FRAME_COUNT]c.VkDescriptorSet = std.mem.zeroes([FRAME_COUNT]c.VkDescriptorSet),
     pipeline_layout: c.VkPipelineLayout = null,
     pipeline: c.VkPipeline = null,
-    validate: bool,
-    expected_counts: [FRAME_COUNT][MAX_LOD_LEVELS * 2]u32 = undefined,
-    expected_valid: [FRAME_COUNT]bool = [_]bool{false} ** FRAME_COUNT,
-    expected_ids: [FRAME_COUNT][2]std.ArrayListUnmanaged(u32) = undefined,
-    validation_mismatch_count: u32 = 0,
 
     fn init(allocator: std.mem.Allocator, ctx: *VulkanContext, requested_capacity: usize) !*LODCullingSystem {
         const self = try allocator.create(LODCullingSystem);
@@ -46,34 +49,49 @@ const LODCullingSystem = struct {
             .capacity = capacity,
             .candidates = std.mem.zeroes([FRAME_COUNT]Utils.VulkanBuffer),
             .counters = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
-            .counter_readbacks = std.mem.zeroes([FRAME_COUNT]Utils.VulkanBuffer),
-            .terrain_ids = std.mem.zeroes([FRAME_COUNT]Utils.VulkanBuffer),
-            .water_ids = std.mem.zeroes([FRAME_COUNT]Utils.VulkanBuffer),
             .terrain_instances = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
             .water_instances = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
             .terrain_indirect = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
             .water_indirect = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
-            .validate = envEnabled("ZIGCRAFT_LOD_GPU_CULLING_VALIDATE"),
-            .expected_ids = undefined,
+            .compact_terrain_instances = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
+            .compact_water_instances = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
+            .compact_terrain_indirect = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
+            .compact_water_indirect = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
+            .visible_ids = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
+            .validation_readback = std.mem.zeroes([FRAME_COUNT]Utils.VulkanBuffer),
+            .validation_expected_ids = undefined,
+            .validation_enabled = envFlag("ZIGCRAFT_LOD_GPU_CULLING_VALIDATE"),
         };
-        for (&self.expected_ids) |*per_frame| {
-            for (per_frame) |*ids| ids.* = .empty;
-        }
+        for (&self.validation_expected_ids) |*ids| ids.* = &.{};
         errdefer self.deinit();
 
         const candidate_bytes = capacity * @sizeOf(culling.LODCullCandidate);
         const stream_instances = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.InstanceData);
+        const compact_stream_instances = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.CompactLODInstance);
         const stream_commands = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndirectCommand);
+        const compact_stream_commands = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndexedIndirectCommand);
+        const visible_id_count = capacity * MAX_LOD_LEVELS * 4;
         for (0..FRAME_COUNT) |i| {
             self.candidates[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, candidate_bytes, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            self.counters[i] = try ctx.resources.createBuffer(MAX_LOD_LEVELS * 2 * @sizeOf(u32), .indirect);
-            self.counter_readbacks[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, MAX_LOD_LEVELS * 2 * @sizeOf(u32), c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            self.terrain_ids[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, capacity * MAX_LOD_LEVELS * @sizeOf(u32), c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            self.water_ids[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, capacity * MAX_LOD_LEVELS * @sizeOf(u32), c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            self.counters[i] = try ctx.resources.createBuffer(MAX_LOD_LEVELS * 4 * @sizeOf(u32), .indirect);
             self.terrain_instances[i] = try ctx.resources.createBuffer(stream_instances, .storage);
             self.water_instances[i] = try ctx.resources.createBuffer(stream_instances, .storage);
             self.terrain_indirect[i] = try ctx.resources.createBuffer(stream_commands, .indirect);
             self.water_indirect[i] = try ctx.resources.createBuffer(stream_commands, .indirect);
+            self.compact_terrain_instances[i] = try ctx.resources.createBuffer(compact_stream_instances, .storage);
+            self.compact_water_instances[i] = try ctx.resources.createBuffer(compact_stream_instances, .storage);
+            self.compact_terrain_indirect[i] = try ctx.resources.createBuffer(compact_stream_commands, .indirect);
+            self.compact_water_indirect[i] = try ctx.resources.createBuffer(compact_stream_commands, .indirect);
+            self.visible_ids[i] = try ctx.resources.createBuffer(visible_id_count * @sizeOf(u32), .storage);
+            if (self.validation_enabled) {
+                self.validation_expected_ids[i] = try allocator.alloc(u32, visible_id_count);
+                self.validation_readback[i] = try Utils.createVulkanBuffer(
+                    &ctx.vulkan_device,
+                    (MAX_LOD_LEVELS * 4 + visible_id_count) * @sizeOf(u32),
+                    c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                );
+            }
         }
         try self.initPipeline();
         return self;
@@ -85,21 +103,24 @@ const LODCullingSystem = struct {
         for (0..FRAME_COUNT) |i| {
             destroyNative(device, &self.candidates[i]);
             if (self.counters[i] != 0) self.ctx.resources.destroyBuffer(self.counters[i]);
-            destroyNative(device, &self.counter_readbacks[i]);
-            destroyNative(device, &self.terrain_ids[i]);
-            destroyNative(device, &self.water_ids[i]);
-            for (&self.expected_ids[i]) |*ids| ids.deinit(self.allocator);
             if (self.terrain_instances[i] != 0) self.ctx.resources.destroyBuffer(self.terrain_instances[i]);
             if (self.water_instances[i] != 0) self.ctx.resources.destroyBuffer(self.water_instances[i]);
             if (self.terrain_indirect[i] != 0) self.ctx.resources.destroyBuffer(self.terrain_indirect[i]);
             if (self.water_indirect[i] != 0) self.ctx.resources.destroyBuffer(self.water_indirect[i]);
+            if (self.compact_terrain_instances[i] != 0) self.ctx.resources.destroyBuffer(self.compact_terrain_instances[i]);
+            if (self.compact_water_instances[i] != 0) self.ctx.resources.destroyBuffer(self.compact_water_instances[i]);
+            if (self.compact_terrain_indirect[i] != 0) self.ctx.resources.destroyBuffer(self.compact_terrain_indirect[i]);
+            if (self.compact_water_indirect[i] != 0) self.ctx.resources.destroyBuffer(self.compact_water_indirect[i]);
+            if (self.visible_ids[i] != 0) self.ctx.resources.destroyBuffer(self.visible_ids[i]);
+            destroyNative(device, &self.validation_readback[i]);
+            if (self.validation_expected_ids[i].len != 0) self.allocator.free(self.validation_expected_ids[i]);
         }
         self.allocator.destroy(self);
     }
 
     fn dispatch(self: *LODCullingSystem, frame_index: usize, input: []const culling.LODCullCandidate, config: culling.LODCullDispatch) bool {
         if (frame_index >= FRAME_COUNT or input.len > self.capacity or input.len == 0) return false;
-        self.validatePrevious(frame_index);
+        self.validateCompletedFrame(frame_index);
         const command_buffer = self.ctx.frames.command_buffers[frame_index];
         if (command_buffer == null or self.candidates[frame_index].mapped_ptr == null) return false;
         @memcpy(@as([*]u8, @ptrCast(self.candidates[frame_index].mapped_ptr.?))[0 .. input.len * @sizeOf(culling.LODCullCandidate)], std.mem.sliceAsBytes(input));
@@ -109,12 +130,18 @@ const LODCullingSystem = struct {
         const terrain_indirect = self.lookup(self.terrain_indirect[frame_index]) orelse return false;
         const water_indirect = self.lookup(self.water_indirect[frame_index]) orelse return false;
         const cmd = command_buffer;
-        const counter_bytes = MAX_LOD_LEVELS * 2 * @sizeOf(u32);
+        const counter_bytes = MAX_LOD_LEVELS * 4 * @sizeOf(u32);
         const stream_command_bytes = self.capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndirectCommand);
+        const compact_stream_command_bytes = self.capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndexedIndirectCommand);
         const counters = self.lookup(self.counters[frame_index]) orelse return false;
+        const visible_ids = self.lookup(self.visible_ids[frame_index]) orelse return false;
         c.vkCmdFillBuffer(cmd, counters.buffer, 0, counter_bytes, 0);
         c.vkCmdFillBuffer(cmd, terrain_indirect.buffer, 0, stream_command_bytes, 0);
         c.vkCmdFillBuffer(cmd, water_indirect.buffer, 0, stream_command_bytes, 0);
+        const compact_terrain_indirect = self.lookup(self.compact_terrain_indirect[frame_index]) orelse return false;
+        const compact_water_indirect = self.lookup(self.compact_water_indirect[frame_index]) orelse return false;
+        c.vkCmdFillBuffer(cmd, compact_terrain_indirect.buffer, 0, compact_stream_command_bytes, 0);
+        c.vkCmdFillBuffer(cmd, compact_water_indirect.buffer, 0, compact_stream_command_bytes, 0);
         var transfer_to_compute = std.mem.zeroes(c.VkMemoryBarrier);
         transfer_to_compute.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         transfer_to_compute.srcAccessMask = c.VK_ACCESS_HOST_WRITE_BIT | c.VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -124,29 +151,30 @@ const LODCullingSystem = struct {
         var push = config;
         push.candidate_count = @intCast(input.len);
         push.max_commands_per_lod = @intCast(self.capacity);
-        if (self.validate) {
-            self.expected_counts[frame_index] = tryExpectedIds(self, frame_index, input, push) catch return false;
-            self.expected_valid[frame_index] = true;
-        }
         c.vkCmdBindPipeline(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline);
         c.vkCmdBindDescriptorSets(cmd, c.VK_PIPELINE_BIND_POINT_COMPUTE, self.pipeline_layout, 0, 1, &self.descriptor_sets[frame_index], 0, null);
         c.vkCmdPushConstants(cmd, self.pipeline_layout, c.VK_SHADER_STAGE_COMPUTE_BIT, 0, @sizeOf(culling.LODCullDispatch), &push);
         c.vkCmdDispatch(cmd, @divFloor(@as(u32, @intCast(input.len)) + WORKGROUP_SIZE - 1, WORKGROUP_SIZE), 1, 1);
 
-        if (self.validate) {
+        if (self.validation_enabled) {
             var compute_to_copy = std.mem.zeroes(c.VkMemoryBarrier);
             compute_to_copy.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
             compute_to_copy.srcAccessMask = c.VK_ACCESS_SHADER_WRITE_BIT;
-            compute_to_copy.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT | c.VK_ACCESS_HOST_READ_BIT;
-            c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT | c.VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &compute_to_copy, 0, null, 0, null);
-            var copy = std.mem.zeroes(c.VkBufferCopy);
-            copy.size = counter_bytes;
-            c.vkCmdCopyBuffer(cmd, counters.buffer, self.counter_readbacks[frame_index].buffer, 1, &copy);
+            compute_to_copy.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
+            c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &compute_to_copy, 0, null, 0, null);
+            const copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = 0, .size = counter_bytes };
+            c.vkCmdCopyBuffer(cmd, counters.buffer, self.validation_readback[frame_index].buffer, 1, &copy);
+            const id_bytes = self.capacity * MAX_LOD_LEVELS * 4 * @sizeOf(u32);
+            const id_copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = counter_bytes, .size = id_bytes };
+            c.vkCmdCopyBuffer(cmd, visible_ids.buffer, self.validation_readback[frame_index].buffer, 1, &id_copy);
             var copy_to_host = std.mem.zeroes(c.VkMemoryBarrier);
             copy_to_host.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
             copy_to_host.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
             copy_to_host.dstAccessMask = c.VK_ACCESS_HOST_READ_BIT;
             c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &copy_to_host, 0, null, 0, null);
+            self.validation_expected[frame_index] = cpuExpectedCounts(input, push);
+            fillExpectedIds(self.validation_expected_ids[frame_index], input, push, self.capacity);
+            self.validation_pending[frame_index] = true;
         }
 
         var compute_to_draw = std.mem.zeroes(c.VkMemoryBarrier);
@@ -157,36 +185,43 @@ const LODCullingSystem = struct {
         return true;
     }
 
+    fn validateCompletedFrame(self: *LODCullingSystem, frame_index: usize) void {
+        if (!self.validation_enabled or !self.validation_pending[frame_index]) return;
+        // A frame slot is dispatched only after its fence has completed, so
+        // coherent transfer results are safe to read here without a stall.
+        const mapped = self.validation_readback[frame_index].mapped_ptr orelse return;
+        const actual: *const [MAX_LOD_LEVELS * 4]u32 = @ptrCast(@alignCast(mapped));
+        var mismatch = !std.mem.eql(u32, actual, &self.validation_expected[frame_index]);
+        const actual_ids: [*]u32 = @ptrCast(@alignCast(@as([*]u8, @ptrCast(mapped)) + MAX_LOD_LEVELS * 4 * @sizeOf(u32)));
+        for (0..MAX_LOD_LEVELS * 4) |stream| {
+            const count = @min(actual[stream], @as(u32, @intCast(self.capacity)));
+            const start = stream * self.capacity;
+            const gpu_slice = actual_ids[start .. start + count];
+            const cpu_slice = self.validation_expected_ids[frame_index][start .. start + count];
+            std.mem.sort(u32, gpu_slice, {}, std.sort.asc(u32));
+            std.mem.sort(u32, cpu_slice, {}, std.sort.asc(u32));
+            if (!std.mem.eql(u32, gpu_slice, cpu_slice)) mismatch = true;
+        }
+        if (mismatch) {
+            self.diagnostics_state.validation_mismatch_count +|= 1;
+        }
+        self.validation_pending[frame_index] = false;
+    }
+
     fn lookup(self: *LODCullingSystem, handle: rhi.BufferHandle) ?Utils.VulkanBuffer {
         return self.ctx.resources.buffers.get(handle);
     }
 
-    fn validatePrevious(self: *LODCullingSystem, frame_index: usize) void {
-        if (!self.validate or !self.expected_valid[frame_index]) return;
-        const mapped = self.counter_readbacks[frame_index].mapped_ptr orelse return;
-        const actual: *align(1) const [MAX_LOD_LEVELS * 2]u32 = @ptrCast(mapped);
-        var mismatch = false;
-        for (self.expected_counts[frame_index], actual.*) |expected, observed| {
-            if (expected != observed) mismatch = true;
-        }
-        mismatch = mismatch or !idsMatch(self.expected_ids[frame_index][0].items, self.terrain_ids[frame_index].mapped_ptr.?, actual.*, self.capacity, 0) or !idsMatch(self.expected_ids[frame_index][1].items, self.water_ids[frame_index].mapped_ptr.?, actual.*, self.capacity, MAX_LOD_LEVELS);
-        if (mismatch) {
-            self.validation_mismatch_count +%= 1;
-            @import("engine-core").log.log.warn("LOD GPU culling validation mismatch frame_slot={} expected={any} actual={any}", .{ frame_index, self.expected_counts[frame_index], actual.* });
-        }
-        self.expected_valid[frame_index] = false;
-    }
-
     fn initPipeline(self: *LODCullingSystem) !void {
         const vk = self.ctx.vulkan_device.vk_device;
-        var pool_sizes = [_]c.VkDescriptorPoolSize{.{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 8 * FRAME_COUNT }};
+        var pool_sizes = [_]c.VkDescriptorPoolSize{.{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 11 * FRAME_COUNT }};
         var pool_info = std.mem.zeroes(c.VkDescriptorPoolCreateInfo);
         pool_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_info.maxSets = FRAME_COUNT;
         pool_info.poolSizeCount = pool_sizes.len;
         pool_info.pPoolSizes = &pool_sizes;
         try Utils.checkVk(c.vkCreateDescriptorPool(vk, &pool_info, null, &self.descriptor_pool));
-        var bindings: [8]c.VkDescriptorSetLayoutBinding = undefined;
+        var bindings: [11]c.VkDescriptorSetLayoutBinding = undefined;
         for (&bindings, 0..) |*binding, i| binding.* = .{ .binding = @intCast(i), .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT, .pImmutableSamplers = null };
         var layout_info = std.mem.zeroes(c.VkDescriptorSetLayoutCreateInfo);
         layout_info.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -226,8 +261,8 @@ const LODCullingSystem = struct {
     }
 
     fn updateDescriptors(self: *LODCullingSystem) void {
-        var writes: [8 * FRAME_COUNT]c.VkWriteDescriptorSet = undefined;
-        var infos: [8 * FRAME_COUNT]c.VkDescriptorBufferInfo = undefined;
+        var writes: [11 * FRAME_COUNT]c.VkWriteDescriptorSet = undefined;
+        var infos: [11 * FRAME_COUNT]c.VkDescriptorBufferInfo = undefined;
         var n: usize = 0;
         for (0..FRAME_COUNT) |fi| {
             const buffers = [_]c.VkBuffer{
@@ -236,9 +271,12 @@ const LODCullingSystem = struct {
                 self.lookup(self.water_instances[fi]).?.buffer,
                 self.lookup(self.terrain_indirect[fi]).?.buffer,
                 self.lookup(self.water_indirect[fi]).?.buffer,
+                self.lookup(self.compact_terrain_instances[fi]).?.buffer,
+                self.lookup(self.compact_water_instances[fi]).?.buffer,
+                self.lookup(self.compact_terrain_indirect[fi]).?.buffer,
+                self.lookup(self.compact_water_indirect[fi]).?.buffer,
                 self.lookup(self.counters[fi]).?.buffer,
-                self.terrain_ids[fi].buffer,
-                self.water_ids[fi].buffer,
+                self.lookup(self.visible_ids[fi]).?.buffer,
             };
             for (buffers, 0..) |buffer, binding| {
                 infos[n] = .{ .buffer = buffer, .offset = 0, .range = c.VK_WHOLE_SIZE };
@@ -276,14 +314,16 @@ const VTABLE = culling.ILODCullingSystem.VTable{
         }
     }.call,
     .instanceBuffer = struct {
-        fn call(ptr: *anyopaque, frame: usize, fluid: bool) rhi.BufferHandle {
+        fn call(ptr: *anyopaque, frame: usize, fluid: bool, compact: bool) rhi.BufferHandle {
             const self: *LODCullingSystem = @ptrCast(@alignCast(ptr));
+            if (compact) return if (fluid) self.compact_water_instances[frame] else self.compact_terrain_instances[frame];
             return if (fluid) self.water_instances[frame] else self.terrain_instances[frame];
         }
     }.call,
     .indirectBuffer = struct {
-        fn call(ptr: *anyopaque, frame: usize, fluid: bool) rhi.BufferHandle {
+        fn call(ptr: *anyopaque, frame: usize, fluid: bool, compact: bool) rhi.BufferHandle {
             const self: *LODCullingSystem = @ptrCast(@alignCast(ptr));
+            if (compact) return if (fluid) self.compact_water_indirect[frame] else self.compact_terrain_indirect[frame];
             return if (fluid) self.water_indirect[frame] else self.terrain_indirect[frame];
         }
     }.call,
@@ -296,7 +336,7 @@ const VTABLE = culling.ILODCullingSystem.VTable{
     .diagnostics = struct {
         fn call(ptr: *anyopaque) culling.LODCullDiagnostics {
             const self: *LODCullingSystem = @ptrCast(@alignCast(ptr));
-            return .{ .validation_mismatch_count = self.validation_mismatch_count };
+            return self.diagnostics_state;
         }
     }.call,
 };
@@ -326,63 +366,42 @@ fn loadShader(device: c.VkDevice, allocator: std.mem.Allocator) !c.VkShaderModul
     return module;
 }
 
-fn cpuExpectedCounts(input: []const culling.LODCullCandidate, config: culling.LODCullDispatch) [MAX_LOD_LEVELS * 2]u32 {
-    var counts = [_]u32{0} ** (MAX_LOD_LEVELS * 2);
+fn envFlag(name: [*:0]const u8) bool {
+    const value = std.c.getenv(name) orelse return false;
+    const bytes = std.mem.span(value);
+    return !(std.mem.eql(u8, bytes, "0") or std.ascii.eqlIgnoreCase(bytes, "false"));
+}
+
+fn cpuExpectedCounts(input: []const culling.LODCullCandidate, config: culling.LODCullDispatch) [MAX_LOD_LEVELS * 4]u32 {
+    var counts = [_]u32{0} ** (MAX_LOD_LEVELS * 4);
     for (input) |candidate| {
         if (!cpuVisible(candidate, config)) continue;
         const lod = @min(candidate.lod_and_padding[0], MAX_LOD_LEVELS - 1);
-        if (candidate.terrain_command.vertexCount != 0 and counts[lod] < config.max_commands_per_lod) counts[lod] += 1;
-        const water_index = MAX_LOD_LEVELS + lod;
-        if (candidate.water_command.vertexCount != 0 and counts[water_index] < config.max_commands_per_lod) counts[water_index] += 1;
+        const base: usize = if (candidate.lod_and_padding[1] != 0) MAX_LOD_LEVELS * 2 else 0;
+        if (candidate.terrain_command.count != 0 and counts[base + lod] < config.max_commands_per_lod) counts[base + lod] += 1;
+        const water_index = base + MAX_LOD_LEVELS + lod;
+        if (candidate.water_command.count != 0 and counts[water_index] < config.max_commands_per_lod) counts[water_index] += 1;
     }
     return counts;
 }
 
-fn tryExpectedIds(self: *LODCullingSystem, frame_index: usize, input: []const culling.LODCullCandidate, config: culling.LODCullDispatch) ![MAX_LOD_LEVELS * 2]u32 {
-    var counts = [_]u32{0} ** (MAX_LOD_LEVELS * 2);
-    const stream_len = self.capacity * MAX_LOD_LEVELS;
-    for (&self.expected_ids[frame_index]) |*ids| {
-        try ids.resize(self.allocator, stream_len);
-        @memset(ids.items, std.math.maxInt(u32));
-    }
-    for (input, 0..) |candidate, candidate_id| {
+fn fillExpectedIds(output: []u32, input: []const culling.LODCullCandidate, config: culling.LODCullDispatch, capacity: usize) void {
+    @memset(output, std.math.maxInt(u32));
+    var counts = [_]u32{0} ** (MAX_LOD_LEVELS * 4);
+    for (input, 0..) |candidate, candidate_index| {
         if (!cpuVisible(candidate, config)) continue;
         const lod = @min(candidate.lod_and_padding[0], MAX_LOD_LEVELS - 1);
-        const terrain_slot = lod * self.capacity + counts[lod];
-        if (candidate.terrain_command.vertexCount != 0 and counts[lod] < config.max_commands_per_lod) {
-            self.expected_ids[frame_index][0].items[terrain_slot] = @intCast(candidate_id);
-            counts[lod] += 1;
-        }
-        const water_count_index = MAX_LOD_LEVELS + lod;
-        const water_slot = lod * self.capacity + counts[water_count_index];
-        if (candidate.water_command.vertexCount != 0 and counts[water_count_index] < config.max_commands_per_lod) {
-            self.expected_ids[frame_index][1].items[water_slot] = @intCast(candidate_id);
-            counts[water_count_index] += 1;
-        }
-    }
-    return counts;
-}
-
-fn idsMatch(expected: []const u32, mapped: *anyopaque, counts: [MAX_LOD_LEVELS * 2]u32, capacity: usize, count_base: usize) bool {
-    const actual: [*]align(1) const u32 = @ptrCast(mapped);
-    for (0..MAX_LOD_LEVELS) |lod| {
-        const base = lod * capacity;
-        const count = @min(@as(usize, counts[count_base + lod]), capacity);
-        var index: usize = 0;
-        while (index < count) : (index += 1) {
-            const actual_id = actual[base + index];
-            var found = false;
-            var expected_index: usize = 0;
-            while (expected_index < count) : (expected_index += 1) {
-                if (expected[base + expected_index] == actual_id) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) return false;
+        const base: usize = if (candidate.lod_and_padding[1] != 0) MAX_LOD_LEVELS * 2 else 0;
+        const streams = [_]struct { index: usize, count: u32 }{
+            .{ .index = base + lod, .count = candidate.terrain_command.count },
+            .{ .index = base + MAX_LOD_LEVELS + lod, .count = candidate.water_command.count },
+        };
+        for (streams) |stream| {
+            if (stream.count == 0 or counts[stream.index] >= config.max_commands_per_lod) continue;
+            output[stream.index * capacity + counts[stream.index]] = @intCast(candidate_index);
+            counts[stream.index] += 1;
         }
     }
-    return true;
 }
 
 fn cpuVisible(candidate: culling.LODCullCandidate, config: culling.LODCullDispatch) bool {
@@ -398,28 +417,19 @@ fn cpuVisible(candidate: culling.LODCullCandidate, config: culling.LODCullDispat
     return dx * dx + dz * dz <= config.max_distance_blocks * config.max_distance_blocks;
 }
 
-fn envEnabled(name: [:0]const u8) bool {
-    return @import("engine-core").envFlag(name, false);
-}
-
-test "LOD culling CPU validation mirrors terrain and water stream partitioning" {
+test "LOD culling CPU partitioning separates compact indexed streams" {
     var candidate = std.mem.zeroes(culling.LODCullCandidate);
     candidate.min_point = .{ -1, -1, -1, 0 };
     candidate.max_point = .{ 1, 1, 1, 0 };
-    candidate.terrain_command.vertexCount = 3;
-    candidate.water_command.vertexCount = 6;
+    candidate.terrain_command.count = 3;
+    candidate.water_command.count = 6;
     candidate.lod_and_padding[0] = 2;
     const planes = [_][4]f32{.{ 0, 0, 0, 1 }} ** 6;
     const counts = cpuExpectedCounts(&.{candidate}, .{ .planes = planes, .candidate_count = 1, .max_distance_blocks = 10, .max_commands_per_lod = 4 });
     try std.testing.expectEqual(@as(u32, 1), counts[2]);
     try std.testing.expectEqual(@as(u32, 1), counts[MAX_LOD_LEVELS + 2]);
-}
-
-test "LOD culling validation compares candidate sets independent of atomic order" {
-    var expected = [_]u32{std.math.maxInt(u32)} ** (MAX_LOD_LEVELS * 2);
-    expected[0] = 4;
-    expected[1] = 9;
-    const actual = [_]u32{ 9, 4 } ++ ([_]u32{0} ** (MAX_LOD_LEVELS * 2 - 2));
-    const counts = [_]u32{2} ++ ([_]u32{0} ** (MAX_LOD_LEVELS * 2 - 1));
-    try std.testing.expect(idsMatch(&expected, @ptrCast(@constCast(&actual)), counts, 2, 0));
+    candidate.lod_and_padding[1] = 1;
+    const compact_counts = cpuExpectedCounts(&.{candidate}, .{ .planes = planes, .candidate_count = 1, .max_distance_blocks = 10, .max_commands_per_lod = 4 });
+    try std.testing.expectEqual(@as(u32, 1), compact_counts[MAX_LOD_LEVELS * 2 + 2]);
+    try std.testing.expectEqual(@as(u32, 1), compact_counts[MAX_LOD_LEVELS * 3 + 2]);
 }
