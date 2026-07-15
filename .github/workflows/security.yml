@@ -24,7 +24,7 @@ jobs:
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run Semgrep
         run: semgrep scan --config p/default --severity ERROR --error --sarif --output semgrep.sarif
@@ -39,7 +39,7 @@ jobs:
     name: Gitleaks Secrets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -58,7 +58,7 @@ jobs:
     name: Trivy Filesystem
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
@@ -87,7 +87,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Generate CycloneDX SBOM
         uses: anchore/sbom-action@v0
