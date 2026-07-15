@@ -39,6 +39,7 @@ test {
     _ = @import("engine-graphics").descriptor_manager_tests;
     _ = @import("engine-graphics").descriptor_manager_error_tests;
     _ = @import("engine-graphics").shader_registry_tests;
+    _ = @import("engine-graphics").screenshot_tests;
     _ = @import("engine-graphics").frame_manager_tests;
     _ = @import("engine-graphics").final_composition;
     _ = @import("engine-graphics").render_pass_manager_tests;

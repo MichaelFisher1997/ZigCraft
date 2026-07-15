@@ -4,6 +4,7 @@ set -euo pipefail
 warn_threshold=5
 fail_threshold=10
 preset=""
+scenario=""
 
 if [[ $# -lt 2 ]]; then
     printf 'Usage: %s baseline.json new.json\n' "$0" >&2
@@ -18,6 +19,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --preset)
             preset="$2"
+            shift 2
+            ;;
+        --scenario)
+            scenario="$2"
             shift 2
             ;;
         --warn)
@@ -39,16 +44,15 @@ read_json() {
     jq -r "$1" "$2"
 }
 
+[[ -n "$preset" && -n "$scenario" ]] || { printf 'Schema-v2 comparison requires --preset and --scenario.\n' >&2; exit 2; }
+python3 scripts/benchmark_baseline.py validate "$baseline"
+bash scripts/validate_benchmark_artifact.sh --result "$new"
+python3 scripts/benchmark_baseline.py compatibility "$baseline" "$new" --preset "$preset" --scenario "$scenario"
 baseline_source="$baseline"
-baseline_generated=$(read_json '.generated' "$baseline")
-if [[ "$baseline_generated" != "true" ]]; then
-    printf 'Baseline placeholder detected; refusing to skip benchmark regression gating.\n' >&2
-    exit 1
-fi
 
 if [[ -n "$preset" ]]; then
     baseline_source=$(mktemp)
-    jq -c --arg preset "$preset" '.presets[$preset]' "$baseline" > "$baseline_source"
+    jq -c --arg preset "$preset" --arg scenario "$scenario" '.results[$preset][$scenario]' "$baseline" > "$baseline_source"
     if [[ "$(read_json 'type' "$baseline_source")" == "null" ]]; then
         printf 'Baseline preset not found: %s\n' "$preset" >&2
         exit 2
@@ -75,8 +79,8 @@ baseline_fps_avg=$(read_json '.fps.avg' "$baseline_source")
 new_fps_avg=$(read_json '.fps.avg' "$new")
 baseline_fps_p1=$(read_json '.fps.p1' "$baseline_source")
 new_fps_p1=$(read_json '.fps.p1' "$new")
-baseline_gpu=$(read_json '.gpu_ms.total_avg' "$baseline_source")
-new_gpu=$(read_json '.gpu_ms.total_avg' "$new")
+baseline_gpu=$(read_json '.gpu_ms.total.avg' "$baseline_source")
+new_gpu=$(read_json '.gpu_ms.total.avg' "$new")
 baseline_draws=$(read_json '.draw_calls_avg' "$baseline_source")
 new_draws=$(read_json '.draw_calls_avg' "$new")
 

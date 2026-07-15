@@ -12,6 +12,53 @@ pub const WORKGROUP_SIZE: u32 = 64;
 pub const MAX_LOD_LEVELS: usize = 5;
 const FRAME_COUNT = rhi.MAX_FRAMES_IN_FLIGHT;
 
+/// Fixed readback sections used only by the opt-in GPU culling validator.
+/// Keeping the command and instance payloads beside the existing counters/IDs
+/// lets validation distinguish a visibility error from a bad indirect ABI.
+const ValidationLayout = struct {
+    counters_offset: usize = 0,
+    ids_offset: usize,
+    terrain_commands_offset: usize,
+    water_commands_offset: usize,
+    compact_terrain_commands_offset: usize,
+    compact_water_commands_offset: usize,
+    terrain_instances_offset: usize,
+    water_instances_offset: usize,
+    compact_terrain_instances_offset: usize,
+    compact_water_instances_offset: usize,
+    total_bytes: usize,
+
+    fn init(capacity: usize) ValidationLayout {
+        const counters_bytes = MAX_LOD_LEVELS * 4 * @sizeOf(u32);
+        const ids_bytes = capacity * MAX_LOD_LEVELS * 4 * @sizeOf(u32);
+        const command_bytes = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndirectCommand);
+        const compact_command_bytes = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.DrawIndexedIndirectCommand);
+        const instance_bytes = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.InstanceData);
+        const compact_instance_bytes = capacity * MAX_LOD_LEVELS * @sizeOf(rhi.CompactLODInstance);
+        const ids_offset = counters_bytes;
+        const terrain_commands_offset = ids_offset + ids_bytes;
+        const water_commands_offset = terrain_commands_offset + command_bytes;
+        const compact_terrain_commands_offset = water_commands_offset + command_bytes;
+        const compact_water_commands_offset = compact_terrain_commands_offset + compact_command_bytes;
+        const terrain_instances_offset = compact_water_commands_offset + compact_command_bytes;
+        const water_instances_offset = terrain_instances_offset + instance_bytes;
+        const compact_terrain_instances_offset = water_instances_offset + instance_bytes;
+        const compact_water_instances_offset = compact_terrain_instances_offset + compact_instance_bytes;
+        return .{
+            .ids_offset = ids_offset,
+            .terrain_commands_offset = terrain_commands_offset,
+            .water_commands_offset = water_commands_offset,
+            .compact_terrain_commands_offset = compact_terrain_commands_offset,
+            .compact_water_commands_offset = compact_water_commands_offset,
+            .terrain_instances_offset = terrain_instances_offset,
+            .water_instances_offset = water_instances_offset,
+            .compact_terrain_instances_offset = compact_terrain_instances_offset,
+            .compact_water_instances_offset = compact_water_instances_offset,
+            .total_bytes = compact_water_instances_offset + compact_instance_bytes,
+        };
+    }
+};
+
 const LODCullingSystem = struct {
     allocator: std.mem.Allocator,
     ctx: *VulkanContext,
@@ -30,7 +77,11 @@ const LODCullingSystem = struct {
     validation_readback: [FRAME_COUNT]Utils.VulkanBuffer,
     validation_expected: [FRAME_COUNT][MAX_LOD_LEVELS * 4]u32 = [_][MAX_LOD_LEVELS * 4]u32{[_]u32{0} ** (MAX_LOD_LEVELS * 4)} ** FRAME_COUNT,
     validation_expected_ids: [FRAME_COUNT][]u32,
+    validation_expected_candidates: [FRAME_COUNT][]culling.LODCullCandidate,
+    validation_candidate_count: [FRAME_COUNT]usize = [_]usize{0} ** FRAME_COUNT,
+    validation_layout: ValidationLayout,
     validation_pending: [FRAME_COUNT]bool = [_]bool{false} ** FRAME_COUNT,
+    validation_pending_generation: [FRAME_COUNT]u64 = [_]u64{0} ** FRAME_COUNT,
     validation_enabled: bool,
     diagnostics_state: culling.LODCullDiagnostics = .{},
     descriptor_pool: c.VkDescriptorPool = null,
@@ -60,9 +111,14 @@ const LODCullingSystem = struct {
             .visible_ids = [_]rhi.BufferHandle{0} ** FRAME_COUNT,
             .validation_readback = std.mem.zeroes([FRAME_COUNT]Utils.VulkanBuffer),
             .validation_expected_ids = undefined,
+            .validation_expected_candidates = undefined,
+            .validation_layout = ValidationLayout.init(capacity),
             .validation_enabled = envFlag("ZIGCRAFT_LOD_GPU_CULLING_VALIDATE"),
         };
-        for (&self.validation_expected_ids) |*ids| ids.* = &.{};
+        for (&self.validation_expected_ids, &self.validation_expected_candidates) |*ids, *candidates| {
+            ids.* = &.{};
+            candidates.* = &.{};
+        }
         errdefer self.deinit();
 
         const candidate_bytes = capacity * @sizeOf(culling.LODCullCandidate);
@@ -85,9 +141,10 @@ const LODCullingSystem = struct {
             self.visible_ids[i] = try ctx.resources.createBuffer(visible_id_count * @sizeOf(u32), .storage);
             if (self.validation_enabled) {
                 self.validation_expected_ids[i] = try allocator.alloc(u32, visible_id_count);
+                self.validation_expected_candidates[i] = try allocator.alloc(culling.LODCullCandidate, capacity);
                 self.validation_readback[i] = try Utils.createVulkanBuffer(
                     &ctx.vulkan_device,
-                    (MAX_LOD_LEVELS * 4 + visible_id_count) * @sizeOf(u32),
+                    self.validation_layout.total_bytes,
                     c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                 );
@@ -114,6 +171,7 @@ const LODCullingSystem = struct {
             if (self.visible_ids[i] != 0) self.ctx.resources.destroyBuffer(self.visible_ids[i]);
             destroyNative(device, &self.validation_readback[i]);
             if (self.validation_expected_ids[i].len != 0) self.allocator.free(self.validation_expected_ids[i]);
+            if (self.validation_expected_candidates[i].len != 0) self.allocator.free(self.validation_expected_candidates[i]);
         }
         self.allocator.destroy(self);
     }
@@ -162,11 +220,25 @@ const LODCullingSystem = struct {
             compute_to_copy.srcAccessMask = c.VK_ACCESS_SHADER_WRITE_BIT;
             compute_to_copy.dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
             c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &compute_to_copy, 0, null, 0, null);
-            const copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = 0, .size = counter_bytes };
+            const copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = self.validation_layout.counters_offset, .size = counter_bytes };
             c.vkCmdCopyBuffer(cmd, counters.buffer, self.validation_readback[frame_index].buffer, 1, &copy);
             const id_bytes = self.capacity * MAX_LOD_LEVELS * 4 * @sizeOf(u32);
-            const id_copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = counter_bytes, .size = id_bytes };
+            const id_copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = self.validation_layout.ids_offset, .size = id_bytes };
             c.vkCmdCopyBuffer(cmd, visible_ids.buffer, self.validation_readback[frame_index].buffer, 1, &id_copy);
+            const copies = [_]struct { source: c.VkBuffer, destination_offset: usize, size: usize }{
+                .{ .source = terrain_indirect.buffer, .destination_offset = self.validation_layout.terrain_commands_offset, .size = stream_command_bytes },
+                .{ .source = water_indirect.buffer, .destination_offset = self.validation_layout.water_commands_offset, .size = stream_command_bytes },
+                .{ .source = compact_terrain_indirect.buffer, .destination_offset = self.validation_layout.compact_terrain_commands_offset, .size = compact_stream_command_bytes },
+                .{ .source = compact_water_indirect.buffer, .destination_offset = self.validation_layout.compact_water_commands_offset, .size = compact_stream_command_bytes },
+                .{ .source = self.lookup(self.terrain_instances[frame_index]).?.buffer, .destination_offset = self.validation_layout.terrain_instances_offset, .size = self.capacity * MAX_LOD_LEVELS * @sizeOf(rhi.InstanceData) },
+                .{ .source = self.lookup(self.water_instances[frame_index]).?.buffer, .destination_offset = self.validation_layout.water_instances_offset, .size = self.capacity * MAX_LOD_LEVELS * @sizeOf(rhi.InstanceData) },
+                .{ .source = self.lookup(self.compact_terrain_instances[frame_index]).?.buffer, .destination_offset = self.validation_layout.compact_terrain_instances_offset, .size = self.capacity * MAX_LOD_LEVELS * @sizeOf(rhi.CompactLODInstance) },
+                .{ .source = self.lookup(self.compact_water_instances[frame_index]).?.buffer, .destination_offset = self.validation_layout.compact_water_instances_offset, .size = self.capacity * MAX_LOD_LEVELS * @sizeOf(rhi.CompactLODInstance) },
+            };
+            for (copies) |entry| {
+                const payload_copy = c.VkBufferCopy{ .srcOffset = 0, .dstOffset = @intCast(entry.destination_offset), .size = @intCast(entry.size) };
+                c.vkCmdCopyBuffer(cmd, entry.source, self.validation_readback[frame_index].buffer, 1, &payload_copy);
+            }
             var copy_to_host = std.mem.zeroes(c.VkMemoryBarrier);
             copy_to_host.sType = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER;
             copy_to_host.srcAccessMask = c.VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -174,6 +246,10 @@ const LODCullingSystem = struct {
             c.vkCmdPipelineBarrier(cmd, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &copy_to_host, 0, null, 0, null);
             self.validation_expected[frame_index] = cpuExpectedCounts(input, push);
             fillExpectedIds(self.validation_expected_ids[frame_index], input, push, self.capacity);
+            @memcpy(self.validation_expected_candidates[frame_index][0..input.len], input);
+            self.validation_candidate_count[frame_index] = input.len;
+            self.diagnostics_state.validation_generation +|= 1;
+            self.validation_pending_generation[frame_index] = self.diagnostics_state.validation_generation;
             self.validation_pending[frame_index] = true;
         }
 
@@ -190,12 +266,22 @@ const LODCullingSystem = struct {
         // A frame slot is dispatched only after its fence has completed, so
         // coherent transfer results are safe to read here without a stall.
         const mapped = self.validation_readback[frame_index].mapped_ptr orelse return;
-        const actual: *const [MAX_LOD_LEVELS * 4]u32 = @ptrCast(@alignCast(mapped));
+        const bytes: [*]const u8 = @ptrCast(mapped);
+        const actual: *const [MAX_LOD_LEVELS * 4]u32 = @ptrCast(@alignCast(bytes + self.validation_layout.counters_offset));
         var mismatch = !std.mem.eql(u32, actual, &self.validation_expected[frame_index]);
-        const actual_ids: [*]u32 = @ptrCast(@alignCast(@as([*]u8, @ptrCast(mapped)) + MAX_LOD_LEVELS * 4 * @sizeOf(u32)));
+        const actual_ids: [*]u32 = @ptrCast(@alignCast(@as([*]u8, @ptrCast(mapped)) + self.validation_layout.ids_offset));
         for (0..MAX_LOD_LEVELS * 4) |stream| {
             const count = @min(actual[stream], @as(u32, @intCast(self.capacity)));
             const start = stream * self.capacity;
+            for (0..count) |slot| {
+                const candidate_index = actual_ids[start + slot];
+                if (candidate_index >= self.validation_candidate_count[frame_index]) {
+                    mismatch = true;
+                    continue;
+                }
+                const candidate = self.validation_expected_candidates[frame_index][candidate_index];
+                if (!matchesPayload(self, bytes, stream, slot, candidate)) mismatch = true;
+            }
             const gpu_slice = actual_ids[start .. start + count];
             const cpu_slice = self.validation_expected_ids[frame_index][start .. start + count];
             std.mem.sort(u32, gpu_slice, {}, std.sort.asc(u32));
@@ -205,7 +291,55 @@ const LODCullingSystem = struct {
         if (mismatch) {
             self.diagnostics_state.validation_mismatch_count +|= 1;
         }
+        self.diagnostics_state.validation_completed_generation = self.validation_pending_generation[frame_index];
+        self.diagnostics_state.validation_completed_count +|= 1;
         self.validation_pending[frame_index] = false;
+    }
+
+    fn matchesPayload(self: *const LODCullingSystem, bytes: [*]const u8, stream: usize, slot: usize, candidate: culling.LODCullCandidate) bool {
+        const lod = @min(candidate.lod_and_padding[0], MAX_LOD_LEVELS - 1);
+        const output_index = lod * self.capacity + slot;
+        const compact = stream >= MAX_LOD_LEVELS * 2;
+        const water = stream % (MAX_LOD_LEVELS * 2) >= MAX_LOD_LEVELS;
+        const command = if (water) candidate.water_command else candidate.terrain_command;
+        if (!compact) {
+            const command_offset = (if (water) self.validation_layout.water_commands_offset else self.validation_layout.terrain_commands_offset) + output_index * @sizeOf(rhi.DrawIndirectCommand);
+            const actual_command: *const rhi.DrawIndirectCommand = @ptrCast(@alignCast(bytes + command_offset));
+            const expected_command = rhi.DrawIndirectCommand{
+                .vertexCount = command.count,
+                .instanceCount = command.instance_count,
+                .firstVertex = command.first,
+                .firstInstance = @intCast(output_index),
+            };
+            if (!std.mem.eql(u8, std.mem.asBytes(actual_command), std.mem.asBytes(&expected_command))) return false;
+            const instance_offset = (if (water) self.validation_layout.water_instances_offset else self.validation_layout.terrain_instances_offset) + output_index * @sizeOf(rhi.InstanceData);
+            const actual_instance: *const rhi.InstanceData = @ptrCast(@alignCast(bytes + instance_offset));
+            const expected_instance = rhi.InstanceData{
+                .model = candidate.model,
+                .mask_radius = candidate.instance_params[0],
+                .lod_fade = candidate.instance_params[1],
+                .padding = .{ candidate.instance_params[2], candidate.instance_params[3] },
+            };
+            return std.mem.eql(u8, std.mem.asBytes(actual_instance), std.mem.asBytes(&expected_instance));
+        }
+        const command_offset = (if (water) self.validation_layout.compact_water_commands_offset else self.validation_layout.compact_terrain_commands_offset) + output_index * @sizeOf(rhi.DrawIndexedIndirectCommand);
+        const actual_command: *const rhi.DrawIndexedIndirectCommand = @ptrCast(@alignCast(bytes + command_offset));
+        const expected_command = rhi.DrawIndexedIndirectCommand{
+            .indexCount = command.count,
+            .instanceCount = command.instance_count,
+            .firstIndex = command.first,
+            .vertexOffset = command.vertex_offset,
+            .firstInstance = @intCast(output_index),
+        };
+        if (!std.mem.eql(u8, std.mem.asBytes(actual_command), std.mem.asBytes(&expected_command))) return false;
+        const instance_offset = (if (water) self.validation_layout.compact_water_instances_offset else self.validation_layout.compact_terrain_instances_offset) + output_index * @sizeOf(rhi.CompactLODInstance);
+        const actual_instance: *const rhi.CompactLODInstance = @ptrCast(@alignCast(bytes + instance_offset));
+        const expected_instance = rhi.CompactLODInstance{
+            .model = candidate.model,
+            .params = candidate.instance_params,
+            .words = candidate.compact_words,
+        };
+        return std.mem.eql(u8, std.mem.asBytes(actual_instance), std.mem.asBytes(&expected_instance));
     }
 
     fn lookup(self: *LODCullingSystem, handle: rhi.BufferHandle) ?Utils.VulkanBuffer {
@@ -432,4 +566,17 @@ test "LOD culling CPU partitioning separates compact indexed streams" {
     const compact_counts = cpuExpectedCounts(&.{candidate}, .{ .planes = planes, .candidate_count = 1, .max_distance_blocks = 10, .max_commands_per_lod = 4 });
     try std.testing.expectEqual(@as(u32, 1), compact_counts[MAX_LOD_LEVELS * 2 + 2]);
     try std.testing.expectEqual(@as(u32, 1), compact_counts[MAX_LOD_LEVELS * 3 + 2]);
+}
+
+test "cleared fixed-capacity indirect entries are draw no-ops" {
+    // GPU culling submits a fixed-capacity MDI stream because RADV's indirect
+    // count path corrupts otherwise validated output. vkCmdFillBuffer writes
+    // this exact all-zero representation before each dispatch; Vulkan defines
+    // zero vertex/index counts as no-op draws.
+    const direct = std.mem.zeroes(rhi.DrawIndirectCommand);
+    try std.testing.expectEqual(@as(u32, 0), direct.vertexCount);
+    try std.testing.expectEqual(@as(u32, 0), direct.instanceCount);
+    const indexed = std.mem.zeroes(rhi.DrawIndexedIndirectCommand);
+    try std.testing.expectEqual(@as(u32, 0), indexed.indexCount);
+    try std.testing.expectEqual(@as(u32, 0), indexed.instanceCount);
 }

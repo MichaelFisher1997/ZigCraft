@@ -208,6 +208,11 @@ pub fn deinit(self: *Self) void {
     self.shutdownCacheIO();
     self.cache_io.deinit();
 
+    // All LOD workers and cache I/O are stopped. This is the sole manager
+    // lifecycle boundary allowed to issue a device-wide synchronization; the
+    // shutdown bucket keeps it out of runtime streaming telemetry.
+    self.waitIdleTracked(.shutdown);
+
     for (0..LODLevel.count) |i| {
         self.job_dispatcher.queues[i].deinit();
         self.allocator.destroy(self.job_dispatcher.queues[i]);
@@ -242,9 +247,9 @@ pub fn deinit(self: *Self) void {
     }
 
     self.ingestion_queue.deinit(self.allocator);
-    self.generation_candidates_scratch.deinit(self.allocator);
-    self.mesh_candidates_scratch.deinit(self.allocator);
-    self.upload_candidates_scratch.deinit(self.allocator);
+    self.generation_tokens.deinit(self.allocator);
+    self.transition_tokens.deinit(self.allocator);
+    self.fade_tokens.deinit(self.allocator);
 
     // NOTE: LODManager does NOT own the renderer lifetime.
     // The renderer is owned by World and deinit'd there.
@@ -259,11 +264,22 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     // Completion application only: no filesystem or serialization occurs on
     // this frame/update path.
     self.drainCacheCompletions();
+    // The GPU-culling scale fixture is already fully resident through the
+    // production upload bridge. Do not let normal streaming add finer coverage
+    // or evict its fixed source set while it is being measured.
+    if (self.benchmark_fixture_active) {
+        self.updateStats();
+        return;
+    }
     if (self.paused) return;
 
-    // Deferred deletion handling. LOD meshes do not carry frame fences yet,
-    // so destruction still waits for idle, but the bounded sweep prevents
-    // unreachable GPU/CPU resources from accumulating through long sessions.
+    // Render detects compact submission failure under its shared lock. Only
+    // this update thread may retire its GPU range and publish CPU fallback.
+    self.recoverCompactDrawFailures();
+
+    // Deferred deletion is frame-safe: renderer resource destruction retires
+    // buffers/ranges through its frame-fence path rather than stalling the
+    // device during routine streaming.
     self.mesh_disposal.timer += LOD_FRAME_DT_APPROX;
     if (self.mesh_disposal.timer >= DELETION_SWEEP_SECONDS) {
         self.processMeshDeletions(MAX_MESH_DELETIONS_PER_SWEEP);
@@ -544,7 +560,7 @@ pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos:
     const lock_hold_timer = self.profiling.begin();
     defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
-    self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
 pub fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {

@@ -55,7 +55,7 @@
 
 ## Graphics hazards
 
-- `ZIGCRAFT_LOD_COMPACT=auto` currently fails closed to expanded GPU LOD meshes. `force` is diagnostic only: compact/mixed wet-dry rendering has reproducibly caused RADV `VK_ERROR_DEVICE_LOST` with no validation-layer VUID. Do not restore compact-by-default based only on headless/generated-world tests; require visible testing of a real saved world on RADV plus validation, robustness, and Phase 5 gates.
+- `ZIGCRAFT_LOD_COMPACT=auto` is qualified only through immutable per-layer descriptors plus expanded fallback for unsupported shoreline topology; `off` remains the explicit supported fallback. `force` is diagnostic only. Do not weaken the saved-world RADV reload, validation, robustness, and Phase 5 qualification requirements based only on generated-world captures.
 - Dedicated transfer queues cannot upload exclusive graphics buffers safely with semaphore synchronization alone; queue-family release/acquire ownership transfers are required. Until implemented, keep these uploads on the graphics family.
 - A descriptor set update affects all previously recorded commands that bind that set when execution happens. Terrain/water or direct/indirect streams that need different buffers require immutable/per-layer descriptor sets, not sequential updates to one set.
 

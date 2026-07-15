@@ -17,6 +17,8 @@ pub const Waypoint = struct {
 };
 
 pub const BENCHMARK_WORLD_SEED: u64 = 12345;
+pub const BENCHMARK_SCHEMA_VERSION: u32 = 3;
+pub const LOD_BUDGET_SCHEMA_VERSION: u32 = 1;
 
 pub const Scenario = enum {
     stationary,
@@ -82,6 +84,8 @@ pub const FrameSample = struct {
     gpu_opaque_ms: f32,
     gpu_lod_terrain_ms: f32,
     gpu_lod_water_ms: f32,
+    gpu_lod_compact_terrain_ms: f32,
+    gpu_lod_compact_water_ms: f32,
     gpu_lod_culling_ms: f32,
     gpu_total_ms: f32,
     draw_calls: u32,
@@ -107,9 +111,13 @@ pub const LODFrameSample = struct {
     eviction_ms: f64 = 0,
     worker_generation_ms: f64 = 0,
     worker_mesh_construction_ms: f64 = 0,
+    worker_far_expanded_mesh_construction_ms: f64 = 0,
+    worker_compact_encode_ms: f64 = 0,
     manager_lock_wait_ms: f64 = 0,
     manager_lock_hold_ms: f64 = 0,
     upload_bytes: u64 = 0,
+    far_expanded_upload_bytes: u64 = 0,
+    compact_upload_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     staging_pressure_count: u64 = 0,
     visible_count: u64 = 0,
@@ -127,11 +135,20 @@ pub const LODFrameSample = struct {
     compact_pool_free_bytes: u64 = 0,
     compact_pool_retired_bytes: u64 = 0,
     direct_mesh_gpu_bytes: u64 = 0,
+    source_data_cpu_bytes: u64 = 0,
     known_memory_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
     gpu_culling_overflows: u32 = 0,
     gpu_culling_validation_mismatches: u32 = 0,
+    gpu_culling_requested: bool = false,
+    gpu_culling_threshold: u32 = 0,
+    gpu_culling_candidate_count: u32 = 0,
+    gpu_culling_candidate_count_max: u32 = 0,
+    gpu_culling_draw_submissions: u64 = 0,
+    gpu_culling_validation_generation: u64 = 0,
+    gpu_culling_validation_completed_generation: u64 = 0,
+    gpu_culling_validation_completed_count: u64 = 0,
 };
 
 pub const SloThresholds = struct {
@@ -160,6 +177,10 @@ pub const GpuSummary = struct {
     lod_water_avg: f64,
     lod_culling_avg: f64,
     total_avg: f64,
+    total: Summary = zeroSummary(),
+    lod_compact_terrain: Summary = zeroSummary(),
+    lod_compact_water: Summary = zeroSummary(),
+    lod_culling: Summary = zeroSummary(),
 };
 
 pub const TimingTotalAverage = struct {
@@ -184,12 +205,17 @@ pub const LODCpuCategories = struct {
 pub const LODWorkerSummary = struct {
     generation_total_ms: f64,
     mesh_construction_total_ms: f64,
+    far_expanded_mesh_construction_total_ms: f64,
+    compact_encode_total_ms: f64,
 };
 
 pub const ByteGaugeSummary = struct {
     avg_bytes: f64,
     max_bytes: u64,
     last_bytes: u64,
+    p50_bytes: u64 = 0,
+    p95_bytes: u64 = 0,
+    p99_bytes: u64 = 0,
 };
 
 const ByteGaugeAccumulator = struct {
@@ -210,11 +236,32 @@ const ByteGaugeAccumulator = struct {
             .last_bytes = self.last,
         };
     }
+
+    /// Exact percentile calculation for a sampled gauge series. Keep percentile
+    /// calculation here so all byte telemetry shares one definition.
+    fn summarizeSamples(allocator: std.mem.Allocator, values: []const u64) !ByteGaugeSummary {
+        if (values.len == 0) return .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 };
+        const sorted = try allocator.dupe(u64, values);
+        defer allocator.free(sorted);
+        std.sort.block(u64, sorted, {}, lessThanU64);
+        var sum: f64 = 0;
+        for (sorted) |value| sum += @floatFromInt(value);
+        return .{
+            .avg_bytes = sum / @as(f64, @floatFromInt(sorted.len)),
+            .max_bytes = sorted[sorted.len - 1],
+            .last_bytes = values[values.len - 1],
+            .p50_bytes = percentileU64(sorted, 0.50),
+            .p95_bytes = percentileU64(sorted, 0.95),
+            .p99_bytes = percentileU64(sorted, 0.99),
+        };
+    }
 };
 
 pub const LODMemorySummary = struct {
     upload_total_bytes: u64,
     upload_avg_bytes: f64,
+    far_expanded_upload_total_bytes: u64,
+    compact_upload_total_bytes: u64,
     pending_cpu_upload_bytes: ByteGaugeSummary,
     /// Compatibility alias for `deferred_deletion_gpu_bytes`.
     deferred_deletion_bytes: ByteGaugeSummary,
@@ -229,7 +276,10 @@ pub const LODMemorySummary = struct {
     compact_pool_free_bytes: ByteGaugeSummary,
     compact_pool_retired_bytes: ByteGaugeSummary,
     direct_mesh_gpu_bytes: ByteGaugeSummary,
+    source_data_cpu_bytes: ByteGaugeSummary,
     known_memory_bytes: ByteGaugeSummary,
+    logical_ram_bytes: ByteGaugeSummary = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
+    logical_vram_bytes: ByteGaugeSummary = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
 };
 
 pub const LODVisibilitySummary = struct {
@@ -248,14 +298,34 @@ pub const LODPressureSummary = struct {
     gpu_culling_validation_mismatches_max: u32 = 0,
 };
 
+/// Evidence that GPU culling was both requested and actively exercised. Counts
+/// are sampled from completed render frames; validation fields are monotonic
+/// delayed-readback diagnostics from the RHI.
+pub const LODGpuCullingSummary = struct {
+    requested: bool = false,
+    threshold: u32 = 0,
+    candidate_count_total: u64 = 0,
+    candidate_count_max: u32 = 0,
+    draw_submission_count_total: u64 = 0,
+    validation_generation: u64 = 0,
+    validation_completed_generation: u64 = 0,
+    validation_completed_count: u64 = 0,
+};
+
 pub const LODBenchmarkSummary = struct {
     profiling_enabled: bool,
+    profiling_frame_count: u32 = 0,
     cpu_frame_ms: Summary,
+    gpu_frame_ms: Summary = zeroSummary(),
     cpu_categories: LODCpuCategories,
     workers: LODWorkerSummary,
     memory_bytes: LODMemorySummary,
     visibility: LODVisibilitySummary,
     pressure: LODPressureSummary,
+    gpu_culling: LODGpuCullingSummary = .{},
+    /// Latest cumulative count of confirmed compact direct submissions and
+    /// successfully emitted compact GPU indirect streams.
+    compact_submissions: u64 = 0,
 };
 
 pub const WorstFrame = struct {
@@ -284,11 +354,15 @@ pub const WorstFrame = struct {
 };
 
 pub const BenchmarkResults = struct {
+    schema_version: u32 = BENCHMARK_SCHEMA_VERSION,
+    artifact_type: []const u8 = "benchmark-result",
     preset: []const u8,
     scenario: []const u8,
     world_seed: u64,
     build: BuildMetadata,
+    provenance: BenchmarkProvenance = .{},
     render_distance: i32,
+    horizon_distance: i32,
     gpu_memory_mb_avg: f64,
     gpu_memory_mb_max: f64,
     frames: u32,
@@ -303,12 +377,88 @@ pub const BenchmarkResults = struct {
     chunks_rendered_avg: f64,
     worst_frame: WorstFrame,
     lod: LODBenchmarkSummary,
+    /// Cumulative counters and allocation gauges observed when the asynchronous
+    /// startup/warmup gate became ready. These are deliberately not sampled
+    /// deltas: steady-state measurements below remain separate.
+    startup_evidence: BenchmarkStartupEvidence = .{},
+    completion: BenchmarkCompletionEvidence = .{},
 };
+
+pub const BenchmarkProvenance = struct {
+    gpu_adapter: []const u8 = "unknown",
+    gpu_driver: []const u8 = "unknown",
+    runner: []const u8 = "unknown",
+    zig_toolchain: []const u8 = "unknown",
+};
+
+pub const BenchmarkStartupEvidence = struct {
+    readiness_observed: bool = false,
+    readiness_elapsed_s: f64 = 0,
+    upload_total_bytes: u64 = 0,
+    /// Successful LOD3/LOD4 uploads, split by the representation that owns
+    /// the uploaded GPU storage. Near pooled uploads are excluded.
+    far_expanded_upload_bytes: u64 = 0,
+    compact_upload_bytes: u64 = 0,
+    worker_generation_total_ms: f64 = 0,
+    worker_mesh_construction_total_ms: f64 = 0,
+    /// Successful LOD3/LOD4 worker construction, split by representation.
+    worker_far_expanded_mesh_construction_ms: f64 = 0,
+    worker_compact_encode_ms: f64 = 0,
+    compact_submissions: u64 = 0,
+    pool_gpu_allocated_bytes: u64 = 0,
+    direct_mesh_gpu_bytes: u64 = 0,
+    compact_pool_allocated_bytes: u64 = 0,
+    pool_cpu_shadow_bytes: u64 = 0,
+    /// Current renderable LOD-region gauge at the common CPU/GPU readiness
+    /// point. It is deliberately not a cumulative visibility counter.
+    lod_renderable_regions: u64 = 0,
+    /// Current submitted candidate count at readiness. CPU culling sources
+    /// legitimately leave this at zero.
+    gpu_culling_candidate_count: u32 = 0,
+};
+
+pub const BenchmarkCompletionEvidence = struct {
+    scenario_completed: bool = false,
+    sampled_duration_s: f64 = 0,
+    requested_duration_s: f64 = 0,
+    sampled_frame_count: u32 = 0,
+    evidence_mode: bool = false,
+    warmup_ready: bool = false,
+    compact_ready: bool = false,
+    warmup_timed_out: bool = false,
+    /// Explicit capture controls, defaulted for schema-v3 compatibility.
+    lod_renderable_region_target: u32 = 0,
+    gpu_candidate_target: u32 = 0,
+};
+pub const LODPercentileBudgets = struct { cpu_p95_ms: f64, cpu_p99_ms: f64, gpu_p95_ms: f64, gpu_p99_ms: f64, logical_ram_p95_bytes: u64, logical_ram_p99_bytes: u64, logical_vram_p95_bytes: u64, logical_vram_p99_bytes: u64 };
+pub fn lodBudgetFor(preset: []const u8, scenario: Scenario) ?LODPercentileBudgets {
+    const ram_mib: u64 = if (std.ascii.eqlIgnoreCase(preset, "low")) 512 else if (std.ascii.eqlIgnoreCase(preset, "medium")) 768 else if (std.ascii.eqlIgnoreCase(preset, "high")) 1024 else if (std.ascii.eqlIgnoreCase(preset, "ultra")) 1152 else if (std.ascii.eqlIgnoreCase(preset, "extreme")) 1280 else return null;
+    const limits: [4]f64 = switch (scenario) {
+        .stationary => .{ 40, 64, 80, 120 },
+        .traversal => .{ 75, 120, 125, 190 },
+        .rapid_turn => .{ 65, 104, 115, 175 },
+        .teleport_eviction => .{ 110, 176, 150, 225 },
+    };
+    const mib = 1024 * 1024;
+    return .{ .cpu_p95_ms = limits[0], .cpu_p99_ms = limits[1], .gpu_p95_ms = limits[2], .gpu_p99_ms = limits[3], .logical_ram_p95_bytes = ram_mib * mib * 3 / 4, .logical_ram_p99_bytes = ram_mib * mib, .logical_vram_p95_bytes = ram_mib * mib * 3 / 2, .logical_vram_p99_bytes = ram_mib * mib * 2 };
+}
+fn zeroSummary() Summary {
+    return .{ .min = 0, .avg = 0, .max = 0, .p1 = 0, .p5 = 0, .p50 = 0, .p95 = 0, .p99 = 0 };
+}
 
 pub const BuildMetadata = struct {
     mode: []const u8,
+    world: []const u8,
+    fixture: []const u8,
     headless: bool = true,
     resolution: [2]u32 = .{ 1920, 1080 },
+    /// The effective LOD horizon. This is distinct from near render distance
+    /// so large-horizon captures remain comparable without changing chunks.
+    horizon_distance: i32,
+    /// Benchmark-only LOD admission override. Zero means the preset value.
+    benchmark_lod_memory_budget_mb: u32 = 0,
+    /// Shared CPU/GPU warmup readiness target. Zero preserves normal warmup.
+    benchmark_require_gpu_candidates: u32 = 0,
 };
 
 pub const BenchmarkRunner = struct {
@@ -316,14 +466,35 @@ pub const BenchmarkRunner = struct {
     preset: []const u8,
     scenario: Scenario,
     render_distance: i32,
+    horizon_distance: i32,
     duration_s: f32,
     world_seed: u64,
     build: BuildMetadata,
+    provenance: BenchmarkProvenance,
     output_path: []const u8,
+    benchmark_lod_memory_budget_mb: u32 = 0,
+    require_gpu_candidates: u32 = 0,
     start_ms: i64,
     elapsed_s: f32 = 0,
     sampled_s: f32 = 0,
     warmup_s: f32 = 1.0,
+    /// Evidence snapshots compare two independently launched modes. Hold both
+    /// at the same fixed camera long enough for the requested horizon to load,
+    /// then require a full second with empty queues before capturing startup
+    /// totals. Without this floor, compact auto can be compared against an off
+    /// run captured during a transient early queue lull.
+    evidence_min_warmup_s: f32 = 10.0,
+    settled_warmup_s: f32 = 0,
+    evidence_mode: bool = false,
+    require_compact: bool = false,
+    warmup_ready: bool = false,
+    compact_ready: bool = false,
+    compact_submissions: u64 = 0,
+    warmup_gpu_candidate_count_max: u32 = 0,
+    startup_evidence: BenchmarkStartupEvidence = .{},
+    warmup_timed_out: bool = false,
+    scenario_elapsed_s: f32 = 0,
+    next_warmup_diagnostic_s: f32 = 5,
     samples: std.ArrayListUnmanaged(FrameSample) = .empty,
     previous_lod_profiling: ?LODProfilingDisplay = null,
 
@@ -332,24 +503,42 @@ pub const BenchmarkRunner = struct {
         preset: []const u8,
         scenario_name: []const u8,
         render_distance: i32,
+        horizon_distance: i32,
         duration_s: f32,
         world_seed: u64,
         build_mode: []const u8,
+        benchmark_world: []const u8,
+        benchmark_fixture: []const u8,
         output_path: []const u8,
+        benchmark_lod_memory_budget_mb: u32,
+        require_gpu_candidates: u32,
     ) !BenchmarkRunner {
         var runner = BenchmarkRunner{
             .allocator = allocator,
             .preset = preset,
             .scenario = try Scenario.parse(scenario_name),
             .render_distance = render_distance,
+            .horizon_distance = horizon_distance,
             .duration_s = duration_s,
             .world_seed = world_seed,
-            .build = .{ .mode = build_mode },
+            .build = .{
+                .mode = build_mode,
+                .world = benchmark_world,
+                .fixture = benchmark_fixture,
+                .horizon_distance = horizon_distance,
+                .benchmark_lod_memory_budget_mb = benchmark_lod_memory_budget_mb,
+                .benchmark_require_gpu_candidates = require_gpu_candidates,
+            },
+            .provenance = provenanceFromEnvironment(),
             .output_path = output_path,
+            .benchmark_lod_memory_budget_mb = benchmark_lod_memory_budget_mb,
+            .require_gpu_candidates = require_gpu_candidates,
             .start_ms = nowMs(),
             .elapsed_s = 0,
             .sampled_s = 0,
             .warmup_s = 1.0,
+            .evidence_mode = environmentFlag("ZIGCRAFT_BENCHMARK_EVIDENCE"),
+            .require_compact = environmentFlag("ZIGCRAFT_BENCHMARK_REQUIRE_COMPACT"),
             .samples = .empty,
             .previous_lod_profiling = null,
         };
@@ -364,7 +553,7 @@ pub const BenchmarkRunner = struct {
     }
 
     pub fn applyPose(self: *const BenchmarkRunner, player: *Player) void {
-        const pose = poseAtTime(self.scenario, @max(self.elapsed_s - self.warmup_s, 0.0));
+        const pose = poseAtTime(self.scenario, self.scenario_elapsed_s);
         player.fly_mode = true;
         player.can_fly = true;
         player.noclip = true;
@@ -383,6 +572,37 @@ pub const BenchmarkRunner = struct {
             break :blk null;
         } else null;
         const lod = lodFrameDelta(lod_stats, &self.previous_lod_profiling);
+        if (lod_stats) |stats| self.compact_submissions = @max(self.compact_submissions, stats.profiling.compact_submissions);
+        if (self.evidence_mode and !self.warmup_ready) {
+            const renderable_regions = if (world_stats) |ws| ws.lod_renderable_regions else 0;
+            const settled = if (world_stats) |ws| ws.chunks_rendered > 0 and ws.gen_queue == 0 and ws.mesh_queue == 0 and ws.upload_queue == 0 else false;
+            self.settled_warmup_s = if (settled) self.settled_warmup_s + dt else 0;
+            const compact_ready = !self.require_compact or compactEvidenceReady(lod_stats);
+            const gpu_requested = if (lod_stats) |stats| stats.profiling.gpu_culling_requested else false;
+            const current_candidates = if (lod_stats) |stats| stats.profiling.gpu_culling_candidate_count else 0;
+            const max_candidates = if (lod_stats) |stats| stats.profiling.gpu_culling_candidate_count_max else 0;
+            if (gpu_requested) self.warmup_gpu_candidate_count_max = @max(self.warmup_gpu_candidate_count_max, max_candidates);
+            // The resident-region readiness is deliberately shared by paired
+            // CPU/GPU runs. Candidate counters only exist when GPU culling is
+            // on, so using them for the CPU source would create an unequal
+            // warmup gate.
+            const regions_ready = renderable_regions >= self.require_gpu_candidates;
+            const candidates_ready = !gpu_requested or max_candidates >= self.require_gpu_candidates;
+            const gpu_compact_submitted = !gpu_requested or compactEvidenceReady(lod_stats);
+            if (self.elapsed_s >= self.next_warmup_diagnostic_s) {
+                const compact = if (lod_stats) |stats| stats.compact_pool_allocated_bytes else 0;
+                const compact_diag = if (lod_stats) |stats| stats.profiling else LODProfilingDisplay{};
+                std.log.warn("BENCHMARK_WARMUP: elapsed={d:.1}s chunks={} lod_regions={}/{} gpu_candidates={}/{} queues={}/{}/{} compact_bytes={} settled={} compact_ready={} compact=selected:{} rejected:{} upload_fail:{} unavailable:{} draw_fail:{} submissions:{} recovery:{} disabled:{}", .{ self.elapsed_s, if (world_stats) |ws| ws.chunks_rendered else 0, renderable_regions, self.require_gpu_candidates, current_candidates, self.require_gpu_candidates, if (world_stats) |ws| ws.gen_queue else 0, if (world_stats) |ws| ws.mesh_queue else 0, if (world_stats) |ws| ws.upload_queue else 0, compact, settled, compact_ready, compact_diag.compact_selected, compact_diag.compact_build_rejected, compact_diag.compact_upload_failures, compact_diag.compact_draw_unavailable, compact_diag.compact_draw_failures, compact_diag.compact_submissions, compact_diag.compact_recoveries, compact_diag.compact_disabled });
+                self.next_warmup_diagnostic_s += 5;
+            }
+            self.compact_ready = self.compact_ready or compact_ready;
+            if (self.elapsed_s >= self.evidence_min_warmup_s and self.settled_warmup_s >= 1.0 and compact_ready and regions_ready and candidates_ready and gpu_compact_submitted) {
+                self.warmup_ready = true;
+                if (lod_stats) |stats| self.startup_evidence = startupEvidence(stats, self.elapsed_s, renderable_regions);
+            }
+            if (self.elapsed_s > 90.0) self.warmup_timed_out = true;
+            return;
+        }
         if (self.elapsed_s < self.warmup_s) return;
 
         const shadow_avg = averageArray(&gpu.shadow_pass_ms);
@@ -397,6 +617,8 @@ pub const BenchmarkRunner = struct {
             .gpu_opaque_ms = gpu.opaque_pass_ms,
             .gpu_lod_terrain_ms = gpu.lod_terrain_pass_ms,
             .gpu_lod_water_ms = gpu.lod_water_pass_ms,
+            .gpu_lod_compact_terrain_ms = gpu.lod_compact_terrain_pass_ms,
+            .gpu_lod_compact_water_ms = gpu.lod_compact_water_pass_ms,
             .gpu_lod_culling_ms = gpu.lod_culling_compute_ms,
             .gpu_total_ms = gpu.total_gpu_ms,
             .draw_calls = draw_calls,
@@ -406,10 +628,11 @@ pub const BenchmarkRunner = struct {
             .lod = lod,
         });
         self.sampled_s += dt;
+        self.scenario_elapsed_s += dt;
     }
 
     pub fn isComplete(self: *const BenchmarkRunner) bool {
-        return self.sampled_s >= self.duration_s or wallElapsedSeconds(self) >= self.duration_s + self.warmup_s + 30.0;
+        return self.sampled_s >= self.duration_s or self.warmup_timed_out or wallElapsedSeconds(self) >= self.duration_s + self.warmup_s + 90.0;
     }
 
     pub fn writeResults(self: *const BenchmarkRunner) !void {
@@ -435,6 +658,20 @@ pub const BenchmarkRunner = struct {
         defer self.allocator.free(frame_ms_values);
         const lod_cpu_values = try self.collectLodCpuValues();
         defer self.allocator.free(lod_cpu_values);
+        const gpu_total_values = try self.collectField(gpuTotalField);
+        defer self.allocator.free(gpu_total_values);
+        const lod_gpu_values = try self.collectField(lodGpuField);
+        defer self.allocator.free(lod_gpu_values);
+        const compact_terrain_values = try self.collectField(compactTerrainField);
+        defer self.allocator.free(compact_terrain_values);
+        const compact_water_values = try self.collectField(compactWaterField);
+        defer self.allocator.free(compact_water_values);
+        const culling_values = try self.collectField(cullingField);
+        defer self.allocator.free(culling_values);
+        const logical_ram_values = try self.collectLodBytes(logicalRamBytes);
+        defer self.allocator.free(logical_ram_values);
+        const logical_vram_values = try self.collectLodBytes(logicalVramBytes);
+        defer self.allocator.free(logical_vram_values);
 
         var cpu_sum: f64 = 0;
         var shadow_sum: f64 = 0;
@@ -450,6 +687,7 @@ pub const BenchmarkRunner = struct {
         var memory_max: f64 = 0;
         var max_frame_ms: f64 = 0;
         var lod_profiling_enabled = false;
+        var lod_profiling_frame_count: u32 = 0;
         var lod_scheduling_ms: f64 = 0;
         var lod_cache_ms: f64 = 0;
         var lod_generation_dispatch_ms: f64 = 0;
@@ -461,9 +699,13 @@ pub const BenchmarkRunner = struct {
         var lod_eviction_ms: f64 = 0;
         var lod_worker_generation_ms: f64 = 0;
         var lod_worker_mesh_construction_ms: f64 = 0;
+        var lod_worker_far_expanded_mesh_construction_ms: f64 = 0;
+        var lod_worker_compact_encode_ms: f64 = 0;
         var lod_manager_lock_wait_ms: f64 = 0;
         var lod_manager_lock_hold_ms: f64 = 0;
         var lod_upload_bytes: u64 = 0;
+        var lod_far_expanded_upload_bytes: u64 = 0;
+        var lod_compact_upload_bytes: u64 = 0;
         var lod_pending_cpu_upload_bytes = ByteGaugeAccumulator{};
         var lod_deferred_deletion_gpu_bytes = ByteGaugeAccumulator{};
         var lod_deferred_deletion_cpu_bytes = ByteGaugeAccumulator{};
@@ -476,6 +718,7 @@ pub const BenchmarkRunner = struct {
         var lod_compact_pool_free_bytes = ByteGaugeAccumulator{};
         var lod_compact_pool_retired_bytes = ByteGaugeAccumulator{};
         var lod_direct_mesh_gpu_bytes = ByteGaugeAccumulator{};
+        var lod_source_data_cpu_bytes = ByteGaugeAccumulator{};
         var lod_known_memory_bytes = ByteGaugeAccumulator{};
         var lod_staging_pressure_count: u64 = 0;
         var lod_visible_count: u64 = 0;
@@ -486,6 +729,14 @@ pub const BenchmarkRunner = struct {
         var lod_wait_idle_ms: f64 = 0;
         var lod_gpu_culling_overflows_max: u32 = 0;
         var lod_gpu_culling_validation_mismatches_max: u32 = 0;
+        var lod_gpu_culling_requested = false;
+        var lod_gpu_culling_threshold: u32 = 0;
+        var lod_gpu_culling_candidate_count_total: u64 = 0;
+        var lod_gpu_culling_candidate_count_max: u32 = self.warmup_gpu_candidate_count_max;
+        var lod_gpu_culling_draw_submission_count_total: u64 = 0;
+        var lod_gpu_culling_validation_generation: u64 = 0;
+        var lod_gpu_culling_validation_completed_generation: u64 = 0;
+        var lod_gpu_culling_validation_completed_count: u64 = 0;
         var worst_frame = WorstFrame{
             .frame_index = 0,
             .frame_ms = 0,
@@ -531,6 +782,7 @@ pub const BenchmarkRunner = struct {
 
             const lod = sample.lod;
             lod_profiling_enabled = lod_profiling_enabled or lod.enabled;
+            if (lod.enabled) lod_profiling_frame_count +|= 1;
             lod_scheduling_ms += lod.scheduling_ms;
             lod_cache_ms += lod.cache_ms;
             lod_generation_dispatch_ms += lod.generation_dispatch_ms;
@@ -542,9 +794,13 @@ pub const BenchmarkRunner = struct {
             lod_eviction_ms += lod.eviction_ms;
             lod_worker_generation_ms += lod.worker_generation_ms;
             lod_worker_mesh_construction_ms += lod.worker_mesh_construction_ms;
+            lod_worker_far_expanded_mesh_construction_ms += lod.worker_far_expanded_mesh_construction_ms;
+            lod_worker_compact_encode_ms += lod.worker_compact_encode_ms;
             lod_manager_lock_wait_ms += lod.manager_lock_wait_ms;
             lod_manager_lock_hold_ms += lod.manager_lock_hold_ms;
             lod_upload_bytes +|= lod.upload_bytes;
+            lod_far_expanded_upload_bytes +|= lod.far_expanded_upload_bytes;
+            lod_compact_upload_bytes +|= lod.compact_upload_bytes;
             lod_pending_cpu_upload_bytes.add(lod.pending_cpu_upload_bytes);
             lod_deferred_deletion_gpu_bytes.add(lod.deferred_deletion_bytes);
             lod_deferred_deletion_cpu_bytes.add(lod.deferred_deletion_cpu_bytes);
@@ -557,6 +813,7 @@ pub const BenchmarkRunner = struct {
             lod_compact_pool_free_bytes.add(lod.compact_pool_free_bytes);
             lod_compact_pool_retired_bytes.add(lod.compact_pool_retired_bytes);
             lod_direct_mesh_gpu_bytes.add(lod.direct_mesh_gpu_bytes);
+            lod_source_data_cpu_bytes.add(lod.source_data_cpu_bytes);
             lod_known_memory_bytes.add(lod.known_memory_bytes);
             lod_staging_pressure_count +|= lod.staging_pressure_count;
             lod_visible_count +|= lod.visible_count;
@@ -567,12 +824,21 @@ pub const BenchmarkRunner = struct {
             lod_wait_idle_ms += lod.wait_idle_ms;
             lod_gpu_culling_overflows_max = @max(lod_gpu_culling_overflows_max, lod.gpu_culling_overflows);
             lod_gpu_culling_validation_mismatches_max = @max(lod_gpu_culling_validation_mismatches_max, lod.gpu_culling_validation_mismatches);
+            lod_gpu_culling_requested = lod_gpu_culling_requested or lod.gpu_culling_requested;
+            lod_gpu_culling_threshold = @max(lod_gpu_culling_threshold, lod.gpu_culling_threshold);
+            lod_gpu_culling_candidate_count_total +|= lod.gpu_culling_candidate_count;
+            lod_gpu_culling_candidate_count_max = @max(lod_gpu_culling_candidate_count_max, lod.gpu_culling_candidate_count_max);
+            lod_gpu_culling_draw_submission_count_total +|= lod.gpu_culling_draw_submissions;
+            lod_gpu_culling_validation_generation = @max(lod_gpu_culling_validation_generation, lod.gpu_culling_validation_generation);
+            lod_gpu_culling_validation_completed_generation = @max(lod_gpu_culling_validation_completed_generation, lod.gpu_culling_validation_completed_generation);
+            lod_gpu_culling_validation_completed_count = @max(lod_gpu_culling_validation_completed_count, lod.gpu_culling_validation_completed_count);
         }
 
         const count = @as(f64, @floatFromInt(@max(self.samples.items.len, 1)));
         var fps_summary = try summarizeSeries(self.allocator, fps_values);
         const frame_ms_summary = try summarizeSeries(self.allocator, frame_ms_values);
         const lod_cpu_summary = try summarizeSeries(self.allocator, lod_cpu_values);
+        const lod_gpu_summary = try summarizeSeries(self.allocator, lod_gpu_values);
         const sampled_s = cpu_sum / 1000.0;
         if (sampled_s > 0.0) {
             fps_summary.avg = @as(f64, @floatFromInt(self.samples.items.len)) / sampled_s;
@@ -583,7 +849,9 @@ pub const BenchmarkRunner = struct {
             .scenario = self.scenario.name(),
             .world_seed = self.world_seed,
             .build = self.build,
+            .provenance = self.provenance,
             .render_distance = self.render_distance,
+            .horizon_distance = self.horizon_distance,
             .gpu_memory_mb_avg = memory_sum / count,
             .gpu_memory_mb_max = memory_max,
             .frames = @intCast(self.samples.items.len),
@@ -599,6 +867,10 @@ pub const BenchmarkRunner = struct {
                 .lod_water_avg = lod_water_sum / count,
                 .lod_culling_avg = lod_culling_sum / count,
                 .total_avg = total_sum / count,
+                .total = try summarizeSeries(self.allocator, gpu_total_values),
+                .lod_compact_terrain = try summarizeSeries(self.allocator, compact_terrain_values),
+                .lod_compact_water = try summarizeSeries(self.allocator, compact_water_values),
+                .lod_culling = try summarizeSeries(self.allocator, culling_values),
             },
             .draw_calls_avg = draw_sum / count,
             .vertices_avg = vertices_sum / count,
@@ -606,7 +878,9 @@ pub const BenchmarkRunner = struct {
             .worst_frame = worst_frame,
             .lod = .{
                 .profiling_enabled = lod_profiling_enabled,
+                .profiling_frame_count = lod_profiling_frame_count,
                 .cpu_frame_ms = lod_cpu_summary,
+                .gpu_frame_ms = lod_gpu_summary,
                 .cpu_categories = .{
                     .scheduling = timingTotalAverage(lod_scheduling_ms, count),
                     .cache = timingTotalAverage(lod_cache_ms, count),
@@ -623,10 +897,14 @@ pub const BenchmarkRunner = struct {
                 .workers = .{
                     .generation_total_ms = lod_worker_generation_ms,
                     .mesh_construction_total_ms = lod_worker_mesh_construction_ms,
+                    .far_expanded_mesh_construction_total_ms = lod_worker_far_expanded_mesh_construction_ms,
+                    .compact_encode_total_ms = lod_worker_compact_encode_ms,
                 },
                 .memory_bytes = .{
                     .upload_total_bytes = lod_upload_bytes,
                     .upload_avg_bytes = @as(f64, @floatFromInt(lod_upload_bytes)) / count,
+                    .far_expanded_upload_total_bytes = lod_far_expanded_upload_bytes,
+                    .compact_upload_total_bytes = lod_compact_upload_bytes,
                     .pending_cpu_upload_bytes = lod_pending_cpu_upload_bytes.summarize(count),
                     .deferred_deletion_bytes = lod_deferred_deletion_gpu_bytes.summarize(count),
                     .deferred_deletion_gpu_bytes = lod_deferred_deletion_gpu_bytes.summarize(count),
@@ -640,7 +918,10 @@ pub const BenchmarkRunner = struct {
                     .compact_pool_free_bytes = lod_compact_pool_free_bytes.summarize(count),
                     .compact_pool_retired_bytes = lod_compact_pool_retired_bytes.summarize(count),
                     .direct_mesh_gpu_bytes = lod_direct_mesh_gpu_bytes.summarize(count),
+                    .source_data_cpu_bytes = lod_source_data_cpu_bytes.summarize(count),
                     .known_memory_bytes = lod_known_memory_bytes.summarize(count),
+                    .logical_ram_bytes = try ByteGaugeAccumulator.summarizeSamples(self.allocator, logical_ram_values),
+                    .logical_vram_bytes = try ByteGaugeAccumulator.summarizeSamples(self.allocator, logical_vram_values),
                 },
                 .visibility = .{
                     .visible_total = lod_visible_count,
@@ -656,7 +937,20 @@ pub const BenchmarkRunner = struct {
                     .gpu_culling_overflows_max = lod_gpu_culling_overflows_max,
                     .gpu_culling_validation_mismatches_max = lod_gpu_culling_validation_mismatches_max,
                 },
+                .gpu_culling = .{
+                    .requested = lod_gpu_culling_requested,
+                    .threshold = lod_gpu_culling_threshold,
+                    .candidate_count_total = lod_gpu_culling_candidate_count_total,
+                    .candidate_count_max = lod_gpu_culling_candidate_count_max,
+                    .draw_submission_count_total = lod_gpu_culling_draw_submission_count_total,
+                    .validation_generation = lod_gpu_culling_validation_generation,
+                    .validation_completed_generation = lod_gpu_culling_validation_completed_generation,
+                    .validation_completed_count = lod_gpu_culling_validation_completed_count,
+                },
+                .compact_submissions = self.compact_submissions,
             },
+            .startup_evidence = self.startup_evidence,
+            .completion = .{ .scenario_completed = self.sampled_s >= self.duration_s, .sampled_duration_s = self.sampled_s, .requested_duration_s = self.duration_s, .sampled_frame_count = @intCast(self.samples.items.len), .evidence_mode = self.evidence_mode, .warmup_ready = !self.evidence_mode or self.warmup_ready, .compact_ready = !self.require_compact or self.compact_ready, .warmup_timed_out = self.warmup_timed_out, .lod_renderable_region_target = self.require_gpu_candidates, .gpu_candidate_target = self.require_gpu_candidates },
         };
     }
 
@@ -676,6 +970,12 @@ pub const BenchmarkRunner = struct {
         return values;
     }
 
+    fn collectLodBytes(self: *const BenchmarkRunner, comptime getter: fn (LODFrameSample) u64) ![]u64 {
+        var values = try self.allocator.alloc(u64, self.samples.items.len);
+        for (self.samples.items, 0..) |sample, i| values[i] = getter(sample.lod);
+        return values;
+    }
+
     fn results_json(results: BenchmarkResults, allocator: std.mem.Allocator) ![]u8 {
         return try std.json.Stringify.valueAlloc(allocator, results, .{ .whitespace = .indent_2 });
     }
@@ -685,9 +985,59 @@ fn nowMs() i64 {
     return std.Io.Clock.real.now(std.Options.debug_io).toMilliseconds();
 }
 
+fn environmentFlag(name: [:0]const u8) bool {
+    const raw = std.c.getenv(name) orelse return false;
+    const value = std.mem.span(raw);
+    return value.len > 0 and
+        !std.mem.eql(u8, value, "0") and
+        !std.ascii.eqlIgnoreCase(value, "false") and
+        !std.ascii.eqlIgnoreCase(value, "off");
+}
+
+fn environmentLabel(name: [:0]const u8) []const u8 {
+    const raw = std.c.getenv(name) orelse return "unknown";
+    const value = std.mem.span(raw);
+    return if (value.len == 0) "unknown" else value;
+}
+
+fn provenanceFromEnvironment() BenchmarkProvenance {
+    return .{
+        .gpu_adapter = environmentLabel("ZIGCRAFT_BENCHMARK_GPU_ADAPTER"),
+        .gpu_driver = environmentLabel("ZIGCRAFT_BENCHMARK_GPU_DRIVER"),
+        .runner = environmentLabel("ZIGCRAFT_BENCHMARK_RUNNER"),
+        .zig_toolchain = environmentLabel("ZIGCRAFT_BENCHMARK_ZIG_TOOLCHAIN"),
+    };
+}
+
+fn startupEvidence(stats: LODStatsDisplay, elapsed_s: f32, lod_renderable_regions: u64) BenchmarkStartupEvidence {
+    return .{
+        .readiness_observed = true,
+        .readiness_elapsed_s = elapsed_s,
+        .upload_total_bytes = stats.profiling.upload_bytes,
+        .far_expanded_upload_bytes = stats.profiling.far_expanded_upload_bytes,
+        .compact_upload_bytes = stats.profiling.compact_upload_bytes,
+        .worker_generation_total_ms = stats.profiling.worker_generation_ms,
+        .worker_mesh_construction_total_ms = stats.profiling.worker_mesh_construction_ms,
+        .worker_far_expanded_mesh_construction_ms = stats.profiling.worker_far_expanded_mesh_construction_ms,
+        .worker_compact_encode_ms = stats.profiling.worker_compact_encode_ms,
+        .compact_submissions = stats.profiling.compact_submissions,
+        .pool_gpu_allocated_bytes = stats.pool_gpu_allocated_bytes,
+        .direct_mesh_gpu_bytes = stats.direct_mesh_gpu_bytes,
+        .compact_pool_allocated_bytes = stats.compact_pool_allocated_bytes,
+        .pool_cpu_shadow_bytes = stats.pool_cpu_shadow_bytes,
+        .lod_renderable_regions = lod_renderable_regions,
+        .gpu_culling_candidate_count = stats.profiling.gpu_culling_candidate_count,
+    };
+}
+
 fn wallElapsedSeconds(self: *const BenchmarkRunner) f32 {
     const elapsed_ms = @max(@as(i64, 0), nowMs() - self.start_ms);
     return @as(f32, @floatFromInt(elapsed_ms)) / 1000.0;
+}
+
+fn compactEvidenceReady(lod_stats: ?LODStatsDisplay) bool {
+    const stats = lod_stats orelse return false;
+    return stats.compact_pool_allocated_bytes > 0 and stats.profiling.compact_submissions > 0;
 }
 
 pub fn thresholdsForPreset(preset: []const u8) SloThresholds {
@@ -718,7 +1068,33 @@ fn thresholdsForResults(results: BenchmarkResults) SloThresholds {
     return thresholds;
 }
 
-fn enforceSlo(results: BenchmarkResults) !void {
+pub fn validateResults(results: BenchmarkResults) !void {
+    if (!results.completion.scenario_completed or results.completion.sampled_duration_s < results.completion.requested_duration_s or results.completion.sampled_frame_count == 0) return error.IncompleteBenchmarkScenario;
+    if (!results.completion.warmup_ready or results.completion.warmup_timed_out) return error.BenchmarkWarmupNotReady;
+    if (!results.completion.compact_ready) return error.CompactWarmupNotReady;
+    if (results.completion.lod_renderable_region_target > 0) {
+        if (results.startup_evidence.lod_renderable_regions < results.completion.lod_renderable_region_target) return error.LodReadinessTargetNotMet;
+        if (results.build.benchmark_require_gpu_candidates != results.completion.lod_renderable_region_target or results.completion.gpu_candidate_target != results.completion.lod_renderable_region_target) return error.BenchmarkReadinessTargetMismatch;
+        if (results.lod.gpu_culling.requested and results.lod.gpu_culling.candidate_count_max < results.completion.gpu_candidate_target) return error.GpuCandidateTargetNotMet;
+    }
+    if (results.completion.evidence_mode) {
+        if (!results.startup_evidence.readiness_observed) return error.MissingStartupEvidence;
+        inline for (.{ results.provenance.gpu_adapter, results.provenance.gpu_driver, results.provenance.runner, results.provenance.zig_toolchain }) |label| {
+            if (label.len == 0 or std.ascii.eqlIgnoreCase(label, "unknown")) return error.MissingBenchmarkProvenance;
+        }
+    }
+    if (!results.lod.profiling_enabled or results.lod.profiling_frame_count != results.completion.sampled_frame_count) return error.MissingLodProfiling;
+    if (results.lod.pressure.wait_idle_count_total != 0) return error.StreamingWaitIdleObserved;
+    if (results.lod.pressure.gpu_culling_overflows_max != 0) return error.GpuCullingOverflowObserved;
+    if (results.lod.pressure.gpu_culling_validation_mismatches_max != 0) return error.GpuCullingMismatchObserved;
+    const logical = results.lod.memory_bytes;
+    if (logical.logical_ram_bytes.max_bytes == 0 or logical.logical_vram_bytes.max_bytes == 0) return error.MissingLogicalLodMemoryEvidence;
+    const scenario = Scenario.parse(results.scenario) catch return error.InvalidBenchmarkScenario;
+    const budget = lodBudgetFor(results.preset, scenario) orelse return error.MissingLodBudget;
+    if (results.lod.cpu_frame_ms.p95 > budget.cpu_p95_ms or results.lod.cpu_frame_ms.p99 > budget.cpu_p99_ms) return error.LodCpuBudgetBreach;
+    if (results.lod.gpu_frame_ms.p95 > budget.gpu_p95_ms or results.lod.gpu_frame_ms.p99 > budget.gpu_p99_ms) return error.LodGpuBudgetBreach;
+    if (logical.logical_ram_bytes.p95_bytes > budget.logical_ram_p95_bytes or logical.logical_ram_bytes.p99_bytes > budget.logical_ram_p99_bytes) return error.LodLogicalRamBudgetBreach;
+    if (logical.logical_vram_bytes.p95_bytes > budget.logical_vram_p95_bytes or logical.logical_vram_bytes.p99_bytes > budget.logical_vram_p99_bytes) return error.LodLogicalVramBudgetBreach;
     const thresholds = thresholdsForResults(results);
     var failed = false;
 
@@ -745,6 +1121,9 @@ fn enforceSlo(results: BenchmarkResults) !void {
 
     if (failed) return error.BenchmarkSloBreach;
 }
+fn enforceSlo(results: BenchmarkResults) !void {
+    return validateResults(results);
+}
 
 test "benchmark draw-call SLO scales for render-distance override" {
     const base = thresholdsForPreset("medium");
@@ -752,8 +1131,9 @@ test "benchmark draw-call SLO scales for render-distance override" {
         .preset = "medium",
         .scenario = "traversal",
         .world_seed = BENCHMARK_WORLD_SEED,
-        .build = .{ .mode = "Debug" },
+        .build = .{ .mode = "Debug", .horizon_distance = 512 },
         .render_distance = 22,
+        .horizon_distance = 512,
         .gpu_memory_mb_avg = 0,
         .gpu_memory_mb_max = 0,
         .frames = 0,
@@ -806,10 +1186,12 @@ test "benchmark draw-call SLO scales for render-distance override" {
                 .manager_lock_wait = .{ .total_ms = 0, .avg_ms = 0 },
                 .manager_lock_hold = .{ .total_ms = 0, .avg_ms = 0 },
             },
-            .workers = .{ .generation_total_ms = 0, .mesh_construction_total_ms = 0 },
+            .workers = .{ .generation_total_ms = 0, .mesh_construction_total_ms = 0, .far_expanded_mesh_construction_total_ms = 0, .compact_encode_total_ms = 0 },
             .memory_bytes = .{
                 .upload_total_bytes = 0,
                 .upload_avg_bytes = 0,
+                .far_expanded_upload_total_bytes = 0,
+                .compact_upload_total_bytes = 0,
                 .pending_cpu_upload_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
                 .deferred_deletion_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
                 .deferred_deletion_gpu_bytes = .{ .avg_bytes = 0, .max_bytes = 0, .last_bytes = 0 },
@@ -837,7 +1219,7 @@ test "benchmark draw-call SLO scales for render-distance override" {
 }
 
 test "benchmark reports LOD GPU timing, frame percentiles, and worst-frame attribution" {
-    var runner = try BenchmarkRunner.init(std.testing.allocator, "medium", "traversal", 12, 1, BENCHMARK_WORLD_SEED, "Debug", "unused.json");
+    var runner = try BenchmarkRunner.init(std.testing.allocator, "medium", "traversal", 12, 512, 1, BENCHMARK_WORLD_SEED, "Debug", "flat", "", "unused.json", 0, 0);
     defer runner.deinit();
 
     try runner.samples.append(std.testing.allocator, .{
@@ -847,6 +1229,8 @@ test "benchmark reports LOD GPU timing, frame percentiles, and worst-frame attri
         .gpu_opaque_ms = 2,
         .gpu_lod_terrain_ms = 3,
         .gpu_lod_water_ms = 4,
+        .gpu_lod_compact_terrain_ms = 0,
+        .gpu_lod_compact_water_ms = 0,
         .gpu_lod_culling_ms = 2,
         .gpu_total_ms = 8,
         .draw_calls = 10,
@@ -861,6 +1245,8 @@ test "benchmark reports LOD GPU timing, frame percentiles, and worst-frame attri
         .gpu_opaque_ms = 2,
         .gpu_lod_terrain_ms = 9,
         .gpu_lod_water_ms = 4,
+        .gpu_lod_compact_terrain_ms = 0,
+        .gpu_lod_compact_water_ms = 0,
         .gpu_lod_culling_ms = 5,
         .gpu_total_ms = 16,
         .draw_calls = 20,
@@ -916,7 +1302,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         }
     };
 
-    var runner = try BenchmarkRunner.init(std.testing.allocator, "medium", "traversal", 12, 1, BENCHMARK_WORLD_SEED, "Debug", "unused.json");
+    var runner = try BenchmarkRunner.init(std.testing.allocator, "medium", "traversal", 12, 512, 1, BENCHMARK_WORLD_SEED, "Debug", "flat", "", "unused.json", 0, 0);
     defer runner.deinit();
     runner.warmup_s = 0;
     const gpu = std.mem.zeroes(GpuTimingResults);
@@ -935,9 +1321,13 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .eviction_ms = 1,
         .worker_generation_ms = 8,
         .worker_mesh_construction_ms = 4,
+        .worker_far_expanded_mesh_construction_ms = 2,
+        .worker_compact_encode_ms = 1,
         .manager_lock_wait_ms = 2,
         .manager_lock_hold_ms = 4,
         .upload_bytes = 100,
+        .far_expanded_upload_bytes = 40,
+        .compact_upload_bytes = 10,
         .pending_cpu_upload_bytes = 10,
         .staging_pressure_count = 3,
         .visible_count = 10,
@@ -958,6 +1348,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .known_memory_bytes = 253,
         .wait_idle_count = 5,
         .wait_idle_ms = 3,
+        .compact_submissions = 1,
     }), 0, 0);
     try runner.recordFrame(0.02, 50, gpu, Test.world(.{
         .enabled = true,
@@ -973,9 +1364,13 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .eviction_ms = 2,
         .worker_generation_ms = 12,
         .worker_mesh_construction_ms = 6,
+        .worker_far_expanded_mesh_construction_ms = 5,
+        .worker_compact_encode_ms = 3,
         .manager_lock_wait_ms = 5,
         .manager_lock_hold_ms = 7,
         .upload_bytes = 150,
+        .far_expanded_upload_bytes = 70,
+        .compact_upload_bytes = 30,
         .pending_cpu_upload_bytes = 20,
         .staging_pressure_count = 4,
         .visible_count = 13,
@@ -996,6 +1391,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .known_memory_bytes = 305,
         .wait_idle_count = 6,
         .wait_idle_ms = 5,
+        .compact_submissions = 3,
     }), 0, 0);
     try runner.recordFrame(0.03, 33, gpu, Test.world(.{
         .enabled = true,
@@ -1011,9 +1407,13 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .eviction_ms = 0.5,
         .worker_generation_ms = 3,
         .worker_mesh_construction_ms = 2,
+        .worker_far_expanded_mesh_construction_ms = 1,
+        .worker_compact_encode_ms = 0.5,
         .manager_lock_wait_ms = 1,
         .manager_lock_hold_ms = 1,
         .upload_bytes = 20,
+        .far_expanded_upload_bytes = 20,
+        .compact_upload_bytes = 5,
         .pending_cpu_upload_bytes = 5,
         .staging_pressure_count = 2,
         .visible_count = 2,
@@ -1034,6 +1434,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         .known_memory_bytes = 229,
         .wait_idle_count = 2,
         .wait_idle_ms = 0.5,
+        .compact_submissions = 1,
     }), 0, 0);
 
     const results = try runner.makeResults();
@@ -1044,7 +1445,11 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
     try std.testing.expectApproxEqAbs(@as(f64, 5), results.lod.cpu_categories.cache.total_ms, 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 7), results.lod.workers.generation_total_ms, 0.001);
     try std.testing.expectApproxEqAbs(@as(f64, 4), results.lod.workers.mesh_construction_total_ms, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 4), results.lod.workers.far_expanded_mesh_construction_total_ms, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), results.lod.workers.compact_encode_total_ms, 0.001);
     try std.testing.expectEqual(@as(u64, 70), results.lod.memory_bytes.upload_total_bytes);
+    try std.testing.expectEqual(@as(u64, 50), results.lod.memory_bytes.far_expanded_upload_total_bytes);
+    try std.testing.expectEqual(@as(u64, 25), results.lod.memory_bytes.compact_upload_total_bytes);
     try std.testing.expectEqual(@as(u64, 20), results.lod.memory_bytes.pending_cpu_upload_bytes.max_bytes);
     try std.testing.expectEqual(@as(u64, 8), results.lod.memory_bytes.deferred_deletion_bytes.last_bytes);
     try std.testing.expectEqual(@as(u64, 40), results.lod.memory_bytes.deferred_deletion_gpu_bytes.max_bytes);
@@ -1077,6 +1482,7 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
     try std.testing.expectEqual(@as(u32, 2), results.worst_frame.frame_index);
     try std.testing.expectEqualStrings("cache", results.worst_frame.dominant_lod_cpu_category);
     try std.testing.expectEqual(@as(u64, 20), results.worst_frame.lod_upload_bytes);
+    try std.testing.expectEqual(@as(u64, 3), results.lod.compact_submissions);
 
     const json = try BenchmarkRunner.results_json(results, std.testing.allocator);
     defer std.testing.allocator.free(json);
@@ -1096,6 +1502,11 @@ test "benchmark projects LOD profiling deltas and accepts cumulative counter res
         "deferred_deletion_gpu_bytes",
         "deferred_deletion_cpu_bytes",
         "known_memory_bytes",
+        "far_expanded_upload_bytes",
+        "compact_upload_bytes",
+        "far_expanded_mesh_construction_total_ms",
+        "compact_encode_total_ms",
+        "compact_submissions",
     }) |field| {
         try std.testing.expect(std.mem.indexOf(u8, json, field) != null);
     }
@@ -1121,12 +1532,189 @@ test "benchmark scenarios have stable bounded poses" {
     try std.testing.expect(rapid_turn_a.look.z < rapid_turn_b.look.z);
 }
 
+test "compact benchmark evidence requires residency and a successful submission" {
+    const resident_without_submission = LODStatsDisplay{
+        .loaded = .{ 0, 0, 0, 0, 0 },
+        .memory_used_mb = 0,
+        .compact_pool_allocated_bytes = 64,
+    };
+    try std.testing.expect(!compactEvidenceReady(null));
+    try std.testing.expect(!compactEvidenceReady(resident_without_submission));
+
+    var submitted = resident_without_submission;
+    submitted.profiling.compact_submissions = 1;
+    try std.testing.expect(compactEvidenceReady(submitted));
+}
+
+test "benchmark readiness uses common regions and GPU-only candidate evidence" {
+    const gpu = std.mem.zeroes(GpuTimingResults);
+    const ready_lod = LODStatsDisplay{
+        .loaded = .{ 0, 0, 0, 0, 0 },
+        .memory_used_mb = 0,
+        .compact_pool_allocated_bytes = 64,
+        .profiling = .{
+            .gpu_culling_requested = true,
+            .gpu_culling_candidate_count = 512,
+            .compact_submissions = 1,
+        },
+    };
+    const ready_world = WorldStats{
+        .chunks_total = 1,
+        .chunks_rendered = 1,
+        .chunks_culled = 0,
+        .vertices_rendered = 0,
+        .gen_queue = 0,
+        .mesh_queue = 0,
+        .upload_queue = 0,
+        .lod_renderable_regions = 512,
+        .lod = ready_lod,
+    };
+
+    var runner = try BenchmarkRunner.init(std.testing.allocator, "high", "traversal", 12, 4096, 1, BENCHMARK_WORLD_SEED, "Debug", "flat", "", "unused.json", 2048, 512);
+    defer runner.deinit();
+    runner.evidence_mode = true;
+    runner.evidence_min_warmup_s = 0;
+    try runner.recordFrame(1.0, 60, gpu, ready_world, 0, 0);
+    try std.testing.expect(runner.warmup_ready);
+    try std.testing.expectEqual(@as(u32, 512), runner.warmup_gpu_candidate_count_max);
+    try std.testing.expectEqual(@as(u64, 512), runner.startup_evidence.lod_renderable_regions);
+
+    // The CPU source must meet the same resident-region gate but cannot be
+    // held to a GPU-only candidate counter.
+    runner.warmup_ready = false;
+    runner.elapsed_s = 0;
+    runner.settled_warmup_s = 0;
+    runner.startup_evidence = .{};
+    var cpu_world = ready_world;
+    cpu_world.lod.?.profiling.gpu_culling_requested = false;
+    cpu_world.lod.?.profiling.gpu_culling_candidate_count = 0;
+    try runner.recordFrame(1.0, 60, gpu, cpu_world, 0, 0);
+    try std.testing.expect(runner.warmup_ready);
+}
+
+test "startup evidence preserves cumulative readiness counters and resident gauges" {
+    const evidence = startupEvidence(.{
+        .loaded = .{ 0, 0, 0, 0, 0 },
+        .memory_used_mb = 0,
+        .pool_gpu_allocated_bytes = 100,
+        .direct_mesh_gpu_bytes = 200,
+        .compact_pool_allocated_bytes = 300,
+        .pool_cpu_shadow_bytes = 400,
+        .profiling = .{
+            .upload_bytes = 500,
+            .far_expanded_upload_bytes = 300,
+            .compact_upload_bytes = 100,
+            .worker_generation_ms = 6.5,
+            .worker_mesh_construction_ms = 7.5,
+            .worker_far_expanded_mesh_construction_ms = 4.5,
+            .worker_compact_encode_ms = 2.5,
+            .compact_submissions = 8,
+        },
+    }, 9, 512);
+    try std.testing.expect(evidence.readiness_observed);
+    try std.testing.expectEqual(@as(u64, 500), evidence.upload_total_bytes);
+    try std.testing.expectEqual(@as(u64, 300), evidence.far_expanded_upload_bytes);
+    try std.testing.expectEqual(@as(u64, 100), evidence.compact_upload_bytes);
+    try std.testing.expectApproxEqAbs(@as(f64, 7.5), evidence.worker_mesh_construction_total_ms, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 4.5), evidence.worker_far_expanded_mesh_construction_ms, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.5), evidence.worker_compact_encode_ms, 0.001);
+    try std.testing.expectEqual(@as(u64, 8), evidence.compact_submissions);
+    try std.testing.expectEqual(@as(u64, 500), evidence.direct_mesh_gpu_bytes + evidence.compact_pool_allocated_bytes);
+}
+
+fn validResultForPolicyTest() !BenchmarkResults {
+    var runner = try BenchmarkRunner.init(std.testing.allocator, "low", "stationary", 6, 512, 1, BENCHMARK_WORLD_SEED, "ReleaseFast", "flat", "", "unused.json", 0, 0);
+    defer runner.deinit();
+    runner.sampled_s = 1;
+    try runner.samples.append(std.testing.allocator, .{
+        .cpu_ms = 1,
+        .fps = 100,
+        .gpu_shadow_ms = 0,
+        .gpu_opaque_ms = 0,
+        .gpu_lod_terrain_ms = 1,
+        .gpu_lod_water_ms = 1,
+        .gpu_lod_compact_terrain_ms = 0,
+        .gpu_lod_compact_water_ms = 0,
+        .gpu_lod_culling_ms = 1,
+        .gpu_total_ms = 3,
+        .draw_calls = 0,
+        .vertices = 0,
+        .chunks_rendered = 0,
+        .gpu_memory_mb = 0,
+        .lod = .{ .enabled = true, .pending_cpu_upload_bytes = 1, .deferred_deletion_cpu_bytes = 1, .pool_cpu_shadow_bytes = 1, .deferred_deletion_bytes = 1, .pool_gpu_capacity_bytes = 1, .compact_pool_capacity_bytes = 1, .direct_mesh_gpu_bytes = 1 },
+    });
+    return runner.makeResults();
+}
+
+test "evidence mode rejects unknown benchmark provenance" {
+    var results = try validResultForPolicyTest();
+    results.completion.evidence_mode = true;
+    results.startup_evidence.readiness_observed = true;
+    results.provenance = .{
+        .gpu_adapter = "Lavapipe",
+        .gpu_driver = "Mesa",
+        .runner = "test runner",
+        .zig_toolchain = "Zig 0.16.0",
+    };
+    try validateResults(results);
+    results.provenance.gpu_driver = "unknown";
+    try std.testing.expectError(error.MissingBenchmarkProvenance, validateResults(results));
+}
+
+test "benchmark policy rejects each LOD evidence and percentile budget breach" {
+    var results = try validResultForPolicyTest();
+    try validateResults(results);
+    results.lod.memory_bytes.logical_ram_bytes.max_bytes = 0;
+    try std.testing.expectError(error.MissingLogicalLodMemoryEvidence, validateResults(results));
+    results = try validResultForPolicyTest();
+    results.lod.cpu_frame_ms.p95 = 41;
+    try std.testing.expectError(error.LodCpuBudgetBreach, validateResults(results));
+    results = try validResultForPolicyTest();
+    results.lod.gpu_frame_ms.p99 = 121;
+    try std.testing.expectError(error.LodGpuBudgetBreach, validateResults(results));
+    results = try validResultForPolicyTest();
+    results.lod.memory_bytes.logical_ram_bytes.p99_bytes = 513 * 1024 * 1024;
+    try std.testing.expectError(error.LodLogicalRamBudgetBreach, validateResults(results));
+    results = try validResultForPolicyTest();
+    results.lod.memory_bytes.logical_vram_bytes.p99_bytes = 1025 * 1024 * 1024;
+    try std.testing.expectError(error.LodLogicalVramBudgetBreach, validateResults(results));
+}
+
+test "byte gauge sample summary calculates p50 p95 and p99" {
+    const values = [_]u64{ 1, 2, 3, 4, 100 };
+    const summary = try ByteGaugeAccumulator.summarizeSamples(std.testing.allocator, &values);
+    try std.testing.expectEqual(@as(u64, 3), summary.p50_bytes);
+    try std.testing.expectEqual(@as(u64, 100), summary.p95_bytes);
+    try std.testing.expectEqual(@as(u64, 100), summary.p99_bytes);
+}
+
 fn fpsField(sample: FrameSample) f32 {
     return sample.fps;
 }
 
 fn frameMsField(sample: FrameSample) f32 {
     return sample.cpu_ms;
+}
+fn gpuTotalField(sample: FrameSample) f32 {
+    return sample.gpu_total_ms;
+}
+fn lodGpuField(sample: FrameSample) f32 {
+    return sample.gpu_lod_terrain_ms + sample.gpu_lod_water_ms + sample.gpu_lod_culling_ms;
+}
+fn logicalRamBytes(sample: LODFrameSample) u64 {
+    return sample.source_data_cpu_bytes +| sample.pending_cpu_upload_bytes +| sample.deferred_deletion_cpu_bytes +| sample.pool_cpu_shadow_bytes;
+}
+fn logicalVramBytes(sample: LODFrameSample) u64 {
+    return sample.deferred_deletion_bytes +| sample.pool_gpu_capacity_bytes +| sample.compact_pool_capacity_bytes +| sample.direct_mesh_gpu_bytes;
+}
+fn compactTerrainField(sample: FrameSample) f32 {
+    return sample.gpu_lod_compact_terrain_ms;
+}
+fn compactWaterField(sample: FrameSample) f32 {
+    return sample.gpu_lod_compact_water_ms;
+}
+fn cullingField(sample: FrameSample) f32 {
+    return sample.gpu_lod_culling_ms;
 }
 
 fn timingTotalAverage(total_ms: f64, frame_count: f64) TimingTotalAverage {
@@ -1157,6 +1745,7 @@ fn lodFrameDelta(current: ?LODStatsDisplay, previous: *?LODProfilingDisplay) LOD
         compact_pool_free_bytes: u64,
         compact_pool_retired_bytes: u64,
         direct_mesh_gpu_bytes: u64,
+        source_data_cpu_bytes: u64,
         known_memory_bytes: u64,
     }{
         .pending_cpu_upload_bytes = display.pending_cpu_upload_bytes,
@@ -1171,6 +1760,7 @@ fn lodFrameDelta(current: ?LODStatsDisplay, previous: *?LODProfilingDisplay) LOD
         .compact_pool_free_bytes = display.compact_pool_free_bytes,
         .compact_pool_retired_bytes = display.compact_pool_retired_bytes,
         .direct_mesh_gpu_bytes = display.direct_mesh_gpu_bytes,
+        .source_data_cpu_bytes = display.source_data_cpu_bytes,
         .known_memory_bytes = display.memory_used_bytes,
     };
     if (!snapshot.enabled or last == null or !last.?.enabled) {
@@ -1188,9 +1778,18 @@ fn lodFrameDelta(current: ?LODStatsDisplay, previous: *?LODProfilingDisplay) LOD
             .compact_pool_free_bytes = gauges.compact_pool_free_bytes,
             .compact_pool_retired_bytes = gauges.compact_pool_retired_bytes,
             .direct_mesh_gpu_bytes = gauges.direct_mesh_gpu_bytes,
+            .source_data_cpu_bytes = gauges.source_data_cpu_bytes,
             .known_memory_bytes = gauges.known_memory_bytes,
             .gpu_culling_overflows = snapshot.gpu_culling_overflows,
             .gpu_culling_validation_mismatches = snapshot.gpu_culling_validation_mismatches,
+            .gpu_culling_requested = snapshot.gpu_culling_requested,
+            .gpu_culling_threshold = snapshot.gpu_culling_threshold,
+            .gpu_culling_candidate_count = snapshot.gpu_culling_candidate_count,
+            .gpu_culling_candidate_count_max = snapshot.gpu_culling_candidate_count_max,
+            .gpu_culling_draw_submissions = snapshot.gpu_culling_draw_submissions,
+            .gpu_culling_validation_generation = snapshot.gpu_culling_validation_generation,
+            .gpu_culling_validation_completed_generation = snapshot.gpu_culling_validation_completed_generation,
+            .gpu_culling_validation_completed_count = snapshot.gpu_culling_validation_completed_count,
         };
     }
 
@@ -1211,9 +1810,13 @@ fn lodFrameDelta(current: ?LODStatsDisplay, previous: *?LODProfilingDisplay) LOD
         .eviction_ms = cumulativeTimingDelta(snapshot.eviction_ms, prior.eviction_ms),
         .worker_generation_ms = cumulativeTimingDelta(snapshot.worker_generation_ms, prior.worker_generation_ms),
         .worker_mesh_construction_ms = cumulativeTimingDelta(snapshot.worker_mesh_construction_ms, prior.worker_mesh_construction_ms),
+        .worker_far_expanded_mesh_construction_ms = cumulativeTimingDelta(snapshot.worker_far_expanded_mesh_construction_ms, prior.worker_far_expanded_mesh_construction_ms),
+        .worker_compact_encode_ms = cumulativeTimingDelta(snapshot.worker_compact_encode_ms, prior.worker_compact_encode_ms),
         .manager_lock_wait_ms = cumulativeTimingDelta(snapshot.manager_lock_wait_ms, prior.manager_lock_wait_ms),
         .manager_lock_hold_ms = cumulativeTimingDelta(snapshot.manager_lock_hold_ms, prior.manager_lock_hold_ms),
         .upload_bytes = cumulativeCounterDelta(snapshot.upload_bytes, prior.upload_bytes),
+        .far_expanded_upload_bytes = cumulativeCounterDelta(snapshot.far_expanded_upload_bytes, prior.far_expanded_upload_bytes),
+        .compact_upload_bytes = cumulativeCounterDelta(snapshot.compact_upload_bytes, prior.compact_upload_bytes),
         .pending_cpu_upload_bytes = gauges.pending_cpu_upload_bytes,
         .staging_pressure_count = cumulativeCounterDelta(snapshot.staging_pressure_count, prior.staging_pressure_count),
         .visible_count = cumulativeCounterDelta(snapshot.visible_count, prior.visible_count),
@@ -1235,11 +1838,20 @@ fn lodFrameDelta(current: ?LODStatsDisplay, previous: *?LODProfilingDisplay) LOD
         .compact_pool_free_bytes = gauges.compact_pool_free_bytes,
         .compact_pool_retired_bytes = gauges.compact_pool_retired_bytes,
         .direct_mesh_gpu_bytes = gauges.direct_mesh_gpu_bytes,
+        .source_data_cpu_bytes = gauges.source_data_cpu_bytes,
         .known_memory_bytes = gauges.known_memory_bytes,
         .wait_idle_count = cumulativeCounterDelta(snapshot.wait_idle_count, prior.wait_idle_count),
         .wait_idle_ms = cumulativeTimingDelta(snapshot.wait_idle_ms, prior.wait_idle_ms),
         .gpu_culling_overflows = snapshot.gpu_culling_overflows,
         .gpu_culling_validation_mismatches = snapshot.gpu_culling_validation_mismatches,
+        .gpu_culling_requested = snapshot.gpu_culling_requested,
+        .gpu_culling_threshold = snapshot.gpu_culling_threshold,
+        .gpu_culling_candidate_count = snapshot.gpu_culling_candidate_count,
+        .gpu_culling_candidate_count_max = snapshot.gpu_culling_candidate_count_max,
+        .gpu_culling_draw_submissions = cumulativeCounterDelta(snapshot.gpu_culling_draw_submissions, prior.gpu_culling_draw_submissions),
+        .gpu_culling_validation_generation = snapshot.gpu_culling_validation_generation,
+        .gpu_culling_validation_completed_generation = snapshot.gpu_culling_validation_completed_generation,
+        .gpu_culling_validation_completed_count = snapshot.gpu_culling_validation_completed_count,
     };
 }
 
@@ -1376,6 +1988,14 @@ fn percentile(sorted: []const f32, p: f64) f64 {
 
 fn lessThan(_: void, a: f32, b: f32) bool {
     return a < b;
+}
+fn lessThanU64(_: void, a: u64, b: u64) bool {
+    return a < b;
+}
+fn percentileU64(sorted: []const u64, quantile: f64) u64 {
+    if (sorted.len == 0) return 0;
+    const index: usize = @intFromFloat(@ceil(quantile * @as(f64, @floatFromInt(sorted.len - 1))));
+    return sorted[@min(index, sorted.len - 1)];
 }
 
 fn averageArray(values: []const f32) f32 {

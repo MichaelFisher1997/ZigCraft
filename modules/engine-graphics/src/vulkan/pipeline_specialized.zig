@@ -170,6 +170,11 @@ pub fn createCompactLODPipeline(
         .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT, .module = shaders.frag, .pName = "main" },
     };
     var vertex_input = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
+    // Vertex-pulling intentionally has no bindings or attributes, but Vulkan
+    // still requires this create-info's structure type to be initialized.
+    // Leaving it zero makes the compact-only pipeline undefined on drivers
+    // that validate nested pipeline state (observed as an all-black compact
+    // capture on RADV).
     vertex_input.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
     var water_depth_stencil = depth_stencil.*;

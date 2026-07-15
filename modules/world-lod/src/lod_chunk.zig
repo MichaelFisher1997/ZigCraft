@@ -208,8 +208,9 @@ pub const LODChunk = struct {
     /// cap. A source revision or cap increase makes it eligible again.
     store_size_limited: bool,
     store_size_limit_cap_mb: u32,
-    /// Sticky for this region lifetime after a compact runtime submission
-    /// failure, preventing an auto/force rebuild loop.
+    /// Sticky for the current source revision after a compact runtime
+    /// submission failure, preventing an auto/force rebuild loop on this
+    /// device session. Source changes clear it and may retry compact safely.
     compact_disabled: bool,
 
     /// Creates an empty LOD region record in the missing state.
@@ -381,7 +382,14 @@ pub const LODChunk = struct {
         self.dirty = true;
         self.store_dirty = true;
         self.store_size_limited = false;
+        self.bumpSourceRevision();
+    }
+
+    /// Advances the immutable source identity. A fresh source revision is
+    /// allowed to retry compact rendering after a device-local failure.
+    pub fn bumpSourceRevision(self: *LODChunk) void {
         self.source_revision +%= 1;
+        self.compact_disabled = false;
     }
 
     /// Sets the ready-child count directly, clamped to four direct children.
@@ -478,6 +486,7 @@ pub const ILODConfig = struct {
         getQEMTarget: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
         getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
         getHorizontalDetail: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
+        getSampleDensity: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
         getVerticalSpanBudget: *const fn (ptr: *anyopaque) u8,
         getMeshPath: *const fn (ptr: *anyopaque) LODMeshPath,
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
@@ -560,6 +569,11 @@ pub const ILODConfig = struct {
     pub fn getHorizontalDetail(self: ILODConfig, lod: LODLevel) u32 {
         return self.vtable.getHorizontalDetail(self.ptr, lod);
     }
+    /// Returns the source-sample density used before meshing. Far LODs may
+    /// reduce this independently of their render radius.
+    pub fn getSampleDensity(self: ILODConfig, lod: LODLevel) f32 {
+        return self.vtable.getSampleDensity(self.ptr, lod);
+    }
 
     /// Returns the maximum number of vertical spans retained per LOD column.
     /// Implementations clamp this to the storage capacity of `LODSimplifiedData`.
@@ -631,6 +645,11 @@ pub const LODConfig = struct {
     fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28, 0.22 },
 
     horizontal_detail: [LODLevel.count]u32 = .{ 33, 65, 65, 129, 129 },
+
+    /// LOD3 reduces worker input where four-block cells remain visually stable.
+    /// Keep the outer horizon at its full 65-sample grid: reducing it to 17
+    /// samples creates 32-block plateaus and visibly detached height seams.
+    sample_density: [LODLevel.count]f32 = .{ 1.0, 1.0, 1.0, 0.5, 1.0 },
 
     vertical_span_budget: u8 = 4,
 
@@ -753,6 +772,7 @@ pub const LODConfig = struct {
         .getQEMTarget = getQEMTargetWrapper,
         .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
         .getHorizontalDetail = getHorizontalDetailWrapper,
+        .getSampleDensity = getSampleDensityWrapper,
         .getVerticalSpanBudget = getVerticalSpanBudgetWrapper,
         .getMeshPath = getMeshPathWrapper,
         .getFogStartPercent = getFogStartPercentWrapper,
@@ -819,6 +839,10 @@ pub const LODConfig = struct {
     fn getHorizontalDetailWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.horizontal_detail[@intFromEnum(lod)];
+    }
+    fn getSampleDensityWrapper(ptr: *anyopaque, lod: LODLevel) f32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return std.math.clamp(self.sample_density[@intFromEnum(lod)], 0.0625, 1.0);
     }
     fn getVerticalSpanBudgetWrapper(ptr: *anyopaque) u8 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -889,6 +913,16 @@ test "LODConfig distance calculation" {
     try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(20));
     try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(50));
     try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(100));
+}
+
+test "LODConfig keeps outer horizon cells below detached-plateau scale" {
+    var config = LODConfig{};
+    const interface = config.interface();
+    const width = world_core.LODSimplifiedData.getGridSizeForDensity(.lod4, interface.getSampleDensity(.lod4));
+    const cell_size = regionSizeBlocks(.lod4) / (width - 1);
+
+    try std.testing.expectEqual(@as(u32, 65), width);
+    try std.testing.expectEqual(@as(u32, 8), cell_size);
 }
 
 test "LODConfig distance calculation respects active LOD count" {

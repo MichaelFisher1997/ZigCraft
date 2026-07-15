@@ -26,6 +26,7 @@ const ILODConfig = lod_chunk.ILODConfig;
 const LODState = lod_chunk.LODState;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
 pub const LODStats = @import("lod_stats.zig").LODStats;
+pub const LODWaitIdleReason = @import("lod_stats.zig").LODWaitIdleReason;
 
 const world_core = @import("world-core");
 const Chunk = world_core.Chunk;
@@ -72,6 +73,7 @@ const lod_manager_ingestion_ops = @import("lod_manager_ingestion_ops.zig");
 const lod_manager_generation_ops = @import("lod_manager_generation_ops.zig");
 const lod_manager_upload_ops = @import("lod_manager_upload_ops.zig");
 const lod_manager_eviction_ops = @import("lod_manager_eviction_ops.zig");
+const lod_manager_benchmark_fixture_ops = @import("lod_manager_benchmark_fixture_ops.zig");
 const CacheIoPipeline = @import("lod_cache_io.zig").CacheIoPipeline;
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const ChunkCoordKey = lod_manager_context.ChunkCoordKey;
@@ -79,9 +81,7 @@ const ChunkCoordKeyContext = lod_manager_context.ChunkCoordKeyContext;
 const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std.hash_map.default_max_load_percentage);
 const PendingIngestion = lod_manager_context.PendingIngestion;
 const PlayerChunkPos = lod_manager_context.PlayerChunkPos;
-const GenerationCandidate = lod_manager_context.GenerationCandidate;
-const MeshCandidate = lod_manager_context.MeshCandidate;
-const UploadCandidate = lod_manager_context.UploadCandidate;
+const LifecycleQueue = lod_manager_context.LifecycleQueue;
 pub const ChunkResolver = lod_manager_context.ChunkResolver;
 const MAX_LOD_REGIONS = lod_manager_context.MAX_LOD_REGIONS;
 
@@ -129,6 +129,9 @@ pub const LODMeshDisposalQueue = struct {
 
 pub const LODMemoryGovernor = struct {
     used_bytes: usize = 0,
+    /// Exact known allocations plus conservative reservations for admitted
+    /// regions. This is the value checked before accepting new work.
+    logical_admission_bytes: usize = 0,
     radius_shrink_chunks: [LODLevel.count]i32 = [_]i32{0} ** LODLevel.count,
 };
 
@@ -217,17 +220,20 @@ pub const LODManager = struct {
     // update() once the regions appear.
     ingestion_queue: LODIngestionQueue,
 
-    // Reused per-update scratch buffers for candidate sorting. These used to
-    // allocate/free on every LOD tick; retaining capacity removes steady-state
-    // allocator churn at high render distances.
-    generation_candidates_scratch: std.ArrayListUnmanaged(GenerationCandidate) = .empty,
-    mesh_candidates_scratch: std.ArrayListUnmanaged(MeshCandidate) = .empty,
-    upload_candidates_scratch: std.ArrayListUnmanaged(UploadCandidate) = .empty,
+    // Bounded, tokenized lifecycle heaps. Resident maps are consulted only
+    // when a token is popped; stale work is rejected by token/revision.
+    generation_tokens: LifecycleQueue = .{},
+    transition_tokens: LifecycleQueue = .{},
+    fade_tokens: LifecycleQueue = .{},
 
     // Number of regions admitted to the generation/mesh/upload pipeline. This
     // is maintained at lifecycle boundaries so scheduling does not need to
     // recount every region map before each admission pass.
     pending_region_count: usize = 0,
+
+    /// A benchmark-only resident fixture owns the normal maps/meshes but opts
+    /// out of scheduler/eviction mutation for the duration of its session.
+    benchmark_fixture_active: bool = false,
 
     // Callback type to check if a regular chunk is loaded and renderable
     pub const ChunkChecker = lod_gpu.ChunkChecker;
@@ -269,6 +275,13 @@ pub const LODManager = struct {
     /// Call from the world update thread; errors report failed queueing, mesh creation, or budget/eviction work.
     pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
         return lod_manager_core.update(self, player_pos, player_velocity, chunk_checker, checker_ctx);
+    }
+
+    /// Installs the bounded `gpu-culling-scale` benchmark source set through
+    /// the normal compact upload bridge. This is intentionally unavailable to
+    /// normal session code except through the benchmark fixture launcher.
+    pub fn installGpuCullingScaleFixture(self: *Self) !void {
+        return lod_manager_benchmark_fixture_ops.install(self);
     }
 
     /// Returns a snapshot of LOD scheduling, cache, generation, upload, and renderability counters.
@@ -440,18 +453,23 @@ pub const LODManager = struct {
     /// Folds one full-detail chunk into every matching LOD region's simplified source data.
     /// Marks affected source data dirty so meshes and cache payloads can be refreshed.
     pub fn ingestChunk(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) void {
+        // The scale fixture's source set is immutable for a matched CPU/GPU
+        // run. Full-detail streamer arrivals must not remesh a fixture tile.
+        if (self.benchmark_fixture_active) return;
         return lod_manager_ingestion_ops.ingestChunk(self, cx, cz, chunk, provenance);
     }
 
     /// Queues ingestion for a chunk whose target LOD regions may not exist yet.
-    /// The request is retried by later update ticks until it expires or applies.
+    /// The request is retried by later update ticks until it applies or manager teardown.
     pub fn requestIngestion(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance) void {
+        if (self.benchmark_fixture_active) return;
         return lod_manager_ingestion_ops.requestIngestion(self, cx, cz, provenance);
     }
 
     /// Marks a full-detail chunk as edited so its containing LOD regions can be refreshed.
     /// The edit is debounced and flushed into ingestion work from the update thread.
     pub fn markChunkEdited(self: *Self, cx: i32, cz: i32) void {
+        if (self.benchmark_fixture_active) return;
         return lod_manager_ingestion_ops.markChunkEdited(self, cx, cz);
     }
 
@@ -467,14 +485,14 @@ pub const LODManager = struct {
         return lod_manager_ingestion_ops.recordPendingLocked(self, cx, cz, provenance, mask);
     }
 
-    /// Refreshes an existing deferred ingestion request with a new mask and time-to-live.
-    /// Used when chunk edits arrive faster than regions can be regenerated.
+    /// Refreshes an existing deferred ingestion request with a new mask. The
+    /// legacy `ttl` argument is ignored; work remains durable until it applies.
     pub fn rerecordPending(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8, ttl: u16) void {
         return lod_manager_ingestion_ops.rerecordPending(self, cx, cz, provenance, mask, ttl);
     }
 
-    /// Decrements pending-ingestion TTL counters while the ingestion mutex is held.
-    /// Expired requests are dropped to avoid unbounded retry queues.
+    /// Removes completed pending-ingestion records while the ingestion mutex is held.
+    /// Unresolved requests remain durable; queue capacity bounds memory usage.
     pub fn decayPendingLocked(self: *Self) void {
         return lod_manager_ingestion_ops.decayPendingLocked(self);
     }
@@ -509,6 +527,17 @@ pub const LODManager = struct {
         return lod_manager_generation_ops.processStateTransitions(self, velocity);
     }
 
+    /// Adds a revision-checked mesh or upload lifecycle token. Used when
+    /// workers and ingestion change state without a resident-map sweep.
+    pub fn enqueueTransition(self: *Self, key: LODRegionKey, chunk: *const LODChunk, stage: lod_manager_context.LifecycleStage) void {
+        return lod_manager_generation_ops.enqueueTransition(self, key, chunk, stage);
+    }
+
+    /// Schedules bounded fade decay only for regions actively transitioning.
+    pub fn enqueueFade(self: *Self, key: LODRegionKey, chunk: *const LODChunk) void {
+        return lod_manager_generation_ops.enqueueFade(self, key, chunk);
+    }
+
     /// Returns the mesh object for a region, allocating it when absent.
     /// The returned mesh is manager-owned and remains valid until eviction or manager teardown.
     pub fn getOrCreateMesh(self: *Self, key: LODRegionKey) !*LODMesh {
@@ -537,6 +566,18 @@ pub const LODManager = struct {
     /// Chunks that cannot be uploaded within the budget are left queued for later frames.
     pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         return lod_manager_upload_ops.processUploadsWithBudget(self, upload_budget_bytes);
+    }
+
+    /// Recovers compact draw failures on the update thread through the normal
+    /// CPU mesh and bounded upload path.
+    pub fn recoverCompactDrawFailures(self: *Self) void {
+        return lod_manager_upload_ops.recoverCompactDrawFailures(self);
+    }
+
+    /// Explicitly records a device-wide LOD wait. Routine upload, eviction,
+    /// and pool maintenance must use frame-safe retirement instead.
+    pub fn waitIdleTracked(self: *Self, reason: LODWaitIdleReason) void {
+        self.gpu_bridge.waitIdleTracked(&self.profiling, reason);
     }
 
     /// Places an LOD chunk back onto an upload queue after a deferred or failed upload attempt.

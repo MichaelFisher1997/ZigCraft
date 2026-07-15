@@ -96,6 +96,13 @@ pub const LODCullDispatch = extern struct {
 pub const LODCullDiagnostics = extern struct {
     overflow_count: u32 = 0,
     validation_mismatch_count: u32 = 0,
+    /// Monotonic opt-in validation work generation. A generation is assigned
+    /// when its device readback has been queued, not when it is assumed done.
+    validation_generation: u64 = 0,
+    /// Last validation generation observed after its delayed frame-slot fence.
+    validation_completed_generation: u64 = 0,
+    /// Number of delayed validation readbacks actually completed.
+    validation_completed_count: u64 = 0,
 };
 
 pub const ILODCullingSystem = struct {
@@ -143,4 +150,15 @@ test "LOD culling candidate ABI is std430 aligned" {
     try @import("std").testing.expectEqual(@as(usize, 144), @offsetOf(LODCullCandidate, "terrain_command"));
     try @import("std").testing.expectEqual(@as(usize, 208), @offsetOf(LODCullCandidate, "lod_and_padding"));
     try @import("std").testing.expectEqual(@as(usize, 32), @sizeOf(LODCullCommand));
+}
+
+test "LOD culling diagnostics expose delayed validation completion" {
+    const diagnostics = LODCullDiagnostics{
+        .validation_generation = 9,
+        .validation_completed_generation = 8,
+        .validation_completed_count = 8,
+    };
+    try @import("std").testing.expectEqual(@as(u64, 9), diagnostics.validation_generation);
+    try @import("std").testing.expectEqual(@as(u64, 8), diagnostics.validation_completed_generation);
+    try @import("std").testing.expectEqual(@as(u64, 8), diagnostics.validation_completed_count);
 }

@@ -50,13 +50,13 @@ layout(push_constant) uniform CompactDraw {
     float cell_size;
     uint layer;
     float skirt_depth;
-    uint _reserved;
+    uint edge_masks;
 } draw_data;
 
 bool indirectMode() { return draw_data.layer == 2u; }
 mat4 tileModel() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].model : draw_data.model; }
 vec4 tileParams() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].params : vec4(draw_data.mask_radius, draw_data.lod_fade, draw_data.cell_size, draw_data.skirt_depth); }
-uvec4 tileWords() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].words : uvec4(draw_data.sample_offset, draw_data.width, draw_data.layer, 0u); }
+uvec4 tileWords() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].words : uvec4(draw_data.sample_offset, draw_data.width, draw_data.layer, draw_data.edge_masks); }
 
 int decodeSigned16(uint word, uint shift) {
     uint raw = (word >> shift) & 0xffffu;
@@ -128,9 +128,9 @@ void main() {
     uint x = vertex_index % words.y;
     uint z = vertex_index / words.y;
     uvec4 packed = sampleAtApron(x + 1u, z + 1u);
-    // Compact generation only accepts uniformly wet or uniformly dry tiles, so
-    // a nine-sample neighborhood test is redundant and needlessly amplifies
-    // vertex-stage storage reads on drivers where this path is being diagnosed.
+    // Compact generation accepts only uniformly wet or uniformly dry tiles.
+    // Keep this guard as defense against stale/corrupt payloads; mixed shoreline
+    // topology requires per-cell indices and remains on the expanded path.
     if (!isFullyCoveredWater(packed)) {
         collapsePrimitiveVertex();
         return;

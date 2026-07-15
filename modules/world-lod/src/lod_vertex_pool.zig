@@ -12,6 +12,7 @@ const Vertex = rhi_types.Vertex;
 const BufferHandle = rhi_types.BufferHandle;
 const RhiError = rhi_types.RhiError;
 const log = @import("engine-core").log;
+const LODStagingCost = @import("lod_mesh_resources.zig").LODStagingCost;
 
 const DEFAULT_INITIAL_CAPACITY_BYTES: usize = 8 * 1024 * 1024;
 const COMPACTION_FRAGMENTATION_THRESHOLD: f32 = 0.35;
@@ -228,6 +229,35 @@ pub const LODVertexPool = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         return self.capacity_bytes;
+    }
+
+    /// Returns every staging byte `uploadMesh` will need for its current
+    /// payload. Replacing a pool buffer republishes its CPU shadow, so callers
+    /// must reserve the migration writes before beginning the upload.
+    pub fn uploadCost(self: *LODVertexPool, mesh: *LODMesh) LODStagingCost {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        mesh.mutex.lock();
+        defer mesh.mutex.unlock();
+
+        const pending = mesh.pending_vertices orelse return .{};
+        const payload_bytes = std.mem.sliceAsBytes(pending).len;
+        if (payload_bytes == 0) return .{};
+
+        const old_index = self.findRecordIndexUnlocked(mesh);
+        const old_size = if (old_index) |index| self.allocations.items[index].size else 0;
+        const needs_new_range = old_index == null or old_size < payload_bytes or
+            (payload_bytes > lod_mesh.MAX_STAGING_UPDATE_BYTES and old_index != null);
+        if (!needs_new_range or self.capacity_bytes == 0 or self.findBestFitUnlocked(payload_bytes) != null) {
+            return .{ .payload_bytes = payload_bytes };
+        }
+
+        // Fragmented allocation compacts, while insufficient total free space
+        // grows. Both paths create a replacement and upload every live record.
+        return .{
+            .payload_bytes = payload_bytes,
+            .migration_bytes = self.allocatedBytesUnlocked(),
+        };
     }
 
     pub fn freeBytes(self: *LODVertexPool) usize {
@@ -634,6 +664,29 @@ test "LODVertexPool grows and preserves pooled handles" {
     try std.testing.expectEqual(@as(u32, 0), resources.uploaded);
     try std.testing.expect(resources.updated >= 1);
     try std.testing.expectEqual(@as(u32, 0), resources.wait_idle);
+    pool.destroyMesh(&first);
+    pool.destroyMesh(&second);
+}
+
+test "LODVertexPool upload cost includes replacement migration staging" {
+    const allocator = std.testing.allocator;
+    var resources = TestResources{};
+    var pool = LODVertexPool.init(allocator, .lod1, 64);
+    defer pool.deinit(resources.resources());
+
+    var first = LODMesh.init(allocator, .lod1);
+    var second = LODMesh.init(allocator, .lod1);
+    try setPending(&first, allocator, 1);
+    const initial_cost = pool.uploadCost(&first);
+    try std.testing.expectEqual(@sizeOf(Vertex), initial_cost.payload_bytes);
+    try std.testing.expectEqual(@as(usize, 0), initial_cost.migration_bytes);
+    try pool.uploadMesh(&first, resources.resources());
+
+    try setPending(&second, allocator, 64);
+    const growth_cost = pool.uploadCost(&second);
+    try std.testing.expectEqual(64 * @sizeOf(Vertex), growth_cost.payload_bytes);
+    try std.testing.expectEqual(@sizeOf(Vertex), growth_cost.migration_bytes);
+    try std.testing.expectEqual(65 * @sizeOf(Vertex), growth_cost.total());
     pool.destroyMesh(&first);
     pool.destroyMesh(&second);
 }

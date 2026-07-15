@@ -23,6 +23,12 @@ const BuildOptions = struct {
     benchmark_duration: u32,
     benchmark_output: []const u8,
     benchmark_render_distance: i32,
+    benchmark_horizon_distance: i32,
+    benchmark_lod_memory_budget_mb: u32,
+    benchmark_require_gpu_candidates: u32,
+    benchmark_gpu_culling: bool,
+    benchmark_world: []const u8,
+    benchmark_fixture: []const u8,
     sanitize_c: ?std.zig.SanitizeC,
 };
 
@@ -429,6 +435,8 @@ fn defineBuildSteps(
     const benchmark_scenario = opts.benchmark_scenario;
     const benchmark_duration = opts.benchmark_duration;
     const benchmark_output = opts.benchmark_output;
+    const benchmark_world = opts.benchmark_world;
+    const benchmark_fixture = opts.benchmark_fixture;
     const sanitize_c = opts.sanitize_c;
     const zig_math = modules.zig_math;
     const zig_noise = modules.zig_noise;
@@ -508,8 +516,8 @@ fn defineBuildSteps(
     benchmark_options.addOption(bool, "smoke_test", false);
     benchmark_options.addOption(bool, "chunk_debug_mode", false);
     benchmark_options.addOption([]const u8, "chunk_debug_enable", "");
-    benchmark_options.addOption([]const u8, "auto_world", "");
-    benchmark_options.addOption([]const u8, "auto_preset", "");
+    benchmark_options.addOption([]const u8, "auto_world", benchmark_world);
+    benchmark_options.addOption([]const u8, "auto_preset", benchmark_preset);
     benchmark_options.addOption(u32, "startup_diagnostic_seconds", 0);
     benchmark_options.addOption(i32, "monitor_index", monitor_index);
     benchmark_options.addOption([]const u8, "monitor_name", monitor_name);
@@ -519,6 +527,8 @@ fn defineBuildSteps(
     benchmark_options.addOption([]const u8, "screenshot_path", "");
     benchmark_options.addOption(u32, "screenshot_frame", 120);
     benchmark_options.addOption(u32, "screenshot_delay_seconds", 0);
+    benchmark_options.addOption([]const u8, "phase5_visual_scene", benchmark_fixture);
+    benchmark_options.addOption([]const u8, "phase5_visual_run_id", "");
     benchmark_options.addOption(bool, "shadow_test_scene", false);
     benchmark_options.addOption([]const u8, "shadow_test_variant", "dug-cave");
     benchmark_options.addOption(bool, "benchmark", true);
@@ -527,6 +537,11 @@ fn defineBuildSteps(
     benchmark_options.addOption(u32, "benchmark_duration", benchmark_duration);
     benchmark_options.addOption([]const u8, "benchmark_output", benchmark_output);
     benchmark_options.addOption(i32, "benchmark_render_distance", opts.benchmark_render_distance);
+    benchmark_options.addOption(i32, "benchmark_horizon_distance", opts.benchmark_horizon_distance);
+    benchmark_options.addOption(u32, "benchmark_lod_memory_budget_mb", opts.benchmark_lod_memory_budget_mb);
+    benchmark_options.addOption(u32, "benchmark_require_gpu_candidates", opts.benchmark_require_gpu_candidates);
+    benchmark_options.addOption([]const u8, "benchmark_world", benchmark_world);
+    benchmark_options.addOption([]const u8, "benchmark_fixture", benchmark_fixture);
     benchmark_options.addOption([]const u8, "benchmark_build_mode", @tagName(optimize));
 
     const benchmark_root_module = b.createModule(.{
@@ -762,8 +777,44 @@ fn defineBuildSteps(
     const run_phase5_lod_gate_tests = b.addRunArtifact(phase5_lod_gate_tests);
     run_phase5_lod_gate_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
 
+    // This is deliberately operation-count based rather than wall-clock based:
+    // CI machines vary widely, while the stress sequence remains reproducible.
+    const phase5_stress_iterations = b.option(u32, "phase5-stress-iterations", "Deterministic Phase 5 streaming stress cycles") orelse 64;
+    const phase5_stress_root = b.createModule(.{
+        .root_source_file = b.path("modules/world-lod/src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_c = sanitize_c,
+    });
+    addSharedImports(phase5_stress_root, modules.zig_math, modules.zig_noise, modules.fs_module, modules.sync_module, modules.c_module, options);
+    phase5_stress_root.addImport("engine-core", modules.engine_core);
+    phase5_stress_root.addImport("engine-assets", modules.engine_assets);
+    phase5_stress_root.addImport("engine-graphics", modules.engine_graphics);
+    phase5_stress_root.addImport("engine-math", modules.engine_math);
+    phase5_stress_root.addImport("engine-rhi", modules.engine_rhi);
+    phase5_stress_root.addImport("world-meshing", modules.world_meshing);
+    phase5_stress_root.addImport("world-core", modules.world_core);
+    phase5_stress_root.addImport("world-persistence", modules.world_persistence);
+    phase5_stress_root.addImport("world-worldgen", modules.world_worldgen);
+    phase5_stress_root.addOptions("world_lod_options", opts.world_lod_options);
+    const phase5_stress_tests = b.addTest(.{
+        .root_module = phase5_stress_root,
+        .filters = &.{"Phase 5 stress"},
+    });
+    const run_phase5_stress_tests = b.addRunArtifact(phase5_stress_tests);
+    run_phase5_stress_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
+    run_phase5_stress_tests.setEnvironmentVariable("ZIGCRAFT_PHASE5_STRESS_ITERATIONS", b.fmt("{}", .{phase5_stress_iterations}));
+
     const phase5_benchmark_config = b.addSystemCommand(&.{ "bash", "scripts/check_phase5_benchmark_config.sh" });
     phase5_benchmark_config.setCwd(b.path("."));
+    const phase5_benchmark_schema = b.addSystemCommand(&.{ "python3", "scripts/benchmark_baseline.py", "self-test" });
+    phase5_benchmark_schema.setCwd(b.path("."));
+    const phase5_checked_in_baseline = b.addSystemCommand(&.{ "python3", "scripts/benchmark_baseline.py", "validate", "docs/benchmarks/baseline.json" });
+    phase5_checked_in_baseline.setCwd(b.path("."));
+    const phase5_checked_in_acceptance = b.addSystemCommand(&.{ "python3", "scripts/benchmark_baseline.py", "validate", "docs/benchmarks/acceptance-baseline.json" });
+    phase5_checked_in_acceptance.setCwd(b.path("."));
+    const phase5_checked_in_gpu_culling = b.addSystemCommand(&.{ "python3", "scripts/benchmark_baseline.py", "validate-gpu-culling", "docs/benchmarks/gpu-culling-baseline.json" });
+    phase5_checked_in_gpu_culling.setCwd(b.path("."));
 
     const phase5_visual_smoke = b.addSystemCommand(&.{ "bash", "scripts/run_phase5_visual_smoke.sh" });
     phase5_visual_smoke.setCwd(b.path("."));
@@ -772,8 +823,15 @@ fn defineBuildSteps(
     phase5_gate_step.dependOn(&run_benchmark_phase5_gate_tests.step);
     phase5_gate_step.dependOn(&run_phase5_lod_gate_tests.step);
     phase5_gate_step.dependOn(&phase5_benchmark_config.step);
+    phase5_gate_step.dependOn(&phase5_benchmark_schema.step);
+    phase5_gate_step.dependOn(&phase5_checked_in_baseline.step);
+    phase5_gate_step.dependOn(&phase5_checked_in_acceptance.step);
+    phase5_gate_step.dependOn(&phase5_checked_in_gpu_culling.step);
 
-    const phase5_visual_gate_step = b.step("phase5-visual-gate", "Capture compact off/auto scenes and reject empty or divergent output");
+    const phase5_stress_gate_step = b.step("phase5-stress-gate", "Run deterministic low-memory Phase 5 streaming stress coverage");
+    phase5_stress_gate_step.dependOn(&run_phase5_stress_tests.step);
+
+    const phase5_visual_gate_step = b.step("phase5-visual-gate", "Capture deterministic fixtures, bounded motion scenes, and a persisted saved-world compact-auto reload qualification");
     phase5_visual_gate_step.dependOn(&phase5_visual_smoke.step);
 
     const engine_math_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
@@ -977,6 +1035,11 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
     const screenshot_delay_seconds = b.option(u32, "screenshot-delay-seconds", "Seconds to wait after screenshot target is ready before capture") orelse 0;
     options.addOption(u32, "screenshot_delay_seconds", screenshot_delay_seconds);
 
+    const phase5_visual_scene = b.option([]const u8, "phase5-visual-scene", "Deterministic production-world fixture/camera for the Phase 5 visual gate (seam, water, lod-handoff, lod-handoff-traversal, fog-rapid-turn, teleport-handoff, saved-world-create, saved-world-reload)") orelse "";
+    options.addOption([]const u8, "phase5_visual_scene", phase5_visual_scene);
+    const phase5_visual_run_id = b.option([]const u8, "phase5-visual-run-id", "Fresh evidence scope identifier for a Phase 5 visual-gate invocation") orelse "";
+    options.addOption([]const u8, "phase5_visual_run_id", phase5_visual_run_id);
+
     const shadow_test_scene = b.option(bool, "shadow-test-scene", "Launch the deterministic shadow/cave lighting test scene") orelse false;
     options.addOption(bool, "shadow_test_scene", shadow_test_scene);
 
@@ -989,6 +1052,8 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
     // process-wide environment mutation. Normal runs remain opt-in through
     // ZIGCRAFT_LOD_PROFILE.
     world_lod_options.addOption(bool, "benchmark_lod_profile", benchmark);
+    const benchmark_gpu_culling = b.option(bool, "benchmark-gpu-culling", "Request LOD GPU culling in the benchmark executable") orelse false;
+    world_lod_options.addOption(bool, "benchmark_gpu_culling", benchmark_gpu_culling);
 
     const benchmark_preset = b.option([]const u8, "benchmark-preset", "Graphics preset to benchmark (low, medium, high, ultra, extreme)") orelse "medium";
     options.addOption([]const u8, "benchmark_preset", benchmark_preset);
@@ -1008,6 +1073,28 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
 
     const benchmark_render_distance = b.option(i32, "benchmark-render-distance", "Override benchmark render and LOD horizon distance; 0 uses selected preset") orelse 0;
     options.addOption(i32, "benchmark_render_distance", benchmark_render_distance);
+    const benchmark_horizon_distance = b.option(i32, "benchmark-horizon-distance", "Override benchmark LOD horizon distance only; 0 uses selected preset") orelse 0;
+    if (benchmark_horizon_distance < 0) {
+        std.log.err("-Dbenchmark-horizon-distance must be zero or positive, got {}", .{benchmark_horizon_distance});
+        b.invalid_user_input = true;
+    }
+    options.addOption(i32, "benchmark_horizon_distance", benchmark_horizon_distance);
+    const benchmark_lod_memory_budget_mb = b.option(u32, "benchmark-lod-memory-budget-mb", "Benchmark-only LOD memory budget override in MiB; 0 uses the preset (maximum 4096)") orelse 0;
+    if (benchmark_lod_memory_budget_mb > 4096) {
+        std.log.err("-Dbenchmark-lod-memory-budget-mb must be between 0 and 4096, got {}", .{benchmark_lod_memory_budget_mb});
+        b.invalid_user_input = true;
+    }
+    options.addOption(u32, "benchmark_lod_memory_budget_mb", benchmark_lod_memory_budget_mb);
+    const benchmark_require_gpu_candidates = b.option(u32, "benchmark-require-gpu-candidates", "Benchmark warmup readiness target for renderable LOD regions and, when GPU culling is enabled, current GPU candidates; 0 disables the extra gate") orelse 0;
+    options.addOption(u32, "benchmark_require_gpu_candidates", benchmark_require_gpu_candidates);
+    const benchmark_world = b.option([]const u8, "benchmark-world", "Benchmark auto-world generator (normal, overworld, overworld-v2, flat, test)") orelse "normal";
+    options.addOption([]const u8, "benchmark_world", benchmark_world);
+    const benchmark_fixture = b.option([]const u8, "benchmark-fixture", "Deterministic Phase 5 fixture to apply during benchmark without screenshot capture (lod-handoff)") orelse "";
+    if (std.mem.eql(u8, benchmark_fixture, "gpu-culling-scale") and (benchmark_horizon_distance < 4096 or benchmark_require_gpu_candidates < 1024 or benchmark_lod_memory_budget_mb == 0 or benchmark_lod_memory_budget_mb > 2048)) {
+        std.log.err("-Dbenchmark-fixture=gpu-culling-scale requires horizon >=4096, readiness target >=1024, and a nonzero LOD memory budget no larger than 2048 MiB", .{});
+        b.invalid_user_input = true;
+    }
+    options.addOption([]const u8, "benchmark_fixture", benchmark_fixture);
     options.addOption([]const u8, "benchmark_build_mode", @tagName(optimize));
 
     const sanitize = b.option([]const u8, "sanitize", "Sanitizer profile for test builds (none, address)") orelse "none";
@@ -1036,6 +1123,12 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
         .benchmark_duration = benchmark_duration,
         .benchmark_output = benchmark_output,
         .benchmark_render_distance = benchmark_render_distance,
+        .benchmark_horizon_distance = benchmark_horizon_distance,
+        .benchmark_lod_memory_budget_mb = benchmark_lod_memory_budget_mb,
+        .benchmark_require_gpu_candidates = benchmark_require_gpu_candidates,
+        .benchmark_gpu_culling = benchmark_gpu_culling,
+        .benchmark_world = benchmark_world,
+        .benchmark_fixture = benchmark_fixture,
         .sanitize_c = sanitize_c,
     };
 }

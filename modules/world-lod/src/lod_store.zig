@@ -222,10 +222,10 @@ fn enforceStoreSizeCap(allocator: std.mem.Allocator, save_dir_path: []const u8, 
 
     while (true) {
         const usage = try scanStoreUsage(allocator, lod_root, protected_path);
+        defer if (usage.oldest_candidate) |candidate| allocator.free(candidate.path);
         if (usage.total_size <= cap_bytes) return;
 
         const candidate = usage.oldest_candidate orelse return;
-        defer allocator.free(candidate.path);
         fs.cwd().deleteFile(candidate.path) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => return err,

@@ -13,7 +13,7 @@
     "assets/shaders/vulkan/fxaa.vert": 1160,
     "assets/shaders/vulkan/g_pass.frag": 6912,
     "assets/shaders/vulkan/lod_compact_terrain.frag": 4296,
-    "assets/shaders/vulkan/lod_compact_terrain.vert": 18452,
+    "assets/shaders/vulkan/lod_compact_terrain.vert": 20656,
     "assets/shaders/vulkan/lod_compact_water.frag": 5364,
     "assets/shaders/vulkan/lod_compact_water.vert": 13332,
     "assets/shaders/vulkan/lod_culling.comp": 14044,

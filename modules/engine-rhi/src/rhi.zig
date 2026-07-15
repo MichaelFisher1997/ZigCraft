@@ -87,6 +87,7 @@ pub const ShaderStageFlags = rhi_types.ShaderStageFlags;
 pub const DrawIndirectCommand = rhi_types.DrawIndirectCommand;
 pub const InstanceData = rhi_types.InstanceData;
 pub const CompactLODDraw = rhi_types.CompactLODDraw;
+pub const LODDescriptorStream = rhi_types.LODDescriptorStream;
 pub const CompactLODSampleWords = rhi_types.CompactLODSampleWords;
 pub const SkyParams = rhi_types.SkyParams;
 pub const SkyPushConstants = rhi_types.SkyPushConstants;
@@ -481,6 +482,10 @@ pub const RenderContext = struct {
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: RenderContext, handle: BufferHandle) void {
         self.state.setLODInstanceBuffer(handle);
+    }
+    /// Selects the immutable LOD descriptor stream before binding its buffers.
+    pub fn setLODDescriptorStream(self: RenderContext, stream: LODDescriptorStream) void {
+        self.state.setLODDescriptorStream(stream);
     }
     /// Binds the shared compact LOD sample pool for subsequent vertex-pulling draws.
     pub fn setLODCompactSampleBuffer(self: RenderContext, handle: BufferHandle) void {
@@ -907,6 +912,7 @@ pub const IRenderStateContext = struct {
         setModelMatrix: *const fn (ptr: *anyopaque, model: Mat4, color: Vec3, mask_radius: f32) void,
         setInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setLODInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
+        setLODDescriptorStream: *const fn (ptr: *anyopaque, stream: LODDescriptorStream) void,
         setLODCompactSampleBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setLODCompactInstanceBuffer: *const fn (ptr: *anyopaque, handle: BufferHandle) void,
         setTerrainPipelineBound: *const fn (ptr: *anyopaque, bound: bool) void,
@@ -929,6 +935,11 @@ pub const IRenderStateContext = struct {
     /// The setting affects later frames or later commands according to backend state lifetime. Must be called from the render thread that owns the backend context.
     pub fn setLODInstanceBuffer(self: IRenderStateContext, handle: BufferHandle) void {
         self.vtable.setLODInstanceBuffer(self.ptr, handle);
+    }
+    /// Selects the immutable descriptor set used by subsequent LOD bindings
+    /// and draws. Must be called before the stream's buffers are set.
+    pub fn setLODDescriptorStream(self: IRenderStateContext, stream: LODDescriptorStream) void {
+        self.vtable.setLODDescriptorStream(self.ptr, stream);
     }
     /// Selects the immutable shared compact sample pool for LOD vertex pulling.
     pub fn setLODCompactSampleBuffer(self: IRenderStateContext, handle: BufferHandle) void {
@@ -1356,6 +1367,9 @@ pub const IDeviceQuery = struct {
         getFrameIndex: *const fn (ptr: *anyopaque) usize,
         supportsIndirectFirstInstance: *const fn (ptr: *anyopaque) bool,
         supportsIndirectCount: *const fn (ptr: *anyopaque) bool,
+        /// The backend provides immutable descriptor snapshots for compact
+        /// terrain/water GPU-culling streams.
+        supportsCompactLODGpuCulling: *const fn (ptr: *anyopaque) bool,
         getMaxAnisotropy: *const fn (ptr: *anyopaque) u8,
         getMaxMSAASamples: *const fn (ptr: *anyopaque) u8,
         getFaultCount: *const fn (ptr: *anyopaque) u32,
@@ -1379,6 +1393,11 @@ pub const IDeviceQuery = struct {
     /// Reports whether GPU-generated indirect command counts are supported.
     pub fn supportsIndirectCount(self: IDeviceQuery) bool {
         return self.vtable.supportsIndirectCount(self.ptr);
+    }
+    /// Reports whether compact terrain and water can share a frame without
+    /// mutating descriptors referenced by already-recorded commands.
+    pub fn supportsCompactLODGpuCulling(self: IDeviceQuery) bool {
+        return self.vtable.supportsCompactLODGpuCulling(self.ptr);
     }
     /// Returns fault count from the active graphics backend.
     /// The returned value is backend-owned or diagnostic unless the specific type documents otherwise.

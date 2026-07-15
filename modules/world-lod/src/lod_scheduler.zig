@@ -14,6 +14,8 @@ const sync = @import("sync");
 const lod_gpu = @import("lod_upload_queue.zig");
 const ChunkChecker = lod_gpu.ChunkChecker;
 const RegionMap = lod_gpu.RegionMap;
+const LifecycleQueue = @import("lod_manager_context.zig").LifecycleQueue;
+const LifecycleToken = @import("lod_manager_context.zig").LifecycleToken;
 
 pub const CoverageFn = *const fn (ptr: *anyopaque, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool;
 
@@ -40,7 +42,15 @@ pub const SchedulerContext = struct {
     // Shared admission count for queued or in-flight regions. The manager
     // supplies this during normal updates; isolated scheduler tests may omit it.
     pending_regions: ?*usize = null,
+    /// Resident-region and conservative logical-memory admission caps.
+    resident_region_limit: usize = MAX_LOD_REGIONS,
+    logical_memory_limit_bytes: usize = std.math.maxInt(usize),
+    logical_memory_bytes: ?*usize = null,
+    logical_region_reservation_bytes: usize = 0,
     use_vertical_spans: bool = false,
+    /// Persistent bounded priority queue owned by the manager. `null` keeps
+    /// isolated scheduler tests and legacy direct-dispatch callers working.
+    generation_tokens: ?*LifecycleQueue = null,
 };
 
 const std = @import("std");
@@ -59,6 +69,7 @@ const LOD1_QUEUE_CANDIDATE_LIMIT: usize = 64;
 const HORIZON_QUEUE_CANDIDATE_LIMIT: usize = 24;
 const REFINEMENT_QUEUE_CANDIDATE_LIMIT: usize = 48;
 const MAX_PENDING_LOD_REGIONS = @import("lod_manager_context.zig").MAX_PENDING_LOD_REGIONS;
+const MAX_LOD_REGIONS = @import("lod_manager_context.zig").MAX_LOD_REGIONS;
 
 pub fn priorityRank(lod: LODLevel, active_lod_count: usize) usize {
     const lod_idx: usize = @intFromEnum(lod);
@@ -134,10 +145,10 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     const queue = ctx.gen_queues[LODLevel.count - 1];
     const lod_idx: u3 = @intFromEnum(lod);
 
-    // Collect candidates and queue them nearest-first. Coarse regions must form
-    // contiguous fallback coverage; scattered horizon samples appear as
-    // isolated floating terrain islands.
+    // Keep only the bounded best candidates while walking the horizon. This
+    // avoids allocating/sorting an entry for every potential region.
     const Candidate = struct { key: LODRegionKey, encoded_priority: i32 };
+    const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
     defer candidates.deinit(ctx.allocator);
 
@@ -166,17 +177,16 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
             const center_cx = key.rx * scale + @divFloor(scale, 2);
             const center_cz = key.rz * scale + @divFloor(scale, 2);
             const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
-            try candidates.append(ctx.allocator, .{ .key = key, .encoded_priority = encoded_priority });
+            const candidate = Candidate{ .key = key, .encoded_priority = encoded_priority };
+            var insert_at: usize = 0;
+            while (insert_at < candidates.items.len and candidates.items[insert_at].encoded_priority <= encoded_priority) : (insert_at += 1) {}
+            if (insert_at < max_candidates) {
+                try candidates.insert(ctx.allocator, insert_at, candidate);
+                if (candidates.items.len > max_candidates) _ = candidates.pop();
+            }
             diag.candidates += 1;
         }
     }
-
-    const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
-    std.mem.sort(Candidate, candidates.items, {}, struct {
-        fn lessThan(_: void, a: Candidate, b: Candidate) bool {
-            return a.encoded_priority < b.encoded_priority;
-        }
-    }.lessThan);
 
     var queued_count: usize = 0;
 
@@ -184,6 +194,8 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     defer ctx.mutex.unlock();
 
     const storage = &ctx.regions[@intFromEnum(lod)];
+    var resident_regions: usize = 0;
+    for (ctx.regions) |region_map| resident_regions += region_map.count();
     for (candidates.items) |cand| {
         if (queued_count >= max_candidates) break;
         if (ctx.pending_regions) |pending| {
@@ -192,6 +204,11 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
         const existing = storage.get(cand.key);
         if (existing != null) diag.existing += 1;
+        if (existing == null and resident_regions >= ctx.resident_region_limit) break;
+        if (existing == null) if (ctx.logical_memory_bytes) |logical| {
+            const reservation = ctx.logical_region_reservation_bytes;
+            if (reservation > ctx.logical_memory_limit_bytes -| logical.*) break;
+        };
         // A cancelled worker keeps the region pinned until it observes its
         // cancellation signal. Do not reset that signal by dispatching a new
         // generation for the same region concurrently.
@@ -203,6 +220,10 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
             errdefer ctx.allocator.destroy(c);
             c.* = LODChunk.init(cand.key.rx, cand.key.rz, lod);
             try storage.put(cand.key, c);
+            resident_regions += 1;
+            if (ctx.logical_memory_bytes) |logical| {
+                logical.* = std.math.add(usize, logical.*, ctx.logical_region_reservation_bytes) catch std.math.maxInt(usize);
+            }
             break :blk c;
         };
 
@@ -210,6 +231,15 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         ctx.next_job_token.* += 1;
         if (ctx.defer_generation_dispatch) {
             chunk.setState(.queued_for_generation);
+            if (ctx.generation_tokens) |tokens| {
+                _ = try tokens.push(ctx.allocator, .{
+                    .key = cand.key,
+                    .job_token = chunk.job_token,
+                    .source_revision = chunk.source_revision,
+                    .priority = cand.encoded_priority,
+                    .stage = .generation,
+                });
+            }
         } else {
             chunk.resetCancellation();
             chunk.setState(.generating);
@@ -277,7 +307,7 @@ test "LOD scheduling seeds horizon before detailed refinements" {
     try std.testing.expectEqual(@as(usize, 3), priorityLevelIndex(4, LODLevel.count));
 }
 
-test "LOD scheduling queues LOD0 generation jobs" {
+test "LOD scheduling caps resident regions and logical admission memory" {
     const allocator = std.testing.allocator;
 
     var regions: [LODLevel.count]RegionMap = undefined;
@@ -311,6 +341,8 @@ test "LOD scheduling queues LOD0 generation jobs" {
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
     var pending_regions: usize = 0;
+    var logical_memory_bytes: usize = 0;
+    const reservation_bytes: usize = 1024;
     var coverage_ctx: u8 = 0;
     const Coverage = struct {
         fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
@@ -334,11 +366,16 @@ test "LOD scheduling queues LOD0 generation jobs" {
         .are_all_chunks_loaded = Coverage.neverCovered,
         .radius_reduction = &radius_reduction,
         .pending_regions = &pending_regions,
+        .resident_region_limit = 1,
+        .logical_memory_limit_bytes = reservation_bytes,
+        .logical_memory_bytes = &logical_memory_bytes,
+        .logical_region_reservation_bytes = reservation_bytes,
     }, .lod0, Vec3.zero, null, null);
 
     const queue = queue_ptrs[LODLevel.count - 1];
-    try std.testing.expect(queue.count() > 0);
+    try std.testing.expectEqual(@as(usize, 1), queue.count());
     try std.testing.expectEqual(queue.count(), pending_regions);
+    try std.testing.expectEqual(reservation_bytes, logical_memory_bytes);
     const job = queue.pop().?;
     try std.testing.expectEqual(engine_core.job_system.JobType.chunk_generation, job.type);
     try std.testing.expectEqual(@as(u3, 0), job.data.chunk.lod_level);

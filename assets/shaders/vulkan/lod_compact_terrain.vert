@@ -48,7 +48,7 @@ layout(set = 0, binding = 17) readonly buffer CompactInstances {
 } compact_instances;
 
 // Keep this byte-for-byte identical to rhi.CompactLODDraw. The explicit tail
-// reserves the std430 struct-alignment words at offsets 88 and 92.
+// carries edge validity in the std430 tail word at offset 92.
 layout(push_constant) uniform CompactDraw {
     mat4 model;
     float mask_radius;
@@ -58,7 +58,7 @@ layout(push_constant) uniform CompactDraw {
     float cell_size;
     uint layer;
     float skirt_depth;
-    uint _reserved;
+    uint edge_masks;
 } draw_data;
 
 // `layer == 2` is the indirect sentinel. Direct draws retain their existing
@@ -66,7 +66,7 @@ layout(push_constant) uniform CompactDraw {
 bool indirectMode() { return draw_data.layer == 2u; }
 mat4 tileModel() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].model : draw_data.model; }
 vec4 tileParams() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].params : vec4(draw_data.mask_radius, draw_data.lod_fade, draw_data.cell_size, draw_data.skirt_depth); }
-uvec4 tileWords() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].words : uvec4(draw_data.sample_offset, draw_data.width, draw_data.layer, 0u); }
+uvec4 tileWords() { return indirectMode() ? compact_instances.items[gl_InstanceIndex].words : uvec4(draw_data.sample_offset, draw_data.width, draw_data.layer, draw_data.edge_masks); }
 
 int decodeSigned16(uint word, uint shift) {
     uint raw = (word >> shift) & 0xffffu;
@@ -88,6 +88,19 @@ float terrainHeight(uvec4 packed) {
 
 uint surfaceMaterial(uvec4 packed) {
     return (packed.y >> 16u) & 0x7fu;
+}
+
+// Compact tile edge bits are N/E/S/W. A clear bit is an explicit non-seamless
+// contract: its apron is a local fallback, and its edge must retain a skirt.
+bool hasAuthoritativeApron(uvec4 words, uint edge) {
+    return (words.w & (1u << edge)) != 0u;
+}
+
+uint skirtTileEdge(uint skirt_edge) {
+    if (skirt_edge == 0u) return 0u; // north
+    if (skirt_edge == 1u) return 2u; // south
+    if (skirt_edge == 2u) return 3u; // west
+    return 1u; // east
 }
 
 uint sampleColor(uvec4 packed) {
@@ -152,20 +165,23 @@ void main() {
     float height_x1 = terrainHeight(sampleAtApron(x + 2u, z + 1u));
     float height_z0 = terrainHeight(sampleAtApron(x + 1u, z));
     float height_z1 = terrainHeight(sampleAtApron(x + 1u, z + 2u));
-    // Until a same-level neighbor apron arrives, duplicated edge samples would
-    // flatten the boundary normal. Extrapolate the interior slope instead;
-    // conservative skirts below hide any geometric LOD transition gap.
-    if (x == 0u) height_x0 = 2.0 * height - height_x1;
-    if (x + 1u == words.y) height_x1 = 2.0 * height - height_x0;
-    if (z == 0u) height_z0 = 2.0 * height - height_z1;
-    if (z + 1u == words.y) height_z1 = 2.0 * height - height_z0;
+    // Do not discard an authoritative apron. Only explicit fallback edges use
+    // slope extrapolation, so resident tiles never pretend an invalid apron is
+    // a seamless normal.
+    if (x == 0u && !hasAuthoritativeApron(words, 3u)) height_x0 = 2.0 * height - height_x1;
+    if (x + 1u == words.y && !hasAuthoritativeApron(words, 1u)) height_x1 = 2.0 * height - height_x0;
+    if (z == 0u && !hasAuthoritativeApron(words, 0u)) height_z0 = 2.0 * height - height_z1;
+    if (z + 1u == words.y && !hasAuthoritativeApron(words, 2u)) height_z1 = 2.0 * height - height_z0;
 
     vec3 normal = normalize(vec3(
         height_x0 - height_x1,
         2.0 * params.z,
         height_z0 - height_z1
     ));
-    if (is_skirt) {
+    // The static index buffer contains all four skirts. Valid same-level edges
+    // collapse theirs to a degenerate strip; absent or cross-LOD neighbors keep
+    // only their own edge skirt, rather than relying on a universal skirt.
+    if (is_skirt && !hasAuthoritativeApron(words, skirtTileEdge(skirt_edge))) {
         height -= params.w;
         if (skirt_edge == 0u) normal = vec3(0.0, 0.0, -1.0);
         else if (skirt_edge == 1u) normal = vec3(0.0, 0.0, 1.0);
@@ -185,7 +201,7 @@ void main() {
     uint color = sampleColor(packed);
     vColor = vec3(color & 0xffu, (color >> 8u) & 0xffu, (color >> 16u) & 0xffu) / 255.0;
     if (color == 0u) vColor = fallbackMaterialColor(surfaceMaterial(packed));
-    if (is_skirt) vColor *= 0.82;
+    if (is_skirt && !hasAuthoritativeApron(words, skirtTileEdge(skirt_edge))) vColor *= 0.82;
     vNormal = normal;
     vTexCoord = vec2(float(x), float(z)) * params.z;
     // Compact samples store semantic materials, not texture-atlas tile IDs.

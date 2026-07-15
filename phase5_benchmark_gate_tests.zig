@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const benchmark = @import("game-core").benchmark;
+const session = @import("game-core").session;
 const rhi = @import("engine-rhi");
 
 const BENCHMARK_DOC = @embedFile("docs/benchmarks/README.md");
@@ -33,6 +34,25 @@ test "Phase 5 recognizes exactly the four documented bounded scenarios" {
     }
 
     try std.testing.expectError(error.InvalidBenchmarkScenario, benchmark.Scenario.parse("unbounded"));
+}
+
+test "Phase 5 visual motion scene names and parser match the automated matrix" {
+    const MotionScene = struct {
+        name: []const u8,
+        motion: session.Phase5VisualMotion,
+    };
+    const scenes = [_]MotionScene{
+        .{ .name = "lod-handoff-traversal", .motion = .lod_handoff_traversal },
+        .{ .name = "fog-rapid-turn", .motion = .fog_rapid_turn },
+        .{ .name = "teleport-handoff", .motion = .teleport_handoff },
+    };
+
+    for (scenes) |scene| {
+        const parsed = session.parsePhase5VisualScene(scene.name) orelse return error.DocumentedMotionSceneMissing;
+        try std.testing.expectEqual(scene.motion, parsed.motion);
+        try std.testing.expect(std.mem.indexOf(u8, BENCHMARK_DOC, scene.name) != null);
+    }
+    try std.testing.expect(session.parsePhase5VisualScene("unbounded-motion") == null);
 }
 
 test "Phase 5 benchmark SLO table matches runtime thresholds" {

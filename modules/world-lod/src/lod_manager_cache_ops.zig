@@ -86,7 +86,9 @@ pub fn drainCacheCompletions(self: *Self) void {
                     log_legacy_notice = read.used_legacy;
                     switch (read.result) {
                         .hit => |*data| {
-                            if (regionRequiresSpans(self, read.key) and !data.hasVerticalSpans()) {
+                            if ((regionRequiresSpans(self, read.key) and !data.hasVerticalSpans()) or
+                                data.width != LODSimplifiedData.getGridSizeForDensity(read.key.lod, self.config.getSampleDensity(read.key.lod)))
+                            {
                                 data.deinit();
                                 read.result = .miss;
                                 self.cache_misses += 1;
@@ -98,8 +100,9 @@ pub fn drainCacheCompletions(self: *Self) void {
                                 // deinitialize the consumed payload.
                                 read.result = .miss;
                                 region.updateHeightBoundsFromData();
-                                region.source_revision +%= 1;
+                                region.bumpSourceRevision();
                                 region.setState(.generated);
+                                self.enqueueTransition(read.key, region, .mesh);
                                 self.cache_hits += 1;
                             }
                         },

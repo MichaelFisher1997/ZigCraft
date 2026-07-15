@@ -82,9 +82,13 @@ fn gameBuildConfig() BuildConfig {
         .chunk_debug_enable = build_options.chunk_debug_enable,
         .chunk_debug_mode = build_options.chunk_debug_mode,
         .screenshot_path = build_options.screenshot_path,
+        .phase5_visual_scene = build_options.phase5_visual_scene,
+        .benchmark_fixture = build_options.benchmark_fixture,
+        .phase5_visual_run_id = build_options.phase5_visual_run_id,
         .shadow_test_scene = build_options.shadow_test_scene,
         .shadow_test_variant = build_options.shadow_test_variant,
         .startup_diagnostic_seconds = build_options.startup_diagnostic_seconds,
+        .benchmark_lod_memory_budget_mb = if (build_options.benchmark) build_options.benchmark_lod_memory_budget_mb else 0,
     };
 }
 
@@ -125,13 +129,12 @@ pub const App = struct {
         errdefer settings_manager.deinit();
 
         if (build_options.benchmark) {
-            applyBenchmarkPreset(settings_manager.ptr(), build_options.benchmark_preset);
-            if (build_options.benchmark_render_distance > 0) {
-                settings_manager.settings.render_distance = build_options.benchmark_render_distance;
-                settings_manager.settings.horizon_distance = build_options.benchmark_render_distance;
-            }
+            applyBenchmarkSettings(settings_manager.ptr(), build_options.benchmark_preset, build_options.benchmark_render_distance, build_options.benchmark_horizon_distance);
         }
-        if (build_options.auto_preset.len > 0) {
+        // Benchmark setup above already applies its preset and independent
+        // near/horizon overrides. Reapplying `auto_preset` here would silently
+        // reset a dedicated large-horizon culling capture to the preset radius.
+        if (build_options.auto_preset.len > 0 and !build_options.benchmark) {
             _ = applyNamedPreset(settings_manager.ptr(), build_options.auto_preset, "AUTO PRESET");
         }
         if (build_options.screenshot_path.len > 0) {
@@ -211,10 +214,15 @@ pub const App = struct {
                 build_options.benchmark_preset,
                 build_options.benchmark_scenario,
                 settings_manager.settings.render_distance,
+                settings_manager.settings.horizon_distance,
                 benchmark_duration_s,
                 BENCHMARK_WORLD_SEED,
                 build_options.benchmark_build_mode,
+                build_options.benchmark_world,
+                build_options.benchmark_fixture,
                 build_options.benchmark_output,
+                build_options.benchmark_lod_memory_budget_mb,
+                build_options.benchmark_require_gpu_candidates,
             );
             benchmark_runner = runner;
         }
@@ -496,7 +504,8 @@ pub const App = struct {
             // well; otherwise the headless UI-only fallback clears the output
             // black and a screenshot can race that transient frame.
             const rendered_frame = self.render_system.getRHI().query().getDrawCallCount() > 0;
-            if ((!requires_world_ready or world_ready) and (!requires_world_ready or rendered_frame)) {
+            const phase5_ready = build_options.phase5_visual_run_id.len == 0 or build_options.phase5_visual_scene.len == 0 or @import("game-core").phase5CaptureReady();
+            if ((!requires_world_ready or world_ready) and (!requires_world_ready or rendered_frame) and phase5_ready) {
                 self.screenshot_settle_frames += 1;
             } else {
                 self.screenshot_settle_frames = 0;
@@ -535,9 +544,10 @@ pub const App = struct {
 
             if (should_finish) {
                 if (build_options.screenshot_path.len > 0) {
-                    if (world_stats) |stats| if (stats.lod) |lod| {
-                        log.log.warn("COMPACT_CAPTURE: allocated={} capacity={}", .{ lod.compact_pool_allocated_bytes, lod.compact_pool_capacity_bytes });
-                        std.debug.print("COMPACT_CAPTURE: allocated={} capacity={}\n", .{ lod.compact_pool_allocated_bytes, lod.compact_pool_capacity_bytes });
+                    if (build_options.phase5_visual_run_id.len > 0) if (world_stats) |stats| if (stats.lod) |lod| {
+                        const scene = if (build_options.phase5_visual_scene.len > 0) build_options.phase5_visual_scene else build_options.shadow_test_variant;
+                        log.log.warn("PHASE5_CAPTURE: run={s} scene={s} chunks_rendered={} compact_allocated={} compact_submissions={}", .{ build_options.phase5_visual_run_id, scene, stats.chunks_rendered, lod.compact_pool_allocated_bytes, lod.profiling.compact_submissions });
+                        std.debug.print("PHASE5_CAPTURE: run={s} scene={s} chunks_rendered={} compact_allocated={} compact_submissions={}\n", .{ build_options.phase5_visual_run_id, scene, stats.chunks_rendered, lod.compact_pool_allocated_bytes, lod.profiling.compact_submissions });
                     };
                     log.log.info("SCREENSHOT: Requesting final composed frame to '{s}'", .{build_options.screenshot_path});
                     if (!self.render_system.getRHI().screenshot().captureFrame(build_options.screenshot_path)) {
@@ -549,6 +559,9 @@ pub const App = struct {
             }
         }
 
+        // Screenshot requests must reach the RHI while this frame's command
+        // buffer is still open. Vulkan records the readback after its final
+        // output pass and before submission/presentation.
         self.render_system.endFrame();
         self.revealMenuWindowWhenReady();
 
@@ -642,6 +655,26 @@ fn applyBenchmarkPreset(settings: *Settings, preset_name: []const u8) void {
     if (applyNamedPreset(settings, preset_name, "BENCHMARK")) {
         settings.vsync = false;
     }
+}
+
+/// Apply the preset first, then explicit benchmark distances. Keeping the
+/// override ordering in one helper makes a large horizon immune to a later
+/// automatic preset application.
+fn applyBenchmarkSettings(settings: *Settings, preset_name: []const u8, render_distance: i32, horizon_distance: i32) void {
+    applyBenchmarkPreset(settings, preset_name);
+    if (render_distance > 0) {
+        settings.render_distance = render_distance;
+        settings.horizon_distance = render_distance;
+    }
+    // The horizon does not change near-chunk residency.
+    if (horizon_distance > 0) settings.horizon_distance = horizon_distance;
+}
+
+test "benchmark horizon override is retained after its preset" {
+    var settings = Settings{};
+    applyBenchmarkSettings(&settings, "high", 12, 4096);
+    try std.testing.expectEqual(@as(i32, 12), settings.render_distance);
+    try std.testing.expectEqual(@as(i32, 4096), settings.horizon_distance);
 }
 
 fn gpuMemoryMb(stats: @import("engine-rhi").Stats) f32 {

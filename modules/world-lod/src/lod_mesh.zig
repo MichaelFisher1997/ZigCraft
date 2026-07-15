@@ -85,6 +85,11 @@ pub fn getCellSize(lod: LODLevel) u32 {
 
 /// LOD Mesh for a single LOD region
 pub const LODMesh = struct {
+    /// `drawCompactLOD` currently reports a bool, so transient render-graph
+    /// readiness and a rejected backend submission share one result. Retrying
+    /// several frames preserves compact residency during pipeline/descriptor
+    /// warmup while still bounding a genuine persistent failure.
+    pub const COMPACT_BACKEND_FAILURE_LIMIT: u8 = 8;
     pub const DrawRange = struct {
         offset: usize,
         count: u32,
@@ -99,6 +104,16 @@ pub const LODMesh = struct {
         ready: bool = false,
 
         pub const empty: DrawState = .{};
+    };
+
+    /// CPU geometry prepared for an expanded upload.  Keeping this payload
+    /// separately movable lets a compact-to-CPU transition retain the compact
+    /// representation until CPU generation has definitely succeeded.
+    pub const PendingCpuBuild = struct {
+        vertices: ?[]Vertex = null,
+        opaque_vertex_count: u32 = 0,
+        water_vertex_offset: usize = 0,
+        water_vertex_count: u32 = 0,
     };
 
     pub const MemorySnapshot = struct {
@@ -130,6 +145,10 @@ pub const LODMesh = struct {
     /// Present only while a compact tile awaits GPU upload.  The pool owns the
     /// post-upload representation, so this is never an expanded Vertex array.
     compact_tile: ?CompactLODTile = null,
+    /// Same-level authoritative compact aprons. This metadata survives release
+    /// of `compact_tile` after upload, so a resident tile never claims a
+    /// seamless edge merely because its fallback apron happened to be local.
+    compact_neighbor_apron_mask: u8 = 0,
     compact: bool = false,
     compact_sample_offset: u32 = 0,
     compact_sample_bytes: usize = 0,
@@ -137,6 +156,11 @@ pub const LODMesh = struct {
     compact_tile_width: u32 = 0,
     compact_has_water: bool = false,
     compact_draw_failed: bool = false,
+    compact_backend_draw_failures: u8 = 0,
+    /// Immutable source identity captured when this representation was built.
+    /// Recovery uses it to reject a late render failure from a superseded mesh.
+    source_job_token: u32 = 0,
+    source_revision: u32 = 0,
     /// Allocator
     allocator: std.mem.Allocator,
     /// Mutex for thread safety
@@ -183,6 +207,63 @@ pub const LODMesh = struct {
         self.ready = false;
     }
 
+    /// A backend failure is only terminal after a bounded retry budget.
+    /// Resource/descriptor availability is handled separately by the renderer
+    /// and never calls this method.
+    pub fn noteCompactBackendDrawFailure(self: *LODMesh) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.compact_backend_draw_failures +|= 1;
+        if (self.compact_backend_draw_failures < COMPACT_BACKEND_FAILURE_LIMIT) return false;
+        self.compact_draw_failed = true;
+        self.ready = false;
+        return true;
+    }
+
+    /// A confirmed backend submission makes earlier failures irrelevant: only
+    /// consecutive failures may retire an otherwise healthy compact mesh.
+    /// Transient resource unavailability intentionally does not call this.
+    pub fn resetCompactBackendDrawFailures(self: *LODMesh) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.compact_backend_draw_failures = 0;
+    }
+
+    /// A manager-owned mesh build records the source identity before it can be
+    /// rendered. The render thread only marks failure; it never owns recovery.
+    pub fn setSourceIdentity(self: *LODMesh, job_token: u32, source_revision: u32) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.source_job_token = job_token;
+        self.source_revision = source_revision;
+    }
+
+    pub fn compactDrawFailureMatches(self: *LODMesh, job_token: u32, source_revision: u32) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.compact_draw_failed and self.compact and
+            self.source_job_token == job_token and self.source_revision == source_revision;
+    }
+
+    /// A bit is set only when the corresponding same-level apron was copied
+    /// before upload. Missing and cross-LOD neighbors intentionally remain
+    /// invalid; the shader uses the complementary skirt mask for those edges.
+    pub fn compactApronMask(self: *LODMesh) u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.compact_neighbor_apron_mask;
+    }
+
+    pub fn compactSkirtMask(self: *LODMesh) u8 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return (~self.compact_neighbor_apron_mask) & @import("lod_tile.zig").TILE_EDGE_MASK;
+    }
+
+    pub fn compactEdgeIsSeamless(self: *LODMesh, edge: CompactTileEdge) bool {
+        return (self.compactApronMask() & @import("lod_tile.zig").edgeMask(edge)) != 0;
+    }
+
     pub fn patchCompactNeighbor(self: *LODMesh, edge: CompactTileEdge, neighbor: *LODMesh) bool {
         if (self == neighbor) return false;
         const self_first = @intFromPtr(self) < @intFromPtr(neighbor);
@@ -202,6 +283,8 @@ pub const LODMesh = struct {
             .south => .north,
         };
         neighbor_tile.applyNeighborApron(opposite, tile) catch return false;
+        self.compact_neighbor_apron_mask = tile.neighbor_apron_mask;
+        neighbor.compact_neighbor_apron_mask = neighbor_tile.neighbor_apron_mask;
         return true;
     }
 
@@ -306,6 +389,37 @@ pub const LODMesh = struct {
         return self.pending_vertices;
     }
 
+    /// Detaches a successfully built expanded payload before compact GPU
+    /// storage is retired. `LODGPUBridge.destroy` deliberately clears pending
+    /// vertices, so the caller must carry this payload across that callback.
+    pub fn takePendingCpuBuild(self: *LODMesh) PendingCpuBuild {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const result = PendingCpuBuild{
+            .vertices = self.pending_vertices,
+            .opaque_vertex_count = self.opaque_vertex_count,
+            .water_vertex_offset = self.water_vertex_offset,
+            .water_vertex_count = self.water_vertex_count,
+        };
+        self.pending_vertices = null;
+        return result;
+    }
+
+    /// Publishes a detached expanded payload after the former compact storage
+    /// has been retired. This cannot allocate, so a successful CPU build never
+    /// becomes an empty mesh during retirement.
+    pub fn restorePendingCpuBuild(self: *LODMesh, build: *PendingCpuBuild) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        std.debug.assert(!self.compact);
+        std.debug.assert(self.pending_vertices == null);
+        self.opaque_vertex_count = build.opaque_vertex_count;
+        self.water_vertex_offset = build.water_vertex_offset;
+        self.water_vertex_count = build.water_vertex_count;
+        self.pending_vertices = build.vertices;
+        build.* = .{};
+    }
+
     pub fn deinit(self: *LODMesh, resources: LODMeshResources) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -330,6 +444,7 @@ pub const LODMesh = struct {
         }
         if (self.compact_tile) |*tile| tile.deinit();
         self.compact_tile = null;
+        self.compact_neighbor_apron_mask = 0;
         self.compact = false;
         self.compact_sample_offset = 0;
         self.compact_sample_bytes = 0;
@@ -337,6 +452,7 @@ pub const LODMesh = struct {
         self.compact_tile_width = 0;
         self.compact_has_water = false;
         self.compact_draw_failed = false;
+        self.compact_backend_draw_failures = 0;
         self.ready = false;
     }
 
@@ -346,6 +462,7 @@ pub const LODMesh = struct {
         defer self.mutex.unlock();
         if (self.compact_tile) |*old| old.deinit();
         self.compact_tile = tile;
+        self.compact_neighbor_apron_mask = 0;
         self.compact = true;
         const cells = (data.width - 1) * (data.width - 1);
         self.compact_index_count = cells * 6;
@@ -358,12 +475,14 @@ pub const LODMesh = struct {
             }
         }
         self.compact_draw_failed = false;
+        self.compact_backend_draw_failures = 0;
         self.ready = false;
     }
 
-    /// Releases an unuploaded compact source tile.  Shutdown paths call this
-    /// before handing a mesh to a type-erased backend, so a partial upload never
-    /// relies on a backend-specific destroy hook for CPU ownership.
+    /// Releases a compact source tile once its samples have been uploaded.
+    /// `compact_neighbor_apron_mask` deliberately remains: resident data has no
+    /// mutable CPU payload, so a later neighbor must remain a skirted,
+    /// non-seamless edge rather than triggering an unsafe in-place GPU patch.
     pub fn releasePendingCompactTile(self: *LODMesh) void {
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -381,6 +500,7 @@ pub const LODMesh = struct {
         defer self.mutex.unlock();
         if (self.compact_tile) |*tile| tile.deinit();
         self.compact_tile = null;
+        self.compact_neighbor_apron_mask = 0;
         self.compact = false;
         self.compact_sample_offset = 0;
         self.compact_sample_bytes = 0;
@@ -388,6 +508,7 @@ pub const LODMesh = struct {
         self.compact_tile_width = 0;
         self.compact_has_water = false;
         self.compact_draw_failed = false;
+        self.compact_backend_draw_failures = 0;
         self.buffer_handle = 0;
         self.vertex_count = 0;
         self.opaque_vertex_count = 0;
@@ -409,6 +530,7 @@ pub const LODMesh = struct {
         self.pending_vertices = null;
         if (self.compact_tile) |*tile| tile.deinit();
         self.compact_tile = null;
+        self.compact_neighbor_apron_mask = 0;
         self.clearDrawStateUnlocked();
         self.compact = false;
         self.compact_sample_offset = 0;
@@ -417,6 +539,7 @@ pub const LODMesh = struct {
         self.compact_tile_width = 0;
         self.compact_has_water = false;
         self.compact_draw_failed = false;
+        self.compact_backend_draw_failures = 0;
     }
 
     pub fn clearPendingVertices(self: *LODMesh) void {
@@ -515,29 +638,27 @@ pub const LODMesh = struct {
             }
         }
 
-        // Store pending vertices
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        if (self.pending_vertices) |p| {
-            self.allocator.free(p);
-        }
-
         const opaque_count = vertices.items.len;
         const water_count = water_vertices.items.len;
         const total_count = opaque_count + water_count;
+        var pending: ?[]Vertex = null;
+        if (total_count > 0) {
+            const allocated = try self.allocator.alloc(Vertex, total_count);
+            pending = allocated;
+            errdefer self.allocator.free(allocated);
+            @memcpy(allocated[0..opaque_count], vertices.items);
+            @memcpy(allocated[opaque_count..total_count], water_vertices.items);
+        }
+
+        // Allocate and populate before touching the live mesh. A failed CPU
+        // fallback must leave its compact representation exactly retryable.
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.pending_vertices) |old| self.allocator.free(old);
         self.opaque_vertex_count = @intCast(opaque_count);
         self.water_vertex_offset = opaque_count * @sizeOf(Vertex);
         self.water_vertex_count = @intCast(water_count);
-
-        if (total_count > 0) {
-            const pending = try self.allocator.alloc(Vertex, total_count);
-            @memcpy(pending[0..opaque_count], vertices.items);
-            @memcpy(pending[opaque_count..total_count], water_vertices.items);
-            self.pending_vertices = pending;
-        } else {
-            self.pending_vertices = null;
-        }
+        self.pending_vertices = pending;
     }
 
     /// Build mesh from rich LOD column/span data, falling back to the stable heightfield path

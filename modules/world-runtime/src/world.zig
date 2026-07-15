@@ -905,6 +905,13 @@ pub const World = struct {
         }
     }
 
+    /// Installs the bounded benchmark-only LOD source set used to exercise the
+    /// production compute/indirect culling path at high cardinality.
+    pub fn installGpuCullingScaleFixture(self: *World) !void {
+        const lod = self.lod orelse return error.LODDisabled;
+        try lod.installGpuCullingScaleFixture();
+    }
+
     /// Returns a resident chunk or creates storage for it.
     /// May allocate chunk data and enqueue follow-up generation or meshing work. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn getOrCreateChunk(self: *World, chunk_x: i32, chunk_z: i32) !*ChunkData {

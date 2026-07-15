@@ -14,12 +14,14 @@ const GpuPass = enum {
     opaque_pass,
     lod_terrain,
     lod_water,
+    lod_compact_terrain,
+    lod_compact_water,
     lod_culling_compute,
     bloom,
     fxaa,
     post_process,
 
-    pub const COUNT = 15;
+    pub const COUNT = 17;
 };
 
 pub const PASS_COUNT = GpuPass.COUNT;
@@ -37,6 +39,8 @@ fn mapPassName(name: []const u8) ?GpuPass {
     if (std.mem.eql(u8, name, "OpaquePass")) return .opaque_pass;
     if (std.mem.eql(u8, name, "LODTerrainPass")) return .lod_terrain;
     if (std.mem.eql(u8, name, "LODWaterPass")) return .lod_water;
+    if (std.mem.eql(u8, name, "LODCompactTerrainPass")) return .lod_compact_terrain;
+    if (std.mem.eql(u8, name, "LODCompactWaterPass")) return .lod_compact_water;
     if (std.mem.eql(u8, name, "LODGpuCullingComputeBarrier")) return .lod_culling_compute;
     if (std.mem.eql(u8, name, "BloomPass")) return .bloom;
     if (std.mem.eql(u8, name, "FXAAPass")) return .fxaa;
@@ -109,6 +113,8 @@ pub fn processTimingResults(ctx: anytype) void {
     const opaque_ms = readPassMs(ctx, frame, .opaque_pass, period) orelse return;
     const lod_terrain = readPassMs(ctx, frame, .lod_terrain, period) orelse return;
     const lod_water = readPassMs(ctx, frame, .lod_water, period) orelse return;
+    const lod_compact_terrain = readPassMs(ctx, frame, .lod_compact_terrain, period) orelse return;
+    const lod_compact_water = readPassMs(ctx, frame, .lod_compact_water, period) orelse return;
     const lod_culling_compute = readPassMs(ctx, frame, .lod_culling_compute, period) orelse return;
     const bloom = readPassMs(ctx, frame, .bloom, period) orelse return;
     const fxaa = readPassMs(ctx, frame, .fxaa, period) orelse return;
@@ -125,6 +131,8 @@ pub fn processTimingResults(ctx: anytype) void {
     ctx.timing.timing_results.opaque_pass_ms = opaque_ms;
     ctx.timing.timing_results.lod_terrain_pass_ms = lod_terrain;
     ctx.timing.timing_results.lod_water_pass_ms = lod_water;
+    ctx.timing.timing_results.lod_compact_terrain_pass_ms = lod_compact_terrain;
+    ctx.timing.timing_results.lod_compact_water_pass_ms = lod_compact_water;
     ctx.timing.timing_results.lod_culling_compute_ms = lod_culling_compute;
     ctx.timing.timing_results.bloom_pass_ms = bloom;
     ctx.timing.timing_results.fxaa_pass_ms = fxaa;

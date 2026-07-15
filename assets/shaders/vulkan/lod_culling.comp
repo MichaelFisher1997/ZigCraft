@@ -50,14 +50,19 @@ void emit(bool water, Candidate c, uvec4 command_a, uvec4 command_b) {
     if (slot >= params.max_commands_per_lod) return;
     uint out_index = lod * params.max_commands_per_lod + slot;
     visible_ids.values[counter * params.max_commands_per_lod + slot] = gl_GlobalInvocationID.x;
+    mat4 model = c.model;
+    // CPU-visible terrain is lowered slightly during the full-chunk handoff.
+    // Apply the same terrain-only bias to GPU-generated instance streams while
+    // preserving water at its true surface height.
+    if (!water) model[3][1] -= 0.05;
     if (!compact) {
         uvec4 command = uvec4(command_a.x, command_a.y, command_a.z, out_index);
-        Instance instance = Instance(c.model, c.instance_params);
+        Instance instance = Instance(model, c.instance_params);
         if (water) { water_instances.items[out_index] = instance; water_commands.items[out_index] = command; }
         else { terrain_instances.items[out_index] = instance; terrain_commands.items[out_index] = command; }
         return;
     }
-    CompactInstance instance = CompactInstance(c.model, c.instance_params, c.compact_words);
+    CompactInstance instance = CompactInstance(model, c.instance_params, c.compact_words);
     uint command_offset = out_index * 5u;
     if (water) {
         compact_water_instances.items[out_index] = instance;

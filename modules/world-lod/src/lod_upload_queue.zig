@@ -18,6 +18,8 @@ const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
 const rhi_types = @import("engine-rhi");
 const RhiError = rhi_types.RhiError;
+const LODStagingCost = @import("lod_mesh_resources.zig").LODStagingCost;
+const LODWaitIdleReason = @import("lod_stats.zig").LODWaitIdleReason;
 
 /// Callback interface for GPU data operations (upload, destroy, sync).
 /// Created by the caller who owns the concrete RHI, passed to LODManager.
@@ -28,10 +30,16 @@ pub const LODGPUBridge = struct {
     on_destroy: *const fn (mesh: *LODMesh, ctx: *anyopaque) void,
     /// Wait for GPU to finish all pending work (needed before batch deletion).
     on_wait_idle: *const fn (ctx: *anyopaque) void,
+    /// Preflight staging bytes. Non-pooled bridge implementations can omit
+    /// this and are charged for the mesh payload alone.
+    on_upload_cost: ?*const fn (mesh: *LODMesh, ctx: *anyopaque) LODStagingCost = null,
     /// Opaque context pointer (typically the concrete RHI instance).
     ctx: *anyopaque,
     /// Optional capability probe for compact storage-buffer vertex pulling.
     on_supports_compact: ?*const fn (ctx: *anyopaque) bool = null,
+    /// Stronger production capability: compact streams may be GPU-culled with
+    /// immutable terrain/water descriptor snapshots.
+    on_supports_compact_gpu_culling: ?*const fn (ctx: *anyopaque) bool = null,
 
     fn hasInvalidCtx(self: LODGPUBridge) bool {
         const ctx_addr = @intFromPtr(self.ctx);
@@ -68,9 +76,30 @@ pub const LODGPUBridge = struct {
         self.on_wait_idle(self.ctx);
     }
 
+    /// Attribute an unavoidable device-wide wait to its caller. Streaming
+    /// paths should never need this; renderer shutdown is recorded separately.
+    pub fn waitIdleTracked(self: LODGPUBridge, profiling: *LODProfilingCollector, reason: LODWaitIdleReason) void {
+        if (self.hasInvalidCtx()) return;
+        const timer = profiling.begin();
+        self.waitIdle();
+        profiling.recordWaitIdle(reason, timer);
+    }
+
+    pub fn uploadCost(self: LODGPUBridge, mesh: *LODMesh) LODStagingCost {
+        if (self.hasInvalidCtx()) return .{ .payload_bytes = mesh.pendingUploadBytes() };
+        const estimate = self.on_upload_cost orelse return .{ .payload_bytes = mesh.pendingUploadBytes() };
+        return estimate(mesh, self.ctx);
+    }
+
     pub fn supportsCompact(self: LODGPUBridge) bool {
         if (self.hasInvalidCtx()) return false;
         const probe = self.on_supports_compact orelse return false;
+        return probe(self.ctx);
+    }
+
+    pub fn supportsCompactGpuCulling(self: LODGPUBridge) bool {
+        if (self.hasInvalidCtx()) return false;
+        const probe = self.on_supports_compact_gpu_culling orelse return false;
         return probe(self.ctx);
     }
 };
@@ -149,6 +178,8 @@ pub const LODRenderInterface = struct {
         chunk_checker: ?ChunkChecker,
         checker_ctx: ?*anyopaque,
         max_distance_chunks: ?i32,
+        stats: ?*LODStats,
+        profiling: ?*LODProfilingCollector,
     ) void = null,
     memory_stats_fn: ?*const fn (self_ptr: *anyopaque) LODRendererMemoryStats = null,
     /// Destroy renderer resources.
@@ -201,8 +232,8 @@ pub const LODRenderInterface = struct {
         self.deinit_fn(self.ptr);
     }
 
-    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
-        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, stats, profiling);
     }
 
     pub fn memoryStats(self: LODRenderInterface) LODRendererMemoryStats {

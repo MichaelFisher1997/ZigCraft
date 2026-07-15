@@ -57,7 +57,6 @@ const CHUNK_COVERAGE_PADDING = manager_ctx.CHUNK_COVERAGE_PADDING;
 const MIN_LOD_WORKERS = manager_ctx.MIN_LOD_WORKERS;
 const MAX_LOD_WORKERS = manager_ctx.MAX_LOD_WORKERS;
 const MAX_PENDING_INGESTIONS = manager_ctx.MAX_PENDING_INGESTIONS;
-const PENDING_INGESTION_TTL = manager_ctx.PENDING_INGESTION_TTL;
 const EDIT_FLUSH_COOLDOWN = manager_ctx.EDIT_FLUSH_COOLDOWN;
 const LOD_FRAME_DT_APPROX = manager_ctx.LOD_FRAME_DT_APPROX;
 const lodUploadBudgetBytes = manager_ctx.lodUploadBudgetBytes;
@@ -163,66 +162,64 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
 
 /// Assumes `ingestion_mutex` held. Coalesces by coordinate, keeping the
 /// most authoritative provenance and the union of pending level bits.
+/// Deferred work is deliberately durable: a player edit can outlive many
+/// unload/reload or teleport cycles before its source chunk becomes resident.
 pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) void {
     for (self.ingestion_queue.pending_ingestions.items) |*entry| {
         if (entry.cx == cx and entry.cz == cz) {
             entry.pending_levels |= mask;
-            entry.ttl = PENDING_INGESTION_TTL;
+            entry.ttl = 0;
             if (provenance.canOverwrite(entry.provenance)) entry.provenance = provenance;
             return;
         }
     }
-    if (self.ingestion_queue.pending_ingestions.items.len >= MAX_PENDING_INGESTIONS) {
-        _ = self.ingestion_queue.pending_ingestions.orderedRemove(0);
-    }
+    if (!makePendingRoomLocked(self, cx, cz, provenance)) return;
     self.ingestion_queue.pending_ingestions.append(self.allocator, .{
         .cx = cx,
         .cz = cz,
         .provenance = provenance,
         .pending_levels = mask,
-        .ttl = PENDING_INGESTION_TTL,
+        .ttl = 0,
     }) catch |err| {
         log.log.warn("Failed to defer LOD ingestion for chunk ({}, {}): {}", .{ cx, cz, err });
     };
 }
 
-/// Re-record a pending entry from outside the lock (decay applied by
-/// caller). Coalesces with any existing entry for the coordinate.
+/// Re-record a pending entry from outside the lock. Coalesces with any
+/// existing entry for the coordinate without allowing retry pressure to age
+/// out player-edit provenance.
 pub fn rerecordPending(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8, ttl: u16) void {
     self.ingestion_queue.mutex.lock();
     defer self.ingestion_queue.mutex.unlock();
     for (self.ingestion_queue.pending_ingestions.items) |*entry| {
         if (entry.cx == cx and entry.cz == cz) {
             entry.pending_levels |= mask;
-            entry.ttl = @max(entry.ttl, ttl);
+            _ = ttl;
+            entry.ttl = 0;
             if (provenance.canOverwrite(entry.provenance)) entry.provenance = provenance;
             return;
         }
     }
-    if (self.ingestion_queue.pending_ingestions.items.len >= MAX_PENDING_INGESTIONS) {
-        _ = self.ingestion_queue.pending_ingestions.orderedRemove(0);
-    }
+    if (!makePendingRoomLocked(self, cx, cz, provenance)) return;
     self.ingestion_queue.pending_ingestions.append(self.allocator, .{
         .cx = cx,
         .cz = cz,
         .provenance = provenance,
         .pending_levels = mask,
-        .ttl = ttl,
+        .ttl = 0,
     }) catch |err| {
         log.log.warn("Failed to requeue deferred LOD ingestion for chunk ({}, {}): {}", .{ cx, cz, err });
     };
 }
 
-/// Decay TTL of every pending entry, dropping expired ones. Assumes
-/// `ingestion_mutex` held.
+/// Remove only entries that have no remaining target levels. Deferred source
+/// updates must not expire just because their chunks remain unloaded.
+/// Assumes `ingestion_mutex` held.
 pub fn decayPendingLocked(self: *Self) void {
     var write: usize = 0;
     for (self.ingestion_queue.pending_ingestions.items) |entry| {
-        const ttl = if (entry.ttl > 0) entry.ttl - 1 else 0;
-        if (ttl > 0 and entry.pending_levels != 0) {
-            var e = entry;
-            e.ttl = ttl;
-            self.ingestion_queue.pending_ingestions.items[write] = e;
+        if (entry.pending_levels != 0) {
+            self.ingestion_queue.pending_ingestions.items[write] = entry;
             write += 1;
         }
     }
@@ -231,7 +228,7 @@ pub fn decayPendingLocked(self: *Self) void {
 
 /// Replay deferred ingestions: snapshot all pending under the ingestion
 /// lock, resolve each chunk, and re-apply. Unresolved or still-in-flight
-/// levels are re-recorded with a decayed TTL.
+/// levels remain queued until they apply or manager teardown.
 pub fn drainPendingIngestions(self: *Self) void {
     var snapshot = std.ArrayListUnmanaged(PendingIngestion).empty;
     {
@@ -249,28 +246,43 @@ pub fn drainPendingIngestions(self: *Self) void {
     const resolver = self.ingestion_queue.chunk_resolver;
     const limit = @min(snapshot.items.len, self.ingestion_queue.drain_per_frame);
 
-    // Process the head of the snapshot; defer the tail with a decayed TTL.
+    // Process the head of the snapshot and retain the tail for a later frame.
     var i: usize = 0;
     while (i < snapshot.items.len) : (i += 1) {
         const entry = snapshot.items[i];
         if (entry.pending_levels == 0) continue;
         if (i >= limit) {
-            const ttl = if (entry.ttl > 0) entry.ttl - 1 else 0;
-            if (ttl > 0) self.rerecordPending(entry.cx, entry.cz, entry.provenance, entry.pending_levels, ttl);
+            self.rerecordPending(entry.cx, entry.cz, entry.provenance, entry.pending_levels, 0);
             continue;
         }
         const chunk = if (resolver) |r| r.resolve(entry.cx, entry.cz) else null;
         if (chunk) |c| {
             const remaining = self.applyIngestionToRegions(entry.cx, entry.cz, c, entry.provenance);
             if (remaining != 0) {
-                const ttl = if (entry.ttl > 0) entry.ttl - 1 else 0;
-                if (ttl > 0) self.rerecordPending(entry.cx, entry.cz, entry.provenance, remaining, ttl);
+                self.rerecordPending(entry.cx, entry.cz, entry.provenance, remaining, 0);
             }
         } else {
-            const ttl = if (entry.ttl > 0) entry.ttl - 1 else 0;
-            if (ttl > 0) self.rerecordPending(entry.cx, entry.cz, entry.provenance, entry.pending_levels, ttl);
+            self.rerecordPending(entry.cx, entry.cz, entry.provenance, entry.pending_levels, 0);
         }
     }
+}
+
+/// Preserve already accepted edit provenance when the bounded queue is under
+/// pressure. Non-edit work may be displaced, but an edited entry is never
+/// silently evicted to make room for ordinary streaming retries.
+/// Assumes `ingestion_queue.mutex` is held.
+fn makePendingRoomLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance) bool {
+    if (self.ingestion_queue.pending_ingestions.items.len < MAX_PENDING_INGESTIONS) return true;
+
+    for (self.ingestion_queue.pending_ingestions.items, 0..) |entry, index| {
+        if (entry.provenance != .edited) {
+            _ = self.ingestion_queue.pending_ingestions.orderedRemove(index);
+            return true;
+        }
+    }
+
+    log.log.warn("LOD deferred-ingestion queue is full; retaining existing edited work and rejecting ({}, {}) provenance={}", .{ cx, cz, provenance });
+    return false;
 }
 
 /// Flush debounced player edits: re-ingest edited chunks with the `edited`

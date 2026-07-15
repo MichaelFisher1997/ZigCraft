@@ -49,6 +49,7 @@ const MAX_CACHE_LOADS_PER_UPDATE = manager_ctx.MAX_CACHE_LOADS_PER_UPDATE;
 const MAX_MEMORY_EVICTIONS_PER_UPDATE = manager_ctx.MAX_MEMORY_EVICTIONS_PER_UPDATE;
 const MAX_MESH_DELETIONS_PER_SWEEP = manager_ctx.MAX_MESH_DELETIONS_PER_SWEEP;
 const DEFAULT_LOD_UPLOAD_BUDGET_BYTES = manager_ctx.DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+const LOGICAL_LOD_REGION_RESERVATION_BYTES = manager_ctx.LOGICAL_LOD_REGION_RESERVATION_BYTES;
 const LOD_UPLOAD_BUDGET_ENV = manager_ctx.LOD_UPLOAD_BUDGET_ENV;
 const LOD_UPDATE_DIVISOR = manager_ctx.LOD_UPDATE_DIVISOR;
 const DELETION_SWEEP_SECONDS = manager_ctx.DELETION_SWEEP_SECONDS;
@@ -303,6 +304,7 @@ pub fn updateStats(self: *Self) void {
     var pending_cpu_upload_bytes: usize = 0;
     var deferred_deletion_gpu_bytes: usize = 0;
     var deferred_deletion_cpu_bytes: usize = 0;
+    var resident_region_count: usize = 0;
 
     const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
@@ -315,6 +317,7 @@ pub fn updateStats(self: *Self) void {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
+            resident_region_count += 1;
             self.stats.recordState(i, chunk.getState());
 
             // Calculate actual memory usage for this chunk's data
@@ -357,8 +360,16 @@ pub fn updateStats(self: *Self) void {
         direct_mesh_gpu_bytes +
         pool_memory.pool_gpu_capacity_bytes +
         pool_memory.pool_cpu_shadow_bytes +
+        // Compact tiles are sub-allocations of this production GPU pool. Its
+        // capacity is the real allocation retained by the renderer and must be
+        // governed alongside source data; allocated bytes would double-count it.
+        pool_memory.compact_pool_capacity_bytes +
         pending_cpu_upload_bytes +
         deferred_deletion_cpu_bytes;
+    const budget_bytes = @as(usize, self.config.getMemoryBudgetMB()) * 1024 * 1024;
+    const reservation_per_region = if (budget_bytes == 0) 0 else @min(budget_bytes, LOGICAL_LOD_REGION_RESERVATION_BYTES);
+    const admission_reservation_bytes = std.math.mul(usize, resident_region_count, reservation_per_region) catch std.math.maxInt(usize);
+    const logical_admission_bytes = std.math.add(usize, known_memory_bytes, admission_reservation_bytes) catch std.math.maxInt(usize);
     self.stats.addMemory(known_memory_bytes);
     self.stats.pool_gpu_capacity_bytes = @intCast(pool_memory.pool_gpu_capacity_bytes);
     self.stats.pool_gpu_allocated_bytes = @intCast(pool_memory.pool_gpu_allocated_bytes);
@@ -369,6 +380,10 @@ pub fn updateStats(self: *Self) void {
     self.stats.compact_pool_free_bytes = @intCast(pool_memory.compact_pool_free_bytes);
     self.stats.compact_pool_retired_bytes = @intCast(pool_memory.compact_pool_retired_bytes);
     self.stats.direct_mesh_gpu_bytes = @intCast(direct_mesh_gpu_bytes);
+    self.stats.source_data_cpu_bytes = @intCast(source_data_cpu_bytes);
+    self.stats.resident_region_count = @intCast(resident_region_count);
+    self.stats.logical_admission_reservation_bytes = @intCast(admission_reservation_bytes);
+    self.stats.logical_admission_bytes = @intCast(logical_admission_bytes);
     self.stats.pending_cpu_upload_bytes = @intCast(pending_cpu_upload_bytes);
     self.stats.deferred_deletion_gpu_bytes = @intCast(deferred_deletion_gpu_bytes);
     self.stats.deferred_deletion_cpu_bytes = @intCast(deferred_deletion_cpu_bytes);
@@ -377,7 +392,11 @@ pub fn updateStats(self: *Self) void {
     self.stats.cache_hits = self.cache_hits;
     self.stats.cache_misses = self.cache_misses;
     self.stats.cancelled_jobs = self.cancelled_jobs;
+    self.stats.generation_token_overflows = self.generation_tokens.overflowEvents();
+    self.stats.transition_token_overflows = self.transition_tokens.overflowEvents();
+    self.stats.fade_token_overflows = self.fade_tokens.overflowEvents();
     self.memory_governor.used_bytes = known_memory_bytes;
+    self.memory_governor.logical_admission_bytes = logical_admission_bytes;
     self.profiling.setPendingCpuUploadBytes(pending_cpu_upload_bytes);
     self.profiling.setMemoryAccounting(
         pool_memory.pool_gpu_capacity_bytes,

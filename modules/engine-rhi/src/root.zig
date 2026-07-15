@@ -42,6 +42,7 @@ pub const DrawIndirectCommand = rhi_types.DrawIndirectCommand;
 pub const DrawIndexedIndirectCommand = rhi_types.DrawIndexedIndirectCommand;
 pub const InstanceData = rhi_types.InstanceData;
 pub const CompactLODDraw = rhi_types.CompactLODDraw;
+pub const LODDescriptorStream = rhi_types.LODDescriptorStream;
 pub const CompactLODInstance = rhi_types.CompactLODInstance;
 pub const CompactLODSampleWords = rhi_types.CompactLODSampleWords;
 pub const SkyParams = rhi_types.SkyParams;

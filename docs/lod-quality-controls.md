@@ -64,21 +64,74 @@ Set `ZIGCRAFT_LOD_DIAG=1` to log LOD queue, render, and aggregate stats diagnost
 Runtime mesh path overrides are available while alternate mesh paths stabilize:
 
 - `ZIGCRAFT_LOD_COMPACT=off` explicitly keeps expanded CPU LOD meshes.
-- `ZIGCRAFT_LOD_COMPACT=auto` is the default and currently fails closed to
-  expanded GPU LOD meshes. API/resource capability checks alone are insufficient:
-  mixed compact and expanded regions can trigger RADV command-stream rejection.
+- `ZIGCRAFT_LOD_COMPACT=auto` is the production capability-selected path only
+  when immutable terrain/water descriptor sets are available. Unsupported
+  mixed shoreline topology remains on the expanded mesh fallback; capability
+  allocation alone is not a release criterion. `off` remains the explicit
+  supported expanded fallback.
 - `ZIGCRAFT_LOD_COMPACT=force` requests the same compact path for validation;
   unrepresentable terrain, partial-water tiles, allocation pressure, and runtime
   draw failures still fall back to a dedicated CPU-built GPU mesh rather than dropping a region.
 - Normal expanded LOD drawing remains GPU-backed by default. The separate
   `ZIGCRAFT_LOD_GPU_CULLING=1` indirect-compaction optimization is opt-in and
-  currently applies only to expanded pooled meshes. Compact tiles intentionally
-  use CPU visibility plus direct GPU draws until terrain and water have immutable
-  per-layer instance descriptor sets.
-- Wet LOD3/4 regions currently remain on the expanded fallback mesh because the
-  compact water vertex path can trigger RADV command-stream rejection. Dry
-  regions use compact GPU terrain only in diagnostic `force` mode.
+  applies to the qualified compact-auto reload path through immutable per-layer
+  terrain/water descriptor sets. Unsupported shoreline topology remains on the
+  expanded fallback rather than sharing mutable descriptor state.
+- Wet LOD3/4 regions with unsupported shoreline topology remain on the
+  expanded fallback mesh. The saved-world RADV qualification requires this
+  fallback alongside dry compact residency; compact allocation alone is not
+  evidence that wet compact terrain was rendered.
 - `ZIGCRAFT_LOD_MESH_PATH_QEM=1` forces the QEM decimation path.
 - `ZIGCRAFT_LOD_MESH_PATH_SPANS=1` forces the column/span mesh path.
+
+## Phase 5 visual regression gate
+
+`zig build phase5-visual-gate` is a bounded, headless capture gate, not a
+pixel-golden test. It launches the production flat generator in expanded
+(`ZIGCRAFT_LOD_COMPACT=off`) and production compact (`auto`) modes, then applies
+small deterministic runtime fixtures for three separate scenes:
+
+- `seam` places contrasting geometry on both sides of the x=16 chunk boundary.
+- `water` creates a resident full-detail water pool. The app records resident
+  fixture-cell observations and the checker validates the water capture ROI.
+- `lod-handoff` places a fixed camera in full detail looking into the LOD
+  horizon, requiring both rendered full-detail chunks and compact allocation;
+  its `auto` capture also enables MDI/GPU culling and requires a zero-mismatch
+  candidate submission record.
+- `lod-handoff-traversal` moves the production player 256 blocks across LOD
+  rings; `fog-rapid-turn` makes two deterministic horizon rotations; and
+  `teleport-handoff` jumps to a fixed distant pose before its full-detail/LOD
+  handoff settles. These compact-auto scenes emit exact run/scene motion and
+  readiness markers and require compact residency/submissions, zero culling
+  mismatches/overflows, and completed delayed GPU validation.
+- `saved-world-create` writes deterministic wet and dry edits, flushes the
+  world save, and persists its LOD source cache in a unique per-run
+  `ZIGCRAFT_SAVE_DIR`. `saved-world-reload` is a second process that reloads
+  that exact save using `auto`, MDI/GPU culling validation, and a screenshot.
+  It requires explicit save-loaded, wet/dry fallback, compact-residency,
+  validation-complete, zero-mismatch, and zero-overflow evidence.
+
+The seam/water visual pairs keep LOD MDI disabled so their compact-direct image
+comparison isolates the production fallback/compact paths. The GPU-culling MDI
+handoff capture is kept separate because it exercises a distinct submission
+stream and has its own activation/validation evidence.
+
+Each capture is frame- and wall-time-bounded (`PHASE5_VISUAL_CAPTURE_TIMEOUT`,
+default `110s`). Captures default to frame 900 and require 180 consecutive
+fixture/streaming/LOD-queue/transition-stable frames first
+(`PHASE5_VISUAL_SETTLE_FRAMES`). The checker writes `zig-out/phase5-visual-smoke/manifest.json`
+even when it fails. It requires compact allocation/capture counters, water
+fixture evidence, whole-image and terrain ROI health, and tighter whole-image
+and ROI expanded-versus-compact differences. The saved-world reload also
+requires a healthy rendered image, rather than accepting save/telemetry logs
+alone. Motion capture readiness additionally waits for the bounded pose script
+to finish. CI allows 35 minutes for the now ten process-isolated captures and
+uploads the isolated save, PNGs, logs, and manifest on both success and failure.
+
+The water fixture validates the production full-detail water path. The
+saved-world reload is the RADV qualification for production `auto`: dry tiles
+use compact residency through immutable descriptors while unsupported wet
+shorelines retain the expanded fallback. `ZIGCRAFT_LOD_COMPACT=off` remains
+available throughout.
 
 Use the stable heightfield defaults for normal gameplay. Use the override flags only when comparing visual quality or diagnosing LOD mesh regressions.

@@ -29,7 +29,7 @@ pub const TimingOverlay = struct {
         if (data.world) |ws| {
             num_lines += 1 + 6;
             if (ws.lod != null) {
-                num_lines += 1 + 6;
+                num_lines += 1 + 8;
             }
         }
         const padding: f32 = 25;
@@ -89,6 +89,8 @@ pub const TimingOverlay = struct {
                 drawStatLine(ui, "LOD3:", ls.loaded[3], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
                 drawStatLine(ui, "LOD4:", ls.loaded[4], label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
                 drawStatLine(ui, "LOD MEM:", ls.memory_used_mb, label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawBytePairLine(ui, "FAR UP E/C:", ls.profiling.far_expanded_upload_bytes, ls.profiling.compact_upload_bytes, label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
+                drawMsPairLine(ui, "FAR CPU E/C:", ls.profiling.worker_far_expanded_mesh_construction_ms, ls.profiling.worker_compact_encode_ms, label_x, value_x, &y, scale, Color.rgba(0.5, 0.7, 1.0, 1.0));
             }
         }
 
@@ -139,6 +141,24 @@ pub const TimingOverlay = struct {
         y.* += 15;
     }
 
+    fn drawBytePairLine(ui: *UISystem, label: []const u8, expanded: u64, compact: u64, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, label_x, y.*, scale, color);
+        var buf: [48]u8 = undefined;
+        const val_str = std.fmt.bufPrint(&buf, "{d}/{d}", .{ expanded, compact }) catch "0/0";
+        const val_w = font.measureTextWidth(val_str, scale);
+        font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
+        y.* += 15;
+    }
+
+    fn drawMsPairLine(ui: *UISystem, label: []const u8, expanded: f64, compact: f64, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
+        font.drawText(ui, label, label_x, y.*, scale, color);
+        var buf: [48]u8 = undefined;
+        const val_str = std.fmt.bufPrint(&buf, "{d:.2}/{d:.2}", .{ expanded, compact }) catch "0/0";
+        const val_w = font.measureTextWidth(val_str, scale);
+        font.drawText(ui, val_str, right_x - val_w, y.*, scale, color);
+        y.* += 15;
+    }
+
     fn drawMemoryLine(ui: *UISystem, label: []const u8, count: u32, bytes: usize, label_x: f32, right_x: f32, y: *f32, scale: f32, color: Color) void {
         font.drawText(ui, label, label_x, y.*, scale, color);
         const mb = @as(f32, @floatFromInt(bytes)) / (1024.0 * 1024.0);
@@ -171,6 +191,9 @@ pub const WorldStats = struct {
     gen_queue: usize,
     mesh_queue: usize,
     upload_queue: usize,
+    /// Current LOD regions with renderable meshes. This gauge is common to CPU
+    /// and GPU culling benchmark sources, unlike GPU candidate telemetry.
+    lod_renderable_regions: u64 = 0,
     lod: ?LODStatsDisplay,
 };
 
@@ -189,6 +212,7 @@ pub const LODStatsDisplay = struct {
     compact_pool_free_bytes: u64 = 0,
     compact_pool_retired_bytes: u64 = 0,
     direct_mesh_gpu_bytes: u64 = 0,
+    source_data_cpu_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     deferred_deletion_gpu_bytes: u64 = 0,
     deferred_deletion_cpu_bytes: u64 = 0,
@@ -211,9 +235,13 @@ pub const LODProfilingDisplay = struct {
     eviction_ms: f64 = 0,
     worker_generation_ms: f64 = 0,
     worker_mesh_construction_ms: f64 = 0,
+    worker_far_expanded_mesh_construction_ms: f64 = 0,
+    worker_compact_encode_ms: f64 = 0,
     manager_lock_wait_ms: f64 = 0,
     manager_lock_hold_ms: f64 = 0,
     upload_bytes: u64 = 0,
+    far_expanded_upload_bytes: u64 = 0,
+    compact_upload_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     staging_pressure_count: u64 = 0,
     visible_count: u64 = 0,
@@ -236,6 +264,22 @@ pub const LODProfilingDisplay = struct {
     wait_idle_ms: f64 = 0,
     gpu_culling_overflows: u32 = 0,
     gpu_culling_validation_mismatches: u32 = 0,
+    gpu_culling_requested: bool = false,
+    gpu_culling_threshold: u32 = 0,
+    gpu_culling_candidate_count: u32 = 0,
+    gpu_culling_candidate_count_max: u32 = 0,
+    gpu_culling_draw_submissions: u64 = 0,
+    gpu_culling_validation_generation: u64 = 0,
+    gpu_culling_validation_completed_generation: u64 = 0,
+    gpu_culling_validation_completed_count: u64 = 0,
+    compact_selected: u64 = 0,
+    compact_build_rejected: u64 = 0,
+    compact_upload_failures: u64 = 0,
+    compact_draw_unavailable: u64 = 0,
+    compact_draw_failures: u64 = 0,
+    compact_submissions: u64 = 0,
+    compact_recoveries: u64 = 0,
+    compact_disabled: u64 = 0,
 };
 
 /// UI-neutral per-level visibility projection counters from world-lod.

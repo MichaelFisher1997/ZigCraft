@@ -254,7 +254,23 @@ pub const CompactLODDraw = extern struct {
     cell_size: f32,
     layer: u32,
     skirt_depth: f32,
-    _reserved: u32 = 0,
+    /// Bits 0..3: authoritative same-level compact aprons (N/E/S/W). The
+    /// shader emits a skirt for every complementary edge.
+    edge_masks: u32 = 0,
+};
+
+/// Selects one immutable descriptor snapshot before any LOD stream bindings
+/// are updated or draw commands are recorded.  Direct and GPU-indirect streams
+/// are intentionally distinct even when they currently share a buffer type.
+pub const LODDescriptorStream = enum(u3) {
+    terrain_standard_direct,
+    water_standard_direct,
+    terrain_standard_gpu,
+    water_standard_gpu,
+    terrain_compact_direct,
+    water_compact_direct,
+    terrain_compact_gpu,
+    water_compact_gpu,
 };
 
 /// Per-draw compact-tile data consumed from a std430 SSBO by the indirect
@@ -264,7 +280,7 @@ pub const CompactLODInstance = extern struct {
     model: Mat4,
     /// mask radius, LOD fade, cell size, skirt depth
     params: [4]f32,
-    /// sample offset, tile width, layer, reserved
+    /// sample offset, tile width, layer, authoritative-apron mask
     words: [4]u32,
 };
 
@@ -287,7 +303,7 @@ comptime {
     std.debug.assert(@offsetOf(CompactLODDraw, "cell_size") == 80);
     std.debug.assert(@offsetOf(CompactLODDraw, "layer") == 84);
     std.debug.assert(@offsetOf(CompactLODDraw, "skirt_depth") == 88);
-    std.debug.assert(@offsetOf(CompactLODDraw, "_reserved") == 92);
+    std.debug.assert(@offsetOf(CompactLODDraw, "edge_masks") == 92);
 }
 
 test "compact LOD push constants match GLSL scalar offsets" {
@@ -300,7 +316,7 @@ test "compact LOD push constants match GLSL scalar offsets" {
     try std.testing.expectEqual(@as(usize, 80), @offsetOf(CompactLODDraw, "cell_size"));
     try std.testing.expectEqual(@as(usize, 84), @offsetOf(CompactLODDraw, "layer"));
     try std.testing.expectEqual(@as(usize, 88), @offsetOf(CompactLODDraw, "skirt_depth"));
-    try std.testing.expectEqual(@as(usize, 92), @offsetOf(CompactLODDraw, "_reserved"));
+    try std.testing.expectEqual(@as(usize, 92), @offsetOf(CompactLODDraw, "edge_masks"));
 }
 
 test "compact LOD indirect instance and indexed command ABI" {
@@ -547,6 +563,10 @@ pub const GpuTimingResults = struct {
     /// GPU time spent drawing distant-water LOD geometry. This is a subset
     /// of the containing scene pass and is therefore excluded from total_gpu_ms.
     lod_water_pass_ms: f32,
+    /// Compact LOD terrain draw scope; retained separately from aggregate LOD terrain.
+    lod_compact_terrain_pass_ms: f32,
+    /// Compact LOD water draw scope; retained separately from aggregate LOD water.
+    lod_compact_water_pass_ms: f32,
     /// GPU time spent culling LOD candidates, compacting indirect commands,
     /// and executing the compute-to-indirect barrier.
     lod_culling_compute_ms: f32,

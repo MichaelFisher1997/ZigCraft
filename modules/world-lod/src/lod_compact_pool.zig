@@ -84,6 +84,9 @@ pub const CompactLODPool = struct {
         mesh.opaque_vertex_count = mesh.compact_index_count;
         mesh.water_vertex_count = if (mesh.compact_has_water) mesh.compact_index_count else 0;
         mesh.ready = true;
+        // Preserve the edge-validity decision after freeing the CPU payload.
+        // A later arrival cannot safely overwrite this resident range.
+        mesh.compact_neighbor_apron_mask = tile.neighbor_apron_mask;
         var mutable_tile = mesh.compact_tile.?;
         mutable_tile.deinit();
         mesh.compact_tile = null;
@@ -189,6 +192,7 @@ pub const CompactLODPool = struct {
     fn clearMeshUnlocked(_: *CompactLODPool, mesh: *LODMesh) void {
         if (mesh.compact_tile) |*tile| tile.deinit();
         mesh.compact_tile = null;
+        mesh.compact_neighbor_apron_mask = 0;
         mesh.compact = false;
         mesh.compact_sample_offset = 0;
         mesh.compact_sample_bytes = 0;
@@ -254,4 +258,33 @@ test "compact pool reports exhaustion without reusing retired bytes" {
     pool.collectRetired(5, 0);
     _ = try pool.allocate(16);
     try std.testing.expectEqual(@as(usize, 16), b.size);
+}
+
+test "Phase 5 stress compact pool retirement and reuse remains bounded" {
+    const cycles = @min(@import("engine-core").envInt("ZIGCRAFT_PHASE5_STRESS_ITERATIONS", 64), 4096);
+    var pool = CompactLODPool.initForTest(std.testing.allocator, 64);
+    defer {
+        pool.free_ranges.deinit(std.testing.allocator);
+        pool.retired.deinit(std.testing.allocator);
+    }
+    try pool.free_ranges.append(std.testing.allocator, .{ .offset = 0, .size = 64 });
+    pool.free_bytes = 64;
+
+    var serial: u64 = 1;
+    for (0..cycles) |cycle| {
+        const frame_slot = cycle % 2;
+        const range = try pool.allocate(16);
+        try pool.retired.append(std.testing.allocator, .{ .range = range, .serial = serial, .frame_slot = frame_slot });
+        pool.allocated_bytes -= range.size;
+        pool.retired_bytes += range.size;
+
+        // Completing the same submission must not make the range reusable.
+        pool.collectRetired(serial, frame_slot);
+        try std.testing.expectEqual(@as(usize, 16), pool.retired_bytes);
+        pool.collectRetired(serial + 1, frame_slot);
+        try std.testing.expectEqual(@as(usize, 0), pool.retired_bytes);
+        try std.testing.expectEqual(@as(usize, 64), pool.free_bytes);
+        try std.testing.expectEqual(@as(usize, 0), pool.allocated_bytes);
+        serial += 2;
+    }
 }

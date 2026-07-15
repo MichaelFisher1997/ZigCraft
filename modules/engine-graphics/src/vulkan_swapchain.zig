@@ -101,6 +101,13 @@ pub const VulkanSwapchain = struct {
         if (self.headless_memory != null) c.vkFreeMemory(vk, self.headless_memory, null);
         self.headless_image = null;
         self.headless_memory = null;
+
+        // These are non-owning image handles. Keeping them after destroying a
+        // headless image leaves index zero pointing at freed Vulkan memory on
+        // the next recreate, while the freshly-created framebuffer points at
+        // the newly appended image. In particular, readback must never select
+        // an image from the previous swapchain generation.
+        self.clearImageTrackingForRecreate();
     }
 
     pub fn recreate(self: *VulkanSwapchain, msaa_samples: u8) !void {
@@ -275,6 +282,10 @@ pub const VulkanSwapchain = struct {
             try checkVk(c.vkCreateImageView(self.device.vk_device, &view_info, null, &view));
             try self.image_views.append(self.allocator, view);
         }
+    }
+
+    fn clearImageTrackingForRecreate(self: *VulkanSwapchain) void {
+        self.images.clearRetainingCapacity();
     }
 
     fn createDepthBuffer(self: *VulkanSwapchain, msaa_samples: u8) !void {
@@ -538,6 +549,18 @@ fn presentModeName(mode: c.VkPresentModeKHR) []const u8 {
         c.VK_PRESENT_MODE_FIFO_RELAXED_KHR => "FIFO_RELAXED",
         else => "UNKNOWN",
     };
+}
+
+test "VulkanSwapchain recreation discards prior image handles" {
+    var swapchain: VulkanSwapchain = undefined;
+    swapchain.images = .empty;
+    defer swapchain.images.deinit(std.testing.allocator);
+
+    try swapchain.images.append(std.testing.allocator, null);
+    try swapchain.images.append(std.testing.allocator, null);
+    swapchain.clearImageTrackingForRecreate();
+
+    try std.testing.expectEqual(@as(usize, 0), swapchain.images.items.len);
 }
 
 fn checkVk(result: c.VkResult) !void {

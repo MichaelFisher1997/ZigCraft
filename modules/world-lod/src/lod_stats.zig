@@ -6,6 +6,14 @@ const lod_types = @import("lod_types.zig");
 const LODLevel = lod_types.LODLevel;
 const LODState = lod_types.LODState;
 
+/// Device-wide waits are never an ordinary streaming operation. Keep their
+/// shutdown accounting separate so runtime streaming telemetry cannot be
+/// made to look healthy by including teardown-only synchronization.
+pub const LODWaitIdleReason = enum(u8) {
+    streaming,
+    shutdown,
+};
+
 /// Read-only LOD profiling data. Durations are cumulative CPU timings; memory
 /// fields are current known allocations rather than GPU-driver measurements.
 pub const LODProfilingSnapshot = struct {
@@ -24,9 +32,17 @@ pub const LODProfilingSnapshot = struct {
     eviction_ms: f64 = 0,
     worker_generation_ms: f64 = 0,
     worker_mesh_construction_ms: f64 = 0,
+    /// Successful LOD3/LOD4 expanded CPU mesh builds performed by workers.
+    worker_far_expanded_mesh_construction_ms: f64 = 0,
+    /// Successful LOD3/LOD4 compact tile encodes performed by workers.
+    worker_compact_encode_ms: f64 = 0,
     manager_lock_wait_ms: f64 = 0,
     manager_lock_hold_ms: f64 = 0,
     upload_bytes: u64 = 0,
+    /// Successful LOD3/LOD4 representation uploads. These deliberately omit
+    /// near pooled geometry and failed/retried submissions.
+    far_expanded_upload_bytes: u64 = 0,
+    compact_upload_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     /// Upload-budget deferrals plus RHI upload-pressure errors.
     staging_pressure_count: u64 = 0,
@@ -51,6 +67,32 @@ pub const LODProfilingSnapshot = struct {
     known_memory_bytes: u64 = 0,
     wait_idle_count: u64 = 0,
     wait_idle_ms: f64 = 0,
+    wait_idle_shutdown_count: u64 = 0,
+    wait_idle_shutdown_ms: f64 = 0,
+    /// Compact LOD lifecycle diagnostics. These are cumulative and let
+    /// production evidence distinguish selection from runtime fallback.
+    compact_selected: u64 = 0,
+    compact_build_rejected: u64 = 0,
+    compact_upload_failures: u64 = 0,
+    compact_draw_unavailable: u64 = 0,
+    compact_draw_failures: u64 = 0,
+    /// Confirmed compact direct draws plus successfully emitted compact GPU
+    /// indirect streams. This is evidence of submission, not allocation.
+    compact_submissions: u64 = 0,
+    compact_recoveries: u64 = 0,
+    compact_disabled: u64 = 0,
+    /// GPU-culling telemetry is renderer-owned and deliberately persistent:
+    /// manager/UI frame-stat resets must not erase benchmark evidence.
+    gpu_culling_requested: bool = false,
+    gpu_culling_threshold: u32 = 0,
+    gpu_culling_candidate_count: u32 = 0,
+    gpu_culling_candidate_count_max: u32 = 0,
+    gpu_culling_draw_submissions: u64 = 0,
+    gpu_culling_overflows: u32 = 0,
+    gpu_culling_validation_mismatches: u32 = 0,
+    gpu_culling_validation_generation: u64 = 0,
+    gpu_culling_validation_completed_generation: u64 = 0,
+    gpu_culling_validation_completed_count: u64 = 0,
 };
 
 pub const LODVisibilityLevelSnapshot = struct {
@@ -123,6 +165,8 @@ pub const LODProfilingCollector = struct {
         eviction,
         worker_generation,
         worker_mesh_construction,
+        worker_far_expanded_mesh_construction,
+        worker_compact_encode,
         manager_lock_wait,
         manager_lock_hold,
         wait_idle,
@@ -141,10 +185,14 @@ pub const LODProfilingCollector = struct {
     eviction_ns: AtomicU64 = AtomicU64.init(0),
     worker_generation_ns: AtomicU64 = AtomicU64.init(0),
     worker_mesh_construction_ns: AtomicU64 = AtomicU64.init(0),
+    worker_far_expanded_mesh_construction_ns: AtomicU64 = AtomicU64.init(0),
+    worker_compact_encode_ns: AtomicU64 = AtomicU64.init(0),
     manager_lock_wait_ns: AtomicU64 = AtomicU64.init(0),
     manager_lock_hold_ns: AtomicU64 = AtomicU64.init(0),
     wait_idle_ns: AtomicU64 = AtomicU64.init(0),
     upload_bytes: AtomicU64 = AtomicU64.init(0),
+    far_expanded_upload_bytes: AtomicU64 = AtomicU64.init(0),
+    compact_upload_bytes: AtomicU64 = AtomicU64.init(0),
     pending_cpu_upload_bytes: AtomicU64 = AtomicU64.init(0),
     staging_pressure_count: AtomicU64 = AtomicU64.init(0),
     visible_count: AtomicU64 = AtomicU64.init(0),
@@ -164,6 +212,26 @@ pub const LODProfilingCollector = struct {
     direct_mesh_gpu_bytes: AtomicU64 = AtomicU64.init(0),
     known_memory_bytes: AtomicU64 = AtomicU64.init(0),
     wait_idle_count: AtomicU64 = AtomicU64.init(0),
+    wait_idle_shutdown_count: AtomicU64 = AtomicU64.init(0),
+    wait_idle_shutdown_ns: AtomicU64 = AtomicU64.init(0),
+    compact_selected: AtomicU64 = AtomicU64.init(0),
+    compact_build_rejected: AtomicU64 = AtomicU64.init(0),
+    compact_upload_failures: AtomicU64 = AtomicU64.init(0),
+    compact_draw_unavailable: AtomicU64 = AtomicU64.init(0),
+    compact_draw_failures: AtomicU64 = AtomicU64.init(0),
+    compact_submissions: AtomicU64 = AtomicU64.init(0),
+    compact_recoveries: AtomicU64 = AtomicU64.init(0),
+    compact_disabled: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_requested: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_threshold: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_candidate_count: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_candidate_count_max: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_draw_submissions: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_overflows: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_validation_mismatches: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_validation_generation: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_validation_completed_generation: AtomicU64 = AtomicU64.init(0),
+    gpu_culling_validation_completed_count: AtomicU64 = AtomicU64.init(0),
 
     pub fn init(enabled: bool) LODProfilingCollector {
         return .{ .enabled = enabled };
@@ -186,6 +254,14 @@ pub const LODProfilingCollector = struct {
 
     pub fn addUploadBytes(self: *LODProfilingCollector, bytes: usize) void {
         self.add(&self.upload_bytes, @intCast(bytes));
+    }
+
+    pub fn addFarExpandedUploadBytes(self: *LODProfilingCollector, bytes: usize) void {
+        self.add(&self.far_expanded_upload_bytes, @intCast(bytes));
+    }
+
+    pub fn addCompactUploadBytes(self: *LODProfilingCollector, bytes: usize) void {
+        self.add(&self.compact_upload_bytes, @intCast(bytes));
     }
 
     pub fn setPendingCpuUploadBytes(self: *LODProfilingCollector, bytes: usize) void {
@@ -213,6 +289,71 @@ pub const LODProfilingCollector = struct {
 
     pub fn addVisible(self: *LODProfilingCollector) void {
         self.add(&self.visible_count, 1);
+    }
+
+    pub fn addCompactSelected(self: *LODProfilingCollector) void {
+        self.add(&self.compact_selected, 1);
+    }
+
+    pub fn addCompactBuildRejected(self: *LODProfilingCollector) void {
+        self.add(&self.compact_build_rejected, 1);
+    }
+
+    pub fn addCompactUploadFailure(self: *LODProfilingCollector) void {
+        self.add(&self.compact_upload_failures, 1);
+    }
+
+    pub fn addCompactDrawUnavailable(self: *LODProfilingCollector) void {
+        self.add(&self.compact_draw_unavailable, 1);
+    }
+
+    pub fn addCompactDrawFailure(self: *LODProfilingCollector) void {
+        self.add(&self.compact_draw_failures, 1);
+    }
+
+    pub fn addCompactSubmission(self: *LODProfilingCollector) void {
+        self.add(&self.compact_submissions, 1);
+    }
+
+    pub fn addCompactRecovery(self: *LODProfilingCollector) void {
+        self.add(&self.compact_recoveries, 1);
+    }
+
+    pub fn addCompactDisabled(self: *LODProfilingCollector) void {
+        self.add(&self.compact_disabled, 1);
+    }
+
+    pub fn setGpuCullingConfiguration(self: *LODProfilingCollector, requested: bool, threshold: usize) void {
+        if (!self.enabled) return;
+        self.gpu_culling_requested.store(@intFromBool(requested), .monotonic);
+        self.gpu_culling_threshold.store(@min(threshold, std.math.maxInt(u32)), .monotonic);
+    }
+
+    /// Records the projection once per prepared frame, before terrain and water
+    /// consume the same candidate stream.
+    pub fn setGpuCullingCandidateCount(self: *LODProfilingCollector, count: usize) void {
+        if (!self.enabled) return;
+        const value: u64 = @min(count, std.math.maxInt(u32));
+        self.gpu_culling_candidate_count.store(value, .monotonic);
+        var observed = self.gpu_culling_candidate_count_max.load(.monotonic);
+        while (observed < value) {
+            observed = self.gpu_culling_candidate_count_max.cmpxchgWeak(observed, value, .monotonic, .monotonic) orelse break;
+        }
+    }
+
+    /// Counts one successful GPU frame submission, rather than one terrain and
+    /// one water stream, so paired layers cannot inflate benchmark evidence.
+    pub fn addGpuCullingSubmission(self: *LODProfilingCollector) void {
+        self.add(&self.gpu_culling_draw_submissions, 1);
+    }
+
+    pub fn setGpuCullingDiagnostics(self: *LODProfilingCollector, overflows: u32, mismatches: u32, generation: u64, completed_generation: u64, completed_count: u64) void {
+        if (!self.enabled) return;
+        self.gpu_culling_overflows.store(overflows, .monotonic);
+        self.gpu_culling_validation_mismatches.store(mismatches, .monotonic);
+        self.gpu_culling_validation_generation.store(generation, .monotonic);
+        self.gpu_culling_validation_completed_generation.store(completed_generation, .monotonic);
+        self.gpu_culling_validation_completed_count.store(completed_count, .monotonic);
     }
 
     pub fn addRejected(self: *LODProfilingCollector) void {
@@ -246,8 +387,25 @@ pub const LODProfilingCollector = struct {
         _ = self.deferred_deletion_cpu_bytes.fetchSub(@intCast(bytes), .monotonic);
     }
 
+    /// Compatibility helper for a runtime/streaming wait with no measured
+    /// duration. New call sites should use `recordWaitIdle`.
     pub fn addWaitIdle(self: *LODProfilingCollector) void {
         self.add(&self.wait_idle_count, 1);
+    }
+
+    pub fn recordWaitIdle(self: *LODProfilingCollector, reason: LODWaitIdleReason, timer: ?MonotonicTimer) void {
+        if (!self.enabled) return;
+        const elapsed = timer orelse return;
+        switch (reason) {
+            .streaming => {
+                _ = self.wait_idle_count.fetchAdd(1, .monotonic);
+                _ = self.wait_idle_ns.fetchAdd(elapsed.read(), .monotonic);
+            },
+            .shutdown => {
+                _ = self.wait_idle_shutdown_count.fetchAdd(1, .monotonic);
+                _ = self.wait_idle_shutdown_ns.fetchAdd(elapsed.read(), .monotonic);
+            },
+        }
     }
 
     /// Resets cumulative profiling counters. Concurrent worker completion may
@@ -255,18 +413,26 @@ pub const LODProfilingCollector = struct {
     /// race-free and never contain torn values.
     pub fn reset(self: *LODProfilingCollector) void {
         inline for (.{
-            &self.update_ns,                   &self.scheduling_ns,                &self.cache_ns,
-            &self.generation_dispatch_ns,      &self.state_transition_ns,          &self.upload_prep_ns,
-            &self.upload_submission_ns,        &self.visibility_ns,                &self.coverage_ns,
-            &self.eviction_ns,                 &self.worker_generation_ns,         &self.worker_mesh_construction_ns,
-            &self.manager_lock_wait_ns,        &self.manager_lock_hold_ns,         &self.wait_idle_ns,
-            &self.upload_bytes,                &self.pending_cpu_upload_bytes,     &self.staging_pressure_count,
-            &self.visible_count,               &self.rejected_count,               &self.coverage_count,
-            &self.deferred_deletion_bytes,     &self.deferred_deletion_cpu_bytes,  &self.pool_gpu_capacity_bytes,
-            &self.pool_gpu_allocated_bytes,    &self.pool_gpu_slack_bytes,         &self.pool_cpu_shadow_bytes,
-            &self.compact_pool_capacity_bytes, &self.compact_pool_allocated_bytes, &self.compact_pool_free_bytes,
-            &self.compact_pool_retired_bytes,  &self.direct_mesh_gpu_bytes,        &self.known_memory_bytes,
-            &self.wait_idle_count,
+            &self.update_ns,                                &self.scheduling_ns,                     &self.cache_ns,
+            &self.generation_dispatch_ns,                   &self.state_transition_ns,               &self.upload_prep_ns,
+            &self.upload_submission_ns,                     &self.visibility_ns,                     &self.coverage_ns,
+            &self.eviction_ns,                              &self.worker_generation_ns,              &self.worker_mesh_construction_ns,
+            &self.worker_far_expanded_mesh_construction_ns, &self.worker_compact_encode_ns,          &self.manager_lock_wait_ns,
+            &self.manager_lock_hold_ns,                     &self.wait_idle_ns,                      &self.upload_bytes,
+            &self.far_expanded_upload_bytes,                &self.compact_upload_bytes,              &self.pending_cpu_upload_bytes,
+            &self.staging_pressure_count,                   &self.visible_count,                     &self.rejected_count,
+            &self.coverage_count,                           &self.deferred_deletion_bytes,           &self.deferred_deletion_cpu_bytes,
+            &self.pool_gpu_capacity_bytes,                  &self.pool_gpu_allocated_bytes,          &self.pool_gpu_slack_bytes,
+            &self.pool_cpu_shadow_bytes,                    &self.compact_pool_capacity_bytes,       &self.compact_pool_allocated_bytes,
+            &self.compact_pool_free_bytes,                  &self.compact_pool_retired_bytes,        &self.direct_mesh_gpu_bytes,
+            &self.known_memory_bytes,                       &self.wait_idle_count,                   &self.wait_idle_shutdown_count,
+            &self.wait_idle_shutdown_ns,                    &self.compact_selected,                  &self.compact_build_rejected,
+            &self.compact_upload_failures,                  &self.compact_draw_unavailable,          &self.compact_draw_failures,
+            &self.compact_submissions,                      &self.compact_recoveries,                &self.compact_disabled,
+            &self.gpu_culling_requested,                    &self.gpu_culling_threshold,             &self.gpu_culling_candidate_count,
+            &self.gpu_culling_candidate_count_max,          &self.gpu_culling_draw_submissions,      &self.gpu_culling_overflows,
+            &self.gpu_culling_validation_mismatches,        &self.gpu_culling_validation_generation, &self.gpu_culling_validation_completed_generation,
+            &self.gpu_culling_validation_completed_count,
         }) |counter| counter.store(0, .monotonic);
         for (&self.visibility_levels) |*level| level.reset();
     }
@@ -286,9 +452,13 @@ pub const LODProfilingCollector = struct {
             .eviction_ms = nsToMs(self.eviction_ns.load(.monotonic)),
             .worker_generation_ms = nsToMs(self.worker_generation_ns.load(.monotonic)),
             .worker_mesh_construction_ms = nsToMs(self.worker_mesh_construction_ns.load(.monotonic)),
+            .worker_far_expanded_mesh_construction_ms = nsToMs(self.worker_far_expanded_mesh_construction_ns.load(.monotonic)),
+            .worker_compact_encode_ms = nsToMs(self.worker_compact_encode_ns.load(.monotonic)),
             .manager_lock_wait_ms = nsToMs(self.manager_lock_wait_ns.load(.monotonic)),
             .manager_lock_hold_ms = nsToMs(self.manager_lock_hold_ns.load(.monotonic)),
             .upload_bytes = self.upload_bytes.load(.monotonic),
+            .far_expanded_upload_bytes = self.far_expanded_upload_bytes.load(.monotonic),
+            .compact_upload_bytes = self.compact_upload_bytes.load(.monotonic),
             .pending_cpu_upload_bytes = self.pending_cpu_upload_bytes.load(.monotonic),
             .staging_pressure_count = self.staging_pressure_count.load(.monotonic),
             .visible_count = self.visible_count.load(.monotonic),
@@ -313,6 +483,26 @@ pub const LODProfilingCollector = struct {
             .known_memory_bytes = self.known_memory_bytes.load(.monotonic),
             .wait_idle_count = self.wait_idle_count.load(.monotonic),
             .wait_idle_ms = nsToMs(self.wait_idle_ns.load(.monotonic)),
+            .wait_idle_shutdown_count = self.wait_idle_shutdown_count.load(.monotonic),
+            .wait_idle_shutdown_ms = nsToMs(self.wait_idle_shutdown_ns.load(.monotonic)),
+            .compact_selected = self.compact_selected.load(.monotonic),
+            .compact_build_rejected = self.compact_build_rejected.load(.monotonic),
+            .compact_upload_failures = self.compact_upload_failures.load(.monotonic),
+            .compact_draw_unavailable = self.compact_draw_unavailable.load(.monotonic),
+            .compact_draw_failures = self.compact_draw_failures.load(.monotonic),
+            .compact_submissions = self.compact_submissions.load(.monotonic),
+            .compact_recoveries = self.compact_recoveries.load(.monotonic),
+            .compact_disabled = self.compact_disabled.load(.monotonic),
+            .gpu_culling_requested = self.gpu_culling_requested.load(.monotonic) != 0,
+            .gpu_culling_threshold = @intCast(self.gpu_culling_threshold.load(.monotonic)),
+            .gpu_culling_candidate_count = @intCast(self.gpu_culling_candidate_count.load(.monotonic)),
+            .gpu_culling_candidate_count_max = @intCast(self.gpu_culling_candidate_count_max.load(.monotonic)),
+            .gpu_culling_draw_submissions = self.gpu_culling_draw_submissions.load(.monotonic),
+            .gpu_culling_overflows = @intCast(self.gpu_culling_overflows.load(.monotonic)),
+            .gpu_culling_validation_mismatches = @intCast(self.gpu_culling_validation_mismatches.load(.monotonic)),
+            .gpu_culling_validation_generation = self.gpu_culling_validation_generation.load(.monotonic),
+            .gpu_culling_validation_completed_generation = self.gpu_culling_validation_completed_generation.load(.monotonic),
+            .gpu_culling_validation_completed_count = self.gpu_culling_validation_completed_count.load(.monotonic),
         };
     }
 
@@ -330,6 +520,8 @@ pub const LODProfilingCollector = struct {
             .eviction => &self.eviction_ns,
             .worker_generation => &self.worker_generation_ns,
             .worker_mesh_construction => &self.worker_mesh_construction_ns,
+            .worker_far_expanded_mesh_construction => &self.worker_far_expanded_mesh_construction_ns,
+            .worker_compact_encode => &self.worker_compact_encode_ns,
             .manager_lock_wait => &self.manager_lock_wait_ns,
             .manager_lock_hold => &self.manager_lock_hold_ns,
             .wait_idle => &self.wait_idle_ns,
@@ -365,6 +557,10 @@ pub const LODStats = struct {
     compact_pool_free_bytes: u64 = 0,
     compact_pool_retired_bytes: u64 = 0,
     direct_mesh_gpu_bytes: u64 = 0,
+    source_data_cpu_bytes: u64 = 0,
+    resident_region_count: u64 = 0,
+    logical_admission_reservation_bytes: u64 = 0,
+    logical_admission_bytes: u64 = 0,
     pending_cpu_upload_bytes: u64 = 0,
     deferred_deletion_gpu_bytes: u64 = 0,
     deferred_deletion_cpu_bytes: u64 = 0,
@@ -387,12 +583,25 @@ pub const LODStats = struct {
     /// deliberately do not require a same-frame readback of compacted counts.
     gpu_terrain_candidates: u32 = 0,
     gpu_fluid_candidates: u32 = 0,
+    gpu_culling_requested: bool = false,
+    gpu_culling_threshold: u32 = 0,
+    gpu_culling_candidate_count: u32 = 0,
+    gpu_culling_draw_submissions: u32 = 0,
     gpu_culling_overflows: u32 = 0,
     gpu_culling_validation_mismatches: u32 = 0,
+    gpu_culling_validation_generation: u64 = 0,
+    gpu_culling_validation_completed_generation: u64 = 0,
+    gpu_culling_validation_completed_count: u64 = 0,
     ingestion_backlog: u32 = 0,
     upgrades_pending: u32 = 0,
     downgrades_pending: u32 = 0,
     upload_failures: u32 = 0,
+    /// Lifecycle tokens accepted into bounded overflow heaps. These are
+    /// observable pressure counters; overflow tokens are still immediately
+    /// prioritized for consumption rather than being dropped.
+    generation_token_overflows: u64 = 0,
+    transition_token_overflows: u64 = 0,
+    fade_token_overflows: u64 = 0,
     /// Worker and queued jobs invalidated before stale results could publish.
     cancelled_jobs: u32 = 0,
 
@@ -427,6 +636,10 @@ pub const LODStats = struct {
         self.compact_pool_free_bytes = 0;
         self.compact_pool_retired_bytes = 0;
         self.direct_mesh_gpu_bytes = 0;
+        self.source_data_cpu_bytes = 0;
+        self.resident_region_count = 0;
+        self.logical_admission_reservation_bytes = 0;
+        self.logical_admission_bytes = 0;
         self.pending_cpu_upload_bytes = 0;
         self.deferred_deletion_gpu_bytes = 0;
         self.deferred_deletion_cpu_bytes = 0;
@@ -440,11 +653,21 @@ pub const LODStats = struct {
         self.fluid_instances = [_]u32{0} ** LODLevel.count;
         self.gpu_terrain_candidates = 0;
         self.gpu_fluid_candidates = 0;
+        self.gpu_culling_requested = false;
+        self.gpu_culling_threshold = 0;
+        self.gpu_culling_candidate_count = 0;
+        self.gpu_culling_draw_submissions = 0;
         self.gpu_culling_overflows = 0;
         self.gpu_culling_validation_mismatches = 0;
+        self.gpu_culling_validation_generation = 0;
+        self.gpu_culling_validation_completed_generation = 0;
+        self.gpu_culling_validation_completed_count = 0;
         self.upgrades_pending = 0;
         self.downgrades_pending = 0;
         self.upload_failures = 0;
+        self.generation_token_overflows = 0;
+        self.transition_token_overflows = 0;
+        self.fade_token_overflows = 0;
         self.ingestion_backlog = 0;
         self.cancelled_jobs = 0;
     }
@@ -485,19 +708,29 @@ test "LODStats reports cache hit rate" {
 test "LOD profiling collector snapshots and resets cumulative counters" {
     var collector = LODProfilingCollector.init(true);
     collector.addUploadBytes(128);
+    collector.addFarExpandedUploadBytes(96);
+    collector.addCompactUploadBytes(32);
     collector.setPendingCpuUploadBytes(64);
     collector.addVisible();
     collector.addRejected();
     collector.addCoverage();
+    collector.addCompactSubmission();
     collector.addVisibilityLevel(.lod1, .{ .candidates = 3, .accepted = 1, .rejected_frustum = 1, .coverage_checks = 1 });
     collector.addDeferredDeletionBytes(32);
     collector.addDeferredDeletionCpuBytes(16);
     collector.setMemoryAccounting(256, 192, 64, 256, 1024, 320, 704, 0, 128, 1664);
     collector.addWaitIdle();
+    collector.setGpuCullingConfiguration(true, 128);
+    collector.setGpuCullingCandidateCount(1024);
+    collector.setGpuCullingCandidateCount(512);
+    collector.addGpuCullingSubmission();
+    collector.setGpuCullingDiagnostics(2, 3, 9, 8, 7);
 
     const snapshot = collector.snapshot();
     try std.testing.expect(snapshot.enabled);
     try std.testing.expectEqual(@as(u64, 128), snapshot.upload_bytes);
+    try std.testing.expectEqual(@as(u64, 96), snapshot.far_expanded_upload_bytes);
+    try std.testing.expectEqual(@as(u64, 32), snapshot.compact_upload_bytes);
     try std.testing.expectEqual(@as(u64, 64), snapshot.pending_cpu_upload_bytes);
     try std.testing.expectEqual(@as(u64, 1), snapshot.visible_count);
     try std.testing.expectEqual(@as(u64, 1), snapshot.rejected_count);
@@ -516,14 +749,43 @@ test "LOD profiling collector snapshots and resets cumulative counters" {
     try std.testing.expectEqual(@as(u64, 128), snapshot.direct_mesh_gpu_bytes);
     try std.testing.expectEqual(@as(u64, 1664), snapshot.known_memory_bytes);
     try std.testing.expectEqual(@as(u64, 1), snapshot.wait_idle_count);
+    try std.testing.expectEqual(@as(u64, 1), snapshot.compact_submissions);
+    try std.testing.expect(snapshot.gpu_culling_requested);
+    try std.testing.expectEqual(@as(u32, 128), snapshot.gpu_culling_threshold);
+    try std.testing.expectEqual(@as(u32, 512), snapshot.gpu_culling_candidate_count);
+    try std.testing.expectEqual(@as(u32, 1024), snapshot.gpu_culling_candidate_count_max);
+    try std.testing.expectEqual(@as(u64, 1), snapshot.gpu_culling_draw_submissions);
+    try std.testing.expectEqual(@as(u32, 2), snapshot.gpu_culling_overflows);
+    try std.testing.expectEqual(@as(u32, 3), snapshot.gpu_culling_validation_mismatches);
 
     collector.reset();
     const reset_snapshot = collector.snapshot();
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.upload_bytes);
+    try std.testing.expectEqual(@as(u64, 0), reset_snapshot.far_expanded_upload_bytes);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.visible_count);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.deferred_deletion_bytes);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.pool_gpu_capacity_bytes);
     try std.testing.expectEqual(@as(u64, 0), reset_snapshot.visibility_levels[1].candidates);
+    try std.testing.expectEqual(@as(u64, 0), reset_snapshot.compact_submissions);
+    try std.testing.expect(!reset_snapshot.gpu_culling_requested);
+    try std.testing.expectEqual(@as(u32, 0), reset_snapshot.gpu_culling_candidate_count_max);
+}
+
+test "per-frame LOD stats reset cannot erase collector GPU-culling evidence" {
+    var collector = LODProfilingCollector.init(true);
+    collector.setGpuCullingConfiguration(true, 128);
+    collector.setGpuCullingCandidateCount(1024);
+    collector.addGpuCullingSubmission();
+
+    var frame_stats = LODStats{};
+    frame_stats.gpu_culling_requested = true;
+    frame_stats.gpu_culling_candidate_count = 1024;
+    frame_stats.reset();
+
+    const snapshot = collector.snapshot();
+    try std.testing.expect(snapshot.gpu_culling_requested);
+    try std.testing.expectEqual(@as(u32, 1024), snapshot.gpu_culling_candidate_count_max);
+    try std.testing.expectEqual(@as(u64, 1), snapshot.gpu_culling_draw_submissions);
 }
 
 test "disabled LOD profiling collector does not accumulate samples" {

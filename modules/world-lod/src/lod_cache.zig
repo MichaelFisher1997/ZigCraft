@@ -86,9 +86,9 @@ pub fn serializedSize(data: *const LODSimplifiedData) usize {
 /// as soon as this returns.
 pub fn cloneSourceData(data: *const LODSimplifiedData, lod: LODLevel, allocator: std.mem.Allocator) !LODSimplifiedData {
     var copy = if (data.hasVerticalSpans())
-        try LODSimplifiedData.initWithVerticalSpans(allocator, lod)
+        try LODSimplifiedData.initWithVerticalSpansGridSize(allocator, lod, data.width)
     else
-        try LODSimplifiedData.init(allocator, lod);
+        try LODSimplifiedData.initWithGridSize(allocator, lod, data.width);
     errdefer copy.deinit();
 
     copy.version = data.version;
@@ -357,7 +357,7 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
     off += 4;
 
     if (seed != key.seed or generator_identity_hash != key.generator_identity_hash or generator_version != key.generator_version or rx != key.rx or rz != key.rz) return CacheError.InvalidKey;
-    if (width != LODSimplifiedData.getGridSize(key.lod)) return CacheError.InvalidWidth;
+    if (!LODSimplifiedData.isSupportedGridSize(key.lod, width)) return CacheError.InvalidWidth;
 
     const count = @as(usize, @intCast(width)) * @as(usize, @intCast(width));
     const v1_expected = HEADER_SIZE + payloadSize(count);
@@ -382,7 +382,10 @@ pub fn deserialize(bytes: []const u8, key: Key, allocator: std.mem.Allocator) !L
     // to worldgen data; the cache pipeline will regenerate them safely.
     if ((version == CACHE_VERSION_V1) or (version == CACHE_VERSION_V10 and !has_spans)) return CacheError.MissingProvenance;
 
-    var data = if (has_spans) try LODSimplifiedData.initWithVerticalSpans(allocator, key.lod) else try LODSimplifiedData.init(allocator, key.lod);
+    var data = if (has_spans)
+        try LODSimplifiedData.initWithVerticalSpansGridSize(allocator, key.lod, width)
+    else
+        try LODSimplifiedData.initWithGridSize(allocator, key.lod, width);
     errdefer data.deinit();
 
     for (data.heightmap) |*height| {
@@ -497,6 +500,24 @@ test "LOD cache round-trip preserves source data" {
     try testing.expectEqual(data.water[idx].depth, decoded.water[idx].depth);
     try testing.expectEqual(data.lighting[idx].sky_light, decoded.lighting[idx].sky_light);
     try testing.expectEqual(data.vegetation[idx].leaves, decoded.vegetation[idx].leaves);
+}
+
+test "LOD cache round-trips reduced far density widths" {
+    inline for ([_]struct { lod: LODLevel, density: f32, width: u32 }{
+        .{ .lod = .lod3, .density = 0.5, .width = 65 },
+        .{ .lod = .lod4, .density = 0.25, .width = 17 },
+    }) |case| {
+        var data = try LODSimplifiedData.initWithSampleDensity(testing.allocator, case.lod, case.density);
+        defer data.deinit();
+        data.setHeight(0, 0, 83.0);
+        const key = Key{ .seed = 73, .generator_identity_hash = 9, .generator_version = 2, .rx = 1, .rz = -1, .lod = case.lod };
+        const bytes = try serialize(&data, key, testing.allocator);
+        defer testing.allocator.free(bytes);
+        var decoded = try deserialize(bytes, key, testing.allocator);
+        defer decoded.deinit();
+        try testing.expectEqual(case.width, decoded.width);
+        try testing.expectEqual(@as(f32, 83.0), decoded.getHeight(0, 0));
+    }
 }
 
 test "LOD cache round-trip preserves vertical spans" {

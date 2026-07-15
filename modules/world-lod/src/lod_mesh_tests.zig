@@ -19,6 +19,9 @@ const LODSimplifiedData = lod_chunk.LODSimplifiedData;
 
 const LODMesh = mesh_mod.LODMesh;
 const LODMeshResources = mesh_mod.LODMeshResources;
+const CompactLODPool = @import("lod_compact_pool.zig").CompactLODPool;
+const TileEdge = @import("lod_tile.zig").TileEdge;
+const TILE_EDGE_MASK = @import("lod_tile.zig").TILE_EDGE_MASK;
 const MAX_STAGING_UPDATE_BYTES = mesh_mod.MAX_STAGING_UPDATE_BYTES;
 const getCellSize = mesh_mod.getCellSize;
 const updateBufferChunked = mesh_mod.updateBufferChunked;
@@ -67,6 +70,83 @@ test "LODMesh initialization" {
     try std.testing.expectEqual(LODLevel.lod1, mesh.lod_level);
     try std.testing.expectEqual(@as(u32, 0), mesh.vertex_count);
     try std.testing.expect(!mesh.ready);
+}
+
+test "compact late neighbor keeps a resident fallback edge skirted" {
+    const allocator = std.testing.allocator;
+    var left_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer left_source.deinit();
+    var right_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer right_source.deinit();
+    right_source.setHeight(0, 3, 88.0);
+
+    var left = LODMesh.init(allocator, .lod4);
+    var pool = CompactLODPool.init(allocator);
+    defer {
+        // `CompactLODPool` owns the shared storage handle. Do not call the
+        // generic mesh deinit while that handle is still attached.
+        left.clearRetiredState();
+        pool.deinit(testResources());
+    }
+    try left.buildCompactTile(&left_source);
+
+    // The pool owns the immutable GPU range and releases the CPU payload. A
+    // neighbor arriving later must not make the old fallback apron seamless.
+    try pool.upload(&left, testResources());
+    try std.testing.expect(left.compact_tile == null);
+    var late_right = LODMesh.init(allocator, .lod4);
+    defer late_right.deinit(testResources());
+    try late_right.buildCompactTile(&right_source);
+
+    try std.testing.expect(!left.patchCompactNeighbor(.east, &late_right));
+    try std.testing.expect(!left.compactEdgeIsSeamless(.east));
+    try std.testing.expectEqual(TILE_EDGE_MASK, left.compactSkirtMask());
+}
+
+test "compact eviction reload does not retain a stale seam claim" {
+    const allocator = std.testing.allocator;
+    var left_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer left_source.deinit();
+    var right_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer right_source.deinit();
+
+    var left = LODMesh.init(allocator, .lod4);
+    defer left.deinit(testResources());
+    var right = LODMesh.init(allocator, .lod4);
+    defer right.deinit(testResources());
+    try left.buildCompactTile(&left_source);
+    try right.buildCompactTile(&right_source);
+    try std.testing.expect(left.patchCompactNeighbor(.east, &right));
+    try std.testing.expect(left.compactEdgeIsSeamless(.east));
+
+    // Retiring the old range and rebuilding from a reloaded source starts with
+    // no authority. The edge becomes seamless only after a fresh pre-upload
+    // neighbor patch, never by inheriting the former resident metadata.
+    left.clearRetiredState();
+    try left.buildCompactTile(&left_source);
+    try std.testing.expect(!left.compactEdgeIsSeamless(.east));
+    try std.testing.expectEqual(TILE_EDGE_MASK, left.compactSkirtMask());
+    try std.testing.expect(left.patchCompactNeighbor(.east, &right));
+    try std.testing.expect(left.compactEdgeIsSeamless(.east));
+}
+
+test "compact differing LOD edges remain non-seamless and skirted" {
+    const allocator = std.testing.allocator;
+    var fine_source = try LODSimplifiedData.init(allocator, .lod3);
+    defer fine_source.deinit();
+    var coarse_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer coarse_source.deinit();
+
+    var fine = LODMesh.init(allocator, .lod3);
+    defer fine.deinit(testResources());
+    var coarse = LODMesh.init(allocator, .lod4);
+    defer coarse.deinit(testResources());
+    try fine.buildCompactTile(&fine_source);
+    try coarse.buildCompactTile(&coarse_source);
+
+    try std.testing.expect(!fine.patchCompactNeighbor(TileEdge.east, &coarse));
+    try std.testing.expect(!fine.compactEdgeIsSeamless(.east));
+    try std.testing.expectEqual(TILE_EDGE_MASK, fine.compactSkirtMask());
 }
 
 test "getCellSize" {
@@ -999,7 +1079,7 @@ test "LOD boundary height retains its authoritative source sample" {
     try std.testing.expectEqual(@as(f32, 100.0), quantizedCellSurfaceHeight(&data, 0, 1));
 }
 
-test "representativeVegetationForLOD preserves sparse coarse coverage" {
+test "representativeVegetationForLOD aggregates sparse coarse coverage" {
     const allocator = std.testing.allocator;
     var data = try LODSimplifiedData.init(allocator, .lod2);
     defer data.deinit();
@@ -1014,8 +1094,19 @@ test "representativeVegetationForLOD preserves sparse coarse coverage" {
     };
 
     const vegetation = representativeVegetationForLOD(&data, 0, 0, .lod2);
-    try std.testing.expect(vegetation.tree_coverage >= 0.1);
+    try std.testing.expectEqual(@as(f32, 0.025), vegetation.tree_coverage);
     try std.testing.expect(vegetation.avg_tree_height >= 7.0);
+}
+
+test "representativeVegetationForLOD suppresses subpixel horizon foliage" {
+    const allocator = std.testing.allocator;
+    var data = try LODSimplifiedData.init(allocator, .lod4);
+    defer data.deinit();
+    data.vegetation[0] = .{ .tree_coverage = 0.1, .avg_tree_height = 8.0, .offset_x = 0.0, .offset_z = 0.0, .trunk = .wood, .leaves = .leaves };
+
+    const vegetation = representativeVegetationForLOD(&data, 0, 0, .lod4);
+    try std.testing.expectEqual(@as(f32, 0.0), vegetation.tree_coverage);
+    try std.testing.expectEqual(BlockType.air, vegetation.leaves);
 }
 
 test "buildFromSimplifiedData uses averaged color tile for far LOD tops" {

@@ -488,6 +488,11 @@ fn setLODInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     render_state.setLODInstanceBuffer(ctx, handle);
 }
 
+fn setLODDescriptorStream(ctx_ptr: *anyopaque, stream: rhi.LODDescriptorStream) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setLODDescriptorStream(ctx, stream);
+}
+
 fn setLODCompactSampleBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     render_state.setLODCompactSampleBuffer(ctx, handle);
@@ -547,6 +552,10 @@ fn bindTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         6 => ctx.draw.dummy_normal_texture,
         7, 8 => ctx.draw.dummy_roughness_texture,
         9 => ctx.draw.dummy_texture,
+        // LPV shader bindings are sampler3D. A 2D fallback is invalid even
+        // when LPV lighting is disabled, and snapshotting it made indirect LOD
+        // terrain undefined on RADV.
+        11, 12, 13 => ctx.draw.dummy_texture_3d,
         0, 1 => ctx.draw.dummy_texture,
         else => ctx.draw.dummy_texture,
     } else handle;
@@ -605,6 +614,11 @@ fn supportsIndirectFirstInstance(ctx_ptr: *anyopaque) bool {
 fn supportsIndirectCount(ctx_ptr: *anyopaque) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return state_control.supportsIndirectCount(ctx);
+}
+
+fn supportsCompactLODGpuCulling(ctx_ptr: *anyopaque) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return state_control.supportsCompactLODGpuCulling(ctx);
 }
 
 fn recover(ctx_ptr: *anyopaque) anyerror!void {
@@ -1099,6 +1113,7 @@ const VULKAN_STATE_CONTEXT_VTABLE = rhi.IRenderStateContext.VTable{
     .setModelMatrix = setModelMatrix,
     .setInstanceBuffer = setInstanceBuffer,
     .setLODInstanceBuffer = setLODInstanceBuffer,
+    .setLODDescriptorStream = setLODDescriptorStream,
     .setLODCompactSampleBuffer = setLODCompactSampleBuffer,
     .setLODCompactInstanceBuffer = setLODCompactInstanceBuffer,
     .setTerrainPipelineBound = setTerrainPipelineBound,
@@ -1469,6 +1484,7 @@ const VULKAN_DEVICE_QUERY_VTABLE = rhi.IDeviceQuery.VTable{
     .getFrameIndex = getFrameIndex,
     .supportsIndirectFirstInstance = supportsIndirectFirstInstance,
     .supportsIndirectCount = supportsIndirectCount,
+    .supportsCompactLODGpuCulling = supportsCompactLODGpuCulling,
     .getMaxAnisotropy = getMaxAnisotropy,
     .getMaxMSAASamples = getMaxMSAASamples,
     .getFaultCount = getFaultCount,

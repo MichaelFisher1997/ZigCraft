@@ -205,6 +205,9 @@ pub const WORLDGEN_SEA_LEVEL: f32 = 64.0;
 pub const SEA_LEVEL_WATER_EPSILON: f32 = 2.0;
 pub const SYNTHETIC_SEAFLOOR_SKIRT: f32 = 8.0;
 pub const LOD_TREE_COVERAGE_THRESHOLD: f32 = 0.08;
+/// At the horizon a coverage below this cannot form a stable canopy pixel.
+/// Aggregate it into the terrain material instead of emitting noisy slivers.
+pub const LOD_FAR_TREE_SUBPIXEL_THRESHOLD: f32 = 0.16;
 
 /// Classifies a coarse LOD cell as water using averaged coverage, wet-sample count, and representative depth.
 /// Used for coarse material selection where a single fine water sample should not flood the whole cell.
@@ -1041,11 +1044,17 @@ pub fn isLeafBlock(block: BlockType) bool {
 /// Fine levels use one sample; coarser levels combine the local 2x2 vegetation hints.
 pub fn representativeVegetationForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) world_core.LODVegetationHint {
     if (isFineSampleLOD(lod_level)) return data.vegetation[cellIndex(data, gx, gz)];
-    return representativeVegetation(data, gx, gz);
+    const vegetation = representativeVegetation(data, gx, gz);
+    if (lod_level == .lod4 and vegetation.tree_coverage < LOD_FAR_TREE_SUBPIXEL_THRESHOLD) {
+        return world_core.LODVegetationHint.empty;
+    }
+    return vegetation;
 }
 
 /// Combines a 2x2 neighborhood of vegetation hints into one representative hint.
-/// Coverage uses the strongest sample while average height is averaged across non-empty tree samples.
+/// Coverage is area-averaged while height is averaged across non-empty tree
+/// samples. This aggregates far vegetation rather than multiplying sparse
+/// one-column impostors across a coarse mesh.
 pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32) world_core.LODVegetationHint {
     const x0 = @min(gx, data.width - 1);
     const z0 = @min(gz, data.width - 1);
@@ -1060,9 +1069,11 @@ pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32
 
     var height_sum: f32 = 0.0;
     var height_count: u32 = 0;
+    var coverage_sum: f32 = 0.0;
     var best = world_core.LODVegetationHint.empty;
     for (indices) |idx| {
         const hint = data.vegetation[idx];
+        coverage_sum += hint.tree_coverage;
         if (hint.avg_tree_height > 0.0) {
             height_sum += hint.avg_tree_height;
             height_count += 1;
@@ -1071,6 +1082,7 @@ pub fn representativeVegetation(data: *const LODSimplifiedData, gx: u32, gz: u32
     }
 
     best.avg_tree_height = if (height_count == 0) 0.0 else height_sum / @as(f32, @floatFromInt(height_count));
+    best.tree_coverage = coverage_sum * 0.25;
     return best;
 }
 

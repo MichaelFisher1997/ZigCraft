@@ -61,6 +61,15 @@ pub const TileEdge = enum(u2) {
     west = 3,
 };
 
+/// All currently defined `TileEdge` bits. This is kept separate from the
+/// serialized version so a future edge/encoding extension cannot silently turn
+/// an unknown bit into a seamless edge.
+pub const TILE_EDGE_MASK: u8 = 0x0f;
+
+pub fn edgeMask(edge: TileEdge) u8 {
+    return @as(u8, 1) << @intFromEnum(edge);
+}
+
 pub const TileError = error{
     InvalidLod,
     InvalidSourceData,
@@ -170,15 +179,23 @@ pub const CompactLODTile = struct {
     neighbor_apron_mask: u8 = 0,
     samples: []CompactLODSample,
 
-    pub fn initFromSimplified(allocator: Allocator, lod_level: LODLevel, source: *const LODSimplifiedData) !CompactLODTile {
-        if (lod_level != .lod3 and lod_level != .lod4) return TileError.InvalidLod;
-        if (source.width != LODSimplifiedData.getGridSize(lod_level)) return TileError.InvalidSourceData;
-        if (hasUnsupportedVerticalSpans(source)) return TileError.UnsupportedSourceFeatures;
-        // The compact water path has no shoreline coverage geometry. Rendering
-        // a fractional cell as a full quad leaks water onto dry land, so keep
-        // the established CPU heightfield path for these tiles.
-        if (hasUnsupportedWaterTopology(source)) return TileError.UnsupportedSourceFeatures;
+    pub const Support = enum { supported, invalid_lod, invalid_source, vertical_spans, water_topology };
 
+    pub fn support(source: *const LODSimplifiedData, lod_level: LODLevel) Support {
+        if (lod_level != .lod3 and lod_level != .lod4) return .invalid_lod;
+        if (!LODSimplifiedData.isSupportedGridSize(lod_level, source.width)) return .invalid_source;
+        if (hasUnsupportedVerticalSpans(source)) return .vertical_spans;
+        if (hasUnsupportedWaterTopology(source)) return .water_topology;
+        return .supported;
+    }
+
+    pub fn initFromSimplified(allocator: Allocator, lod_level: LODLevel, source: *const LODSimplifiedData) !CompactLODTile {
+        switch (support(source, lod_level)) {
+            .supported => {},
+            .invalid_lod => return TileError.InvalidLod,
+            .invalid_source => return TileError.InvalidSourceData,
+            .vertical_spans, .water_topology => return TileError.UnsupportedSourceFeatures,
+        }
         const source_count = squareCount(source.width) orelse return TileError.InvalidSourceData;
         if (source.heightmap.len != source_count or
             source.biomes.len != source_count or
@@ -251,8 +268,9 @@ pub const CompactLODTile = struct {
     }
 
     /// Replaces one duplicated fallback apron with authoritative samples from
-    /// the adjacent same-level tile. The neighbor's opposite interior edge is
-    /// copied, so central-difference normals agree after both tiles are patched.
+    /// the adjacent same-level tile. Region grids include both endpoints, so
+    /// the shared boundary is neighbor coordinate 0/width-1 and the apron must
+    /// copy the first sample beyond it (1/width-2).
     pub fn applyNeighborApron(self: *CompactLODTile, edge: TileEdge, neighbor: *const CompactLODTile) !void {
         if (self.lod_level != neighbor.lod_level or self.width != neighbor.width) return TileError.InvalidSourceData;
         const stride_value = self.stride();
@@ -266,10 +284,10 @@ pub const CompactLODTile = struct {
                 .west => @as(usize, coordinate + 1) * stride_usize,
             };
             const source_sample = switch (edge) {
-                .north => neighbor.sample(coordinate, neighbor.width - 1).?,
-                .east => neighbor.sample(0, coordinate).?,
-                .south => neighbor.sample(coordinate, 0).?,
-                .west => neighbor.sample(neighbor.width - 1, coordinate).?,
+                .north => neighbor.sample(coordinate, neighbor.width - 2).?,
+                .east => neighbor.sample(1, coordinate).?,
+                .south => neighbor.sample(coordinate, 1).?,
+                .west => neighbor.sample(neighbor.width - 2, coordinate).?,
             };
             self.samples[destination] = source_sample;
         }
@@ -277,7 +295,15 @@ pub const CompactLODTile = struct {
     }
 
     pub fn hasNeighborApron(self: *const CompactLODTile, edge: TileEdge) bool {
-        return (self.neighbor_apron_mask & (@as(u8, 1) << @intFromEnum(edge))) != 0;
+        return (self.neighbor_apron_mask & edgeMask(edge)) != 0;
+    }
+
+    /// Only an edge copied from a same-level neighbor is seamless. A duplicated
+    /// local edge is valid compact data, but it is deliberately *not* a seam
+    /// claim: the renderer must retain that edge's skirt and use its normal
+    /// fallback until an authoritative apron was available before upload.
+    pub fn skirtMask(self: *const CompactLODTile) u8 {
+        return (~self.neighbor_apron_mask) & TILE_EDGE_MASK;
     }
 
     /// Compares compact bytes with the current CPU top-face expansion using an
@@ -323,7 +349,7 @@ pub const CompactLODTile = struct {
         const lod_level = std.enums.fromInt(LODLevel, bytes[6]) orelse return TileError.InvalidLod;
         if (lod_level != .lod3 and lod_level != .lod4) return TileError.InvalidLod;
         const width = std.mem.readInt(u32, bytes[8..12], .little);
-        if (width != LODSimplifiedData.getGridSize(lod_level)) return TileError.InvalidHeader;
+        if (!LODSimplifiedData.isSupportedGridSize(lod_level, width)) return TileError.InvalidHeader;
         const stride_value = apronStride(width) orelse return TileError.InvalidHeader;
         const sample_count = squareCount(stride_value) orelse return TileError.InvalidHeader;
         if (std.mem.readInt(u32, bytes[12..16], .little) != sample_count) return TileError.InvalidHeader;
@@ -421,8 +447,9 @@ fn hasUnsupportedWaterTopology(source: *const LODSimplifiedData) bool {
         } else {
             has_dry = true;
         }
-        // The reusable full grid cannot reject an individual shoreline cell at
-        // primitive granularity. Mixed wet/dry tiles retain the CPU water mesh.
+        // The reusable full-grid index buffer cannot reject a shoreline cell
+        // at primitive granularity. A triangle with one collapsed dry vertex
+        // still stretches toward the clip point, so mixed tiles stay expanded.
         if (has_water and has_dry) return true;
     }
     return false;
@@ -556,6 +583,21 @@ test "CompactLODTile clamps and rounds quantized source values deterministically
     try std.testing.expectEqual(@as(f32, -4096.0), second.terrain_height);
 }
 
+test "CompactLODTile accepts reduced LOD3 and LOD4 density grids" {
+    const allocator = std.testing.allocator;
+    inline for ([_]struct { lod: LODLevel, density: f32, width: u32 }{
+        .{ .lod = .lod3, .density = 0.5, .width = 65 },
+        .{ .lod = .lod4, .density = 0.25, .width = 17 },
+    }) |case| {
+        var source = try LODSimplifiedData.initWithSampleDensity(allocator, case.lod, case.density);
+        defer source.deinit();
+        var tile = try CompactLODTile.initFromSimplified(allocator, case.lod, &source);
+        defer tile.deinit();
+        try std.testing.expectEqual(case.width, tile.width);
+        try std.testing.expectEqual((case.width - 1) * (case.width - 1) * 6, (tile.width - 1) * (tile.width - 1) * 6);
+    }
+}
+
 test "CompactLODTile rejects partial water so CPU shore geometry is retained" {
     var source = try LODSimplifiedData.init(std.testing.allocator, .lod4);
     defer source.deinit();
@@ -616,7 +658,8 @@ test "CompactLODTile patches aprons from same-level neighbors" {
     defer right_source.deinit();
     var mismatched_source = try LODSimplifiedData.init(allocator, .lod3);
     defer mismatched_source.deinit();
-    right_source.setHeight(0, 7, 88.0);
+    right_source.setHeight(0, 7, 44.0);
+    right_source.setHeight(1, 7, 88.0);
 
     var left = try CompactLODTile.initFromSimplified(allocator, .lod4, &left_source);
     defer left.deinit();
@@ -632,6 +675,39 @@ test "CompactLODTile patches aprons from same-level neighbors" {
     try std.testing.expectError(TileError.InvalidSourceData, left.applyNeighborApron(.east, &mismatched));
 }
 
+test "CompactLODTile neighbor aprons use samples beyond shared endpoints" {
+    const allocator = std.testing.allocator;
+    var center_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer center_source.deinit();
+    var neighbor_source = try LODSimplifiedData.init(allocator, .lod4);
+    defer neighbor_source.deinit();
+    const last = neighbor_source.width - 1;
+    neighbor_source.setHeight(3, last - 1, 11.0);
+    neighbor_source.setHeight(1, 3, 22.0);
+    neighbor_source.setHeight(3, 1, 33.0);
+    neighbor_source.setHeight(last - 1, 3, 44.0);
+
+    inline for (.{
+        .{ TileEdge.north, @as(f32, 11.0) },
+        .{ TileEdge.east, @as(f32, 22.0) },
+        .{ TileEdge.south, @as(f32, 33.0) },
+        .{ TileEdge.west, @as(f32, 44.0) },
+    }) |case| {
+        var center = try CompactLODTile.initFromSimplified(allocator, .lod4, &center_source);
+        defer center.deinit();
+        var neighbor = try CompactLODTile.initFromSimplified(allocator, .lod4, &neighbor_source);
+        defer neighbor.deinit();
+        try center.applyNeighborApron(case[0], &neighbor);
+        const sample = switch (case[0]) {
+            .north => center.sampleApron(4, 0).?,
+            .east => center.sampleApron(center.stride() - 1, 4).?,
+            .south => center.sampleApron(4, center.stride() - 1).?,
+            .west => center.sampleApron(0, 4).?,
+        };
+        try std.testing.expectEqual(case[1], sample.decode().terrain_height);
+    }
+}
+
 test "CompactLODTile stores terrain floor separately from water surface" {
     const allocator = std.testing.allocator;
     var source = try LODSimplifiedData.init(allocator, .lod4);
@@ -644,6 +720,14 @@ test "CompactLODTile stores terrain floor separately from water surface" {
     const decoded = tile.sample(1, 1).?.decode();
     try std.testing.expectEqual(@as(f32, 54.0), decoded.terrain_height);
     try std.testing.expectEqual(@as(f32, 64.0), decoded.water.surface_height);
+}
+
+test "CompactLODTile rejects mixed wet and dry samples without per-cell water indices" {
+    const allocator = std.testing.allocator;
+    var source = try LODSimplifiedData.init(allocator, .lod4);
+    defer source.deinit();
+    source.setColumn(1, 1, 64.0, .ocean, .{ .surface = .water, .subsurface = .sand, .foundation = .stone }, 0, .{ .is_surface = true, .surface_height = 64.0, .depth = 4.0, .coverage = 1.0 }, .daylight, .empty);
+    try std.testing.expectError(TileError.UnsupportedSourceFeatures, CompactLODTile.initFromSimplified(allocator, .lod4, &source));
 }
 
 test "CompactLODTile rejects unsupported overhang spans" {
