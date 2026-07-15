@@ -232,6 +232,15 @@ pub fn LODRenderer(comptime RHI: type) type {
         /// streams are not reported as two independent culling submissions.
         gpu_culling_submitted_frame: ?u64,
 
+        fn createCompactIndexBuffer(allocator: std.mem.Allocator, resources: anytype, width: u32, include_skirts: bool) !rhi_types.BufferHandle {
+            const indices = try compactGridIndices(allocator, width, include_skirts);
+            defer allocator.free(indices);
+            const handle = try resources.createBuffer(std.mem.sliceAsBytes(indices).len, .index);
+            errdefer resources.destroyBuffer(handle);
+            try resources.uploadBuffer(handle, std.mem.sliceAsBytes(indices));
+            return handle;
+        }
+
         /// Allocates LOD renderer GPU buffers and per-frame indirect draw resources.
         /// The renderer owns created buffers until `deinit`; allocation failures are returned to the caller.
         pub fn init(allocator: std.mem.Allocator, rhi: RHI) !*Self {
@@ -265,10 +274,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 const max_width = @import("world-core").LODSimplifiedData.getGridSize(lod);
                 inline for (.{ true, false }, 0..) |include_skirts, layer_idx| for (COMPACT_GRID_WIDTHS, 0..) |width, width_idx| {
                     if (width > max_width) continue;
-                    const indices = try compactGridIndices(allocator, width, include_skirts);
-                    defer allocator.free(indices);
-                    compact_index_buffers[idx][layer_idx][width_idx] = try resources.createBuffer(std.mem.sliceAsBytes(indices).len, .index);
-                    try resources.uploadBuffer(compact_index_buffers[idx][layer_idx][width_idx], std.mem.sliceAsBytes(indices));
+                    compact_index_buffers[idx][layer_idx][width_idx] = try createCompactIndexBuffer(allocator, resources, width, include_skirts);
                 };
             }
 
@@ -476,11 +482,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 return;
             }
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
-            if (!@hasDecl(@TypeOf(query), "supportsIndirectCount")) {
-                self.projection_frame = null;
-                return;
-            }
-            if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount()) {
+            if (!query.supportsIndirectFirstInstance()) {
                 self.projection_frame = null;
                 return;
             }
@@ -991,8 +993,8 @@ pub fn LODRenderer(comptime RHI: type) type {
             const frame = self.projection_frame orelse return false;
             if (self.gpu_culling_ready_frame != frame) return false;
             const gpu = self.gpu_culling orelse return false;
-            if (!@hasDecl(@TypeOf(render_ctx), "drawIndirectCount") or !@hasDecl(@TypeOf(query), "supportsIndirectCount")) return false;
-            if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount() or self.gpu_candidates.items.len < self.gpu_culling_threshold) return false;
+            if (!@hasDecl(@TypeOf(render_ctx), "drawIndirectCount")) return false;
+            if (!query.supportsIndirectFirstInstance() or self.gpu_candidates.items.len < self.gpu_culling_threshold) return false;
             var has_standard = false;
             var has_compact = false;
             for (self.gpu_candidates.items) |candidate| {
@@ -2844,7 +2846,7 @@ test "LODRenderer renderFrame times confirmed compact direct terrain and water s
     try std.testing.expectEqual(@as(u64, 2), profiling.snapshot().compact_submissions);
 }
 
-test "LODRenderer balances compact indirect timing and counts only emitted streams" {
+test "LODRenderer submits fixed-capacity compact streams without indirect-count support" {
     const allocator = std.testing.allocator;
     const State = struct {
         next_handle: u32 = 1,
@@ -2882,7 +2884,7 @@ test "LODRenderer balances compact indirect timing and counts only emitted strea
             return true;
         }
         pub fn supportsIndirectCount(_: @This()) bool {
-            return true;
+            return false;
         }
         pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
         pub fn setLODDescriptorStream(_: @This(), _: rhi_types.LODDescriptorStream) void {}

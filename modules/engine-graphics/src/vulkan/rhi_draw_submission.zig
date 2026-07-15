@@ -105,11 +105,15 @@ pub fn drawCompactLOD(ctx: anytype, index_handle: rhi.BufferHandle, index_count:
     return true;
 }
 
-/// Indexed indirect-count submission for compact far LOD. A single sentinel
-/// push constant selects SSBO instance data; every command carries an output
-/// slot in firstInstance, which GLSL exposes through gl_InstanceIndex.
-pub fn drawCompactLODIndirectCount(ctx: anytype, index_handle: rhi.BufferHandle, command_handle: rhi.BufferHandle, offset: usize, count_handle: rhi.BufferHandle, count_offset: usize, max_draw_count: u32) bool {
-    if (!ctx.frames.frame_in_progress or !ctx.vulkan_device.draw_indirect_count or max_draw_count == 0) return false;
+/// Compatibility-named fixed-capacity indexed submission for compact far LOD.
+/// `count_handle` and `count_offset` are deliberately unused: RADV's indexed
+/// indirect-count path corrupts this vertex-pulling stream, while the culler
+/// guarantees every unused command is zero-filled. `max_draw_count` is the
+/// submitted capacity, and zero-count entries are Vulkan no-ops.
+pub fn drawCompactLODIndirectCount(ctx: anytype, index_handle: rhi.BufferHandle, command_handle: rhi.BufferHandle, offset: usize, _count_handle: rhi.BufferHandle, _count_offset: usize, max_draw_count: u32) bool {
+    _ = _count_handle;
+    _ = _count_offset;
+    if (!ctx.frames.frame_in_progress or !ctx.vulkan_device.multi_draw_indirect or max_draw_count == 0 or !ctx.draw.lod_descriptor_stream_valid) return false;
     if (!ctx.runtime.main_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
     if (!ctx.runtime.main_pass_active and !ctx.water_system.pass_active) return false;
     const index = ctx.resources.buffers.get(index_handle) orelse return false;
@@ -141,8 +145,6 @@ pub fn drawCompactLODIndirectCount(ctx: anytype, index_handle: rhi.BufferHandle,
     // fixed-capacity stream is equivalent: zero indexCount entries are no-ops.
     // This remains entirely GPU driven; the count buffer is intentionally not
     // mapped or read back on the CPU.
-    _ = count_handle;
-    _ = count_offset;
     c.vkCmdDrawIndexedIndirect(cb, commands.buffer, @intCast(offset), max_draw_count, @sizeOf(rhi_types.DrawIndexedIndirectCommand));
     ctx.runtime.draw_call_count += 1;
     return true;
@@ -150,6 +152,7 @@ pub fn drawCompactLODIndirectCount(ctx: anytype, index_handle: rhi.BufferHandle,
 
 pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
     if (!ctx.frames.frame_in_progress) return;
+    if (ctx.draw.lod_mode and !ctx.draw.lod_descriptor_stream_valid) return;
 
     if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
@@ -266,10 +269,13 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
     }
 }
 
-/// Vulkan draw-indirect-count path for compute-compacted streams.  It never
-/// maps the count on the CPU, so the current frame remains fully GPU-driven.
-pub fn drawIndirectCount(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, count_buffer: rhi.BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
-    if (!ctx.frames.frame_in_progress or !ctx.vulkan_device.draw_indirect_count) return false;
+/// Compatibility-named fixed-capacity submission for compute-compacted
+/// streams. `count_buffer` and `count_offset` are deliberately unused because
+/// RADV's indirect-count path is avoided; the culler zero-fills unused commands.
+pub fn drawIndirectCount(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, _count_buffer: rhi.BufferHandle, _count_offset: usize, max_draw_count: u32, stride: u32) bool {
+    _ = _count_buffer;
+    _ = _count_offset;
+    if (!ctx.frames.frame_in_progress or !ctx.vulkan_device.multi_draw_indirect or max_draw_count == 0 or (ctx.draw.lod_mode and !ctx.draw.lod_descriptor_stream_valid)) return false;
     if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
     if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) return false;
     const vbo = ctx.resources.buffers.get(handle) orelse return false;
@@ -303,8 +309,6 @@ pub fn drawIndirectCount(ctx: anytype, handle: rhi.BufferHandle, command_buffer:
     // See drawCompactLODIndirectCount. The compute pass zeroes the remainder
     // of each fixed-capacity stream, making this regular MDI submission exactly
     // match the compacted count without a CPU readback or a RADV count-path.
-    _ = count_buffer;
-    _ = count_offset;
     c.vkCmdDrawIndirect(cb, commands.buffer, @intCast(offset), max_draw_count, stride);
     ctx.runtime.draw_call_count += 1;
     return true;
@@ -312,6 +316,7 @@ pub fn drawIndirectCount(ctx: anytype, handle: rhi.BufferHandle, command_buffer:
 
 pub fn drawInstance(ctx: anytype, handle: rhi.BufferHandle, count: u32, instance_index: u32) void {
     if (!ctx.frames.frame_in_progress) return;
+    if (ctx.draw.lod_mode and !ctx.draw.lod_descriptor_stream_valid) return;
 
     if (!ctx.runtime.main_pass_active and !ctx.shadow_system.pass_active and !ctx.runtime.g_pass_active and !ctx.water_system.pass_active) pass_orchestration.beginMainPassInternal(ctx);
 
@@ -384,6 +389,7 @@ pub fn drawOffset(ctx: anytype, handle: rhi.BufferHandle, count: u32, mode: rhi.
         log.log.warn("drawOffset: no frame in progress", .{});
         return;
     }
+    if (ctx.draw.lod_mode and !ctx.draw.lod_descriptor_stream_valid) return;
 
     if (ctx.post_process.pass_active) {
         const command_buffer = ctx.frames.command_buffers[ctx.frames.current_frame];

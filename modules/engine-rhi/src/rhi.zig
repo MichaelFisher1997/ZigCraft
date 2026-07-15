@@ -439,10 +439,12 @@ pub const RenderContext = struct {
     pub fn drawCompactLOD(self: RenderContext, index_buffer: BufferHandle, index_count: u32, params: CompactLODDraw) bool {
         return self.encoder.drawCompactLOD(index_buffer, index_count, params);
     }
-    /// Draws GPU-compacted indexed compact-LOD commands. The compact instance
-    /// SSBO is indexed by each command's firstInstance; no CPU count readback
-    /// or per-draw push constants are used.
+    /// Draws GPU-compacted indexed compact-LOD commands. Backends may consume
+    /// `count_buffer`, or submit `max_draw_count` from a guaranteed zero-filled
+    /// command stream when an indirect-count driver path is unsafe.
     pub fn drawCompactLODIndirectCount(self: RenderContext, index_buffer: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32) bool {
+        // The Vulkan backend currently treats count_buffer/count_offset as
+        // compatibility parameters and submits a zero-filled fixed capacity.
         return self.encoder.drawCompactLODIndirectCount(index_buffer, command_buffer, offset, count_buffer, count_offset, max_draw_count);
     }
     /// Issues indirect draw commands from a GPU buffer.
@@ -450,9 +452,12 @@ pub const RenderContext = struct {
     pub fn drawIndirect(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
         self.encoder.drawIndirect(handle, command_buffer, offset, draw_count, stride);
     }
-    /// Issues GPU-generated indirect commands, with the command count read from
-    /// `count_buffer`. Returns false when the active backend lacks the feature.
+    /// Issues GPU-generated indirect commands. Backends may consume
+    /// `count_buffer`, or use a zero-filled fixed-capacity submission bounded by
+    /// `max_draw_count`. Returns false when neither safe path is supported.
     pub fn drawIndirectCount(self: RenderContext, handle: BufferHandle, command_buffer: BufferHandle, offset: usize, count_buffer: BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
+        // See drawCompactLODIndirectCount: the backend may intentionally use
+        // fixed-capacity MDI while preserving this cross-backend ABI.
         return self.encoder.drawIndirectCount(handle, command_buffer, offset, count_buffer, count_offset, max_draw_count, stride);
     }
     /// Issues an instanced draw using currently bound per-instance state.

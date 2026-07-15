@@ -80,7 +80,7 @@ pub fn setInstanceBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
 }
 
 pub fn setLODInstanceBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
-    if (!ctx.frames.frame_in_progress) return;
+    if (!ctx.frames.frame_in_progress or !ctx.draw.lod_descriptor_stream_valid) return;
     ctx.draw.pending_lod_instance_buffer = handle;
     ctx.draw.lod_mode = true;
     applyPendingDescriptorUpdates(ctx, ctx.frames.current_frame);
@@ -90,20 +90,20 @@ pub fn setLODInstanceBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
 /// Callers own stream choice; render state never infers it from pass state.
 pub fn setLODDescriptorStream(ctx: anytype, stream: rhi.LODDescriptorStream) void {
     if (!ctx.frames.frame_in_progress) return;
-    frame_orchestration.prepareLODDescriptorSnapshot(ctx, stream);
     ctx.draw.lod_descriptor_stream = stream;
     ctx.draw.lod_mode = true;
+    ctx.draw.lod_descriptor_stream_valid = frame_orchestration.prepareLODDescriptorSnapshot(ctx, stream);
 }
 
 pub fn setLODCompactSampleBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
-    if (!ctx.frames.frame_in_progress) return;
+    if (!ctx.frames.frame_in_progress or !ctx.draw.lod_descriptor_stream_valid) return;
     ctx.draw.pending_lod_compact_sample_buffer = handle;
     ctx.draw.lod_mode = true;
     applyPendingDescriptorUpdates(ctx, ctx.frames.current_frame);
 }
 
 pub fn setLODCompactInstanceBuffer(ctx: anytype, handle: rhi.BufferHandle) void {
-    if (!ctx.frames.frame_in_progress) return;
+    if (!ctx.frames.frame_in_progress or !ctx.draw.lod_descriptor_stream_valid) return;
     ctx.draw.pending_lod_compact_instance_buffer = handle;
     ctx.draw.lod_mode = true;
     applyPendingDescriptorUpdates(ctx, ctx.frames.current_frame);
@@ -141,6 +141,7 @@ pub fn applyPendingDescriptorUpdates(ctx: anytype, frame_index: usize) void {
         }
     }
 
+    if (!ctx.draw.lod_descriptor_stream_valid) return;
     const stream_index = @intFromEnum(ctx.draw.lod_descriptor_stream);
     const snapshot_bindings = &ctx.draw.lod_snapshot_bindings[frame_index];
     const bound_lod_instance = &snapshot_bindings.instance[stream_index];

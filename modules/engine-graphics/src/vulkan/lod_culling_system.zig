@@ -4,6 +4,7 @@ const fs = @import("fs");
 const c = @import("c").c;
 const rhi = @import("engine-rhi");
 const culling = rhi.culling;
+const log = @import("engine-core").log;
 const VulkanContext = @import("rhi_context_types.zig").VulkanContext;
 const Utils = @import("utils.zig");
 
@@ -155,6 +156,7 @@ const LODCullingSystem = struct {
     }
 
     fn deinit(self: *LODCullingSystem) void {
+        self.drainPendingValidation();
         self.destroyPipeline();
         const device = self.ctx.vulkan_device.vk_device;
         for (0..FRAME_COUNT) |i| {
@@ -174,6 +176,21 @@ const LODCullingSystem = struct {
             if (self.validation_expected_candidates[i].len != 0) self.allocator.free(self.validation_expected_candidates[i]);
         }
         self.allocator.destroy(self);
+    }
+
+    /// Validation readbacks normally complete when a frame slot is reused. On
+    /// teardown there may be no next dispatch, so wait once and account every
+    /// pending generation before releasing its mapped storage.
+    fn drainPendingValidation(self: *LODCullingSystem) void {
+        if (!self.validation_enabled) return;
+        var pending = false;
+        for (self.validation_pending) |slot_pending| pending = pending or slot_pending;
+        if (!pending) return;
+        if (c.vkDeviceWaitIdle(self.ctx.vulkan_device.vk_device) != c.VK_SUCCESS) {
+            log.log.warn("LOD GPU validation could not drain pending generations during teardown", .{});
+            return;
+        }
+        for (0..FRAME_COUNT) |frame_index| self.validateCompletedFrame(frame_index);
     }
 
     fn dispatch(self: *LODCullingSystem, frame_index: usize, input: []const culling.LODCullCandidate, config: culling.LODCullDispatch) bool {

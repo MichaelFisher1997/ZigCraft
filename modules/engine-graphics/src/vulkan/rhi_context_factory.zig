@@ -93,6 +93,7 @@ pub fn createRHI(
     ctx.draw.current_mask_radius = 0;
     ctx.draw.lod_mode = false;
     ctx.draw.lod_descriptor_stream = .terrain_standard_direct;
+    ctx.draw.lod_descriptor_stream_valid = false;
     ctx.draw.pending_instance_buffer = 0;
     ctx.draw.pending_lod_instance_buffer = 0;
     ctx.draw.pending_lod_compact_sample_buffer = 0;

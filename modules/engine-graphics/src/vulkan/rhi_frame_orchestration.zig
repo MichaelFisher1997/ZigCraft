@@ -244,6 +244,7 @@ pub fn prepareFrameState(ctx: anytype) void {
     // The frame slot fence was waited before prepareFrameState. Reopen only
     // this slot's LOD snapshots; other in-flight slots remain immutable.
     ctx.draw.lod_snapshot_seals[ctx.frames.current_frame] = .{};
+    ctx.draw.lod_descriptor_stream_valid = false;
 
     const command_buffer = ctx.frames.getCurrentCommandBuffer();
 
@@ -427,18 +428,20 @@ pub fn refreshTextureDescriptors(ctx: anytype) void {
 /// current ordinary descriptor set exactly once, before the snapshot's first
 /// bind. Later selections must observe the same material state until this
 /// frame slot is reused after its fence completes.
-pub fn prepareLODDescriptorSnapshot(ctx: anytype, stream: rhi.LODDescriptorStream) void {
+pub fn prepareLODDescriptorSnapshot(ctx: anytype, stream: rhi.LODDescriptorStream) bool {
     const frame = ctx.frames.current_frame;
     const index = @intFromEnum(stream);
     const source = ctx.descriptors.descriptor_sets[frame];
     const destination = ctx.descriptors.lod_descriptor_snapshots[frame][index];
-    std.debug.assert(source != null and destination != null);
-    if (source == null or destination == null) return;
-    const should_copy = ctx.draw.lod_snapshot_seals[frame].acquire(stream, ctx.draw.texture_state_revision) catch {
-        std.debug.assert(false);
-        return;
+    if (source == null or destination == null) {
+        log.log.err("LOD descriptor snapshot unavailable for frame={} stream={s}", .{ frame, @tagName(stream) });
+        return false;
+    }
+    const should_copy = ctx.draw.lod_snapshot_seals[frame].acquire(stream, ctx.draw.texture_state_revision) catch |err| {
+        log.log.err("LOD descriptor snapshot rejected for frame={} stream={s} revision={}: {}", .{ frame, @tagName(stream), ctx.draw.texture_state_revision, err });
+        return false;
     };
-    if (!should_copy) return;
+    if (!should_copy) return true;
 
     // Per-frame UBO descriptors are installed when every snapshot is
     // allocated; their mapped contents change, not the descriptors. Copy only
@@ -470,4 +473,5 @@ pub fn prepareLODDescriptorSnapshot(ctx: anytype, stream: rhi.LODDescriptorStrea
         }
     }
     c.vkUpdateDescriptorSets(ctx.vulkan_device.vk_device, 0, null, @intCast(count), &copies);
+    return true;
 }

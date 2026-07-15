@@ -405,7 +405,7 @@ pub const DescriptorManager = struct {
                     write_index += 1;
                 }
             }
-            c.vkUpdateDescriptorSets(vulkan_device.vk_device, snapshot_writes.len, &snapshot_writes, 0, null);
+            c.vkUpdateDescriptorSets(vulkan_device.vk_device, @intCast(write_index), &snapshot_writes, 0, null);
         }
 
         return self;

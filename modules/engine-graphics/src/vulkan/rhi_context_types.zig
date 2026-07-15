@@ -168,6 +168,10 @@ const DrawState = struct {
     descriptors_updated: bool = false,
     lod_mode: bool = false,
     lod_descriptor_stream: rhi.LODDescriptorStream = .terrain_standard_direct,
+    /// False when the selected immutable snapshot could not acquire the current
+    /// material revision. LOD setters and draws remain no-ops until another
+    /// stream is selected successfully.
+    lod_descriptor_stream_valid: bool = false,
     bound_instance_buffer: [MAX_FRAMES_IN_FLIGHT]rhi.BufferHandle = .{ 0, 0 },
     lod_snapshot_bindings: [MAX_FRAMES_IN_FLIGHT]@import("descriptor_manager.zig").LODDescriptorSnapshotBindings = .{ .{}, .{} },
     /// A snapshot is immutable from its first bind until the corresponding
