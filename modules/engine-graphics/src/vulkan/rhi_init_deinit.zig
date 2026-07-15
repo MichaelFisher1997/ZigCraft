@@ -15,7 +15,10 @@ const Utils = @import("utils.zig");
 const lifecycle = @import("rhi_resource_lifecycle.zig");
 const setup = @import("rhi_resource_setup.zig");
 const rhi_timing = @import("rhi_timing.zig");
+const screenshot = @import("screenshot.zig");
+const final_composition = @import("final_composition.zig");
 const runtime_env = @import("engine-core").runtime_env;
+const build_options = @import("engine_graphics_options");
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 const TOTAL_QUERY_COUNT = rhi_timing.QUERY_COUNT_PER_FRAME * MAX_FRAMES_IN_FLIGHT;
@@ -33,6 +36,8 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
 
     if (!ctx.swapchain.skip_present) {
         try lifecycle.transitionImagesToPresent(ctx, ctx.swapchain.swapchain.images.items);
+    } else {
+        try lifecycle.transitionImagesToColorAttachment(ctx, ctx.swapchain.swapchain.images.items);
     }
 
     ctx.pipeline_manager = try PipelineManager.init(&ctx.vulkan_device, &ctx.descriptors, null);
@@ -102,7 +107,7 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
     try setup.createPostProcessResources(ctx);
     try setup.createSwapchainUIResources(ctx);
 
-    try ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews(), ctx.swapchain.swapchain.headless_mode);
+    try ctx.fxaa.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.swapchain.getExtent(), ctx.swapchain.getImageFormat(), ctx.post_process.sampler, ctx.swapchain.getImageViews(), final_composition.displayLayout(ctx.swapchain.skip_present));
     try ctx.pipeline_manager.createSwapchainUIPipelines(ctx.allocator, ctx.vulkan_device.vk_device, ctx.render_pass_manager.ui_swapchain_render_pass);
     try ctx.bloom.init(&ctx.vulkan_device, ctx.allocator, ctx.descriptors.descriptor_pool, ctx.hdr.hdr_view, ctx.swapchain.getExtent().width, ctx.swapchain.getExtent().height, c.VK_FORMAT_R16G16B16A16_SFLOAT);
 
@@ -125,6 +130,10 @@ pub fn initContext(ctx: anytype, allocator: std.mem.Allocator, render_device: ?*
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
         ctx.ui.ui_vbos[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, 1024 * 1024, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (comptime build_options.rmlui) {
+            ctx.ui.rml_vbos[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, 1024 * 1024, c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            ctx.ui.rml_ibos[i] = try Utils.createVulkanBuffer(&ctx.vulkan_device, 1024 * 1024, c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
     }
 
     for (0..MAX_FRAMES_IN_FLIGHT) |i| {
@@ -186,6 +195,7 @@ pub fn deinit(ctx: anytype) void {
 
     if (vk_device != null) {
         _ = c.vkDeviceWaitIdle(vk_device);
+        screenshot.discardCapture(ctx);
 
         var compute_pipeline_iter = ctx.compute_resources.pipelines.iterator();
         while (compute_pipeline_iter.next()) |entry| {
@@ -237,8 +247,21 @@ pub fn deinit(ctx: anytype) void {
             if (ctx.legacy.dummy_instance_buffer.memory != null) c.vkFreeMemory(device, ctx.legacy.dummy_instance_buffer.memory, null);
 
             for (ctx.ui.ui_vbos) |buf| {
+                if (buf.mapped_ptr != null and buf.memory != null) c.vkUnmapMemory(device, buf.memory);
                 if (buf.buffer != null) c.vkDestroyBuffer(device, buf.buffer, null);
                 if (buf.memory != null) c.vkFreeMemory(device, buf.memory, null);
+            }
+            if (comptime build_options.rmlui) {
+                for (ctx.ui.rml_vbos) |buf| {
+                    if (buf.mapped_ptr != null and buf.memory != null) c.vkUnmapMemory(device, buf.memory);
+                    if (buf.buffer != null) c.vkDestroyBuffer(device, buf.buffer, null);
+                    if (buf.memory != null) c.vkFreeMemory(device, buf.memory, null);
+                }
+                for (ctx.ui.rml_ibos) |buf| {
+                    if (buf.mapped_ptr != null and buf.memory != null) c.vkUnmapMemory(device, buf.memory);
+                    if (buf.buffer != null) c.vkDestroyBuffer(device, buf.buffer, null);
+                    if (buf.memory != null) c.vkFreeMemory(device, buf.memory, null);
+                }
             }
         }
 

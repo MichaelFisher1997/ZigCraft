@@ -188,6 +188,7 @@ pub const IScreen = struct {
         deinit: *const fn (ptr: *anyopaque) void,
         update: ?*const fn (ptr: *anyopaque, dt: f32) anyerror!void = null,
         draw: ?*const fn (ptr: *anyopaque, ui: *UISystem) anyerror!void = null,
+        drawBackground: ?*const fn (ptr: *anyopaque, ui: *UISystem) anyerror!void = null,
         onEnter: ?*const fn (ptr: *anyopaque) void = null,
         onExit: ?*const fn (ptr: *anyopaque) void = null,
         getWorldStats: ?*const fn (ptr: *anyopaque) ?WorldStats = null,
@@ -208,6 +209,14 @@ pub const IScreen = struct {
         if (self.vtable.draw) |draw_fn| {
             try draw_fn(self.ptr, ui);
         }
+    }
+
+    pub fn drawBackground(self: IScreen, ui: *UISystem) !bool {
+        if (self.vtable.drawBackground) |draw_fn| {
+            try draw_fn(self.ptr, ui);
+            return true;
+        }
+        return false;
     }
 
     pub fn onEnter(self: IScreen) void {
@@ -367,6 +376,21 @@ pub const ScreenManager = struct {
                 }
                 return;
             }
+        }
+    }
+
+    /// Draws the nearest background provider below the current screen without
+    /// rendering intermediate menu pages. This keeps one shared world preview
+    /// behind nested menus such as Create World -> My Worlds.
+    pub fn drawBackgroundFor(self: *ScreenManager, current_ptr: *anyopaque, ui: *UISystem) !void {
+        for (self.stack.items, 0..) |screen, current_index| {
+            if (screen.ptr != current_ptr) continue;
+            var index = current_index;
+            while (index > 0) {
+                index -= 1;
+                if (try self.stack.items[index].drawBackground(ui)) return;
+            }
+            return;
         }
     }
 

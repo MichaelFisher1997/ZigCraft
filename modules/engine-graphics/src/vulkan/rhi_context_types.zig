@@ -25,6 +25,8 @@ const WaterSystem = @import("water_system.zig").WaterSystem;
 const VulkanDevice = @import("device.zig").VulkanDevice;
 const DynamicResolutionState = @import("dynamic_resolution.zig").DynamicResolutionState;
 const rhi_timing = @import("rhi_timing.zig");
+const screenshot = @import("screenshot.zig");
+const final_composition = @import("final_composition.zig");
 
 const MAX_FRAMES_IN_FLIGHT = rhi.MAX_FRAMES_IN_FLIGHT;
 
@@ -74,9 +76,17 @@ const UIState = struct {
     ui_tex_descriptor_pool: [MAX_FRAMES_IN_FLIGHT][64]c.VkDescriptorSet = .{.{null} ** 64} ** MAX_FRAMES_IN_FLIGHT,
     ui_tex_descriptor_next: [MAX_FRAMES_IN_FLIGHT]u32 = .{0} ** MAX_FRAMES_IN_FLIGHT,
     ui_vbos: [MAX_FRAMES_IN_FLIGHT]VulkanBuffer = .{VulkanBuffer{}} ** MAX_FRAMES_IN_FLIGHT,
+    rml_vbos: [MAX_FRAMES_IN_FLIGHT]VulkanBuffer = .{VulkanBuffer{}} ** MAX_FRAMES_IN_FLIGHT,
+    rml_ibos: [MAX_FRAMES_IN_FLIGHT]VulkanBuffer = .{VulkanBuffer{}} ** MAX_FRAMES_IN_FLIGHT,
     ui_screen_width: f32 = 0.0,
     ui_screen_height: f32 = 0.0,
     ui_using_swapchain: bool = false,
+    /// This is deliberately independent from FXAA: UI overlays may use the
+    /// final display target after FXAA has already ended.
+    ui_swapchain_pass_active: bool = false,
+    /// The first UI pass of an otherwise empty frame explicitly clears the
+    /// display target; subsequent UI passes load and overlay it.
+    ui_swapchain_clears_output: bool = false,
     ui_in_progress: bool = false,
     ui_vertex_offset: u64 = 0,
     ui_active_textured: bool = false,
@@ -85,6 +95,9 @@ const UIState = struct {
     selection_mode: bool = false,
     ui_flushed_vertex_count: u32 = 0,
     ui_mapped_ptr: ?*anyopaque = null,
+    rml_vertex_offset: u64 = 0,
+    rml_index_offset: u64 = 0,
+    legacy_pipeline_bound: bool = false,
 };
 
 const LegacyResources = struct {
@@ -179,6 +192,7 @@ const RuntimeState = struct {
     ssao_pass_active: bool = false,
     post_process_ran_this_frame: bool = false,
     fxaa_ran_this_frame: bool = false,
+    direct_ui_composed_this_frame: bool = false,
     transfer_barrier_needed: bool = false,
     pipeline_rebuild_needed: bool = false,
     swapchain_recreate_failed: bool = false,
@@ -186,6 +200,7 @@ const RuntimeState = struct {
     image_index: u32,
     clear_color: [4]f32 = .{ 0.07, 0.08, 0.1, 1.0 },
     first_main_pass_draw_logged: bool = false,
+    final_composed: final_composition.FinalComposedImage = .{},
 };
 
 const TimingState = struct {
@@ -256,4 +271,5 @@ pub const VulkanContext = struct {
     timing: TimingState = .{},
     dynamic_resolution: DynamicResolutionState = .{},
     compute_resources: ComputeResources = .{},
+    screenshot_capture: screenshot.PendingCapture = .{},
 };

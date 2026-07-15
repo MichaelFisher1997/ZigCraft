@@ -22,6 +22,8 @@ pub const DebugLPVOverlay = struct {
         };
     }
 
+    /// Submits the LPV preview to an active caller-owned UI pass.
+    /// The caller must pair `ui.begin()` and `ui.end()` around this call.
     pub fn draw(ui: *UISystem, lpv_texture: rhi.TextureHandle, screen_height: f32, config: Config) void {
         if (lpv_texture == 0) return;
 

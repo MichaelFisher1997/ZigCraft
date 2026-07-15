@@ -124,8 +124,12 @@ pub fn createRHI(
     ctx.pipeline_manager.ui_pipeline_layout = null;
     ctx.pipeline_manager.ui_tex_pipeline = null;
     ctx.pipeline_manager.ui_tex_pipeline_layout = null;
+    ctx.pipeline_manager.rml_ui_pipeline = null;
+    ctx.pipeline_manager.rml_ui_tex_pipeline = null;
     ctx.pipeline_manager.ui_swapchain_pipeline = null;
     ctx.pipeline_manager.ui_swapchain_tex_pipeline = null;
+    ctx.pipeline_manager.rml_ui_swapchain_pipeline = null;
+    ctx.pipeline_manager.rml_ui_swapchain_tex_pipeline = null;
     ctx.render_pass_manager.ui_swapchain_framebuffers = .empty;
     if (comptime build_options.debug_shadows) {
         ctx.debug_shadow.pipeline = null;
@@ -160,6 +164,8 @@ pub fn createRHI(
         ctx.descriptors.shadow_ubos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
         ctx.descriptors.shadow_ubos_mapped[i] = null;
         ctx.ui.ui_vbos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
+        ctx.ui.rml_vbos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
+        ctx.ui.rml_ibos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
         ctx.descriptors.descriptor_sets[i] = null;
         ctx.descriptors.lod_descriptor_sets[i] = null;
         ctx.ui.ui_tex_descriptor_sets[i] = null;

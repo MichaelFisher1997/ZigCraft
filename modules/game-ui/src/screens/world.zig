@@ -12,6 +12,8 @@ const Camera = @import("engine-camera").Camera;
 const RenderSystem = @import("engine-graphics").RenderSystem;
 const render_graph_pkg = @import("engine-graphics").render_graph;
 const PausedScreen = @import("paused.zig").PausedScreen;
+const RmlPausedScreen = @import("rml_paused.zig").RmlPausedScreen;
+const rmlui = @import("engine-ui").rmlui;
 const DebugShadowOverlay = @import("engine-ui").DebugShadowOverlay;
 const DebugLPVOverlay = @import("engine-ui").DebugLPVOverlay;
 const DebugUI = @import("engine-ui").DebugUI;
@@ -200,9 +202,15 @@ pub const WorldScreen = struct {
         }
 
         if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
-            const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
-            errdefer paused_screen.deinit(paused_screen);
-            ctx.screen_manager.pushScreen(paused_screen.screen());
+            if (rmlui.available and ctx.ui_manager.getRmlUi() != null) {
+                const paused_screen = try RmlPausedScreen.init(ctx.allocator, self.parent_context);
+                errdefer paused_screen.deinit(paused_screen);
+                ctx.screen_manager.pushScreen(paused_screen.screen());
+            } else {
+                const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
+                errdefer paused_screen.deinit(paused_screen);
+                ctx.screen_manager.pushScreen(paused_screen.screen());
+            }
             return true;
         }
 
@@ -380,15 +388,6 @@ pub const WorldScreen = struct {
         const shadow_sun_dir = if (shadow_sandbox_active) self.resolveStableShadowSunDir(render_sun_dir) else render_sun_dir;
         if (!shadow_sandbox_active) self.stable_shadow_sun_initialized = false;
 
-        if (self.save_failure_warning_count > 0) {
-            var save_warning_buf: [96]u8 = undefined;
-            const save_warning = std.fmt.bufPrint(&save_warning_buf, "SAVE WARNING: {} save failure(s). Check logs.", .{self.save_failure_warning_count}) catch "SAVE WARNING: save failures. Check logs.";
-            const warning_rect = Rect{ .x = 14.0 * ctx.settings.ui_scale, .y = 14.0 * ctx.settings.ui_scale, .width = 360.0 * ctx.settings.ui_scale, .height = 34.0 * ctx.settings.ui_scale };
-            ui.drawRect(warning_rect, Color.rgba(0.18, 0.04, 0.05, 0.88));
-            ui.drawRectOutline(warning_rect, Color.rgba(0.78, 0.30, 0.34, 1.0), 1.0 * ctx.settings.ui_scale);
-            Font.drawText(ui, save_warning, warning_rect.x + 10.0 * ctx.settings.ui_scale, warning_rect.y + 10.0 * ctx.settings.ui_scale, 0.78 * ctx.settings.ui_scale, Color.rgba(1.0, 0.90, 0.84, 1.0));
-        }
-
         const lpv_quality = resolveLPVQuality(ctx.settings.lpv_quality_preset);
         const lpv_system = render_system.getLPVSystem();
         try lpv_system.setSettings(
@@ -515,6 +514,15 @@ pub const WorldScreen = struct {
 
         ui.begin();
         defer ui.end();
+
+        if (self.save_failure_warning_count > 0) {
+            var save_warning_buf: [96]u8 = undefined;
+            const save_warning = std.fmt.bufPrint(&save_warning_buf, "SAVE WARNING: {} save failure(s). Check logs.", .{self.save_failure_warning_count}) catch "SAVE WARNING: save failures. Check logs.";
+            const warning_rect = Rect{ .x = 14.0 * ctx.settings.ui_scale, .y = 14.0 * ctx.settings.ui_scale, .width = 360.0 * ctx.settings.ui_scale, .height = 34.0 * ctx.settings.ui_scale };
+            ui.drawRect(warning_rect, Color.rgba(0.18, 0.04, 0.05, 0.88));
+            ui.drawRectOutline(warning_rect, Color.rgba(0.78, 0.30, 0.34, 1.0), 1.0 * ctx.settings.ui_scale);
+            Font.drawText(ui, save_warning, warning_rect.x + 10.0 * ctx.settings.ui_scale, warning_rect.y + 10.0 * ctx.settings.ui_scale, 0.78 * ctx.settings.ui_scale, Color.rgba(1.0, 0.90, 0.84, 1.0));
+        }
 
         const mouse_pos = ctx.input.getMousePosition();
         const mouse_x: f32 = @floatFromInt(mouse_pos.x);

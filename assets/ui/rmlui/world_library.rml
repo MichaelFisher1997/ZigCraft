@@ -1,0 +1,51 @@
+<rml>
+  <head>
+    <title>ZigCraft World Library</title>
+    <link type="text/rcss" href="menu.rcss" />
+  </head>
+  <body>
+    <div class="page">
+      <div class="shell wide">
+        <div class="header">
+          <div class="kicker">PLAY</div>
+          <h1>WORLD LIBRARY</h1>
+          <p class="copy">Choose an existing world or create something new.</p>
+          <div id="world-count" class="header-meta">0 WORLDS</div>
+        </div>
+
+        <div class="content">
+          <div class="split">
+            <div class="pane pane-left">
+              <div class="pane-header"><span class="section-label">SAVED WORLDS</span></div>
+              <div id="world-list" class="pane-body"></div>
+            </div>
+            <div class="pane pane-right">
+              <div class="pane-header"><span class="section-label">WORLD DETAILS</span></div>
+              <div id="world-detail" class="detail"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <button id="library-back">BACK</button>
+          <div class="footer-right">
+            <button id="clear-worlds" class="danger">CLEAR ALL</button>
+            <button id="new-world" class="primary">NEW WORLD</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-layer" class="modal-layer">
+      <div class="modal">
+        <div id="modal-title"></div>
+        <div id="modal-copy"></div>
+        <div id="modal-body"></div>
+        <div class="modal-actions">
+          <button id="modal-cancel">CANCEL</button>
+          <button id="modal-confirm" class="primary">CONFIRM</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</rml>

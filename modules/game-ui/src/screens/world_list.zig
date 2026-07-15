@@ -11,15 +11,17 @@ const log = @import("engine-core").log;
 const fs = @import("fs");
 const text_input = @import("game-core").text_input;
 const registry = @import("world-worldgen").registry;
+const world_save = @import("world_save.zig");
+const SingleplayerScreen = @import("singleplayer.zig").SingleplayerScreen;
 
 fn getenv(name: [:0]const u8) ?[]const u8 {
     const value = std.c.getenv(name) orelse return null;
     return std.mem.span(value);
 }
 
-const PANEL_WIDTH_MAX = 900.0;
-const PANEL_HEIGHT_BASE = 640.0;
-pub const SAVE_DIR = ".local/share/zigcraft/saves";
+const PANEL_WIDTH_MAX = 1120.0;
+const PANEL_HEIGHT_BASE = 720.0;
+pub const SAVE_DIR = world_save.SAVE_DIR;
 
 pub const WorldEntry = struct {
     name: []const u8,
@@ -36,21 +38,7 @@ pub const LevelDat = struct {
     generator_index: usize,
 };
 
-pub fn writeLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir, name: []const u8, seed: u64, generator_index: usize, last_played: i64) !void {
-    const generator_id = if (generator_index < registry.getGeneratorCount()) registry.getGeneratorId(generator_index) else registry.getGeneratorId(0);
-    const payload = .{
-        .name = name,
-        .seed = seed,
-        .last_played = last_played,
-        .generator_index = generator_index,
-        .generator_id = generator_id,
-    };
-    const json_str = try std.json.Stringify.valueAlloc(allocator, payload, .{ .whitespace = .indent_2 });
-    defer allocator.free(json_str);
-    const file = try save_dir.createFile("level.dat", .{});
-    defer file.close();
-    try file.writeAll(json_str);
-}
+pub const writeLevelDat = world_save.writeLevelDat;
 
 pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
     const content = save_dir.readFileAlloc("level.dat", allocator, 4096) catch return null;
@@ -70,7 +58,7 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
         else => return null,
     };
     const seed: u64 = switch (seed_val) {
-        .integer => |i| @intCast(i),
+        .integer => |i| if (i >= 0) @intCast(i) else return null,
         else => return null,
     };
     const last_played: i64 = if (last_val) |lv| switch (lv) {
@@ -78,7 +66,7 @@ pub fn readLevelDat(allocator: std.mem.Allocator, save_dir: fs.Dir) ?LevelDat {
         else => 0,
     } else 0;
     var generator_index: usize = switch (gen_val) {
-        .integer => |i| @intCast(i),
+        .integer => |i| if (i >= 0 and i < registry.getGeneratorCount()) @intCast(i) else 0,
         else => 0,
     };
     const generator_id_source = if (gen_id_val) |giv| switch (giv) {
@@ -194,7 +182,7 @@ pub const WorldListScreen = struct {
         self.* = .{
             .context = context,
             .worlds = worlds,
-            .selected = null,
+            .selected = if (worlds.len > 0) 0 else null,
             .scroll_offset = 0.0,
             .confirm_delete = false,
             .confirm_clear_all = false,
@@ -243,12 +231,15 @@ pub const WorldListScreen = struct {
             if (self.context.input_mapper.isActionPressed(input, .ui_confirm)) {
                 if (self.selected) |idx| try self.loadWorld(idx);
             }
+        } else if (!self.confirm_delete and !self.confirm_clear_all and !self.confirm_rename and self.context.input_mapper.isActionPressed(self.context.input, .ui_confirm)) {
+            try self.openCreateWizard();
         }
     }
 
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
         ui.begin();
         defer ui.end();
 
@@ -268,13 +259,13 @@ pub const WorldListScreen = struct {
         const ph: f32 = @min(screen_h - margin * 2.0, PANEL_HEIGHT_BASE * ui_scale);
         const px: f32 = (screen_w - pw) * 0.5;
         const py: f32 = (screen_h - ph) * 0.5;
-        const shell = Theme.drawShell(ui, .{ .x = px, .y = py, .width = pw, .height = ph }, ui_scale, "PLAY", "YOUR WORLDS", "Select a save to see details and available actions.");
+        const shell = Theme.drawShell(ui, .{ .x = px, .y = py, .width = pw, .height = ph }, ui_scale, "PLAY", "WORLD LIBRARY", "Choose an existing world or create something new.");
 
         if (self.error_message) |message| {
             const banner = Rect{ .x = shell.content.x + 12.0 * ui_scale, .y = shell.content.y + 8.0 * ui_scale, .width = shell.content.width - 24.0 * ui_scale, .height = 34.0 * ui_scale };
             ui.drawRect(banner, Theme.Color.rgba(0.18, 0.04, 0.05, 0.92));
             ui.drawRectOutline(banner, Theme.danger, 1.0 * ui_scale);
-            Font.drawText(ui, message, banner.x + 12.0 * ui_scale, banner.y + 9.0 * ui_scale, 0.72 * ui_scale, Theme.text);
+            Font.drawText(ui, message, banner.x + 12.0 * ui_scale, banner.y + 9.0 * ui_scale, 0.90 * ui_scale, Theme.text);
         }
 
         var count_buf: [64]u8 = undefined;
@@ -287,7 +278,7 @@ pub const WorldListScreen = struct {
         const list_rect = Rect{
             .x = shell.content.x,
             .y = shell.content.y,
-            .width = if (detail_layout) shell.content.width * 0.62 else shell.content.width,
+            .width = if (detail_layout) shell.content.width * 0.58 else shell.content.width,
             .height = shell.content.height,
         };
         const detail_rect = Rect{
@@ -309,8 +300,8 @@ pub const WorldListScreen = struct {
         Theme.drawScrollbar(ui, list_rect.x + list_rect.width - 12.0 * ui_scale, list_top + 12.0 * ui_scale, list_rect.height - 24.0 * ui_scale, @as(f32, @floatFromInt(self.worlds.len)) * row_h, list_rect.height, self.scroll_offset, max_scroll, ui_scale);
 
         if (self.worlds.len == 0) {
-            Font.drawTextCentered(ui, "NO SAVED WORLDS FOUND", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.40, 1.35 * ui_scale, Theme.title);
-            Font.drawTextCentered(ui, "CREATE A NEW WORLD FIRST", screen_w * 0.5, list_top + (list_bottom - list_top) * 0.40 + 28.0 * ui_scale, 0.82 * ui_scale, Theme.muted);
+            Font.drawTextCentered(ui, "NO WORLDS YET", list_rect.x + list_rect.width * 0.5, list_top + (list_bottom - list_top) * 0.40, 1.35 * ui_scale, Theme.title);
+            Font.drawTextCentered(ui, "PRESS ENTER OR CHOOSE NEW WORLD", list_rect.x + list_rect.width * 0.5, list_top + (list_bottom - list_top) * 0.40 + 32.0 * ui_scale, 0.92 * ui_scale, Theme.muted);
         }
 
         var i: usize = 0;
@@ -330,9 +321,6 @@ pub const WorldListScreen = struct {
             var desc_buf: [128]u8 = undefined;
             const description = std.fmt.bufPrint(&desc_buf, "{s}  //  LAST PLAYED: {s}", .{ seed_text, last_text }) catch seed_text;
             Theme.drawOptionRow(ui, row_rect, world.name, description, 1.28 * ui_scale, is_selected or row_hovered, ui_scale);
-            if (is_selected and !detail_layout) {
-                Theme.drawValueText(ui, .{ .x = row_rect.x + row_rect.width - 136.0 * ui_scale, .y = row_rect.y + 12.0 * ui_scale, .width = 118.0 * ui_scale, .height = 36.0 * ui_scale }, "SELECTED", 0.72 * ui_scale, ui_scale);
-            }
         }
 
         if (detail_layout) drawWorldDetails(ui, detail_rect, self, ui_scale);
@@ -340,22 +328,31 @@ pub const WorldListScreen = struct {
         const btn_h: f32 = 46.0 * ui_scale;
         const byy: f32 = shell.footer_y;
         const btn_gap: f32 = 10.0 * ui_scale;
-        const btn_w: f32 = (shell.content.width - 4.0 * btn_gap) / 5.0;
         const bx_base: f32 = shell.content.x;
-        const btn_scale: f32 = 0.98 * ui_scale;
+        const btn_scale: f32 = 1.04 * ui_scale;
+        const footer_button_w = 150.0 * ui_scale;
 
-        if (Theme.drawButton(ui, .{ .x = bx_base, .y = byy, .width = if (detail_layout) 150.0 * ui_scale else btn_w, .height = btn_h }, "BACK", btn_scale, mx, my, mc, .ghost, ui_scale)) {
+        if (Theme.drawButton(ui, .{ .x = bx_base, .y = byy, .width = footer_button_w, .height = btn_h }, "BACK", btn_scale, mx, my, mc, .ghost, ui_scale)) {
             ctx.screen_manager.popScreen();
         }
 
+        const clear_enabled = self.worlds.len > 0 and !modal_open;
+        const clear_rect = Rect{ .x = bx_base + footer_button_w + btn_gap, .y = byy, .width = footer_button_w, .height = btn_h };
+        if (detail_layout and Theme.drawButton(ui, clear_rect, "CLEAR ALL", btn_scale, mx, my, mc, if (clear_enabled) .danger else .disabled, ui_scale)) self.confirm_clear_all = true;
+
+        const new_world_w = 180.0 * ui_scale;
+        const new_world_rect = Rect{ .x = shell.content.x + shell.content.width - new_world_w, .y = byy, .width = new_world_w, .height = btn_h };
+        if (Theme.drawButton(ui, new_world_rect, "NEW WORLD", btn_scale, mx, my, mc, if (modal_open) .disabled else .primary, ui_scale)) try self.openCreateWizard();
+
         const load_enabled = self.selected != null and !modal_open;
-        const load_rect = if (detail_layout) Rect{ .x = detail_rect.x + 18.0 * ui_scale, .y = detail_rect.y + detail_rect.height - 168.0 * ui_scale, .width = detail_rect.width - 36.0 * ui_scale, .height = 44.0 * ui_scale } else Rect{ .x = bx_base + btn_w + btn_gap, .y = byy, .width = btn_w, .height = btn_h };
+        const compact_action_w = (shell.content.width - new_world_w - footer_button_w - btn_gap * 4.0) / 3.0;
+        const load_rect = if (detail_layout) Rect{ .x = detail_rect.x + 18.0 * ui_scale, .y = detail_rect.y + detail_rect.height - 168.0 * ui_scale, .width = detail_rect.width - 36.0 * ui_scale, .height = 44.0 * ui_scale } else Rect{ .x = bx_base + footer_button_w + btn_gap, .y = byy, .width = compact_action_w, .height = btn_h };
         if (Theme.drawButton(ui, load_rect, "PLAY WORLD", btn_scale, mx, my, mc, if (load_enabled) .primary else .disabled, ui_scale)) {
             if (self.selected) |idx| try self.loadWorld(idx);
         }
 
         const rename_enabled = self.selected != null and !modal_open;
-        const rename_rect = if (detail_layout) Rect{ .x = detail_rect.x + 18.0 * ui_scale, .y = detail_rect.y + detail_rect.height - 114.0 * ui_scale, .width = (detail_rect.width - 46.0 * ui_scale) * 0.5, .height = 42.0 * ui_scale } else Rect{ .x = bx_base + 2.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h };
+        const rename_rect = if (detail_layout) Rect{ .x = detail_rect.x + 18.0 * ui_scale, .y = detail_rect.y + detail_rect.height - 114.0 * ui_scale, .width = (detail_rect.width - 46.0 * ui_scale) * 0.5, .height = 42.0 * ui_scale } else Rect{ .x = load_rect.x + compact_action_w + btn_gap, .y = byy, .width = compact_action_w, .height = btn_h };
         if (Theme.drawButton(ui, rename_rect, "RENAME", btn_scale, mx, my, mc, if (rename_enabled) .secondary else .disabled, ui_scale)) {
             if (self.selected) |idx| {
                 self.rename_buffer.clearRetainingCapacity();
@@ -366,27 +363,21 @@ pub const WorldListScreen = struct {
         }
 
         const del_enabled = self.selected != null and !modal_open;
-        const delete_rect = if (detail_layout) Rect{ .x = rename_rect.x + rename_rect.width + 10.0 * ui_scale, .y = rename_rect.y, .width = rename_rect.width, .height = rename_rect.height } else Rect{ .x = bx_base + 3.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h };
+        const delete_rect = if (detail_layout) Rect{ .x = rename_rect.x + rename_rect.width + 10.0 * ui_scale, .y = rename_rect.y, .width = rename_rect.width, .height = rename_rect.height } else Rect{ .x = rename_rect.x + compact_action_w + btn_gap, .y = byy, .width = compact_action_w, .height = btn_h };
         if (Theme.drawButton(ui, delete_rect, "DELETE", btn_scale, mx, my, mc, if (del_enabled) .danger else .disabled, ui_scale)) {
             self.confirm_delete = true;
         }
 
-        const clear_enabled = self.worlds.len > 0 and !modal_open;
-        const clear_rect = if (detail_layout) Rect{ .x = shell.content.x + shell.content.width - 150.0 * ui_scale, .y = byy, .width = 150.0 * ui_scale, .height = btn_h } else Rect{ .x = bx_base + 4.0 * (btn_w + btn_gap), .y = byy, .width = btn_w, .height = btn_h };
-        if (Theme.drawButton(ui, clear_rect, "CLEAR ALL", btn_scale, mx, my, mc, if (clear_enabled) .danger else .disabled, ui_scale)) {
-            self.confirm_clear_all = true;
-        }
-
         if (self.confirm_delete) {
             if (self.selected) |idx| {
-                const cw: f32 = 420.0 * ui_scale;
-                const ch: f32 = 176.0 * ui_scale;
+                const cw: f32 = 460.0 * ui_scale;
+                const ch: f32 = 220.0 * ui_scale;
                 const cx: f32 = (screen_w - cw) * 0.5;
                 const cy: f32 = (screen_h - ch) * 0.5;
                 Theme.drawModal(ui, screen_w, screen_h, .{ .x = cx, .y = cy, .width = cw, .height = ch }, ui_scale, "DELETE WORLD?", "This cannot be undone.", true);
                 var name_buf: [128]u8 = undefined;
                 const confirm_msg = std.fmt.bufPrint(&name_buf, "'{s}'", .{self.worlds[idx].name}) catch "'?'";
-                Font.drawTextCentered(ui, confirm_msg, cx + cw * 0.5, cy + 86.0 * ui_scale, 1.05 * ui_scale, Theme.text);
+                Font.drawTextCentered(ui, confirm_msg, cx + cw * 0.5, cy + 104.0 * ui_scale, 1.12 * ui_scale, Theme.text);
                 const cbw: f32 = (cw - 30.0 * ui_scale) / 2.0;
                 const cby: f32 = cy + ch - 55.0 * ui_scale;
                 if (Theme.drawButton(ui, .{ .x = cx + 10.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CANCEL", btn_scale, mx, my, mc, .ghost, ui_scale)) {
@@ -402,14 +393,14 @@ pub const WorldListScreen = struct {
         }
 
         if (self.confirm_clear_all) {
-            const cw: f32 = 460.0 * ui_scale;
-            const ch: f32 = 184.0 * ui_scale;
+            const cw: f32 = 480.0 * ui_scale;
+            const ch: f32 = 220.0 * ui_scale;
             const cx: f32 = (screen_w - cw) * 0.5;
             const cy: f32 = (screen_h - ch) * 0.5;
             Theme.drawModal(ui, screen_w, screen_h, .{ .x = cx, .y = cy, .width = cw, .height = ch }, ui_scale, "CLEAR ALL WORLDS?", "Every saved world will be removed.", true);
             var count_buf2: [64]u8 = undefined;
             const count_msg = std.fmt.bufPrint(&count_buf2, "THIS WILL DELETE {} WORLDS", .{self.worlds.len}) catch "?";
-            Font.drawTextCentered(ui, count_msg, cx + cw * 0.5, cy + 88.0 * ui_scale, 0.96 * ui_scale, Theme.text);
+            Font.drawTextCentered(ui, count_msg, cx + cw * 0.5, cy + 104.0 * ui_scale, 1.04 * ui_scale, Theme.text);
             const cbw: f32 = (cw - 30.0 * ui_scale) / 2.0;
             const cby: f32 = cy + ch - 55.0 * ui_scale;
             if (Theme.drawButton(ui, .{ .x = cx + 10.0 * ui_scale, .y = cby, .width = cbw, .height = 40.0 * ui_scale }, "CANCEL", btn_scale, mx, my, mc, .ghost, ui_scale)) {
@@ -425,16 +416,16 @@ pub const WorldListScreen = struct {
 
         if (self.confirm_rename) {
             if (self.selected) |idx| {
-                const cw: f32 = 460.0 * ui_scale;
-                const ch: f32 = 180.0 * ui_scale;
+                const cw: f32 = 500.0 * ui_scale;
+                const ch: f32 = 230.0 * ui_scale;
                 const cx: f32 = (screen_w - cw) * 0.5;
                 const cy: f32 = (screen_h - ch) * 0.5;
                 Theme.drawModal(ui, screen_w, screen_h, .{ .x = cx, .y = cy, .width = cw, .height = ch }, ui_scale, "RENAME WORLD", "Update the display name in level.dat.", false);
                 var name_buf2: [128]u8 = undefined;
                 const current_msg = std.fmt.bufPrint(&name_buf2, "CURRENT: '{s}'", .{self.worlds[idx].name}) catch "'?'";
-                Font.drawTextCentered(ui, current_msg, cx + cw * 0.5, cy + 72.0 * ui_scale, 0.76 * ui_scale, Theme.muted);
-                const input_h: f32 = 40.0 * ui_scale;
-                const input_y: f32 = cy + 92.0 * ui_scale;
+                Font.drawTextCentered(ui, current_msg, cx + cw * 0.5, cy + 92.0 * ui_scale, 0.92 * ui_scale, Theme.muted);
+                const input_h: f32 = 46.0 * ui_scale;
+                const input_y: f32 = cy + 116.0 * ui_scale;
                 const input_rect = Rect{ .x = cx + 20.0 * ui_scale, .y = input_y, .width = cw - 40.0 * ui_scale, .height = input_h };
                 const cursor_visible = @as(u32, @truncate(@as(u64, @intFromFloat(ctx.time.elapsed * 2.0)))) % 2 == 0;
                 if (mc) {
@@ -442,12 +433,12 @@ pub const WorldListScreen = struct {
                 }
                 Theme.drawTextInput(ui, input_rect, self.rename_buffer.items, "ENTER NEW NAME", 1.18 * ui_scale, self.rename_focused, cursor_visible, ui_scale);
                 const cbw: f32 = (cw - 30.0 * ui_scale) / 2.0;
-                const cby: f32 = cy + ch - 45.0 * ui_scale;
-                if (Theme.drawButton(ui, .{ .x = cx + 10.0 * ui_scale, .y = cby, .width = cbw, .height = 38.0 * ui_scale }, "CANCEL", btn_scale, mx, my, mc, .ghost, ui_scale)) {
+                const cby: f32 = cy + ch - 52.0 * ui_scale;
+                if (Theme.drawButton(ui, .{ .x = cx + 10.0 * ui_scale, .y = cby, .width = cbw, .height = 42.0 * ui_scale }, "CANCEL", btn_scale, mx, my, mc, .ghost, ui_scale)) {
                     self.confirm_rename = false;
                     self.rename_buffer.clearRetainingCapacity();
                 }
-                if (Theme.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 38.0 * ui_scale }, "OK", btn_scale, mx, my, mc, .primary, ui_scale)) {
+                if (Theme.drawButton(ui, .{ .x = cx + cbw + 20.0 * ui_scale, .y = cby, .width = cbw, .height = 42.0 * ui_scale }, "OK", btn_scale, mx, my, mc, .primary, ui_scale)) {
                     self.renameWorld(idx) catch |err| {
                         log.log.err("Failed to rename world '{s}': {}", .{ self.worlds[idx].name, err });
                         self.error_message = "Failed to rename world. Check logs.";
@@ -464,6 +455,12 @@ pub const WorldListScreen = struct {
 
     pub fn screen(self: *@This()) IScreen {
         return Screen.makeScreen(@This(), self);
+    }
+
+    fn openCreateWizard(self: *@This()) !void {
+        const create_screen = try SingleplayerScreen.init(self.context.allocator, self.context);
+        errdefer create_screen.deinit(create_screen);
+        self.context.screen_manager.pushScreen(create_screen.screen());
     }
 
     fn loadWorld(self: *@This(), idx: usize) !void {
@@ -489,7 +486,7 @@ pub const WorldListScreen = struct {
             allocator.free(empty_worlds);
             self.worlds = new_worlds;
         } else |_| {}
-        self.selected = null;
+        self.selected = if (self.worlds.len > 0) 0 else null;
         self.confirm_delete = false;
         self.scroll_offset = 0.0;
         self.error_message = null;
@@ -534,19 +531,19 @@ pub const WorldListScreen = struct {
 
 fn drawWorldDetails(ui: *UISystem, rect: Rect, self: *WorldListScreen, scale: f32) void {
     Theme.drawListRail(ui, rect, scale);
-    Font.drawText(ui, "WORLD DETAILS", rect.x + 18.0 * scale, rect.y + 18.0 * scale, 0.72 * scale, Theme.signal);
+    Font.drawText(ui, "WORLD DETAILS", rect.x + 18.0 * scale, rect.y + 18.0 * scale, 0.90 * scale, Theme.signal);
     ui.drawRect(.{ .x = rect.x + 18.0 * scale, .y = rect.y + 44.0 * scale, .width = rect.width - 36.0 * scale, .height = 1.0 * scale }, Theme.outline);
     if (self.selected) |idx| {
         const world = self.worlds[idx];
         Font.drawText(ui, world.name, rect.x + 18.0 * scale, rect.y + 64.0 * scale, 1.36 * scale, Theme.title);
-        Font.drawText(ui, registry.getGeneratorInfo(world.generator_index).name, rect.x + 18.0 * scale, rect.y + 100.0 * scale, 0.82 * scale, Theme.text);
+        Font.drawText(ui, registry.getGeneratorInfo(world.generator_index).name, rect.x + 18.0 * scale, rect.y + 100.0 * scale, 1.00 * scale, Theme.text);
         var seed_buf: [64]u8 = undefined;
         const seed_text = std.fmt.bufPrint(&seed_buf, "Seed  {}", .{world.seed}) catch "Seed  unknown";
-        Font.drawText(ui, seed_text, rect.x + 18.0 * scale, rect.y + 132.0 * scale, 0.76 * scale, Theme.muted);
-        Font.drawText(ui, "Use Play World to resume this save.", rect.x + 18.0 * scale, rect.y + 176.0 * scale, 0.72 * scale, Theme.muted);
+        Font.drawText(ui, seed_text, rect.x + 18.0 * scale, rect.y + 132.0 * scale, 0.90 * scale, Theme.muted);
+        Font.drawText(ui, "Use Play World to resume this save.", rect.x + 18.0 * scale, rect.y + 176.0 * scale, 0.90 * scale, Theme.muted);
     } else {
         Font.drawText(ui, "Select a world", rect.x + 18.0 * scale, rect.y + 68.0 * scale, 1.10 * scale, Theme.title);
-        Font.drawText(ui, "Its details and actions will appear here.", rect.x + 18.0 * scale, rect.y + 102.0 * scale, 0.70 * scale, Theme.muted);
+        Font.drawText(ui, "Its details and actions will appear here.", rect.x + 18.0 * scale, rect.y + 102.0 * scale, 0.90 * scale, Theme.muted);
     }
 }
 

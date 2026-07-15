@@ -8,6 +8,7 @@ const BuildOptions = struct {
     engine_graphics_options: *std.Build.Step.Options,
     enable_debug_shadows: bool,
     enable_imgui: bool,
+    enable_rmlui: bool,
     chunk_debug_mode: bool,
     chunk_debug_enable: []const u8,
     startup_diagnostic_seconds: u32,
@@ -79,6 +80,7 @@ fn defineModules(
 ) BuildModules {
     const options = opts.options;
     const enable_imgui = opts.enable_imgui;
+    const enable_rmlui = opts.enable_rmlui;
     const engine_ui_options = opts.engine_ui_options;
     const world_lod_options = opts.world_lod_options;
     const world_runtime_options = opts.world_runtime_options;
@@ -317,6 +319,10 @@ fn defineModules(
         engine_ui.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
         engine_ui.link_libcpp = true;
     }
+    if (enable_rmlui) {
+        engine_ui.linkSystemLibrary("zigcraft-rmlui-bridge", .{ .use_pkg_config = .force });
+        engine_ui.link_libcpp = true;
+    }
     addSharedImports(world_core, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     world_core.addImport("engine-core", engine_core);
     world_core.addImport("engine-math", engine_math);
@@ -414,6 +420,7 @@ fn defineBuildSteps(
     const options = opts.options;
     const enable_debug_shadows = opts.enable_debug_shadows;
     const enable_imgui = opts.enable_imgui;
+    const enable_rmlui = opts.enable_rmlui;
     const monitor_index = opts.monitor_index;
     const monitor_name = opts.monitor_name;
     const window_video_driver = opts.window_video_driver;
@@ -476,6 +483,7 @@ fn defineBuildSteps(
     exe.root_module.linkSystemLibrary("sdl3", .{});
     exe.root_module.linkSystemLibrary("vulkan", .{});
     if (enable_imgui) addCimgui(b, exe);
+    if (enable_rmlui) addRmlUi(exe);
 
     b.installArtifact(exe);
 
@@ -496,6 +504,7 @@ fn defineBuildSteps(
     const benchmark_options = b.addOptions();
     benchmark_options.addOption(bool, "debug_shadows", enable_debug_shadows);
     benchmark_options.addOption(bool, "imgui", enable_imgui);
+    benchmark_options.addOption(bool, "rmlui", enable_rmlui);
     benchmark_options.addOption(bool, "smoke_test", false);
     benchmark_options.addOption(bool, "chunk_debug_mode", false);
     benchmark_options.addOption([]const u8, "chunk_debug_enable", "");
@@ -555,6 +564,7 @@ fn defineBuildSteps(
     benchmark_exe.root_module.linkSystemLibrary("sdl3", .{});
     benchmark_exe.root_module.linkSystemLibrary("vulkan", .{});
     if (enable_imgui) addCimgui(b, benchmark_exe);
+    if (enable_rmlui) addRmlUi(benchmark_exe);
 
     b.installArtifact(benchmark_exe);
 
@@ -591,6 +601,7 @@ fn defineBuildSteps(
         .name = "worldgen-report",
         .root_module = worldgen_report_root_module,
     });
+    if (enable_rmlui) addRmlUi(worldgen_report_exe);
 
     const worldgen_report_run_cmd = b.addRunArtifact(worldgen_report_exe);
     const worldgen_report_step = b.step("worldgen-report", "Print deterministic worldgen baseline report");
@@ -610,6 +621,7 @@ fn defineBuildSteps(
         .name = "lod-bench",
         .root_module = lod_bench_root_module,
     });
+    if (enable_rmlui) addRmlUi(lod_bench_exe);
 
     const lod_bench_run_cmd = b.addRunArtifact(lod_bench_exe);
     const lod_bench_step = b.step("lod-bench", "Benchmark LOD heightmap generation (CPU-only, no graphics)");
@@ -629,6 +641,7 @@ fn defineBuildSteps(
         .name = "worldgen-climate-snapshot",
         .root_module = worldgen_climate_snapshot_root_module,
     });
+    if (enable_rmlui) addRmlUi(worldgen_climate_snapshot_exe);
 
     const worldgen_climate_snapshot_run_cmd = b.addRunArtifact(worldgen_climate_snapshot_exe);
     if (b.args) |args| {
@@ -672,6 +685,7 @@ fn defineBuildSteps(
     exe_tests.root_module.linkSystemLibrary("vulkan", .{});
     exe_tests.root_module.addIncludePath(b.path("libs/stb"));
     if (enable_imgui) addCimgui(b, exe_tests);
+    if (enable_rmlui) addRmlUi(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
     const run_exe_tests = b.addRunArtifact(exe_tests);
@@ -765,10 +779,12 @@ fn defineBuildSteps(
     const engine_math_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/engine-math/src/ray_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     engine_math_fuzz_root.addImport("zig-math", zig_math);
     const engine_math_fuzz_tests = b.addTest(.{ .root_module = engine_math_fuzz_root, .filters = test_filters });
+    if (enable_rmlui) addRmlUi(engine_math_fuzz_tests);
     test_step.dependOn(&b.addRunArtifact(engine_math_fuzz_tests).step);
 
     const world_core_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/light_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     const world_core_fuzz_tests = b.addTest(.{ .root_module = world_core_fuzz_root, .filters = test_filters });
+    if (enable_rmlui) addRmlUi(world_core_fuzz_tests);
     test_step.dependOn(&b.addRunArtifact(world_core_fuzz_tests).step);
 
     const world_persistence_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
@@ -776,6 +792,7 @@ fn defineBuildSteps(
     world_persistence_fuzz_root.addImport("fs", fs_module);
     world_persistence_fuzz_root.addImport("world-core", world_core);
     const world_persistence_fuzz_tests = b.addTest(.{ .root_module = world_persistence_fuzz_root, .filters = test_filters });
+    if (enable_rmlui) addRmlUi(world_persistence_fuzz_tests);
     test_step.dependOn(&b.addRunArtifact(world_persistence_fuzz_tests).step);
 
     const world_worldgen_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
@@ -789,6 +806,7 @@ fn defineBuildSteps(
     world_worldgen_fuzz_root.addImport("worldgen-test", worldgen_test);
     const world_worldgen_fuzz_tests = b.addTest(.{ .root_module = world_worldgen_fuzz_root, .filters = test_filters });
     world_worldgen_fuzz_tests.root_module.link_libc = true;
+    if (enable_rmlui) addRmlUi(world_worldgen_fuzz_tests);
     test_step.dependOn(&b.addRunArtifact(world_worldgen_fuzz_tests).step);
 
     const integration_root_module = b.createModule(.{
@@ -823,6 +841,7 @@ fn defineBuildSteps(
     exe_integration_tests.root_module.linkSystemLibrary("sdl3", .{});
     exe_integration_tests.root_module.linkSystemLibrary("vulkan", .{});
     if (enable_imgui) addCimgui(b, exe_integration_tests);
+    if (enable_rmlui) addRmlUi(exe_integration_tests);
 
     const test_integration_step = b.step("test-integration", "Run integration smoke test");
     const run_integration_tests = b.addRunArtifact(exe_integration_tests);
@@ -851,6 +870,7 @@ fn defineBuildSteps(
     robust_demo.root_module.linkSystemLibrary("sdl3", .{});
     robust_demo.root_module.linkSystemLibrary("vulkan", .{});
     robust_demo.root_module.addIncludePath(b.path("libs/stb"));
+    if (enable_rmlui) addRmlUi(robust_demo);
 
     b.installArtifact(robust_demo);
 
@@ -870,6 +890,7 @@ fn defineBuildSteps(
     integration_robustness.root_module.addImport("engine-core", engine_core);
     integration_robustness.root_module.link_libc = true;
     integration_robustness.root_module.linkSystemLibrary("sdl3", .{}); // Needed for C imports if any
+    if (enable_rmlui) addRmlUi(integration_robustness);
 
     const test_robustness_run = b.addRunArtifact(integration_robustness);
     // Ensure robust-demo is built first
@@ -894,8 +915,13 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
 
     const enable_imgui = b.option(bool, "imgui", "Enable Dear ImGui debug UI integration") orelse true;
     options.addOption(bool, "imgui", enable_imgui);
+
+    const enable_rmlui = b.option(bool, "rmlui", "Enable the RmlUi 6.2 C ABI bridge") orelse false;
+    options.addOption(bool, "rmlui", enable_rmlui);
+
     const engine_ui_options = b.addOptions();
     engine_ui_options.addOption(bool, "imgui", enable_imgui);
+    engine_ui_options.addOption(bool, "rmlui", enable_rmlui);
 
     const smoke_test = b.option(bool, "smoke-test", "Enable automated smoke test mode (auto-loads world and exits)") orelse false;
     options.addOption(bool, "smoke_test", smoke_test);
@@ -940,6 +966,7 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
     engine_graphics_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
     engine_graphics_options.addOption(bool, "skip_present", skip_present);
     engine_graphics_options.addOption(bool, "imgui", enable_imgui);
+    engine_graphics_options.addOption(bool, "rmlui", enable_rmlui);
 
     const screenshot_path = b.option([]const u8, "screenshot-path", "Capture a PNG screenshot after N frames and exit") orelse "";
     options.addOption([]const u8, "screenshot_path", screenshot_path);
@@ -994,6 +1021,7 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
         .engine_graphics_options = engine_graphics_options,
         .enable_debug_shadows = enable_debug_shadows,
         .enable_imgui = enable_imgui,
+        .enable_rmlui = enable_rmlui,
         .chunk_debug_mode = chunk_debug_mode,
         .chunk_debug_enable = chunk_debug_enable,
         .startup_diagnostic_seconds = startup_diagnostic_seconds,
@@ -1047,6 +1075,11 @@ fn defineShaderValidation(b: *std.Build, test_step: *std.Build.Step) void {
 
 fn addCimgui(_: *std.Build, compile: *std.Build.Step.Compile) void {
     compile.root_module.linkSystemLibrary("cimgui", .{ .use_pkg_config = .force });
+    compile.root_module.link_libcpp = true;
+}
+
+fn addRmlUi(compile: *std.Build.Step.Compile) void {
+    compile.root_module.linkSystemLibrary("zigcraft-rmlui-bridge", .{ .use_pkg_config = .force });
     compile.root_module.link_libcpp = true;
 }
 

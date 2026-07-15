@@ -416,7 +416,7 @@ fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
-    return screenshot.captureScreenshot(ctx, path);
+    return screenshot.requestCapture(ctx, path);
 }
 
 fn endFrame(ctx_ptr: *anyopaque) void {
@@ -774,6 +774,16 @@ fn drawRect2D(ctx_ptr: *anyopaque, rect: rhi.Rect, color: rhi.Color) void {
     ui_submission.drawRect2D(ctx, rect, color);
 }
 
+fn drawIndexedUIGeometry(ctx_ptr: *anyopaque, vertices: []const rhi.UiVertex, indices: []const u32, texture: rhi.TextureHandle, translation: [2]f32) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ui_submission.drawIndexedGeometry(ctx, vertices, indices, texture, translation);
+}
+
+fn setUIScissorRegion(ctx_ptr: *anyopaque, region: rhi.UiScissor) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ui_submission.setScissorRegion(ctx, region);
+}
+
 const VULKAN_SHADOW_CONTEXT_VTABLE = rhi.IShadowContext.VTable{
     .beginPass = beginShadowPass,
     .endPass = endShadowPass,
@@ -1022,6 +1032,8 @@ const VULKAN_UI_CONTEXT_VTABLE = rhi.IUIContext.VTable{
     .drawTextureRegion = drawTextureRegion2D,
     .drawDepthTexture = drawDepthTexture,
     .bindPipeline = bindUIPipeline,
+    .drawIndexedGeometry = drawIndexedUIGeometry,
+    .setScissorRegion = setUIScissorRegion,
 };
 
 fn initImGuiBackend(ctx_ptr: *anyopaque, window: *anyopaque) bool {

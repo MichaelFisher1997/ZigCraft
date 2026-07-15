@@ -118,4 +118,6 @@ test "pipeline_specialized functions use anytype for self parameter" {
     // ui_swapchain_pipeline and ui_swapchain_tex_pipeline are modified by the function
     try testing.expect(@TypeOf(manager.ui_swapchain_pipeline) == c.VkPipeline);
     try testing.expect(@TypeOf(manager.ui_swapchain_tex_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.rml_ui_swapchain_pipeline) == c.VkPipeline);
+    try testing.expect(@TypeOf(manager.rml_ui_swapchain_tex_pipeline) == c.VkPipeline);
 }

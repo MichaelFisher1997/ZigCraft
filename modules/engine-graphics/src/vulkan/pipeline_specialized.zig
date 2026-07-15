@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("engine_graphics_options");
 const fs = @import("fs");
 const c = @import("c").c;
 const rhi = @import("engine-rhi").rhi;
@@ -219,8 +220,12 @@ pub fn createSwapchainUIPipelines(
 
     if (self.ui_swapchain_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
     if (self.ui_swapchain_tex_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
+    if (self.rml_ui_swapchain_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
+    if (self.rml_ui_swapchain_tex_pipeline) |p| c.vkDestroyPipeline(vk_device, p, null);
     self.ui_swapchain_pipeline = null;
     self.ui_swapchain_tex_pipeline = null;
+    self.rml_ui_swapchain_pipeline = null;
+    self.rml_ui_swapchain_tex_pipeline = null;
 
     var viewport_state = std.mem.zeroes(c.VkPipelineViewportStateCreateInfo);
     viewport_state.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -320,6 +325,56 @@ pub fn createSwapchainUIPipelines(
     pipeline_info.layout = self.ui_tex_pipeline_layout;
     pipeline_info.renderPass = ui_swapchain_render_pass;
     try Utils.checkVk(c.vkCreateGraphicsPipelines(vk_device, null, 1, &pipeline_info, null, &self.ui_swapchain_tex_pipeline));
+
+    if (comptime !build_options.rmlui) return;
+
+    // RmlUi 6.2 produces premultiplied vertex/texture colors. Keep this
+    // equation distinct from legacy immediate UI's straight-alpha blending.
+    var rml_blend_attachment = ui_color_blend_attachment;
+    rml_blend_attachment.srcColorBlendFactor = c.VK_BLEND_FACTOR_ONE;
+    rml_blend_attachment.dstColorBlendFactor = c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    rml_blend_attachment.srcAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE;
+    rml_blend_attachment.dstAlphaBlendFactor = c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    var rml_color_blending = ui_color_blending;
+    rml_color_blending.pAttachments = &rml_blend_attachment;
+
+    const rml_binding = c.VkVertexInputBindingDescription{ .binding = 0, .stride = @sizeOf(rhi.UiVertex), .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX };
+    const rml_attributes = [_]c.VkVertexInputAttributeDescription{
+        .{ .binding = 0, .location = 0, .format = c.VK_FORMAT_R32G32_SFLOAT, .offset = @offsetOf(rhi.UiVertex, "position") },
+        .{ .binding = 0, .location = 1, .format = c.VK_FORMAT_R8G8B8A8_UNORM, .offset = @offsetOf(rhi.UiVertex, "color") },
+        .{ .binding = 0, .location = 2, .format = c.VK_FORMAT_R32G32_SFLOAT, .offset = @offsetOf(rhi.UiVertex, "uv") },
+    };
+    var rml_vertex_input = std.mem.zeroes(c.VkPipelineVertexInputStateCreateInfo);
+    rml_vertex_input.sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    rml_vertex_input.vertexBindingDescriptionCount = 1;
+    rml_vertex_input.pVertexBindingDescriptions = &rml_binding;
+    rml_vertex_input.vertexAttributeDescriptionCount = rml_attributes.len;
+    rml_vertex_input.pVertexAttributeDescriptions = &rml_attributes[0];
+
+    const rml_shaders = try loadShaderPair(allocator, vk_device, shader_registry.UI_RML_VERT, shader_registry.UI_RML_FRAG);
+    defer c.vkDestroyShaderModule(vk_device, rml_shaders.vert, null);
+    defer c.vkDestroyShaderModule(vk_device, rml_shaders.frag, null);
+    const rml_stages = [_]c.VkPipelineShaderStageCreateInfo{
+        .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_VERTEX_BIT, .module = rml_shaders.vert, .pName = "main" },
+        .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT, .module = rml_shaders.frag, .pName = "main" },
+    };
+
+    pipeline_info.pStages = &rml_stages[0];
+    pipeline_info.pVertexInputState = &rml_vertex_input;
+    pipeline_info.pColorBlendState = &rml_color_blending;
+    pipeline_info.layout = self.ui_pipeline_layout;
+    try Utils.checkVk(c.vkCreateGraphicsPipelines(vk_device, null, 1, &pipeline_info, null, &self.rml_ui_swapchain_pipeline));
+
+    const rml_textured_shaders = try loadShaderPair(allocator, vk_device, shader_registry.UI_RML_VERT, shader_registry.UI_RML_TEX_FRAG);
+    defer c.vkDestroyShaderModule(vk_device, rml_textured_shaders.vert, null);
+    defer c.vkDestroyShaderModule(vk_device, rml_textured_shaders.frag, null);
+    const rml_textured_stages = [_]c.VkPipelineShaderStageCreateInfo{
+        .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_VERTEX_BIT, .module = rml_textured_shaders.vert, .pName = "main" },
+        .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT, .module = rml_textured_shaders.frag, .pName = "main" },
+    };
+    pipeline_info.pStages = &rml_textured_stages[0];
+    pipeline_info.layout = self.ui_tex_pipeline_layout;
+    try Utils.checkVk(c.vkCreateGraphicsPipelines(vk_device, null, 1, &pipeline_info, null, &self.rml_ui_swapchain_tex_pipeline));
 }
 
 pub fn createDebugShadowPipeline(

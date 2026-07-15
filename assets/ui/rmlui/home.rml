@@ -1,0 +1,38 @@
+<rml>
+  <head>
+    <title>ZigCraft Home</title>
+    <link type="text/rcss" href="home.rcss" />
+  </head>
+  <body>
+    <div id="page">
+      <div id="hero">
+        <div id="brand">ZIGCRAFT <span>0.1</span></div>
+        <div class="eyebrow">PROCEDURAL VOXEL SANDBOX</div>
+        <h1>
+          <span class="hero-full">Build your next world.</span>
+          <span class="hero-compact">Build a world.</span>
+        </h1>
+        <p class="lede">Create a place to explore, shape it block by block, and return whenever you are ready.</p>
+      </div>
+
+      <div id="navigation-panel">
+        <div class="panel-kicker">WORLD MENU</div>
+        <h2>Choose your adventure</h2>
+        <p class="panel-copy">Open a world or tailor the game before you begin.</p>
+
+        <button id="play" class="primary">
+          <strong>WORLD LIBRARY</strong>
+          <span>Choose, create, or continue a world.</span>
+        </button>
+
+        <div class="section-label">GAME OPTIONS</div>
+        <div id="secondary-actions">
+          <button id="resource-packs"><strong>RESOURCE PACKS</strong><span>Change block textures and visual style.</span></button>
+          <button id="environment"><strong>SKY &amp; LIGHTING</strong><span>Set the atmosphere for your worlds.</span></button>
+          <button id="settings"><strong>SETTINGS</strong><span>Adjust graphics, controls, and display.</span></button>
+          <button id="exit" class="quiet"><strong>EXIT</strong><span>Return to the desktop.</span></button>
+        </div>
+      </div>
+    </div>
+  </body>
+</rml>

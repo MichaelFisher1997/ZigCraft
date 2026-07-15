@@ -13,7 +13,14 @@ const Modifiers = interfaces.Modifiers;
 
 const c = @import("c").c;
 
-pub const RawEventProcessor = *const fn (event: *const c.SDL_Event) void;
+/// A context-bound raw SDL event sink. The context is explicitly owned by the
+/// caller, so a processor can point at heap-stable subsystem state instead of
+/// capturing an address of a temporary `App` value during initialization.
+pub const RawEventProcessor = struct {
+    context: *anyopaque,
+    /// Returns true when the event was consumed and must not update game input.
+    process: *const fn (context: *anyopaque, event: *const c.SDL_Event) bool,
+};
 
 pub const Input = struct {
     /// Currently pressed keys
@@ -82,13 +89,22 @@ pub const Input = struct {
     pub fn pollEvents(self: *Input) void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            if (self.raw_event_processor) |process| process(&event);
+            if (self.raw_event_processor) |processor| {
+                if (processor.process(processor.context, &event)) continue;
+            }
             self.processEvent(event);
         }
     }
 
     pub fn setRawEventProcessor(self: *Input, processor: ?RawEventProcessor) void {
         self.raw_event_processor = processor;
+    }
+
+    /// Delivers a raw event without modifying input state. Kept public for
+    /// focused tests and for platforms which supply events externally.
+    pub fn dispatchRawEvent(self: *const Input, event: *const c.SDL_Event) bool {
+        if (self.raw_event_processor) |processor| return processor.process(processor.context, event);
+        return false;
     }
 
     fn processEvent(self: *Input, event: c.SDL_Event) void {

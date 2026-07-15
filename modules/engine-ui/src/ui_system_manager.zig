@@ -12,11 +12,16 @@ const rhi = @import("engine-rhi").rhi;
 const Time = @import("engine-core").Time;
 const WindowManager = @import("engine-core").WindowManager;
 const imgui_backend = @import("imgui/imgui_backend.zig");
+const rmlui = @import("rmlui.zig");
+const sdl = @import("c").c;
 
 pub const UISystemManager = struct {
     ui: ?UISystem,
     font_atlas: ?FontAtlas = null,
     imgui: ?imgui_backend.Backend = null,
+    rmlui: ?*rmlui.RmlUi = null,
+    rmlui_input_enabled: bool = false,
+    window: *sdl.SDL_Window,
     timing_overlay: TimingOverlay,
     last_debug_toggle_time: f32 = 0,
 
@@ -27,15 +32,23 @@ pub const UISystemManager = struct {
             logImguiInitFailure(err);
             break :blk null;
         } else null;
+        const rml = if (rmlui.available) rmlui.RmlUi.init(allocator, renderer, resources, window_manager.window, width, height) catch |err| blk: {
+            logRmlUiInitFailure(err);
+            break :blk null;
+        } else null;
         return .{
             .ui = ui,
             .font_atlas = font_atlas,
             .imgui = imgui,
+            .rmlui = rml,
+            .window = window_manager.window,
             .timing_overlay = .{ .enabled = smoke_test_enabled },
         };
     }
 
     pub fn deinit(self: *UISystemManager, resources: rhi.ResourceManager) void {
+        self.rmlui_input_enabled = false;
+        if (self.rmlui) |backend| backend.deinit();
         if (self.imgui) |*backend| backend.deinit();
         if (self.font_atlas) |*atlas| atlas.deinit(resources);
         if (self.ui) |*u| u.deinit();
@@ -43,6 +56,7 @@ pub const UISystemManager = struct {
 
     pub fn resize(self: *UISystemManager, width: u32, height: u32) void {
         if (self.ui) |*u| u.resize(width, height);
+        if (self.rmlui) |backend| backend.resize(width, height);
     }
 
     pub fn handleTimingToggle(self: *UISystemManager, timing_toggle_pressed: bool, time: *Time, rhi_ptr: *rhi.RHI) void {
@@ -103,9 +117,36 @@ pub const UISystemManager = struct {
         if (self.imgui) |*backend| return backend;
         return null;
     }
+
+    pub fn getRmlUi(self: *UISystemManager) ?*rmlui.RmlUi {
+        return self.rmlui;
+    }
+
+    pub fn setRmlUiInputEnabled(self: *UISystemManager, enabled: bool) void {
+        self.rmlui_input_enabled = enabled and self.rmlui != null;
+    }
+
+    /// Context-bound sink for `Input.RawEventProcessor`. It fans SDL events
+    /// out to both UI systems; RmlUi only receives input while its screen owns
+    /// the active document.
+    pub fn processRawEvent(context: *anyopaque, event: *const sdl.SDL_Event) bool {
+        const self: *UISystemManager = @ptrCast(@alignCast(context));
+        if (self.rmlui_input_enabled) {
+            if (self.rmlui) |backend| {
+                if (backend.processEvent(self.window, event)) return true;
+            }
+        }
+        if (imgui_backend.available) imgui_backend.Backend.processEvent(event);
+        return false;
+    }
 };
 
 fn logImguiInitFailure(err: anyerror) void {
     const log = @import("engine-core").log;
     log.log.warn("ImGui backend disabled after init failure: {}", .{err});
+}
+
+fn logRmlUiInitFailure(err: anyerror) void {
+    const log = @import("engine-core").log;
+    log.log.warn("RmlUi backend disabled after init failure: {}", .{err});
 }

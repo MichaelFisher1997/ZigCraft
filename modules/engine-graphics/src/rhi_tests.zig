@@ -503,6 +503,8 @@ const MockContext = struct {
         .drawTextureRegion = undefined,
         .drawDepthTexture = drawDepthTexture,
         .bindPipeline = undefined,
+        .drawIndexedGeometry = undefined,
+        .setScissorRegion = undefined,
     };
 
     const MOCK_VULKAN_RHI_VTABLE = rhi.RHI.VTable{

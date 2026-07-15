@@ -429,6 +429,10 @@ test "RHI contract declares IUIContext.drawDepthTexture" {
 test "RHI contract declares IUIContext.bindPipeline" {
     try std.testing.expect(@hasDecl(rhi.IUIContext, "bindPipeline"));
 }
+test "RHI contract declares IUIContext retained geometry operations" {
+    try std.testing.expect(@hasDecl(rhi.IUIContext, "drawIndexedGeometry"));
+    try std.testing.expect(@hasDecl(rhi.IUIContext, "setScissorRegion"));
+}
 test "RHI contract declares UIRenderer.beginPass" {
     try std.testing.expect(@hasDecl(rhi.UIRenderer, "beginPass"));
 }
@@ -449,6 +453,16 @@ test "RHI contract declares UIRenderer.drawDepthTexture" {
 }
 test "RHI contract declares UIRenderer.bindPipeline" {
     try std.testing.expect(@hasDecl(rhi.UIRenderer, "bindPipeline"));
+}
+test "RHI contract declares UIRenderer retained geometry operations" {
+    try std.testing.expect(@hasDecl(rhi.UIRenderer, "drawIndexedGeometry"));
+    try std.testing.expect(@hasDecl(rhi.UIRenderer, "setScissorRegion"));
+}
+test "RHI UI geometry types retain the RmlUi-compatible memory layout" {
+    try std.testing.expectEqual(@as(usize, 20), @sizeOf(rhi.UiVertex));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(rhi.UiVertex, "position"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(rhi.UiVertex, "color"));
+    try std.testing.expectEqual(@as(usize, 12), @offsetOf(rhi.UiVertex, "uv"));
 }
 test "RHI contract declares IGraphicsCommandEncoder.bindTexture" {
     try std.testing.expect(@hasDecl(rhi.IGraphicsCommandEncoder, "bindTexture"));
