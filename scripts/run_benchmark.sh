@@ -62,7 +62,10 @@ done
 case "$gpu_culling" in off|on) ;; *) printf 'Unknown GPU culling mode: %s (expected off or on)\n' "$gpu_culling" >&2; exit 2 ;; esac
 [[ "$gpu_culling_threshold" =~ ^[1-9][0-9]*$ ]] || { printf 'GPU culling threshold must be a positive integer: %s\n' "$gpu_culling_threshold" >&2; exit 2; }
 [[ "$benchmark_horizon_distance" =~ ^(0|[1-9][0-9]*)$ ]] || { printf 'Benchmark horizon distance must be zero or a positive integer: %s\n' "$benchmark_horizon_distance" >&2; exit 2; }
-[[ "$benchmark_lod_memory_budget_mb" =~ ^[0-9]+$ ]] && (( benchmark_lod_memory_budget_mb <= 4096 )) || { printf 'Benchmark LOD memory budget must be an integer from 0 to 4096 MiB: %s\n' "$benchmark_lod_memory_budget_mb" >&2; exit 2; }
+if ! [[ "$benchmark_lod_memory_budget_mb" =~ ^[0-9]+$ ]] || (( benchmark_lod_memory_budget_mb > 4096 )); then
+    printf 'Benchmark LOD memory budget must be an integer from 0 to 4096 MiB: %s\n' "$benchmark_lod_memory_budget_mb" >&2
+    exit 2
+fi
 [[ "$benchmark_require_gpu_candidates" =~ ^[0-9]+$ ]] || { printf 'Benchmark GPU candidate readiness target must be a nonnegative integer: %s\n' "$benchmark_require_gpu_candidates" >&2; exit 2; }
 gpu_culling_enabled=0
 gpu_culling_validate=0
@@ -82,6 +85,7 @@ for label_name in gpu_adapter gpu_driver runner zig_toolchain; do
             printf 'Evidence mode requires a known %s label (CLI flag or ZIGCRAFT_BENCHMARK_* env).\n' "$label_name" >&2
             exit 2
             ;;
+        *) ;;
     esac
 done
 

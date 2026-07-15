@@ -24,10 +24,7 @@
         "world": "flat",
         "fixture": "gpu-culling-scale",
         "headless": true,
-        "resolution": [
-          1920,
-          1080
-        ],
+        "resolution": [1920, 1080],
         "horizon_distance": 4096,
         "benchmark_lod_memory_budget_mb": 2048,
         "benchmark_require_gpu_candidates": 1024
@@ -493,10 +490,7 @@
         "world": "flat",
         "fixture": "gpu-culling-scale",
         "headless": true,
-        "resolution": [
-          1920,
-          1080
-        ],
+        "resolution": [1920, 1080],
         "horizon_distance": 4096,
         "benchmark_lod_memory_budget_mb": 2048,
         "benchmark_require_gpu_candidates": 1024
@@ -540,7 +534,7 @@
         "opaque_avg": 0.07698180498577806,
         "lod_terrain_avg": 0.015723274541034886,
         "lod_water_avg": 0.00032894478730695554,
-        "lod_culling_avg": 8.294204604681853e-06,
+        "lod_culling_avg": 8.294204604681853e-6,
         "total_avg": 0.2001898994980263,
         "total": {
           "min": 0,
@@ -574,7 +568,7 @@
         },
         "lod_culling": {
           "min": 0,
-          "avg": 8.294204604681853e-06,
+          "avg": 8.294204604681853e-6,
           "max": 0.0003600000054575503,
           "p1": 0,
           "p5": 0,

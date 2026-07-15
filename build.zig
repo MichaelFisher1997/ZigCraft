@@ -497,7 +497,7 @@ fn defineBuildSteps(
 
     const shader_cmd = b.addSystemCommand(&.{ "sh", "-c", "for f in assets/shaders/vulkan/*.vert assets/shaders/vulkan/*.frag assets/shaders/vulkan/*.comp; do glslangValidator -V \"$f\" -o \"$f.spv\"; done" });
 
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = addRunArtifact(b, exe);
     run_cmd.step.dependOn(b.getInstallStep());
     run_cmd.step.dependOn(&shader_cmd.step);
     run_cmd.setCwd(b.path("."));
@@ -583,7 +583,7 @@ fn defineBuildSteps(
 
     b.installArtifact(benchmark_exe);
 
-    const benchmark_run_cmd = b.addRunArtifact(benchmark_exe);
+    const benchmark_run_cmd = addRunArtifact(b, benchmark_exe);
     benchmark_run_cmd.step.dependOn(b.getInstallStep());
     benchmark_run_cmd.step.dependOn(&shader_cmd.step);
     benchmark_run_cmd.setCwd(b.path("."));
@@ -618,7 +618,7 @@ fn defineBuildSteps(
     });
     if (enable_rmlui) addRmlUi(worldgen_report_exe);
 
-    const worldgen_report_run_cmd = b.addRunArtifact(worldgen_report_exe);
+    const worldgen_report_run_cmd = addRunArtifact(b, worldgen_report_exe);
     const worldgen_report_step = b.step("worldgen-report", "Print deterministic worldgen baseline report");
     worldgen_report_step.dependOn(&worldgen_report_run_cmd.step);
 
@@ -638,7 +638,7 @@ fn defineBuildSteps(
     });
     if (enable_rmlui) addRmlUi(lod_bench_exe);
 
-    const lod_bench_run_cmd = b.addRunArtifact(lod_bench_exe);
+    const lod_bench_run_cmd = addRunArtifact(b, lod_bench_exe);
     const lod_bench_step = b.step("lod-bench", "Benchmark LOD heightmap generation (CPU-only, no graphics)");
     lod_bench_step.dependOn(&lod_bench_run_cmd.step);
 
@@ -658,7 +658,7 @@ fn defineBuildSteps(
     });
     if (enable_rmlui) addRmlUi(worldgen_climate_snapshot_exe);
 
-    const worldgen_climate_snapshot_run_cmd = b.addRunArtifact(worldgen_climate_snapshot_exe);
+    const worldgen_climate_snapshot_run_cmd = addRunArtifact(b, worldgen_climate_snapshot_exe);
     if (b.args) |args| {
         worldgen_climate_snapshot_run_cmd.addArgs(args);
     }
@@ -703,7 +703,7 @@ fn defineBuildSteps(
     if (enable_rmlui) addRmlUi(exe_tests);
 
     const test_step = b.step("test", "Run unit tests");
-    const run_exe_tests = b.addRunArtifact(exe_tests);
+    const run_exe_tests = addRunArtifact(b, exe_tests);
     run_exe_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     run_exe_tests.step.dependOn(&shader_cmd.step);
     test_step.dependOn(&run_exe_tests.step);
@@ -733,7 +733,7 @@ fn defineBuildSteps(
         .root_module = world_lod_test_root,
         .filters = test_filters,
     });
-    const run_world_lod_tests = b.addRunArtifact(world_lod_tests);
+    const run_world_lod_tests = addRunArtifact(b, world_lod_tests);
     run_world_lod_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     test_step.dependOn(&run_world_lod_tests.step);
 
@@ -749,7 +749,7 @@ fn defineBuildSteps(
         .root_module = benchmark_phase5_gate_root,
         .filters = test_filters,
     });
-    const run_benchmark_phase5_gate_tests = b.addRunArtifact(benchmark_phase5_gate_tests);
+    const run_benchmark_phase5_gate_tests = addRunArtifact(b, benchmark_phase5_gate_tests);
     run_benchmark_phase5_gate_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     test_step.dependOn(&run_benchmark_phase5_gate_tests.step);
 
@@ -774,7 +774,7 @@ fn defineBuildSteps(
         .root_module = phase5_lod_gate_root,
         .filters = &.{"LODManager preserves the CPU heightfield fallback for far LODs"},
     });
-    const run_phase5_lod_gate_tests = b.addRunArtifact(phase5_lod_gate_tests);
+    const run_phase5_lod_gate_tests = addRunArtifact(b, phase5_lod_gate_tests);
     run_phase5_lod_gate_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
 
     // This is deliberately operation-count based rather than wall-clock based:
@@ -801,7 +801,7 @@ fn defineBuildSteps(
         .root_module = phase5_stress_root,
         .filters = &.{"Phase 5 stress"},
     });
-    const run_phase5_stress_tests = b.addRunArtifact(phase5_stress_tests);
+    const run_phase5_stress_tests = addRunArtifact(b, phase5_stress_tests);
     run_phase5_stress_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     run_phase5_stress_tests.setEnvironmentVariable("ZIGCRAFT_PHASE5_STRESS_ITERATIONS", b.fmt("{}", .{phase5_stress_iterations}));
 
@@ -838,12 +838,12 @@ fn defineBuildSteps(
     engine_math_fuzz_root.addImport("zig-math", zig_math);
     const engine_math_fuzz_tests = b.addTest(.{ .root_module = engine_math_fuzz_root, .filters = test_filters });
     if (enable_rmlui) addRmlUi(engine_math_fuzz_tests);
-    test_step.dependOn(&b.addRunArtifact(engine_math_fuzz_tests).step);
+    test_step.dependOn(&addRunArtifact(b, engine_math_fuzz_tests).step);
 
     const world_core_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-core/src/light_fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     const world_core_fuzz_tests = b.addTest(.{ .root_module = world_core_fuzz_root, .filters = test_filters });
     if (enable_rmlui) addRmlUi(world_core_fuzz_tests);
-    test_step.dependOn(&b.addRunArtifact(world_core_fuzz_tests).step);
+    test_step.dependOn(&addRunArtifact(b, world_core_fuzz_tests).step);
 
     const world_persistence_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-persistence/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     world_persistence_fuzz_root.addAnonymousImport("level_fixture_v0_1", .{ .root_source_file = b.path("modules/world-persistence/test-fixtures/v0.1/level.dat") });
@@ -851,7 +851,7 @@ fn defineBuildSteps(
     world_persistence_fuzz_root.addImport("world-core", world_core);
     const world_persistence_fuzz_tests = b.addTest(.{ .root_module = world_persistence_fuzz_root, .filters = test_filters });
     if (enable_rmlui) addRmlUi(world_persistence_fuzz_tests);
-    test_step.dependOn(&b.addRunArtifact(world_persistence_fuzz_tests).step);
+    test_step.dependOn(&addRunArtifact(b, world_persistence_fuzz_tests).step);
 
     const world_worldgen_fuzz_root = b.createModule(.{ .root_source_file = b.path("modules/world-worldgen/src/fuzz_tests.zig"), .target = target, .optimize = optimize, .sanitize_c = sanitize_c });
     world_worldgen_fuzz_root.addImport("engine-core", engine_core);
@@ -865,7 +865,7 @@ fn defineBuildSteps(
     const world_worldgen_fuzz_tests = b.addTest(.{ .root_module = world_worldgen_fuzz_root, .filters = test_filters });
     world_worldgen_fuzz_tests.root_module.link_libc = true;
     if (enable_rmlui) addRmlUi(world_worldgen_fuzz_tests);
-    test_step.dependOn(&b.addRunArtifact(world_worldgen_fuzz_tests).step);
+    test_step.dependOn(&addRunArtifact(b, world_worldgen_fuzz_tests).step);
 
     const integration_root_module = b.createModule(.{
         .root_source_file = b.path("src/integration_test.zig"),
@@ -902,7 +902,7 @@ fn defineBuildSteps(
     if (enable_rmlui) addRmlUi(exe_integration_tests);
 
     const test_integration_step = b.step("test-integration", "Run integration smoke test");
-    const run_integration_tests = b.addRunArtifact(exe_integration_tests);
+    const run_integration_tests = addRunArtifact(b, exe_integration_tests);
     run_integration_tests.stdio_limit = .unlimited;
     run_integration_tests.step.dependOn(&shader_cmd.step);
     test_integration_step.dependOn(&run_integration_tests.step);
@@ -950,20 +950,33 @@ fn defineBuildSteps(
     integration_robustness.root_module.linkSystemLibrary("sdl3", .{}); // Needed for C imports if any
     if (enable_rmlui) addRmlUi(integration_robustness);
 
-    const test_robustness_run = b.addRunArtifact(integration_robustness);
+    const test_robustness_run = addRunArtifact(b, integration_robustness);
     // Ensure robust-demo is built first
     test_robustness_run.step.dependOn(&b.addInstallArtifact(robust_demo, .{}).step);
 
     const test_robustness_step = b.step("test-robustness", "Run robustness integration test");
     test_robustness_step.dependOn(&test_robustness_run.step);
 
-    const run_robust_cmd = b.addRunArtifact(robust_demo);
+    const run_robust_cmd = addRunArtifact(b, robust_demo);
     run_robust_cmd.step.dependOn(b.getInstallStep());
 
     const run_robust_step = b.step("run-robust", "Run the GPU robustness demo");
     run_robust_step.dependOn(&run_robust_cmd.step);
 
     defineShaderValidation(b, test_step);
+}
+
+fn addRunArtifact(b: *std.Build, artifact: *std.Build.Step.Compile) *std.Build.Step.Run {
+    const dynamic_linker = b.graph.environ_map.get("ZIGCRAFT_DYNAMIC_LINKER") orelse
+        return b.addRunArtifact(artifact);
+    if (dynamic_linker.len == 0) return b.addRunArtifact(artifact);
+
+    const run = b.addSystemCommand(&.{dynamic_linker});
+    run.addArtifactArg(artifact);
+    if (b.graph.environ_map.get("ZIGCRAFT_RUNTIME_LIBRARY_PATH")) |library_path| {
+        if (library_path.len > 0) run.setEnvironmentVariable("LD_LIBRARY_PATH", library_path);
+    }
+    return run;
 }
 
 fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOptions {

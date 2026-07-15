@@ -3,27 +3,15 @@
   "artifact_type": "benchmark-baseline",
   "status": "ready",
   "generated": true,
-  "required_presets": [
-    "low",
-    "medium",
-    "high"
-  ],
-  "required_scenarios": [
-    "stationary",
-    "traversal",
-    "rapid-turn",
-    "teleport-eviction"
-  ],
+  "required_presets": ["low", "medium", "high"],
+  "required_scenarios": ["stationary", "traversal", "rapid-turn", "teleport-eviction"],
   "provenance": {
     "world_seed": 12345,
     "build.mode": "ReleaseFast",
     "build.world": "overworld",
     "build.fixture": "none",
     "build.headless": true,
-    "build.resolution": [
-      1920,
-      1080
-    ],
+    "build.resolution": [1920, 1080],
     "provenance.gpu_adapter": "AMD Radeon RX 5700 XT",
     "provenance.gpu_driver": "Mesa RADV 25.2.6",
     "provenance.runner": "local NixOS x86_64",
@@ -43,10 +31,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -184,7 +169,7 @@
             },
             "state_transition": {
               "total_ms": 0.24041100000000004,
-              "avg_ms": 4.090709545686575e-05
+              "avg_ms": 4.090709545686575e-5
             },
             "upload_prep": {
               "total_ms": 0.6508689999999999,
@@ -476,10 +461,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -617,7 +599,7 @@
             },
             "state_transition": {
               "total_ms": 0.35783999999999994,
-              "avg_ms": 3.9619131975199284e-05
+              "avg_ms": 3.9619131975199284e-5
             },
             "upload_prep": {
               "total_ms": 0.9891729999999999,
@@ -909,10 +891,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -1050,11 +1029,11 @@
             },
             "state_transition": {
               "total_ms": 0.324468,
-              "avg_ms": 4.1834450747808144e-05
+              "avg_ms": 4.1834450747808144e-5
             },
             "upload_prep": {
               "total_ms": 0.774721,
-              "avg_ms": 9.988666838576585e-05
+              "avg_ms": 9.988666838576585e-5
             },
             "upload_submission": {
               "total_ms": 0,
@@ -1342,10 +1321,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -1483,7 +1459,7 @@
             },
             "state_transition": {
               "total_ms": 0.291743,
-              "avg_ms": 4.2238743303894595e-05
+              "avg_ms": 4.2238743303894595e-5
             },
             "upload_prep": {
               "total_ms": 0.713814,
@@ -1777,10 +1753,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -1918,7 +1891,7 @@
             },
             "state_transition": {
               "total_ms": 0.08926299999999998,
-              "avg_ms": 4.838102981029809e-05
+              "avg_ms": 4.838102981029809e-5
             },
             "upload_prep": {
               "total_ms": 1.9186430000000003,
@@ -2210,10 +2183,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -2347,11 +2317,11 @@
             },
             "generation_dispatch": {
               "total_ms": 0.134476,
-              "avg_ms": 4.1262964099417005e-05
+              "avg_ms": 4.1262964099417005e-5
             },
             "state_transition": {
               "total_ms": 0.307413,
-              "avg_ms": 9.43274010432648e-05
+              "avg_ms": 9.43274010432648e-5
             },
             "upload_prep": {
               "total_ms": 0.4092380000000002,
@@ -2643,10 +2613,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -2784,7 +2751,7 @@
             },
             "state_transition": {
               "total_ms": 0.11431900000000006,
-              "avg_ms": 5.6903434544549555e-05
+              "avg_ms": 5.6903434544549555e-5
             },
             "upload_prep": {
               "total_ms": 1.757701,
@@ -3076,10 +3043,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -3213,11 +3177,11 @@
             },
             "generation_dispatch": {
               "total_ms": 0.043418999999999985,
-              "avg_ms": 1.6207166853303464e-05
+              "avg_ms": 1.6207166853303464e-5
             },
             "state_transition": {
               "total_ms": 0.19633899999999993,
-              "avg_ms": 7.328816722657705e-05
+              "avg_ms": 7.328816722657705e-5
             },
             "upload_prep": {
               "total_ms": 1.7156190000000002,
@@ -3511,10 +3475,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -3652,7 +3613,7 @@
             },
             "state_transition": {
               "total_ms": 0.05986199999999986,
-              "avg_ms": 5.0903061224489675e-05
+              "avg_ms": 5.0903061224489675e-5
             },
             "upload_prep": {
               "total_ms": 2.223355999999999,
@@ -3944,10 +3905,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -4085,7 +4043,7 @@
             },
             "state_transition": {
               "total_ms": 0.1173519999999999,
-              "avg_ms": 4.618339236521051e-05
+              "avg_ms": 4.618339236521051e-5
             },
             "upload_prep": {
               "total_ms": 4.939024999999999,
@@ -4377,10 +4335,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -4518,7 +4473,7 @@
             },
             "state_transition": {
               "total_ms": 0.07941500000000001,
-              "avg_ms": 5.779839883551675e-05
+              "avg_ms": 5.779839883551675e-5
             },
             "upload_prep": {
               "total_ms": 2.594778,
@@ -4810,10 +4765,7 @@
           "world": "overworld",
           "fixture": "none",
           "headless": true,
-          "resolution": [
-            1920,
-            1080
-          ]
+          "resolution": [1920, 1080]
         },
         "provenance": {
           "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -4947,11 +4899,11 @@
             },
             "generation_dispatch": {
               "total_ms": 0.01467400000000002,
-              "avg_ms": 6.0736754966887505e-06
+              "avg_ms": 6.0736754966887505e-6
             },
             "state_transition": {
               "total_ms": 0.1657129999999999,
-              "avg_ms": 6.858981788079466e-05
+              "avg_ms": 6.858981788079466e-5
             },
             "upload_prep": {
               "total_ms": 4.0039940000000005,
@@ -5248,10 +5200,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -5389,7 +5338,7 @@
               },
               "state_transition": {
                 "total_ms": 0.23340799999999995,
-                "avg_ms": 4.0437976437976426e-05
+                "avg_ms": 4.0437976437976426e-5
               },
               "upload_prep": {
                 "total_ms": 6.8931049999999985,
@@ -5681,10 +5630,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -5822,7 +5768,7 @@
               },
               "state_transition": {
                 "total_ms": 0.24041100000000004,
-                "avg_ms": 4.090709545686575e-05
+                "avg_ms": 4.090709545686575e-5
               },
               "upload_prep": {
                 "total_ms": 0.6508689999999999,
@@ -6163,10 +6109,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -6304,7 +6247,7 @@
               },
               "state_transition": {
                 "total_ms": 0.36193700000000006,
-                "avg_ms": 4.0139403349229243e-05
+                "avg_ms": 4.0139403349229243e-5
               },
               "upload_prep": {
                 "total_ms": 11.559888,
@@ -6596,10 +6539,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -6737,7 +6677,7 @@
               },
               "state_transition": {
                 "total_ms": 0.35783999999999994,
-                "avg_ms": 3.9619131975199284e-05
+                "avg_ms": 3.9619131975199284e-5
               },
               "upload_prep": {
                 "total_ms": 0.9891729999999999,
@@ -7078,10 +7018,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -7219,7 +7156,7 @@
               },
               "state_transition": {
                 "total_ms": 0.32901499999999995,
-                "avg_ms": 4.225182997303197e-05
+                "avg_ms": 4.225182997303197e-5
               },
               "upload_prep": {
                 "total_ms": 9.172615,
@@ -7511,10 +7448,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -7652,11 +7586,11 @@
               },
               "state_transition": {
                 "total_ms": 0.324468,
-                "avg_ms": 4.1834450747808144e-05
+                "avg_ms": 4.1834450747808144e-5
               },
               "upload_prep": {
                 "total_ms": 0.774721,
-                "avg_ms": 9.988666838576585e-05
+                "avg_ms": 9.988666838576585e-5
               },
               "upload_submission": {
                 "total_ms": 0,
@@ -7993,10 +7927,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -8134,7 +8065,7 @@
               },
               "state_transition": {
                 "total_ms": 0.3000759999999999,
-                "avg_ms": 4.3058688477543395e-05
+                "avg_ms": 4.3058688477543395e-5
               },
               "upload_prep": {
                 "total_ms": 6.498789,
@@ -8426,10 +8357,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -8567,7 +8495,7 @@
               },
               "state_transition": {
                 "total_ms": 0.291743,
-                "avg_ms": 4.2238743303894595e-05
+                "avg_ms": 4.2238743303894595e-5
               },
               "upload_prep": {
                 "total_ms": 0.713814,
@@ -8910,10 +8838,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -9051,7 +8976,7 @@
               },
               "state_transition": {
                 "total_ms": 0.09293099999999999,
-                "avg_ms": 5.162833333333333e-05
+                "avg_ms": 5.162833333333333e-5
               },
               "upload_prep": {
                 "total_ms": 1.6141949999999996,
@@ -9343,10 +9268,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -9484,7 +9406,7 @@
               },
               "state_transition": {
                 "total_ms": 0.08926299999999998,
-                "avg_ms": 4.838102981029809e-05
+                "avg_ms": 4.838102981029809e-5
               },
               "upload_prep": {
                 "total_ms": 1.9186430000000003,
@@ -9825,10 +9747,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -9962,7 +9881,7 @@
               },
               "generation_dispatch": {
                 "total_ms": 0.24924799999999997,
-                "avg_ms": 8.006681657565048e-05
+                "avg_ms": 8.006681657565048e-5
               },
               "state_transition": {
                 "total_ms": 0.730959,
@@ -10258,10 +10177,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -10395,11 +10311,11 @@
               },
               "generation_dispatch": {
                 "total_ms": 0.134476,
-                "avg_ms": 4.1262964099417005e-05
+                "avg_ms": 4.1262964099417005e-5
               },
               "state_transition": {
                 "total_ms": 0.307413,
-                "avg_ms": 9.43274010432648e-05
+                "avg_ms": 9.43274010432648e-5
               },
               "upload_prep": {
                 "total_ms": 0.4092380000000002,
@@ -10740,10 +10656,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -10881,7 +10794,7 @@
               },
               "state_transition": {
                 "total_ms": 0.102526,
-                "avg_ms": 4.84298535663675e-05
+                "avg_ms": 4.84298535663675e-5
               },
               "upload_prep": {
                 "total_ms": 1.7289840000000005,
@@ -11173,10 +11086,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -11314,7 +11224,7 @@
               },
               "state_transition": {
                 "total_ms": 0.11431900000000006,
-                "avg_ms": 5.6903434544549555e-05
+                "avg_ms": 5.6903434544549555e-5
               },
               "upload_prep": {
                 "total_ms": 1.757701,
@@ -11655,10 +11565,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -11792,7 +11699,7 @@
               },
               "generation_dispatch": {
                 "total_ms": 0.148872,
-                "avg_ms": 5.9836012861736335e-05
+                "avg_ms": 5.9836012861736335e-5
               },
               "state_transition": {
                 "total_ms": 0.344896,
@@ -12088,10 +11995,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -12225,11 +12129,11 @@
               },
               "generation_dispatch": {
                 "total_ms": 0.043418999999999985,
-                "avg_ms": 1.6207166853303464e-05
+                "avg_ms": 1.6207166853303464e-5
               },
               "state_transition": {
                 "total_ms": 0.19633899999999993,
-                "avg_ms": 7.328816722657705e-05
+                "avg_ms": 7.328816722657705e-5
               },
               "upload_prep": {
                 "total_ms": 1.7156190000000002,
@@ -12572,10 +12476,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -12713,7 +12614,7 @@
               },
               "state_transition": {
                 "total_ms": 0.060474999999999834,
-                "avg_ms": 5.1954467353951747e-05
+                "avg_ms": 5.1954467353951747e-5
               },
               "upload_prep": {
                 "total_ms": 3.629244999999999,
@@ -13005,10 +12906,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -13146,7 +13044,7 @@
               },
               "state_transition": {
                 "total_ms": 0.05986199999999986,
-                "avg_ms": 5.0903061224489675e-05
+                "avg_ms": 5.0903061224489675e-5
               },
               "upload_prep": {
                 "total_ms": 2.223355999999999,
@@ -13487,10 +13385,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -13628,7 +13523,7 @@
               },
               "state_transition": {
                 "total_ms": 0.116446,
-                "avg_ms": 4.691619661563255e-05
+                "avg_ms": 4.691619661563255e-5
               },
               "upload_prep": {
                 "total_ms": 6.9330929999999995,
@@ -13920,10 +13815,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -14061,7 +13953,7 @@
               },
               "state_transition": {
                 "total_ms": 0.1173519999999999,
-                "avg_ms": 4.618339236521051e-05
+                "avg_ms": 4.618339236521051e-5
               },
               "upload_prep": {
                 "total_ms": 4.939024999999999,
@@ -14402,10 +14294,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -14543,7 +14432,7 @@
               },
               "state_transition": {
                 "total_ms": 0.073571,
-                "avg_ms": 5.358412235979606e-05
+                "avg_ms": 5.358412235979606e-5
               },
               "upload_prep": {
                 "total_ms": 4.188067,
@@ -14835,10 +14724,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -14976,7 +14862,7 @@
               },
               "state_transition": {
                 "total_ms": 0.07941500000000001,
-                "avg_ms": 5.779839883551675e-05
+                "avg_ms": 5.779839883551675e-5
               },
               "upload_prep": {
                 "total_ms": 2.594778,
@@ -15317,10 +15203,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -15454,7 +15337,7 @@
               },
               "generation_dispatch": {
                 "total_ms": 0.026311999999999988,
-                "avg_ms": 1.1601410934744262e-05
+                "avg_ms": 1.1601410934744262e-5
               },
               "state_transition": {
                 "total_ms": 0.456211,
@@ -15750,10 +15633,7 @@
             "world": "overworld",
             "fixture": "none",
             "headless": true,
-            "resolution": [
-              1920,
-              1080
-            ]
+            "resolution": [1920, 1080]
           },
           "provenance": {
             "gpu_adapter": "AMD Radeon RX 5700 XT",
@@ -15887,11 +15767,11 @@
               },
               "generation_dispatch": {
                 "total_ms": 0.01467400000000002,
-                "avg_ms": 6.0736754966887505e-06
+                "avg_ms": 6.0736754966887505e-6
               },
               "state_transition": {
                 "total_ms": 0.1657129999999999,
-                "avg_ms": 6.858981788079466e-05
+                "avg_ms": 6.858981788079466e-5
               },
               "upload_prep": {
                 "total_ms": 4.0039940000000005,

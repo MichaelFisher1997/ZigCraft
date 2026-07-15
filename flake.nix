@@ -14,6 +14,18 @@
         };
 
         zig_version = "0.16.0";
+        nix_dynamic_linker = if pkgs.stdenv.isLinux then pkgs.stdenv.cc.bintools.dynamicLinker else "";
+        nix_runtime_library_path = if pkgs.stdenv.isLinux then pkgs.lib.makeLibraryPath [
+          pkgs.glibc
+          pkgs.stdenv.cc.cc.lib
+          pkgs.sdl3
+          pkgs.vulkan-loader
+          pkgs.mesa
+          cimgui
+          rmluiBridge
+          rmlui
+          pkgs.freetype
+        ] else "";
         zig_sources = {
           x86_64-linux = {
             url = "https://ziglang.org/download/${zig_version}/zig-x86_64-linux-${zig_version}.tar.xz";
@@ -421,6 +433,9 @@
               pkgs.freetype
             ];
 
+            ZIGCRAFT_DYNAMIC_LINKER = nix_dynamic_linker;
+            ZIGCRAFT_RUNTIME_LIBRARY_PATH = nix_runtime_library_path;
+
             shellHook = ''
               echo "Zig ${zig_version} + SDL3 Dev Environment"
               echo "Compiler: $(zig version)"
@@ -445,6 +460,12 @@
               rmlui
               pkgs.freetype
             ];
+
+            # Use the Nix glibc loader for binaries that link Nix libraries on
+            # non-NixOS CI hosts. Mixing those libraries with the host loader
+            # fails when the runner's glibc is older than nixpkgs' glibc.
+            ZIGCRAFT_DYNAMIC_LINKER = nix_dynamic_linker;
+            ZIGCRAFT_RUNTIME_LIBRARY_PATH = nix_runtime_library_path;
 
             shellHook = ''
               echo "Zig ${zig_version} CI unit environment"
@@ -471,6 +492,9 @@
               rmlui
               pkgs.freetype
             ];
+
+            ZIGCRAFT_DYNAMIC_LINKER = nix_dynamic_linker;
+            ZIGCRAFT_RUNTIME_LIBRARY_PATH = nix_runtime_library_path;
 
             shellHook = ''
               echo "Zig ${zig_version} CI graphics environment"
