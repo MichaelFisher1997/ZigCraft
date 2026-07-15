@@ -6,6 +6,7 @@ blocks-temp/
 libs/zig-image/
 result
 node_modules/
+__pycache__/
 .direnv/
 *-profile*
 test_output.txt

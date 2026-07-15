@@ -67,7 +67,10 @@ pub const CloudSystem = struct {
     pub fn render(self: *CloudSystem, ctx: rhi.RenderContext, camera_pos: Vec3) !void {
         if (!self.config.enabled or self.config.density <= 0.0) return;
         try self.updateMesh(camera_pos);
-        try self.uploadMesh();
+        self.uploadMesh() catch |err| switch (err) {
+            error.OutOfMemory, error.PendingCopyOverflow => return,
+            else => return err,
+        };
         if (self.vertex_count == 0) return;
         ctx.setTerrainPipelineBound(false);
         const smooth_offset = Vec3.init(
@@ -84,7 +87,10 @@ pub const CloudSystem = struct {
     pub fn renderShadow(self: *CloudSystem, ctx: rhi.RenderContext, camera_pos: Vec3) !void {
         if (!self.config.enabled or self.config.density <= 0.0 or self.vertex_count == 0 or !self.gpu_valid) return;
         try self.updateMesh(camera_pos);
-        try self.uploadMesh();
+        self.uploadMesh() catch |err| switch (err) {
+            error.OutOfMemory, error.PendingCopyOverflow => return,
+            else => return err,
+        };
         const smooth_offset = Vec3.init(
             (self.origin_x - self.mesh_origin_x) - (camera_pos.x - self.mesh_camera_pos.x),
             -(camera_pos.y - self.mesh_camera_pos.y),

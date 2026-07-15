@@ -63,6 +63,99 @@ const LOD_FRAME_DT_APPROX = manager_ctx.LOD_FRAME_DT_APPROX;
 const lodUploadBudgetBytes = manager_ctx.lodUploadBudgetBytes;
 const wouldExceedUploadBudget = manager_ctx.wouldExceedUploadBudget;
 const isUploadPressureError = manager_ctx.isUploadPressureError;
+const MAX_LIFECYCLE_TRANSITIONS_PER_UPDATE = manager_ctx.MAX_LIFECYCLE_TRANSITIONS_PER_UPDATE;
+
+/// Rendering can discover a compact submission failure, but may not retire GPU
+/// state while it holds the manager's render lock. Bound update-side recovery
+/// so a pathological driver cannot monopolize one frame.
+const MAX_COMPACT_DRAW_RECOVERIES_PER_UPDATE: usize = 4;
+
+/// Consumes compact draw failures recorded by the renderer. This runs only on
+/// the manager update thread: it pins immutable source data, retires compact
+/// GPU storage through the bridge, builds the expanded CPU mesh, then requeues
+/// the normal bounded upload path. Workers never call the bridge.
+pub fn recoverCompactDrawFailures(self: *Self) void {
+    const RecoveryTask = struct {
+        key: LODRegionKey,
+        chunk: *LODChunk,
+        mesh: *LODMesh,
+        lod_idx: usize,
+        job_token: u32,
+        source_revision: u32,
+    };
+
+    var recovered: usize = 0;
+    while (recovered < MAX_COMPACT_DRAW_RECOVERIES_PER_UPDATE) : (recovered += 1) {
+        var task: ?RecoveryTask = null;
+        self.mutex.lock();
+        find_failure: for (0..LODLevel.count) |lod_idx| {
+            var mesh_iter = self.meshes[lod_idx].iterator();
+            while (mesh_iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const chunk = self.regions[lod_idx].get(key) orelse continue;
+                const mesh = entry.value_ptr.*;
+                // The source identity guards against a render failure from a
+                // representation superseded by ingestion, cache reload, or a
+                // cancelled lifecycle token.
+                if (!mesh.compactDrawFailureMatches(chunk.job_token, chunk.source_revision)) continue;
+                if (chunk.getState() != .renderable) continue;
+
+                chunk.pin();
+                chunk.compact_disabled = true;
+                self.profiling.addCompactDisabled();
+                // `markCompactDrawFailed` already made the mesh non-renderable,
+                // so `noteRegionRemoved` cannot infer its former contribution.
+                // Account for it explicitly to keep the parent visible between
+                // the failed frame and successful expanded upload.
+                self.adjustParentReadyChildren(key, -1);
+                self.pending_region_count += 1;
+                chunk.setState(.meshing);
+                task = .{
+                    .key = key,
+                    .chunk = chunk,
+                    .mesh = mesh,
+                    .lod_idx = lod_idx,
+                    .job_token = chunk.job_token,
+                    .source_revision = chunk.source_revision,
+                };
+                break :find_failure;
+            }
+        }
+        self.mutex.unlock();
+
+        const recovery = task orelse break;
+        self.profiling.addCompactRecovery();
+        self.fallbackCompactMeshToCpu(recovery.mesh, recovery.chunk) catch |err| {
+            log.log.warn("LOD{} compact draw recovery CPU build failed: {}", .{ recovery.lod_idx, err });
+            self.mutex.lock();
+            if (self.regions[recovery.lod_idx].get(recovery.key) == recovery.chunk and
+                recovery.chunk.job_token == recovery.job_token and
+                recovery.chunk.source_revision == recovery.source_revision and
+                recovery.chunk.getState() == .meshing)
+            {
+                // The compact range is already safely retired. Retry the
+                // regular CPU meshing path later; compact remains disabled for
+                // this source revision.
+                recovery.chunk.setState(.generated);
+                self.enqueueTransition(recovery.key, recovery.chunk, .mesh);
+            }
+            recovery.chunk.unpin();
+            self.mutex.unlock();
+            continue;
+        };
+
+        self.mutex.lock();
+        if (self.regions[recovery.lod_idx].get(recovery.key) == recovery.chunk and
+            recovery.chunk.job_token == recovery.job_token and
+            recovery.chunk.source_revision == recovery.source_revision and
+            recovery.chunk.getState() == .meshing)
+        {
+            self.requeueUpload(recovery.lod_idx, recovery.chunk);
+        }
+        recovery.chunk.unpin();
+        self.mutex.unlock();
+    }
+}
 
 /// Process GPU uploads (limited per frame)
 pub fn processUploads(self: *Self) void {
@@ -75,7 +168,7 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         chunk: *LODChunk,
         mesh: *LODMesh,
         lod_idx: usize,
-        pending_bytes: usize,
+        staging_bytes: usize,
     };
 
     self.mutex.lockShared();
@@ -86,26 +179,34 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
     var uploaded_bytes: usize = 0;
 
     while (uploads < max_uploads) {
+        const prep_timer = self.profiling.begin();
         var task: ?UploadTask = null;
         var completed_without_upload = false;
         var made_progress = false;
-        var stop_processing = false;
+        var deferred_for_budget = false;
 
         self.mutex.lock();
         const active_lod_count = lod_chunk.activeLODCount(self.config);
 
+        // Inspect at most the queue depth observed for each level. An
+        // oversized far migration goes back at the tail, allowing a later
+        // near upload to use the remaining frame budget without looping on
+        // that deferred entry forever.
         var order_idx: usize = 0;
-        while (order_idx < active_lod_count and uploads < max_uploads and task == null and !completed_without_upload and !stop_processing) : (order_idx += 1) {
+        while (order_idx < active_lod_count and task == null and !completed_without_upload) : (order_idx += 1) {
             const i = lod_scheduler.priorityLevelIndex(order_idx, active_lod_count);
-            if (self.upload_queues[i].pop()) |chunk| {
+            const attempts = self.upload_queues[i].count();
+            var attempt: usize = 0;
+            while (attempt < attempts and task == null and !completed_without_upload) : (attempt += 1) if (self.upload_queues[i].pop()) |chunk| {
                 made_progress = true;
                 const key = chunk.key();
                 if (self.meshes[i].get(key)) |mesh| {
-                    const pending_bytes = mesh.pendingUploadBytes();
-                    if (wouldExceedUploadBudget(uploaded_bytes, pending_bytes, upload_budget_bytes, uploads)) {
+                    const staging_bytes = self.gpu_bridge.uploadCost(mesh).total();
+                    if (wouldExceedUploadBudget(uploaded_bytes, staging_bytes, upload_budget_bytes)) {
+                        self.profiling.addStagingPressure();
                         self.requeueUpload(i, chunk);
-                        stop_processing = true;
-                        break;
+                        deferred_for_budget = true;
+                        continue;
                     }
 
                     chunk.pin();
@@ -114,27 +215,65 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
                         .chunk = chunk,
                         .mesh = mesh,
                         .lod_idx = i,
-                        .pending_bytes = pending_bytes,
+                        .staging_bytes = staging_bytes,
                     };
                 } else {
                     self.markRegionRenderable(key, chunk);
                     uploads += 1;
                     completed_without_upload = true;
                 }
-            }
+            };
         }
         self.mutex.unlock();
 
-        if (stop_processing or !made_progress) break;
-        if (completed_without_upload) continue;
+        if (!made_progress) {
+            self.profiling.end(.upload_prep, prep_timer);
+            break;
+        }
+        if (completed_without_upload) {
+            self.profiling.end(.upload_prep, prep_timer);
+            continue;
+        }
 
-        const upload_task = task orelse continue;
+        const upload_task = task orelse {
+            self.profiling.end(.upload_prep, prep_timer);
+            if (deferred_for_budget) break;
+            continue;
+        };
+        self.profiling.end(.upload_prep, prep_timer);
+        const submission_timer = self.profiling.begin();
         self.gpu_bridge.upload(upload_task.mesh) catch |err| {
+            self.profiling.end(.upload_submission, submission_timer);
             log.log.warn("LOD{} mesh upload failed (will retry): {}", .{ upload_task.lod_idx, err });
+            // Compact allocation/update failures must not strand a far region
+            // in .mesh_ready. Rebuild its stable CPU heightfield while the
+            // upload task still pins the source, then put it straight back on
+            // the upload queue. This also covers LOD4.
+            if (upload_task.mesh.isCompact()) {
+                self.profiling.addCompactUploadFailure();
+                self.fallbackCompactMeshToCpu(upload_task.mesh, upload_task.chunk) catch |fallback_err| {
+                    log.log.warn("LOD{} compact fallback build failed; retaining retryable compact payload: {}", .{ upload_task.lod_idx, fallback_err });
+                    self.mutex.lock();
+                    self.stats.upload_failures += 1;
+                    uploads += 1;
+                    self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
+                    upload_task.chunk.unpin();
+                    self.mutex.unlock();
+                    return;
+                };
+                self.mutex.lock();
+                self.stats.upload_failures += 1;
+                uploads += 1;
+                self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
+                upload_task.chunk.unpin();
+                self.mutex.unlock();
+                continue;
+            }
             self.mutex.lock();
             self.stats.upload_failures += 1;
             uploads += 1;
             if (isUploadPressureError(err)) {
+                self.profiling.addStagingPressure();
                 self.requeueUpload(upload_task.lod_idx, upload_task.chunk);
                 upload_task.chunk.unpin();
                 self.mutex.unlock();
@@ -145,8 +284,21 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
             self.mutex.unlock();
             continue;
         };
+        self.profiling.end(.upload_submission, submission_timer);
 
-        uploaded_bytes += upload_task.pending_bytes;
+        uploaded_bytes += upload_task.staging_bytes;
+        self.profiling.addUploadBytes(upload_task.staging_bytes);
+        // Count only ownership that reached the GPU bridge successfully. A
+        // requeued failure arrives here once on its eventual successful upload,
+        // never once per retry. LOD3/LOD4 are the compact far-path boundary;
+        // near pooled uploads remain intentionally outside this comparison.
+        if (upload_task.lod_idx >= @intFromEnum(LODLevel.lod3)) {
+            if (upload_task.mesh.isCompact()) {
+                self.profiling.addCompactUploadBytes(upload_task.staging_bytes);
+            } else {
+                self.profiling.addFarExpandedUploadBytes(upload_task.staging_bytes);
+            }
+        }
         self.mutex.lock();
         self.markRegionRenderable(upload_task.key, upload_task.chunk);
         uploads += 1;
@@ -185,11 +337,14 @@ pub fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void
     const parent = key.parentKey() orelse return;
     const parent_chunk = self.regions[@intFromEnum(parent.lod)].get(parent) orelse return;
     parent_chunk.adjustReadyChildren(delta);
+    self.enqueueFade(parent, parent_chunk);
 }
 
 pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
     if (chunk.isRenderable()) return;
     chunk.markRenderable(self.countRenderableChildren(key));
+    self.enqueueFade(key, chunk);
+    if (self.pending_region_count > 0) self.pending_region_count -= 1;
     if (self.regionContributesGeometry(key, chunk)) {
         self.adjustParentReadyChildren(key, 1);
     }
@@ -198,13 +353,15 @@ pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) vo
 pub fn decayTransitionFrames(self: *Self) void {
     self.mutex.lock();
     defer self.mutex.unlock();
-    const active = lod_chunk.activeLODCount(self.config);
-    var i: usize = 1;
-    while (i < active) : (i += 1) {
-        var iter = self.regions[i].iterator();
-        while (iter.next()) |entry| {
-            const chunk = entry.value_ptr.*;
-            chunk.tickTransition();
+    var processed: usize = 0;
+    while (processed < MAX_LIFECYCLE_TRANSITIONS_PER_UPDATE) : (processed += 1) {
+        const token = self.fade_tokens.pop() orelse break;
+        if (token.stage != .fade) continue;
+        const chunk = self.regions[@intFromEnum(token.key.lod)].get(token.key) orelse continue;
+        if (!token.matches(chunk)) continue;
+        chunk.tickTransition();
+        if (chunk.transition_frames_remaining > 0) {
+            _ = self.fade_tokens.push(self.allocator, token) catch false;
         }
     }
 }
@@ -218,8 +375,15 @@ pub fn noteRegionRemoved(self: *Self, key: LODRegionKey, chunk: *const LODChunk)
 pub fn demoteRegionForRemesh(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
     if (chunk.getState() == .renderable) {
         self.noteRegionRemoved(key, chunk);
+        // Source revisions invalidate any queued worker/transition token before
+        // the edited data is allowed to publish a replacement mesh.
+        chunk.job_token +%= 1;
         chunk.setState(.generated);
+        self.pending_region_count += 1;
+        self.enqueueTransition(key, chunk, .mesh);
     } else if (chunk.getState() == .mesh_ready) {
+        chunk.job_token +%= 1;
         chunk.setState(.generated);
+        self.enqueueTransition(key, chunk, .mesh);
     }
 }

@@ -57,6 +57,17 @@ pub fn supportsIndirectFirstInstance(ctx: anytype) bool {
     return ctx.vulkan_device.draw_indirect_first_instance;
 }
 
+pub fn supportsIndirectCount(ctx: anytype) bool {
+    return ctx.vulkan_device.draw_indirect_count;
+}
+
+/// This is intentionally a single backend capability rather than a collection
+/// of Vulkan feature bits.  It certifies the descriptor-snapshot contract used
+/// by compact terrain/water indirect streams.
+pub fn supportsCompactLODGpuCulling(ctx: anytype) bool {
+    return ctx.vulkan_device.draw_indirect_first_instance and ctx.vulkan_device.draw_indirect_count;
+}
+
 pub fn recover(ctx: anytype) !void {
     if (!ctx.runtime.gpu_fault_detected) return;
 

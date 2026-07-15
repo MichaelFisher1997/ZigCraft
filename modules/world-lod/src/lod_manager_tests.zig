@@ -6,18 +6,20 @@ const Vec3 = @import("engine-math").Vec3;
 const rhi_types = @import("engine-rhi").rhi_types;
 const Chunk = @import("world-core").Chunk;
 const world_core = @import("world-core");
-const lod_manager = @import("world-lod").lod_manager;
+const lod_manager = @import("lod_manager.zig");
 const LODManager = lod_manager.LODManager;
+const LODGenerator = @import("lod_generator.zig").LODGenerator;
 const LODStats = lod_manager.LODStats;
-const MAX_LOD_REGIONS = lod_manager.MAX_LOD_REGIONS;
-const lod_chunk = @import("world-lod").lod_chunk;
+const LODProfilingCollector = @import("lod_stats.zig").LODProfilingCollector;
+const MAX_LOD_REGIONS = @import("lod_manager_context.zig").MAX_LOD_REGIONS;
+const lod_chunk = @import("lod_chunk.zig");
 const LODLevel = lod_chunk.LODLevel;
 const LODConfig = lod_chunk.LODConfig;
 const ILODConfig = lod_chunk.ILODConfig;
 const LODChunk = lod_chunk.LODChunk;
 const LODSimplifiedData = lod_chunk.LODSimplifiedData;
-const LODMesh = @import("world-lod").LODMesh;
-const lod_gpu = @import("world-lod").lod_upload_queue;
+const LODMesh = @import("lod_mesh.zig").LODMesh;
+const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
 const MeshMap = lod_gpu.MeshMap;
@@ -30,16 +32,29 @@ const ColumnInfo = world_worldgen.ColumnInfo;
 const Generator = world_worldgen.Generator;
 const RegionInfo = world_worldgen.region.RegionInfo;
 
+fn lodGeneratorFromGenerator(generator: Generator) LODGenerator {
+    return .{
+        .ptr = generator.ptr,
+        .generate_heightmap_only = generator.vtable.generateHeightmapOnly,
+        .maybe_recenter_cache = generator.vtable.maybeRecenterCache,
+        .seed = generator.getSeed(),
+        .identity_hash = std.hash.Wyhash.hash(0, generator.info.name),
+        .version = generator.info.version,
+    };
+}
+
 test "LODManager initialization" {
     const allocator = std.testing.allocator;
 
     const MockState = struct {
         buffer_created: bool = false,
         buffer_destroyed: bool = false,
+        prepare_saw_stats: bool = false,
+        prepare_saw_profiling: bool = false,
     };
 
     const MockGenerator = struct {
-        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
+        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) error{OutOfMemory}!void {}
         fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
         fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
             return false;
@@ -70,7 +85,7 @@ test "LODManager initialization" {
     const mock_gen = Generator{
         .ptr = &mock_gen_impl,
         .vtable = &MockGenerator.vtable,
-        .info = .{ .name = "Mock", .description = "Mock Generator" },
+        .info = .{ .name = "Mock", .description = "Mock Generator", .version = 1 },
     };
 
     var config = LODConfig{
@@ -96,7 +111,14 @@ test "LODManager initialization" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
+        }.f,
+        .prepare_frame_fn = struct {
+            fn f(ctx: *anyopaque, _: u64, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+                const state: *MockState = @ptrCast(@alignCast(ctx));
+                state.prepare_saw_stats = stats != null;
+                state.prepare_saw_profiling = profiling != null;
+            }
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -117,12 +139,16 @@ test "LODManager initialization" {
         .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
     };
 
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen.toLODGenerator(), &mock_atlas);
+    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, lodGeneratorFromGenerator(mock_gen), &mock_atlas);
     mgr.cleanup_covered_regions = false;
 
     const stats = mgr.getStats();
     try std.testing.expectEqual(@as(u32, 0), stats.totalLoaded());
     try std.testing.expectEqual(@as(u32, 0), stats.totalGenerating());
+    mgr.profiling.enabled = true;
+    mgr.prepareFrame(1, Mat4.identity, Vec3.zero, null, null, null);
+    try std.testing.expect(mock_state.prepare_saw_stats);
+    try std.testing.expect(mock_state.prepare_saw_profiling);
 
     mgr.deinit();
 
@@ -136,7 +162,7 @@ test "LODManager end-to-end covered cleanup" {
     const allocator = std.testing.allocator;
 
     const MockGenerator = struct {
-        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
+        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) error{OutOfMemory}!void {}
         fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
         fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
             return false;
@@ -167,7 +193,7 @@ test "LODManager end-to-end covered cleanup" {
     const mock_gen = Generator{
         .ptr = &mock_gen_impl,
         .vtable = &MockGenerator.vtable,
-        .info = .{ .name = "Mock", .description = "Mock Generator" },
+        .info = .{ .name = "Mock", .description = "Mock Generator", .version = 1 },
     };
 
     var config = LODConfig{
@@ -190,7 +216,7 @@ test "LODManager end-to-end covered cleanup" {
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -211,7 +237,7 @@ test "LODManager end-to-end covered cleanup" {
         .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
     };
 
-    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen.toLODGenerator(), &mock_atlas);
+    var mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, lodGeneratorFromGenerator(mock_gen), &mock_atlas);
     mgr.cleanup_covered_regions = false;
     defer mgr.deinit();
 
@@ -266,15 +292,28 @@ test "LODStats aggregation" {
 
     stats.addMemory(2 * 1024 * 1024);
     try std.testing.expectEqual(@as(u32, 2), stats.memory_used_mb);
+    stats.profiling.enabled = true;
 
     stats.reset();
     try std.testing.expectEqual(@as(u32, 0), stats.totalLoaded());
     try std.testing.expectEqual(@as(u32, 0), stats.memory_used_mb);
+    try std.testing.expect(!stats.profiling.enabled);
 }
 
 test "LODManager constants" {
     try std.testing.expect(MAX_LOD_REGIONS > 0);
     try std.testing.expect(LODLevel.count >= 2);
+}
+
+test "LODManager preserves the CPU heightfield fallback for far LODs" {
+    var config = LODConfig{ .mesh_path = .qem };
+    const manager = try buildIngestionManager(std.testing.allocator, &config);
+    defer manager.deinit();
+
+    // Far LODs must not inherit an optional mesh path. They retain the
+    // CPU-expanded heightfield route when a future renderer path is unavailable.
+    try std.testing.expectEqual(@import("engine-rhi").LODMeshPath.heightfield, manager.effectiveMeshPath(.lod3));
+    try std.testing.expectEqual(@import("engine-rhi").LODMeshPath.heightfield, manager.effectiveMeshPath(.lod4));
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +324,7 @@ test "LODManager constants" {
 /// `config` (it must outlive the returned manager, since ILODConfig references it).
 fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LODManager {
     const MockGenerator = struct {
-        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) void {}
+        fn generate(_: *anyopaque, _: *Chunk, _: ?*const bool) error{OutOfMemory}!void {}
         fn generateHeightmapOnly(_: *anyopaque, _: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {}
         fn maybeRecenterCache(_: *anyopaque, _: i32, _: i32) bool {
             return false;
@@ -316,7 +355,7 @@ fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LOD
     const mock_gen = Generator{
         .ptr = &mock_gen_impl,
         .vtable = &MockGenerator.vtable,
-        .info = .{ .name = "Mock", .description = "Mock Generator" },
+        .info = .{ .name = "Mock", .description = "Mock Generator", .version = 1 },
     };
 
     var noop_ctx: u8 = 0;
@@ -335,7 +374,7 @@ fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LOD
 
     const mock_render = LODRenderInterface{
         .render_fn = struct {
-            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats) void {}
+            fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
         }.f,
         .deinit_fn = struct {
             fn f(_: *anyopaque) void {}
@@ -356,7 +395,7 @@ fn buildIngestionManager(allocator: std.mem.Allocator, config: *LODConfig) !*LOD
         .tile_mappings = [_]TextureAtlas.BlockTiles{TextureAtlas.BlockTiles.uniform(0)} ** MAX_BLOCK_TYPES,
     };
 
-    const mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, mock_gen.toLODGenerator(), &mock_atlas);
+    const mgr = try LODManager.init(allocator, config.interface(), mock_bridge, mock_render, lodGeneratorFromGenerator(mock_gen), &mock_atlas);
     mgr.cleanup_covered_regions = false;
     return mgr;
 }
@@ -400,6 +439,29 @@ test "ingestChunk upgrades worldgen region data and schedules a remesh" {
     try std.testing.expectEqual(lod_chunk.LODState.generated, lchunk.state);
     try std.testing.expect(lchunk.dirty);
     try std.testing.expect(lchunk.store_dirty);
+}
+
+test "ingestChunk defers while a cancelled worker still pins source data" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    lchunk.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .empty, .daylight, .empty);
+    lchunk.state = .generated;
+    lchunk.pin();
+    defer lchunk.unpin();
+
+    var chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 64) : (y += 1) chunk.setBlock(0, y, 0, .stone);
+
+    mgr.ingestChunk(0, 0, &chunk, .edited);
+
+    try std.testing.expectEqual(@as(f32, 10.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.worldgen, lchunk.data.simplified.getColumnProvenance(0, 0));
+    try std.testing.expect(mgr.ingestion_queue.pending_ingestions.items.len > 0);
 }
 
 test "ingestChunk provenance authority: edited beats chunk_derived, worldgen cannot overwrite" {
@@ -466,7 +528,7 @@ test "markChunkEdited coalesces and re-ingests via the resolver on update" {
     mgr.markChunkEdited(0, 0);
 
     // update() drains the edit queue on its cooldown (starts expired).
-    try mgr.update(Vec3.zero, Vec3.zero, null, null);
+    for (0..4) |_| try mgr.update(Vec3.zero, Vec3.zero, null, null);
 
     try std.testing.expectEqual(@as(f32, 90.0), lchunk.data.simplified.getHeight(0, 0));
     try std.testing.expectEqual(LODColumnProvenance.edited, lchunk.data.simplified.getColumnProvenance(0, 0));
@@ -484,10 +546,10 @@ test "enforceMemoryBudget shrinks finer radii under sustained pressure and spare
 
     // Force sustained over-budget state with no evictable regions, so the
     // hysteresis grow path must fire.
-    mgr.memory_used_bytes = 50_000_000;
-    try mgr.update(Vec3.zero, Vec3.zero, null, null);
+    mgr.memory_governor.used_bytes = 50_000_000;
+    try mgr.enforceMemoryBudget();
 
     // Finer levels (1..count-2) must have grown; coarsest (horizon) untouched.
-    try std.testing.expect(mgr.radius_shrink_chunks[1] > 0);
-    try std.testing.expectEqual(@as(i32, 0), mgr.radius_shrink_chunks[LODLevel.count - 1]);
+    try std.testing.expect(mgr.memory_governor.radius_shrink_chunks[1] > 0);
+    try std.testing.expectEqual(@as(i32, 0), mgr.memory_governor.radius_shrink_chunks[LODLevel.count - 1]);
 }

@@ -89,8 +89,12 @@ pub const ResourceManager = struct {
         self.staging_ring = try StagingRing.init(vulkan_device, transfer_queue.DEFAULT_STAGING_CAPACITY);
         log.log.info("Staging ring initialized: {}MB", .{transfer_queue.DEFAULT_STAGING_CAPACITY / (1024 * 1024)});
 
-        const tx_family = vulkan_device.transfer_family;
-        const is_dedicated = vulkan_device.has_dedicated_transfer_queue;
+        // Buffer resources use exclusive sharing and are consumed by graphics.
+        // Until queue-family release/acquire ownership transfers are modeled,
+        // record uploads on the graphics family. A semaphore alone does not
+        // transfer exclusive buffer ownership from a transfer-only queue.
+        const tx_family = vulkan_device.graphics_family;
+        const is_dedicated = false;
         self.transfer = try TransferQueue.init(vulkan_device, tx_family, is_dedicated);
         if (is_dedicated) {
             log.log.info("Transfer queue: DEDICATED (family {})", .{tx_family});
@@ -265,7 +269,7 @@ pub const ResourceManager = struct {
             .vertex => c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             .index => c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             .uniform => c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            .indirect => c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .indirect => c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             .storage => c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | c.VK_BUFFER_USAGE_TRANSFER_DST_BIT | c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT | c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         };
 
@@ -297,9 +301,11 @@ pub const ResourceManager = struct {
 
     pub fn updateBuffer(self: *ResourceManager, handle: rhi.BufferHandle, offset: usize, data: []const u8) rhi.RhiError!void {
         const buf = self.buffers.get(handle) orelse return;
+        const end = std.math.add(usize, offset, data.len) catch return error.InvalidState;
+        if (@as(u64, @intCast(end)) > buf.size) return error.InvalidState;
 
         const slice = self.staging_ring.allocate(data.len, self.current_frame_index) orelse {
-            log.log.err("Staging ring overflow in updateBuffer! Data dropped.", .{});
+            log.log.err("Staging ring overflow in updateBuffer: request={} used={} head={} tail={} frame={} frame_used={any}", .{ data.len, self.staging_ring.used_total, self.staging_ring.head, self.staging_ring.tail, self.current_frame_index, self.staging_ring.frame_used });
             return error.OutOfMemory;
         };
 

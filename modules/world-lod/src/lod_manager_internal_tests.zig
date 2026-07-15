@@ -12,9 +12,12 @@ const world_core = @import("world-core");
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const Vec3 = @import("engine-math").Vec3;
 const Vertex = @import("engine-rhi").Vertex;
+const TextureAtlas = @import("engine-assets").TextureAtlas;
 const RingBuffer = @import("engine-core").ring_buffer.RingBuffer;
 const JobQueue = @import("engine-core").job_system.JobQueue;
+const Job = @import("engine-core").job_system.Job;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
+const LODStagingCost = @import("lod_mesh_resources.zig").LODStagingCost;
 const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const MeshMap = lod_gpu.MeshMap;
@@ -25,6 +28,9 @@ const manager_mod = @import("lod_manager.zig");
 const LODManager = manager_mod.LODManager;
 const MAX_CACHE_LOADS_PER_UPDATE = @import("lod_manager_context.zig").MAX_CACHE_LOADS_PER_UPDATE;
 const DEFAULT_LOD_UPLOAD_BUDGET_BYTES = @import("lod_manager_context.zig").DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+const wouldExceedUploadBudget = @import("lod_manager_context.zig").wouldExceedUploadBudget;
+const cancelWorkOutsideHorizon = @import("lod_manager_core_ops.zig").cancelWorkOutsideHorizon;
+const generation_ops = @import("lod_manager_generation_ops.zig");
 const testing = std.testing;
 
 test "LODManager cache helpers save and reload source data" {
@@ -35,7 +41,8 @@ test "LODManager cache helpers save and reload source data" {
     var path_buf: [fs.max_path_bytes]u8 = undefined;
     const save_dir_path = try dir.realpath(".", &path_buf);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 2, .rz = -3, .lod = .lod1 };
@@ -49,6 +56,7 @@ test "LODManager cache helpers save and reload source data" {
     }, 0xFF112233, .empty, .daylight, .empty);
 
     manager.saveCachedSourceData(key, &data);
+    manager.flushCacheIO();
 
     const store_path = try lod_store.containerPath(testing.allocator, save_dir_path, manager.cacheKey(key));
     defer testing.allocator.free(store_path);
@@ -71,7 +79,8 @@ test "LODManager cache helpers delete corrupt cache files" {
     var path_buf: [fs.max_path_bytes]u8 = undefined;
     const save_dir_path = try dir.realpath(".", &path_buf);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
@@ -105,7 +114,8 @@ test "LODManager enableCache deletes stale generator-keyed store and writes live
     const stale_key = lod_cache.Key{ .seed = 42, .generator_identity_hash = 1234, .generator_version = 1, .rx = 0, .rz = 0, .lod = .lod1 };
     try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
@@ -134,7 +144,8 @@ test "LODManager enableCache deletes stale data-version store" {
     const stale_key = lod_cache.Key{ .seed = 42, .generator_identity_hash = 99, .generator_version = 7, .rx = 0, .rz = 0, .lod = .lod1 };
     try lod_store.writePayload(testing.allocator, save_dir_path, stale_key, "stale", lod_store.DEFAULT_STORE_SIZE_CAP_MB);
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
     defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
@@ -144,7 +155,7 @@ test "LODManager enableCache deletes stale data-version store" {
     try testing.expectEqual(lod_cache.CACHE_VERSION, header.lod_data_version);
 }
 
-test "LODManager queued generation reloads source store on main thread" {
+test "LODManager queued generation applies source-store completion asynchronously" {
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -163,15 +174,18 @@ test "LODManager queued generation reloads source store on main thread" {
         .foundation = .stone,
     }, 0xFF445566, .empty, .daylight, .empty);
 
-    var writer = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var writer = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer writer.cache_io.deinit();
     writer.config = config.interface();
     writer.cache_store.cache_dir_path = null;
     try writer.enableCache(save_dir_path);
     writer.saveCachedSourceData(key, &source);
+    writer.flushCacheIO();
     if (writer.cache_store.cache_dir_path) |path| testing.allocator.free(path);
     writer.ingestion_queue.edit_dirty.deinit();
 
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.config = config.interface();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
@@ -199,6 +213,9 @@ test "LODManager queued generation reloads source store on main thread" {
             manager.job_dispatcher.queues[i].deinit();
             testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
+        manager.generation_tokens.deinit(testing.allocator);
+        manager.transition_tokens.deinit(testing.allocator);
+        manager.fade_tokens.deinit(testing.allocator);
     }
 
     const chunk = try testing.allocator.create(LODChunk);
@@ -206,8 +223,15 @@ test "LODManager queued generation reloads source store on main thread" {
     chunk.state = .queued_for_generation;
     chunk.job_token = 9;
     try manager.regions[@intFromEnum(key.lod)].put(key, chunk);
+    _ = try manager.generation_tokens.push(testing.allocator, .{ .key = key, .job_token = chunk.job_token, .source_revision = chunk.source_revision, .priority = 0, .stage = .generation });
 
     try manager.processQueuedGenerations(Vec3.zero);
+
+    // The update-side call only enqueues the read; no source data has been
+    // deserialized or applied until the dedicated cache worker completes.
+    try testing.expectEqual(@as(u32, 0), manager.cache_hits);
+    try testing.expectEqual(LODState.queued_for_generation, chunk.state);
+    manager.flushCacheIO();
 
     try testing.expectEqual(@as(u32, 1), manager.cache_hits);
     try testing.expectEqual(@as(usize, 0), manager.job_dispatcher.queues[LODLevel.count - 1].count());
@@ -231,7 +255,8 @@ test "LODManager queued generation dispatches beyond cache read budget" {
     const save_dir_path = try dir.realpath(".", &path_buf);
 
     var config = LODConfig{};
-    var manager = LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    var manager = try LODManager.initCacheTestManager(testing.allocator, save_dir_path);
+    defer manager.cache_io.deinit();
     manager.config = config.interface();
     manager.cache_store.cache_dir_path = null;
     try manager.enableCache(save_dir_path);
@@ -259,6 +284,9 @@ test "LODManager queued generation dispatches beyond cache read budget" {
             manager.job_dispatcher.queues[i].deinit();
             testing.allocator.destroy(manager.job_dispatcher.queues[i]);
         }
+        manager.generation_tokens.deinit(testing.allocator);
+        manager.transition_tokens.deinit(testing.allocator);
+        manager.fade_tokens.deinit(testing.allocator);
     }
 
     const candidate_count = MAX_CACHE_LOADS_PER_UPDATE + 4;
@@ -269,21 +297,30 @@ test "LODManager queued generation dispatches beyond cache read budget" {
         chunk.state = .queued_for_generation;
         chunk.job_token = @intCast(i + 1);
         try manager.regions[@intFromEnum(key.lod)].put(key, chunk);
+        _ = try manager.generation_tokens.push(testing.allocator, .{ .key = key, .job_token = chunk.job_token, .source_revision = chunk.source_revision, .priority = @intCast(i), .stage = .generation });
     }
 
     try manager.processQueuedGenerations(Vec3.zero);
 
+    try testing.expectEqual(@as(u32, 0), manager.cache_misses);
+    try testing.expectEqual(candidate_count - MAX_CACHE_LOADS_PER_UPDATE, manager.job_dispatcher.queues[LODLevel.count - 1].count());
+    manager.flushCacheIO();
     try testing.expectEqual(@as(u32, @intCast(MAX_CACHE_LOADS_PER_UPDATE)), manager.cache_misses);
     try testing.expectEqual(candidate_count, manager.job_dispatcher.queues[LODLevel.count - 1].count());
 }
 
 fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LODManager {
-    var manager = LODManager.initCacheTestManager(allocator, "");
+    var manager = try LODManager.initCacheTestManager(allocator, "");
     manager.config = config.interface();
+    manager.job_dispatcher.worker_pool = null;
+    manager.job_dispatcher.next_token = 1;
+    manager.job_dispatcher.stop_flag = std.atomic.Value(bool).init(false);
     for (0..LODLevel.count) |i| {
         manager.regions[i] = RegionMap.init(allocator);
         manager.meshes[i] = MeshMap.init(allocator);
         manager.upload_queues[i] = try RingBuffer(*LODChunk).init(allocator, 4);
+        manager.job_dispatcher.queues[i] = try allocator.create(JobQueue);
+        manager.job_dispatcher.queues[i].* = JobQueue.init(allocator);
     }
     var bridge_ctx: u8 = 0;
     manager.gpu_bridge = .{
@@ -302,6 +339,7 @@ fn initEvictionTestManager(allocator: std.mem.Allocator, config: *LODConfig) !LO
 }
 
 fn deinitEvictionTestManager(manager: *LODManager) void {
+    manager.cache_io.deinit();
     for (0..LODLevel.count) |i| {
         var region_iter = manager.regions[i].iterator();
         while (region_iter.next()) |entry| {
@@ -312,6 +350,7 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
 
         var mesh_iter = manager.meshes[i].iterator();
         while (mesh_iter.next()) |entry| {
+            entry.value_ptr.*.releasePendingCompactTile();
             if (entry.value_ptr.*.pending_vertices) |pending| {
                 manager.allocator.free(pending);
             }
@@ -319,12 +358,409 @@ fn deinitEvictionTestManager(manager: *LODManager) void {
         }
         manager.meshes[i].deinit();
         manager.upload_queues[i].deinit();
+        manager.job_dispatcher.queues[i].deinit();
+        manager.allocator.destroy(manager.job_dispatcher.queues[i]);
     }
     for (manager.mesh_disposal.queue.items) |mesh| {
+        manager.gpu_bridge.destroy(mesh);
         manager.allocator.destroy(mesh);
     }
     manager.mesh_disposal.queue.deinit(manager.allocator);
     manager.ingestion_queue.edit_dirty.deinit();
+    manager.generation_tokens.deinit(manager.allocator);
+    manager.transition_tokens.deinit(manager.allocator);
+    manager.fade_tokens.deinit(manager.allocator);
+}
+
+test "LODManager reports pool, direct, pending, deferred, and logical admission memory separately" {
+    var config = LODConfig{ .memory_budget_mb = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const RendererMemory = struct {
+        fn stats(_: *anyopaque) lod_gpu.LODRendererMemoryStats {
+            return .{
+                .pool_gpu_capacity_bytes = 100,
+                .pool_gpu_allocated_bytes = 80,
+                .pool_gpu_slack_bytes = 20,
+                .pool_cpu_shadow_bytes = 100,
+                .compact_pool_capacity_bytes = 60,
+                .compact_pool_allocated_bytes = 40,
+                .compact_pool_free_bytes = 20,
+            };
+        }
+    };
+    manager.renderer = .{
+        .render_fn = undefined,
+        .deinit_fn = undefined,
+        .ptr = undefined,
+        .memory_stats_fn = RendererMemory.stats,
+    };
+    manager.profiling = .init(true);
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    _ = try putTestRegion(&manager, key, .uploading);
+    const direct_mesh = try putTestPendingMesh(&manager, key, 3);
+    direct_mesh.capacity = 2;
+
+    const deferred = try testing.allocator.create(LODMesh);
+    deferred.* = LODMesh.init(testing.allocator, .lod1);
+    deferred.capacity = 4;
+    deferred.pending_vertices = try testing.allocator.alloc(Vertex, 5);
+    manager.queueMeshDeletion(deferred);
+
+    manager.updateStats();
+    const stats = manager.getStats();
+
+    const vertex_bytes = @sizeOf(Vertex);
+    const expected_direct_gpu = 6 * vertex_bytes;
+    const expected_pending = 8 * vertex_bytes;
+    const expected_known = 260 + expected_direct_gpu + expected_pending;
+    const expected_reservation = 1024 * 1024;
+    try testing.expectEqual(@as(u64, 100), stats.pool_gpu_capacity_bytes);
+    try testing.expectEqual(@as(u64, 80), stats.pool_gpu_allocated_bytes);
+    try testing.expectEqual(@as(u64, 20), stats.pool_gpu_slack_bytes);
+    try testing.expectEqual(@as(u64, 100), stats.pool_cpu_shadow_bytes);
+    try testing.expectEqual(@as(u64, 60), stats.compact_pool_capacity_bytes);
+    try testing.expectEqual(@as(u64, 40), stats.compact_pool_allocated_bytes);
+    try testing.expectEqual(@as(u64, expected_direct_gpu), stats.direct_mesh_gpu_bytes);
+    try testing.expectEqual(@as(u64, 3 * vertex_bytes), stats.pending_cpu_upload_bytes);
+    try testing.expectEqual(@as(u64, 4 * vertex_bytes), stats.deferred_deletion_gpu_bytes);
+    try testing.expectEqual(@as(u64, 5 * vertex_bytes), stats.deferred_deletion_cpu_bytes);
+    try testing.expectEqual(@as(u64, expected_known), stats.memory_used_bytes);
+    try testing.expectEqual(@as(u64, 1), stats.resident_region_count);
+    try testing.expectEqual(@as(u64, expected_reservation), stats.logical_admission_reservation_bytes);
+    try testing.expectEqual(@as(u64, expected_known + expected_reservation), stats.logical_admission_bytes);
+    try testing.expectEqual(@as(u64, expected_known), stats.profiling.known_memory_bytes);
+    try testing.expectEqual(@as(u64, 4 * vertex_bytes), stats.profiling.deferred_deletion_bytes);
+    try testing.expectEqual(@as(u64, 5 * vertex_bytes), stats.profiling.deferred_deletion_cpu_bytes);
+}
+
+test "LODManager pool-exhaustion upload failure falls back to CPU heightfield and requeues LOD4" {
+    var config = LODConfig{ .max_uploads_per_frame = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+    atlas.tile_luminance = [_]TextureAtlas.BlockTileLuminance{TextureAtlas.BlockTileLuminance.uniform(1.0)} ** world_core.MAX_BLOCK_TYPES;
+    atlas.tile_colors = [_]TextureAtlas.BlockTileColor{TextureAtlas.BlockTileColor.uniform(0xffffff)} ** world_core.MAX_BLOCK_TYPES;
+    manager.atlas = &atlas;
+
+    const key = LODRegionKey{ .rx = 96, .rz = -96, .lod = .lod4 };
+    const chunk = try putTestRegion(&manager, key, .uploading);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod4) };
+    const mesh = try manager.getOrCreateMesh(key);
+    switch (chunk.data) {
+        .simplified => |*data| try mesh.buildCompactTile(data),
+        else => unreachable,
+    }
+    try manager.upload_queues[@intFromEnum(key.lod)].push(chunk);
+
+    // This mirrors a compact pool exhaustion during a large teleport: compact
+    // upload fails, while the ordinary CPU mesh upload remains available.
+    manager.gpu_bridge.on_upload = struct {
+        fn f(candidate: *LODMesh, _: *anyopaque) @import("engine-rhi").RhiError!void {
+            if (candidate.isCompact()) return error.OutOfMemory;
+        }
+    }.f;
+
+    manager.processUploadsWithBudget(std.math.maxInt(usize));
+    try testing.expect(!mesh.isCompact());
+    try testing.expect(mesh.pendingVerticesForTest() != null);
+    try testing.expectEqual(LODState.uploading, chunk.getState());
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[@intFromEnum(key.lod)].count());
+
+    manager.processUploadsWithBudget(std.math.maxInt(usize));
+    try testing.expectEqual(LODState.renderable, chunk.getState());
+}
+
+test "LODManager compact fallback keeps a renderable compact mesh through injected CPU allocation failure" {
+    const DestroyCounter = struct {
+        calls: u32 = 0,
+
+        fn destroy(mesh: *LODMesh, ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.calls += 1;
+            // Match the production compact-pool callback, which clears all
+            // compact counts/state before LODGPUBridge clears pending vertices.
+            mesh.clearCompactState();
+        }
+    };
+
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+    atlas.tile_luminance = [_]TextureAtlas.BlockTileLuminance{TextureAtlas.BlockTileLuminance.uniform(1.0)} ** world_core.MAX_BLOCK_TYPES;
+    atlas.tile_colors = [_]TextureAtlas.BlockTileColor{TextureAtlas.BlockTileColor.uniform(0xffffff)} ** world_core.MAX_BLOCK_TYPES;
+    manager.atlas = &atlas;
+
+    var destroy_counter = DestroyCounter{};
+    manager.gpu_bridge.ctx = &destroy_counter;
+    manager.gpu_bridge.on_destroy = DestroyCounter.destroy;
+
+    var chunk = LODChunk.init(0, 0, .lod4);
+    defer chunk.deinit(testing.allocator);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod4) };
+    chunk.setState(.renderable);
+
+    const backing = try testing.allocator.alloc(u8, 2 * 1024 * 1024);
+    defer testing.allocator.free(backing);
+    var failing_storage = std.heap.FixedBufferAllocator.init(backing);
+    var mesh = LODMesh.init(failing_storage.allocator(), .lod4);
+    defer mesh.clearRetiredState();
+    switch (chunk.data) {
+        .simplified => |*data| try mesh.buildCompactTile(data),
+        else => unreachable,
+    }
+    mesh.ready = true;
+    mesh.vertex_count = mesh.compact_index_count;
+    const original_count = mesh.vertex_count;
+
+    // Exhaust exactly the mesh allocator after compact setup. The CPU build
+    // must fail before retiring the only renderable representation.
+    const compact_end = failing_storage.end_index;
+    failing_storage.end_index = backing.len;
+    try testing.expectError(error.OutOfMemory, manager.fallbackCompactMeshToCpu(&mesh, &chunk));
+    try testing.expectEqual(@as(u32, 0), destroy_counter.calls);
+    try testing.expect(chunk.isRenderable());
+    try testing.expect(mesh.isCompact());
+    try testing.expect(mesh.isRenderable());
+    try testing.expectEqual(original_count, mesh.vertex_count);
+    try testing.expect(mesh.pendingVerticesForTest() == null);
+
+    // Restore capacity and retry the same transition. This proves the failed
+    // attempt was not an empty .renderable state or a no-op retry.
+    failing_storage.end_index = compact_end;
+    try manager.fallbackCompactMeshToCpu(&mesh, &chunk);
+    try testing.expectEqual(@as(u32, 1), destroy_counter.calls);
+    try testing.expect(!mesh.isCompact());
+    try testing.expect(!mesh.isRenderable());
+    try testing.expect(mesh.pendingVerticesForTest() != null);
+}
+
+test "LODManager recovers compact draw failure on update path without losing parent fallback" {
+    const RecoveryMock = struct {
+        allocator: std.mem.Allocator,
+        destroy_calls: u32 = 0,
+        upload_calls: u32 = 0,
+
+        fn bridge(self: *@This()) LODGPUBridge {
+            return .{
+                .on_upload = upload,
+                .on_destroy = destroy,
+                .on_wait_idle = waitIdle,
+                .ctx = self,
+            };
+        }
+
+        fn upload(mesh: *LODMesh, ctx: *anyopaque) @import("engine-rhi").RhiError!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.upload_calls += 1;
+            const pending = mesh.pending_vertices orelse return;
+            mesh.vertex_count = @intCast(pending.len);
+            mesh.opaque_vertex_count = @intCast(pending.len);
+            mesh.ready = true;
+            self.allocator.free(pending);
+            mesh.pending_vertices = null;
+        }
+
+        fn destroy(_: *LODMesh, ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.destroy_calls += 1;
+        }
+
+        fn waitIdle(_: *anyopaque) void {}
+    };
+
+    var config = LODConfig{ .max_uploads_per_frame = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var atlas: TextureAtlas = undefined;
+    @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+    atlas.tile_luminance = [_]TextureAtlas.BlockTileLuminance{TextureAtlas.BlockTileLuminance.uniform(1.0)} ** world_core.MAX_BLOCK_TYPES;
+    atlas.tile_colors = [_]TextureAtlas.BlockTileColor{TextureAtlas.BlockTileColor.uniform(0xffffff)} ** world_core.MAX_BLOCK_TYPES;
+    manager.atlas = &atlas;
+
+    var mock = RecoveryMock{ .allocator = testing.allocator };
+    manager.gpu_bridge = mock.bridge();
+
+    const parent_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod4 };
+    const parent = try putTestRegion(&manager, parent_key, .renderable);
+    parent.ready_children = 4;
+    _ = try putTestMesh(&manager, parent_key, 3);
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod3 };
+    const chunk = try putTestRegion(&manager, key, .renderable);
+    chunk.job_token = 17;
+    chunk.source_revision = 3;
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod3) };
+    const mesh = try manager.getOrCreateMesh(key);
+    switch (chunk.data) {
+        .simplified => |*data| try mesh.buildCompactTile(data),
+        else => unreachable,
+    }
+    mesh.setSourceIdentity(chunk.job_token, chunk.source_revision);
+    mesh.ready = true;
+    mesh.vertex_count = mesh.compact_index_count;
+
+    // The renderer's failed frame only suppresses the broken compact draw. It
+    // does not touch RHI or hierarchy state while it holds the shared lock.
+    try testing.expect(!mesh.noteCompactBackendDrawFailure());
+    try testing.expect(mesh.isRenderable());
+    var draw_attempt: u8 = 1;
+    while (draw_attempt < LODMesh.COMPACT_BACKEND_FAILURE_LIMIT) : (draw_attempt += 1) {
+        const terminal = mesh.noteCompactBackendDrawFailure();
+        try testing.expectEqual(draw_attempt + 1 == LODMesh.COMPACT_BACKEND_FAILURE_LIMIT, terminal);
+    }
+    try testing.expect(!mesh.isRenderable());
+    try testing.expectEqual(@as(u32, 0), mock.destroy_calls);
+    try testing.expectEqual(LODState.renderable, chunk.getState());
+    try testing.expectEqual(@as(u8, 4), parent.readyChildren());
+
+    // The next update owns retirement and CPU fallback publication. Removing
+    // the child contribution immediately keeps the parent visible until upload.
+    manager.recoverCompactDrawFailures();
+    try testing.expectEqual(@as(u32, 1), mock.destroy_calls);
+    try testing.expect(chunk.compact_disabled);
+    try testing.expect(!mesh.isCompact());
+    try testing.expect(mesh.pendingVerticesForTest() != null);
+    try testing.expectEqual(LODState.uploading, chunk.getState());
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[@intFromEnum(key.lod)].count());
+    try testing.expectEqual(@as(u8, 3), parent.readyChildren());
+
+    manager.processUploadsWithBudget(std.math.maxInt(usize));
+    try testing.expectEqual(@as(u32, 1), mock.upload_calls);
+    try testing.expectEqual(LODState.renderable, chunk.getState());
+    try testing.expect(mesh.isRenderable());
+    try testing.expectEqual(@as(u8, 4), parent.readyChildren());
+}
+
+test "LODManager ignores stale compact draw failures and retries on source change" {
+    const DestroyCounter = struct {
+        calls: u32 = 0,
+
+        fn destroy(_: *LODMesh, ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.calls += 1;
+        }
+    };
+
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    var counter = DestroyCounter{};
+    manager.gpu_bridge.ctx = &counter;
+    manager.gpu_bridge.on_destroy = DestroyCounter.destroy;
+
+    const key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod3 };
+    const chunk = try putTestRegion(&manager, key, .renderable);
+    chunk.job_token = 8;
+    chunk.source_revision = 4;
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod3) };
+    const mesh = try manager.getOrCreateMesh(key);
+    switch (chunk.data) {
+        .simplified => |*data| try mesh.buildCompactTile(data),
+        else => unreachable,
+    }
+    mesh.setSourceIdentity(chunk.job_token, chunk.source_revision);
+    mesh.ready = true;
+    mesh.markCompactDrawFailed();
+
+    // A newer source has its own remesh lifecycle. A late failure from the old
+    // representation must neither retire it nor disable compact for the new
+    // source/device session.
+    chunk.markSourceDirty();
+    manager.recoverCompactDrawFailures();
+    try testing.expect(!chunk.compact_disabled);
+    try testing.expect(mesh.isCompact());
+    try testing.expectEqual(LODState.renderable, chunk.getState());
+    try testing.expectEqual(@as(u32, 0), counter.calls);
+
+    // A stale job token is rejected by the same identity guard.
+    mesh.setSourceIdentity(chunk.job_token, chunk.source_revision);
+    chunk.job_token +%= 1;
+    manager.recoverCompactDrawFailures();
+    try testing.expect(mesh.isCompact());
+    try testing.expectEqual(@as(u32, 0), counter.calls);
+}
+
+test "LODManager meshes reduced LOD3 and full-density horizon grids through compact and expanded paths" {
+    const Cases = [_]struct { lod: LODLevel, width: u32, compact_capable: bool }{
+        .{ .lod = .lod3, .width = 65, .compact_capable = true },
+        .{ .lod = .lod4, .width = 65, .compact_capable = true },
+        .{ .lod = .lod3, .width = 65, .compact_capable = false },
+        .{ .lod = .lod4, .width = 65, .compact_capable = false },
+    };
+
+    inline for (Cases) |case| {
+        var config = LODConfig{};
+        var manager = try initEvictionTestManager(testing.allocator, &config);
+        defer deinitEvictionTestManager(&manager);
+
+        var atlas: TextureAtlas = undefined;
+        @memset(std.mem.asBytes(&atlas.tile_mappings), 0);
+        atlas.tile_luminance = [_]TextureAtlas.BlockTileLuminance{TextureAtlas.BlockTileLuminance.uniform(1.0)} ** world_core.MAX_BLOCK_TYPES;
+        atlas.tile_colors = [_]TextureAtlas.BlockTileColor{TextureAtlas.BlockTileColor.uniform(0xffffff)} ** world_core.MAX_BLOCK_TYPES;
+        manager.atlas = &atlas;
+
+        var capability_context: u8 = 0;
+        manager.gpu_bridge.ctx = &capability_context;
+        manager.gpu_bridge.on_supports_compact_gpu_culling = struct {
+            fn supports(_: *anyopaque) bool {
+                return case.compact_capable;
+            }
+        }.supports;
+
+        manager.generator = .{
+            .ptr = &capability_context,
+            .generate_heightmap_only = struct {
+                fn generate(_: *anyopaque, data: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {
+                    var z: u32 = 0;
+                    while (z < data.width) : (z += 1) {
+                        var x: u32 = 0;
+                        while (x < data.width) : (x += 1) {
+                            data.setGeneratedColumn(x, z, 64.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4f8c45, .empty, .daylight, .empty);
+                        }
+                    }
+                }
+            }.generate,
+            .maybe_recenter_cache = struct {
+                fn recenter(_: *anyopaque, _: i32, _: i32) bool {
+                    return false;
+                }
+            }.recenter,
+            .seed = 1,
+            .identity_hash = 1,
+            .version = 1,
+        };
+
+        const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = case.lod };
+        const chunk = try putTestRegion(&manager, key, .generating);
+        chunk.job_token = 1;
+        generation_ops.processLODJob(&manager, .{ .type = .chunk_generation, .data = .{ .chunk = .{ .x = key.rx, .z = key.rz, .job_token = chunk.job_token, .lod_level = @intFromEnum(case.lod), .coord_scale = @intCast(case.lod.chunksPerSide()), .lod_radius = 4096 } } });
+
+        try testing.expectEqual(LODState.generated, chunk.getState());
+        switch (chunk.data) {
+            .simplified => |*data| try testing.expectEqual(case.width, data.width),
+            else => return error.TestExpectedEqual,
+        }
+
+        try manager.processStateTransitions(Vec3.zero);
+        const mesh_job: Job = manager.job_dispatcher.queues[LODLevel.count - 1].pop().?;
+        generation_ops.processLODJob(&manager, mesh_job);
+
+        const mesh = manager.meshes[@intFromEnum(case.lod)].get(key) orelse return error.TestExpectedEqual;
+        try testing.expectEqual(case.compact_capable, mesh.isCompact());
+        if (case.compact_capable) {
+            try testing.expectEqual((case.width - 1) * (case.width - 1) * 6, mesh.compact_index_count);
+        } else try testing.expect(mesh.pendingVerticesForTest() != null);
+        try testing.expectEqual(LODState.mesh_ready, chunk.getState());
+    }
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
@@ -353,16 +789,49 @@ fn putTestPendingMesh(manager: *LODManager, key: LODRegionKey, vertex_count: usi
     return mesh;
 }
 
+test "LODManager backs off size-limited store writes until the cap changes" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{ .lod_store_size_cap_mb = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    manager.cache_store.cache_dir_path = try testing.allocator.dupe(u8, save_dir);
+    defer testing.allocator.free(manager.cache_store.cache_dir_path.?);
+    manager.cache_store.use_config_store_size_cap = true;
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const chunk = try putTestRegion(&manager, key, .generated);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod1) };
+    chunk.store_dirty = true;
+    chunk.store_size_limited = true;
+    chunk.store_size_limit_cap_mb = 1;
+
+    manager.flushDirtyStores();
+    try testing.expect(!chunk.store_write_queued);
+    try testing.expect(chunk.store_dirty);
+
+    config.lod_store_size_cap_mb = 2;
+    manager.flushDirtyStores();
+    try testing.expect(chunk.store_write_queued);
+}
+
 const UploadMock = struct {
     allocator: std.mem.Allocator,
     calls: u32 = 0,
+    wait_idle_calls: u32 = 0,
     fail_with_pressure: bool = false,
+    lod4_migration_bytes: usize = 0,
 
     fn bridge(self: *UploadMock) LODGPUBridge {
         return .{
             .on_upload = upload,
             .on_destroy = destroy,
             .on_wait_idle = waitIdle,
+            .on_upload_cost = uploadCost,
             .ctx = @ptrCast(self),
         };
     }
@@ -381,7 +850,17 @@ const UploadMock = struct {
     }
 
     fn destroy(_: *LODMesh, _: *anyopaque) void {}
-    fn waitIdle(_: *anyopaque) void {}
+    fn waitIdle(ctx: *anyopaque) void {
+        const self: *UploadMock = @ptrCast(@alignCast(ctx));
+        self.wait_idle_calls += 1;
+    }
+    fn uploadCost(mesh: *LODMesh, ctx: *anyopaque) LODStagingCost {
+        const self: *UploadMock = @ptrCast(@alignCast(ctx));
+        return .{
+            .payload_bytes = mesh.pendingUploadBytes(),
+            .migration_bytes = if (mesh.lodLevel() == .lod4) self.lod4_migration_bytes else 0,
+        };
+    }
 };
 
 test "LODManager upload budget defers remaining queued meshes" {
@@ -409,6 +888,90 @@ test "LODManager upload budget defers remaining queued meshes" {
     try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
 }
 
+test "LODManager upload budget defers an oversized first mesh" {
+    var config = LODConfig{ .max_uploads_per_frame = 8 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var mock = UploadMock{ .allocator = testing.allocator };
+    manager.gpu_bridge = mock.bridge();
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const chunk = try putTestRegion(&manager, key, .uploading);
+    _ = try putTestPendingMesh(&manager, key, 1);
+    try manager.upload_queues[1].push(chunk);
+
+    manager.processUploadsWithBudget(@sizeOf(Vertex) - 1);
+
+    try testing.expectEqual(@as(u32, 0), mock.calls);
+    try testing.expectEqual(LODState.uploading, chunk.state);
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
+}
+
+test "LODManager upload budget lets a near upload bypass a far pool migration" {
+    var config = LODConfig{ .max_uploads_per_frame = 8 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    // The far mesh itself is small, but its pool replacement would restage
+    // two additional vertices. The budget must preflight the full migration.
+    var mock = UploadMock{ .allocator = testing.allocator, .lod4_migration_bytes = 2 * @sizeOf(Vertex) };
+    manager.gpu_bridge = mock.bridge();
+
+    const far_key = LODRegionKey{ .rx = 8, .rz = 0, .lod = .lod4 };
+    const near_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const far = try putTestRegion(&manager, far_key, .uploading);
+    const near = try putTestRegion(&manager, near_key, .uploading);
+    _ = try putTestPendingMesh(&manager, far_key, 1);
+    _ = try putTestPendingMesh(&manager, near_key, 1);
+    try manager.upload_queues[@intFromEnum(far_key.lod)].push(far);
+    try manager.upload_queues[@intFromEnum(near_key.lod)].push(near);
+
+    manager.processUploadsWithBudget(2 * @sizeOf(Vertex));
+
+    try testing.expectEqual(@as(u32, 1), mock.calls);
+    try testing.expectEqual(LODState.uploading, far.state);
+    try testing.expectEqual(LODState.renderable, near.state);
+    try testing.expectEqual(@as(usize, 1), manager.upload_queues[@intFromEnum(far_key.lod)].count());
+}
+
+test "LODManager routine upload and eviction record no streaming device waits" {
+    var config = LODConfig{ .max_uploads_per_frame = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    var mock = UploadMock{ .allocator = testing.allocator };
+    manager.gpu_bridge = mock.bridge();
+    manager.profiling = .init(true);
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const chunk = try putTestRegion(&manager, key, .uploading);
+    const mesh = try putTestPendingMesh(&manager, key, 1);
+    try manager.upload_queues[@intFromEnum(key.lod)].push(chunk);
+    manager.processUploadsWithBudget(@sizeOf(Vertex));
+
+    _ = manager.meshes[@intFromEnum(key.lod)].remove(key);
+    manager.queueMeshDeletion(mesh);
+    manager.processMeshDeletions(1);
+
+    try testing.expectEqual(@as(u32, 0), mock.wait_idle_calls);
+    try testing.expectEqual(@as(u64, 0), manager.profiling.snapshot().wait_idle_count);
+
+    manager.waitIdleTracked(.shutdown);
+    const profile = manager.profiling.snapshot();
+    try testing.expectEqual(@as(u32, 1), mock.wait_idle_calls);
+    try testing.expectEqual(@as(u64, 0), profile.wait_idle_count);
+    try testing.expectEqual(@as(u64, 1), profile.wait_idle_shutdown_count);
+}
+
+test "LOD upload budget permits zero-pending and unlimited uploads" {
+    const pending_bytes = @sizeOf(Vertex);
+
+    try testing.expect(!wouldExceedUploadBudget(0, 0, 1));
+    try testing.expect(!wouldExceedUploadBudget(0, pending_bytes, 0));
+    try testing.expect(!wouldExceedUploadBudget(0, pending_bytes, std.math.maxInt(usize)));
+}
+
 test "LODManager staging pressure failure stops upload sweep" {
     var config = LODConfig{ .max_uploads_per_frame = 8 };
     var manager = try initEvictionTestManager(testing.allocator, &config);
@@ -433,6 +996,71 @@ test "LODManager staging pressure failure stops upload sweep" {
     try testing.expectEqual(LODState.uploading, second.state);
     try testing.expectEqual(@as(usize, 2), manager.upload_queues[1].count());
     try testing.expectEqual(@as(u32, 1), manager.stats.upload_failures);
+}
+
+test "LODManager pause cancels queued and pinned stale work" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const queued_generation = try putTestRegion(&manager, .{ .rx = 0, .rz = 0, .lod = .lod1 }, .generating);
+    queued_generation.job_token = 11;
+    const queued_mesh = try putTestRegion(&manager, .{ .rx = 1, .rz = 0, .lod = .lod1 }, .meshing);
+    queued_mesh.job_token = 12;
+    const running_generation = try putTestRegion(&manager, .{ .rx = 2, .rz = 0, .lod = .lod1 }, .generating);
+    running_generation.job_token = 13;
+    running_generation.pin();
+    defer running_generation.unpin();
+    const running_mesh = try putTestRegion(&manager, .{ .rx = 3, .rz = 0, .lod = .lod1 }, .meshing);
+    running_mesh.job_token = 14;
+    running_mesh.pin();
+    defer running_mesh.unpin();
+    manager.pending_region_count = 4;
+
+    const queue = manager.job_dispatcher.queues[LODLevel.count - 1];
+    try queue.push(.{ .type = .chunk_generation, .data = .{ .chunk = .{ .x = 0, .z = 0, .job_token = 11, .lod_level = 1 } } });
+    try queue.push(.{ .type = .chunk_meshing, .data = .{ .chunk = .{ .x = 1, .z = 0, .job_token = 12, .lod_level = 1 } } });
+
+    manager.pause();
+
+    try testing.expectEqual(@as(usize, 0), queue.count());
+    try testing.expectEqual(LODState.missing, queued_generation.state);
+    try testing.expectEqual(@as(u32, 12), queued_generation.job_token);
+    try testing.expectEqual(LODState.generated, queued_mesh.state);
+    try testing.expectEqual(@as(u32, 13), queued_mesh.job_token);
+    try testing.expectEqual(LODState.missing, running_generation.state);
+    try testing.expectEqual(@as(u32, 14), running_generation.job_token);
+    try testing.expect(running_generation.cancellationRequested());
+    try testing.expectEqual(LODState.generated, running_mesh.state);
+    try testing.expectEqual(@as(u32, 15), running_mesh.job_token);
+    try testing.expect(running_mesh.cancellationRequested());
+    try testing.expectEqual(@as(usize, 2), manager.pending_region_count);
+    try testing.expectEqual(@as(u32, 4), manager.cancelled_jobs);
+}
+
+test "LODManager traversal cancels work outside its level horizon" {
+    var config = LODConfig{ .radii = .{ 8, 16, 32, 64, 128 } };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const near = try putTestRegion(&manager, .{ .rx = 0, .rz = 0, .lod = .lod1 }, .generating);
+    near.job_token = 7;
+    const stale = try putTestRegion(&manager, .{ .rx = 100, .rz = 100, .lod = .lod1 }, .generating);
+    stale.job_token = 9;
+    stale.cache_read_queued = true;
+    manager.pending_region_count = 2;
+
+    cancelWorkOutsideHorizon(&manager, 0, 0);
+
+    try testing.expectEqual(LODState.generating, near.state);
+    try testing.expectEqual(@as(u32, 7), near.job_token);
+    try testing.expect(!near.cancellationRequested());
+    try testing.expectEqual(LODState.missing, stale.state);
+    try testing.expectEqual(@as(u32, 10), stale.job_token);
+    try testing.expect(stale.cancellationRequested());
+    try testing.expect(!stale.cache_read_queued);
+    try testing.expectEqual(@as(usize, 1), manager.pending_region_count);
+    try testing.expectEqual(@as(u32, 1), manager.cancelled_jobs);
 }
 
 test "LODManager ready child counters update on renderable transitions and removal" {
@@ -538,4 +1166,153 @@ test "LODManager memory budget eviction skips unsafe regions and evicts farthest
     try testing.expect(manager.memory_governor.used_bytes <= budget_bytes);
     try testing.expectEqual(@as(u32, 1), manager.stats.evictions);
     try testing.expectEqual(@as(u32, 1), manager.mesh_disposal.queue.items.len);
+}
+
+test "Phase 5 stress repeated teleport eviction cache recovery edits and upload pressure" {
+    // Counted cycles intentionally replace elapsed-time assertions. This makes
+    // the PR gate short while allowing the scheduled gate to exercise a much
+    // longer session with identical ordering and failure conditions.
+    const cycles = @min(@import("engine-core").envInt("ZIGCRAFT_PHASE5_STRESS_ITERATIONS", 64), 4096);
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{ .memory_budget_mb = 1, .lod_store_size_cap_mb = 1 };
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    manager.profiling = .init(true);
+    manager.cache_store.cache_dir_path = null;
+    manager.cache_store.use_config_store_size_cap = true;
+    try manager.enableCache(save_dir);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+
+    var mock = UploadMock{ .allocator = testing.allocator };
+    manager.gpu_bridge = mock.bridge();
+
+    // Seed an oversized valid container, then replace it through the async
+    // cache pipeline under the one-MiB cap. This takes the bounded compaction
+    // path instead of merely exercising a synchronous store helper.
+    const cache_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod2 };
+    var source = try LODSimplifiedData.init(testing.allocator, .lod2);
+    defer source.deinit();
+    source.setColumn(0, 0, 64.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4f8c45, .empty, .daylight, .empty);
+    const oversized = try testing.allocator.alloc(u8, 1300 * 1024);
+    defer testing.allocator.free(oversized);
+    @memset(oversized, 0x5a);
+    try lod_store.writePayload(testing.allocator, save_dir, manager.cacheKey(cache_key), oversized, lod_store.DEFAULT_STORE_SIZE_CAP_MB);
+    manager.saveCachedSourceData(cache_key, &source);
+    manager.flushCacheIO();
+    const container_path = try lod_store.containerPath(testing.allocator, save_dir, manager.cacheKey(cache_key));
+    defer testing.allocator.free(container_path);
+    const compacted_file = try fs.cwd().openFile(container_path, .{});
+    const compacted_stat = try compacted_file.stat();
+    compacted_file.close();
+    try testing.expect(compacted_stat.size <= 1024 * 1024);
+    var cached = manager.loadCachedSourceData(cache_key) orelse return error.ExpectedCacheHit;
+    cached.deinit();
+
+    // A corrupt container must be discarded and subsequently recover through
+    // the asynchronous writer, rather than leaving a permanent cache miss.
+    const corrupt = try fs.cwd().createFile(container_path, .{ .truncate = true });
+    try corrupt.writeAll("corrupt Phase 5 cache container");
+    corrupt.close();
+    try testing.expect(manager.loadCachedSourceData(cache_key) == null);
+    try testing.expectError(error.FileNotFound, fs.cwd().openFile(container_path, .{}));
+    manager.saveCachedSourceData(cache_key, &source);
+    manager.flushCacheIO();
+    cached = manager.loadCachedSourceData(cache_key) orelse return error.ExpectedCacheRecovery;
+    cached.deinit();
+
+    const traveler_key = LODRegionKey{ .rx = 10_000, .rz = -10_000, .lod = .lod1 };
+    const pausable_key = LODRegionKey{ .rx = 10_001, .rz = -10_000, .lod = .lod1 };
+    const traveler = try putTestRegion(&manager, traveler_key, .missing);
+    const pausable = try putTestRegion(&manager, pausable_key, .missing);
+    const budget_bytes = @as(usize, config.memory_budget_mb) * 1024 * 1024;
+    const mesh_capacity: u32 = @intCast((600 * 1024) / @sizeOf(Vertex));
+    const mesh_bytes = @as(usize, mesh_capacity) * @sizeOf(Vertex);
+
+    for (0..cycles) |cycle| {
+        // Repeated long teleports must invalidate in-flight work without
+        // allowing a cancelled state to survive the next unpause.
+        traveler.resetCancellation();
+        traveler.state = .generating;
+        traveler.job_token +%= 1;
+        manager.pending_region_count += 1;
+        cancelWorkOutsideHorizon(&manager, 0, 0);
+        try testing.expectEqual(LODState.missing, traveler.getState());
+        try testing.expect(traveler.cancellationRequested());
+
+        pausable.resetCancellation();
+        pausable.state = .meshing;
+        pausable.job_token +%= 1;
+        manager.pause();
+        try testing.expectEqual(LODState.generated, pausable.getState());
+        try testing.expect(pausable.cancellationRequested());
+        manager.unpause();
+        try testing.expect(!manager.paused);
+
+        // Force a staging-pressure retry each cycle, then ensure the same
+        // upload completes once pressure clears. No streaming path may wait
+        // for the entire device to become idle.
+        const upload_key = LODRegionKey{ .rx = @intCast(20_000 + cycle), .rz = 0, .lod = .lod1 };
+        const upload_chunk = try putTestRegion(&manager, upload_key, .uploading);
+        const upload_mesh = try putTestPendingMesh(&manager, upload_key, 1);
+        try manager.upload_queues[@intFromEnum(upload_key.lod)].push(upload_chunk);
+        mock.fail_with_pressure = true;
+        manager.processUploadsWithBudget(DEFAULT_LOD_UPLOAD_BUDGET_BYTES);
+        try testing.expectEqual(LODState.uploading, upload_chunk.getState());
+        mock.fail_with_pressure = false;
+        manager.processUploadsWithBudget(DEFAULT_LOD_UPLOAD_BUDGET_BYTES);
+        try testing.expectEqual(LODState.renderable, upload_chunk.getState());
+        _ = manager.meshes[@intFromEnum(upload_key.lod)].remove(upload_key);
+        manager.queueMeshDeletion(upload_mesh);
+        upload_chunk.deinit(testing.allocator);
+        testing.allocator.destroy(upload_chunk);
+        _ = manager.regions[@intFromEnum(upload_key.lod)].remove(upload_key);
+        manager.processMeshDeletions(1);
+
+        // A parent fallback permits the finer child to be evicted under the
+        // one-MiB cap. Repeating the operation catches stale resident entries
+        // and deferred-deletion growth across a long teleport session.
+        const child_key = LODRegionKey{ .rx = @intCast(cycle * 2), .rz = 64, .lod = .lod1 };
+        const parent_key = child_key.parentKey().?;
+        _ = try putTestRegion(&manager, parent_key, .renderable);
+        _ = try putTestRegion(&manager, child_key, .renderable);
+        _ = try putTestMesh(&manager, child_key, mesh_capacity);
+        manager.memory_governor.used_bytes = budget_bytes + mesh_bytes;
+        try manager.enforceMemoryBudget();
+        try testing.expect(!manager.regions[@intFromEnum(child_key.lod)].contains(child_key));
+        try testing.expect(manager.memory_governor.used_bytes <= budget_bytes);
+        manager.processMeshDeletions(1);
+
+        // Edits are deliberately repeated across a small set of coordinates;
+        // the coalescing set must remain bounded even as other work churns.
+        manager.markChunkEdited(@intCast(cycle % 8), @intCast(-@as(i64, @intCast(cycle % 8))));
+        try testing.expect(manager.ingestion_queue.edit_dirty.count() <= 8);
+    }
+
+    // Saturate logical admission after the low-memory eviction loop. The
+    // scheduler must not add another resident region when its reservation
+    // would exceed the configured cap.
+    const resident_before = manager.regions[@intFromEnum(LODLevel.lod1)].count();
+    manager.memory_governor.logical_admission_bytes = budget_bytes;
+    manager.cleanup_covered_regions = false;
+    try manager.queueLODRegions(.lod1, Vec3.zero, null, null);
+    try testing.expectEqual(resident_before, manager.regions[@intFromEnum(LODLevel.lod1)].count());
+
+    try testing.expect(mock.calls >= cycles * 2);
+    try testing.expect(manager.stats.upload_failures >= cycles);
+    try testing.expect(manager.cancelled_jobs >= cycles * 2);
+    try testing.expectEqual(@as(u32, 0), mock.wait_idle_calls);
+    try testing.expectEqual(@as(u64, 0), manager.profiling.snapshot().wait_idle_count);
+    for (0..LODLevel.count) |lod_idx| {
+        var regions = manager.regions[lod_idx].iterator();
+        while (regions.next()) |entry| switch (entry.value_ptr.*.getState()) {
+            .queued_for_generation, .generating, .meshing, .uploading => return error.StuckLODState,
+            else => {},
+        };
+        try testing.expectEqual(@as(usize, 0), manager.upload_queues[lod_idx].count());
+    }
 }

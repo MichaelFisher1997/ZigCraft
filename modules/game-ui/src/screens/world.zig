@@ -84,6 +84,11 @@ pub const WorldScreen = struct {
     }
 
     pub fn initMenuPreview(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
+        // The rotating menu preview is intentionally bounded to full-detail
+        // chunks. It does not need the distant hierarchy, and continuously
+        // streaming compact tiles underneath a retained RmlUi overlay can
+        // trigger a RADV command-stream rejection on RDNA1. Normal worlds keep
+        // the user's LOD setting and the complete compact pipeline.
         return initWithDistance(
             allocator,
             context,
@@ -91,7 +96,7 @@ pub const WorldScreen = struct {
             generator_index,
             context.settings.render_distance,
             context.settings.horizon_distance,
-            context.settings.lod_enabled,
+            false,
             true,
         );
     }
@@ -676,10 +681,102 @@ pub const WorldScreen = struct {
         const rs = ws.getRenderStats();
         const stats = ws.getStats();
         var lod_display: ?LODStatsDisplay = null;
+        var lod_renderable_regions: u64 = 0;
         if (ws.getLODStats()) |ls| {
+            for (ls.loaded) |count| lod_renderable_regions += count;
             lod_display = .{
                 .loaded = ls.loaded,
                 .memory_used_mb = ls.memory_used_mb,
+                .memory_used_bytes = ls.memory_used_bytes,
+                .pool_gpu_capacity_bytes = ls.pool_gpu_capacity_bytes,
+                .pool_gpu_allocated_bytes = ls.pool_gpu_allocated_bytes,
+                .pool_gpu_slack_bytes = ls.pool_gpu_slack_bytes,
+                .pool_cpu_shadow_bytes = ls.pool_cpu_shadow_bytes,
+                .compact_pool_capacity_bytes = ls.compact_pool_capacity_bytes,
+                .compact_pool_allocated_bytes = ls.compact_pool_allocated_bytes,
+                .compact_pool_free_bytes = ls.compact_pool_free_bytes,
+                .compact_pool_retired_bytes = ls.compact_pool_retired_bytes,
+                .direct_mesh_gpu_bytes = ls.direct_mesh_gpu_bytes,
+                .source_data_cpu_bytes = ls.source_data_cpu_bytes,
+                .pending_cpu_upload_bytes = ls.pending_cpu_upload_bytes,
+                .deferred_deletion_gpu_bytes = ls.deferred_deletion_gpu_bytes,
+                .deferred_deletion_cpu_bytes = ls.deferred_deletion_cpu_bytes,
+                .profiling = .{
+                    .enabled = ls.profiling.enabled,
+                    .update_ms = ls.profiling.update_ms,
+                    .scheduling_ms = ls.profiling.scheduling_ms,
+                    .cache_ms = ls.profiling.cache_ms,
+                    .generation_dispatch_ms = ls.profiling.generation_dispatch_ms,
+                    .state_transition_ms = ls.profiling.state_transition_ms,
+                    .upload_prep_ms = ls.profiling.upload_prep_ms,
+                    .upload_submission_ms = ls.profiling.upload_submission_ms,
+                    .visibility_ms = ls.profiling.visibility_ms,
+                    .coverage_ms = ls.profiling.coverage_ms,
+                    .eviction_ms = ls.profiling.eviction_ms,
+                    .worker_generation_ms = ls.profiling.worker_generation_ms,
+                    .worker_mesh_construction_ms = ls.profiling.worker_mesh_construction_ms,
+                    .worker_far_expanded_mesh_construction_ms = ls.profiling.worker_far_expanded_mesh_construction_ms,
+                    .worker_compact_encode_ms = ls.profiling.worker_compact_encode_ms,
+                    .manager_lock_wait_ms = ls.profiling.manager_lock_wait_ms,
+                    .manager_lock_hold_ms = ls.profiling.manager_lock_hold_ms,
+                    .upload_bytes = ls.profiling.upload_bytes,
+                    .far_expanded_upload_bytes = ls.profiling.far_expanded_upload_bytes,
+                    .compact_upload_bytes = ls.profiling.compact_upload_bytes,
+                    .pending_cpu_upload_bytes = ls.profiling.pending_cpu_upload_bytes,
+                    .staging_pressure_count = ls.profiling.staging_pressure_count,
+                    .visible_count = ls.profiling.visible_count,
+                    .rejected_count = ls.profiling.rejected_count,
+                    .coverage_count = ls.profiling.coverage_count,
+                    .visibility_levels = blk: {
+                        var levels: [@import("engine-ui").LOD_VISIBILITY_LEVEL_COUNT]@import("engine-ui").LODVisibilityLevelDisplay = undefined;
+                        for (&levels, 0..) |*level, index| level.* = .{
+                            .candidates = ls.profiling.visibility_levels[index].candidates,
+                            .accepted = ls.profiling.visibility_levels[index].accepted,
+                            .rejected_no_draw = ls.profiling.visibility_levels[index].rejected_no_draw,
+                            .rejected_not_ready = ls.profiling.visibility_levels[index].rejected_not_ready,
+                            .rejected_missing_region = ls.profiling.visibility_levels[index].rejected_missing_region,
+                            .rejected_not_renderable = ls.profiling.visibility_levels[index].rejected_not_renderable,
+                            .rejected_finer_coverage = ls.profiling.visibility_levels[index].rejected_finer_coverage,
+                            .rejected_range = ls.profiling.visibility_levels[index].rejected_range,
+                            .rejected_frustum = ls.profiling.visibility_levels[index].rejected_frustum,
+                            .rejected_chunk_coverage = ls.profiling.visibility_levels[index].rejected_chunk_coverage,
+                            .coverage_checks = ls.profiling.visibility_levels[index].coverage_checks,
+                        };
+                        break :blk levels;
+                    },
+                    .deferred_deletion_bytes = ls.profiling.deferred_deletion_bytes,
+                    .deferred_deletion_cpu_bytes = ls.profiling.deferred_deletion_cpu_bytes,
+                    .pool_gpu_capacity_bytes = ls.profiling.pool_gpu_capacity_bytes,
+                    .pool_gpu_allocated_bytes = ls.profiling.pool_gpu_allocated_bytes,
+                    .pool_gpu_slack_bytes = ls.profiling.pool_gpu_slack_bytes,
+                    .pool_cpu_shadow_bytes = ls.profiling.pool_cpu_shadow_bytes,
+                    .compact_pool_capacity_bytes = ls.profiling.compact_pool_capacity_bytes,
+                    .compact_pool_allocated_bytes = ls.profiling.compact_pool_allocated_bytes,
+                    .compact_pool_free_bytes = ls.profiling.compact_pool_free_bytes,
+                    .compact_pool_retired_bytes = ls.profiling.compact_pool_retired_bytes,
+                    .direct_mesh_gpu_bytes = ls.profiling.direct_mesh_gpu_bytes,
+                    .known_memory_bytes = ls.profiling.known_memory_bytes,
+                    .wait_idle_count = ls.profiling.wait_idle_count,
+                    .wait_idle_ms = ls.profiling.wait_idle_ms,
+                    .gpu_culling_overflows = ls.profiling.gpu_culling_overflows,
+                    .gpu_culling_validation_mismatches = ls.profiling.gpu_culling_validation_mismatches,
+                    .gpu_culling_requested = ls.profiling.gpu_culling_requested,
+                    .gpu_culling_threshold = ls.profiling.gpu_culling_threshold,
+                    .gpu_culling_candidate_count = ls.profiling.gpu_culling_candidate_count,
+                    .gpu_culling_candidate_count_max = ls.profiling.gpu_culling_candidate_count_max,
+                    .gpu_culling_draw_submissions = ls.profiling.gpu_culling_draw_submissions,
+                    .gpu_culling_validation_generation = ls.profiling.gpu_culling_validation_generation,
+                    .gpu_culling_validation_completed_generation = ls.profiling.gpu_culling_validation_completed_generation,
+                    .gpu_culling_validation_completed_count = ls.profiling.gpu_culling_validation_completed_count,
+                    .compact_selected = ls.profiling.compact_selected,
+                    .compact_build_rejected = ls.profiling.compact_build_rejected,
+                    .compact_upload_failures = ls.profiling.compact_upload_failures,
+                    .compact_draw_unavailable = ls.profiling.compact_draw_unavailable,
+                    .compact_draw_failures = ls.profiling.compact_draw_failures,
+                    .compact_submissions = ls.profiling.compact_submissions,
+                    .compact_recoveries = ls.profiling.compact_recoveries,
+                    .compact_disabled = ls.profiling.compact_disabled,
+                },
             };
         }
         return .{
@@ -690,6 +787,7 @@ pub const WorldScreen = struct {
             .gen_queue = stats.gen_queue,
             .mesh_queue = stats.mesh_queue,
             .upload_queue = stats.upload_queue,
+            .lod_renderable_regions = lod_renderable_regions,
             .lod = lod_display,
         };
     }

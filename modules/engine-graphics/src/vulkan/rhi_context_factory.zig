@@ -92,8 +92,11 @@ pub fn createRHI(
     ctx.draw.bound_lpv_texture = 0;
     ctx.draw.current_mask_radius = 0;
     ctx.draw.lod_mode = false;
+    ctx.draw.lod_descriptor_stream = .terrain_standard_direct;
     ctx.draw.pending_instance_buffer = 0;
     ctx.draw.pending_lod_instance_buffer = 0;
+    ctx.draw.pending_lod_compact_sample_buffer = 0;
+    ctx.draw.pending_lod_compact_instance_buffer = 0;
 
     ctx.options.wireframe_enabled = false;
     ctx.options.textures_enabled = true;
@@ -168,10 +171,12 @@ pub fn createRHI(
         ctx.ui.rml_ibos[i] = .{ .buffer = null, .memory = null, .size = 0, .is_host_visible = false };
         ctx.descriptors.descriptor_sets[i] = null;
         ctx.descriptors.lod_descriptor_sets[i] = null;
+        for (&ctx.descriptors.lod_descriptor_snapshots[i]) |*snapshot| snapshot.* = null;
         ctx.ui.ui_tex_descriptor_sets[i] = null;
         ctx.ui.ui_tex_descriptor_next[i] = 0;
         ctx.draw.bound_instance_buffer[i] = 0;
-        ctx.draw.bound_lod_instance_buffer[i] = 0;
+        ctx.draw.lod_snapshot_bindings[i] = .{};
+        ctx.draw.lod_snapshot_seals[i] = .{};
         for (0..ctx.ui.ui_tex_descriptor_pool[i].len) |j| {
             ctx.ui.ui_tex_descriptor_pool[i][j] = null;
         }

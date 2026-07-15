@@ -18,6 +18,7 @@ pub const render_system = @import("render_system.zig");
 pub const resource_pack = @import("engine-assets").resource_pack;
 pub const rhi_vulkan = @import("rhi_vulkan.zig");
 pub const lpv_system = @import("vulkan/lpv_system.zig");
+pub const lod_culling_system = @import("vulkan/lod_culling_system.zig");
 pub const lpv_utils = @import("lpv_utils.zig");
 pub const shadow_scene = @import("engine-shadows").shadow_scene;
 pub const shadow_system = @import("engine-shadows").shadow_system;
@@ -46,6 +47,7 @@ pub const rhi_pass_orchestration_tests = @import("vulkan/rhi_pass_orchestration_
 pub const rhi_state_control_tests = @import("vulkan/rhi_state_control_tests.zig");
 pub const shader_registry_tests = @import("vulkan/shader_registry_tests.zig");
 pub const ssao_system_tests = @import("vulkan/ssao_system_tests.zig");
+pub const screenshot_tests = @import("vulkan/screenshot.zig");
 pub const utils_tests = @import("vulkan/utils_tests.zig");
 pub const vulkan_frame_tests = @import("vulkan/vulkan_frame_tests.zig");
 

@@ -22,6 +22,7 @@ const rhi_timing = @import("vulkan/rhi_timing.zig");
 const screenshot = @import("vulkan/screenshot.zig");
 const Utils = @import("vulkan/utils.zig");
 const CullingSystem = @import("vulkan/culling_system.zig").CullingSystem;
+const lod_culling = @import("vulkan/lod_culling_system.zig");
 const build_options = @import("engine_graphics_options");
 
 const imgui_c = if (build_options.imgui) @cImport({
@@ -406,6 +407,11 @@ fn createCullingSystem(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, max_ch
     return system.interface();
 }
 
+fn createLODCullingSystem(ctx_ptr: *anyopaque, allocator: std.mem.Allocator, max_regions: usize) anyerror!?rhi.ILODCullingSystem {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return @as(?rhi.ILODCullingSystem, try lod_culling.create(allocator, ctx, max_regions));
+}
+
 fn captureFrame(ctx_ptr: *anyopaque, path: []const u8) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
@@ -482,6 +488,21 @@ fn setLODInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
     render_state.setLODInstanceBuffer(ctx, handle);
 }
 
+fn setLODDescriptorStream(ctx_ptr: *anyopaque, stream: rhi.LODDescriptorStream) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setLODDescriptorStream(ctx, stream);
+}
+
+fn setLODCompactSampleBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setLODCompactSampleBuffer(ctx, handle);
+}
+
+fn setLODCompactInstanceBuffer(ctx_ptr: *anyopaque, handle: rhi.BufferHandle) void {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    render_state.setLODCompactInstanceBuffer(ctx, handle);
+}
+
 fn setTerrainPipelineBound(ctx_ptr: *anyopaque, bound: bool) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     render_state.setTerrainPipelineBound(ctx, bound);
@@ -531,6 +552,10 @@ fn bindTexture(ctx_ptr: *anyopaque, handle: rhi.TextureHandle, slot: u32) void {
         6 => ctx.draw.dummy_normal_texture,
         7, 8 => ctx.draw.dummy_roughness_texture,
         9 => ctx.draw.dummy_texture,
+        // LPV shader bindings are sampler3D. A 2D fallback is invalid even
+        // when LPV lighting is disabled, and snapshotting it made indirect LOD
+        // terrain undefined on RADV.
+        11, 12, 13 => ctx.draw.dummy_texture_3d,
         0, 1 => ctx.draw.dummy_texture,
         else => ctx.draw.dummy_texture,
     } else handle;
@@ -584,6 +609,16 @@ fn getFrameIndex(ctx_ptr: *anyopaque) usize {
 fn supportsIndirectFirstInstance(ctx_ptr: *anyopaque) bool {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     return state_control.supportsIndirectFirstInstance(ctx);
+}
+
+fn supportsIndirectCount(ctx_ptr: *anyopaque) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return state_control.supportsIndirectCount(ctx);
+}
+
+fn supportsCompactLODGpuCulling(ctx_ptr: *anyopaque) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return state_control.supportsCompactLODGpuCulling(ctx);
 }
 
 fn recover(ctx_ptr: *anyopaque) anyerror!void {
@@ -681,11 +716,28 @@ fn drawIndexed(ctx_ptr: *anyopaque, vbo_handle: rhi.BufferHandle, ebo_handle: rh
     draw_submission.drawIndexed(ctx, vbo_handle, ebo_handle, count);
 }
 
+fn drawCompactLOD(ctx_ptr: *anyopaque, index_handle: rhi.BufferHandle, index_count: u32, params: rhi.CompactLODDraw) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    ctx.mutex.lock();
+    defer ctx.mutex.unlock();
+    return draw_submission.drawCompactLOD(ctx, index_handle, index_count, params);
+}
+
+fn drawCompactLODIndirectCount(ctx_ptr: *anyopaque, index_handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, count_buffer: rhi.BufferHandle, count_offset: usize, max_draw_count: u32) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return draw_submission.drawCompactLODIndirectCount(ctx, index_handle, command_buffer, offset, count_buffer, count_offset, max_draw_count);
+}
+
 fn drawIndirect(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, draw_count: u32, stride: u32) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     ctx.mutex.lock();
     defer ctx.mutex.unlock();
     draw_submission.drawIndirect(ctx, handle, command_buffer, offset, draw_count, stride);
+}
+
+fn drawIndirectCount(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, command_buffer: rhi.BufferHandle, offset: usize, count_buffer: rhi.BufferHandle, count_offset: usize, max_draw_count: u32, stride: u32) bool {
+    const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
+    return draw_submission.drawIndirectCount(ctx, handle, command_buffer, offset, count_buffer, count_offset, max_draw_count, stride);
 }
 
 fn drawInstance(ctx_ptr: *anyopaque, handle: rhi.BufferHandle, count: u32, instance_index: u32) void {
@@ -1061,6 +1113,9 @@ const VULKAN_STATE_CONTEXT_VTABLE = rhi.IRenderStateContext.VTable{
     .setModelMatrix = setModelMatrix,
     .setInstanceBuffer = setInstanceBuffer,
     .setLODInstanceBuffer = setLODInstanceBuffer,
+    .setLODDescriptorStream = setLODDescriptorStream,
+    .setLODCompactSampleBuffer = setLODCompactSampleBuffer,
+    .setLODCompactInstanceBuffer = setLODCompactInstanceBuffer,
     .setTerrainPipelineBound = setTerrainPipelineBound,
     .setSelectionMode = setSelectionMode,
     .updateGlobalUniforms = updateGlobalUniforms,
@@ -1078,7 +1133,10 @@ const VULKAN_COMMAND_ENCODER_VTABLE = rhi.IGraphicsCommandEncoder.VTable{
     .draw = draw,
     .drawOffset = drawOffset,
     .drawIndexed = drawIndexed,
+    .drawCompactLOD = drawCompactLOD,
+    .drawCompactLODIndirectCount = drawCompactLODIndirectCount,
     .drawIndirect = drawIndirect,
+    .drawIndirectCount = drawIndirectCount,
     .drawInstance = drawInstance,
     .setViewport = setViewport,
 };
@@ -1425,6 +1483,8 @@ const VULKAN_NATIVE_HANDLES_VTABLE = rhi.VulkanNativeHandles.VTable{
 const VULKAN_DEVICE_QUERY_VTABLE = rhi.IDeviceQuery.VTable{
     .getFrameIndex = getFrameIndex,
     .supportsIndirectFirstInstance = supportsIndirectFirstInstance,
+    .supportsIndirectCount = supportsIndirectCount,
+    .supportsCompactLODGpuCulling = supportsCompactLODGpuCulling,
     .getMaxAnisotropy = getMaxAnisotropy,
     .getMaxMSAASamples = getMaxMSAASamples,
     .getFaultCount = getFaultCount,
@@ -1474,6 +1534,7 @@ const VULKAN_DEVICE_RECOVERY_VTABLE = rhi.IDeviceRecovery.VTable{
 
 const VULKAN_CULLING_FACTORY_VTABLE = rhi.ICullingSystemFactory.VTable{
     .createCullingSystem = createCullingSystem,
+    .createLODCullingSystem = createLODCullingSystem,
 };
 
 const VULKAN_SCREENSHOT_CONTEXT_VTABLE = rhi.IScreenshotContext.VTable{

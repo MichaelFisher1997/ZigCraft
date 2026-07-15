@@ -8,6 +8,7 @@ pub const VulkanBuffer = struct {
     buffer: c.VkBuffer = null,
     memory: c.VkDeviceMemory = null,
     size: c.VkDeviceSize = 0,
+    usage: c.VkBufferUsageFlags = 0,
     is_host_visible: bool = false,
     mapped_ptr: ?*anyopaque = null,
 };
@@ -74,7 +75,10 @@ pub fn createVulkanBuffer(device: *const VulkanDevice, size: usize, usage: c.VkB
     return .{
         .buffer = buffer,
         .memory = memory,
-        .size = mem_reqs.size,
+        // Descriptor ranges and copy bounds are expressed in the VkBuffer's
+        // requested size, not the (possibly alignment-rounded) allocation.
+        .size = @intCast(size),
+        .usage = usage,
         .is_host_visible = is_host_visible,
         .mapped_ptr = mapped_ptr,
     };

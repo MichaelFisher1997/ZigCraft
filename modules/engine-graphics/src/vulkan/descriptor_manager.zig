@@ -10,6 +10,40 @@ const Mat4 = @import("engine-math").Mat4;
 pub const ShadowUniforms = @import("shadow_uniforms.zig").ShadowUniforms;
 const Utils = @import("utils.zig");
 
+/// Terrain/water × standard/compact × direct/GPU streams never share a set
+/// that can be updated after one of them has been recorded.
+pub const LOD_DESCRIPTOR_SNAPSHOT_COUNT = 8;
+
+/// CPU-side mirror of stream-local descriptor bindings. It prevents an update
+/// for a later stream from being elided because another stream happens to use
+/// the same buffer handle.
+pub const LODDescriptorSnapshotBindings = struct {
+    instance: [LOD_DESCRIPTOR_SNAPSHOT_COUNT]rhi.BufferHandle = [_]rhi.BufferHandle{0} ** LOD_DESCRIPTOR_SNAPSHOT_COUNT,
+    compact_samples: [LOD_DESCRIPTOR_SNAPSHOT_COUNT]rhi.BufferHandle = [_]rhi.BufferHandle{0} ** LOD_DESCRIPTOR_SNAPSHOT_COUNT,
+    compact_instances: [LOD_DESCRIPTOR_SNAPSHOT_COUNT]rhi.BufferHandle = [_]rhi.BufferHandle{0} ** LOD_DESCRIPTOR_SNAPSHOT_COUNT,
+};
+
+/// Tracks the one-time texture/UBO acquisition for a descriptor snapshot.
+/// A changed material revision after sealing is a correctness violation, not a
+/// reason to mutate commands already recorded against the set.
+pub const LODDescriptorSnapshotSeal = struct {
+    sealed: [LOD_DESCRIPTOR_SNAPSHOT_COUNT]bool = [_]bool{false} ** LOD_DESCRIPTOR_SNAPSHOT_COUNT,
+    texture_revision: [LOD_DESCRIPTOR_SNAPSHOT_COUNT]u64 = [_]u64{0} ** LOD_DESCRIPTOR_SNAPSHOT_COUNT,
+
+    /// Returns true exactly once per stream/frame-slot. A later acquisition
+    /// must use the same material state or select a different snapshot.
+    pub fn acquire(self: *LODDescriptorSnapshotSeal, stream: rhi.LODDescriptorStream, revision: u64) error{TextureStateChanged}!bool {
+        const index = @intFromEnum(stream);
+        if (self.sealed[index]) {
+            if (self.texture_revision[index] != revision) return error.TextureStateChanged;
+            return false;
+        }
+        self.sealed[index] = true;
+        self.texture_revision[index] = revision;
+        return true;
+    }
+};
+
 const GlobalUniforms = extern struct {
     view_proj: Mat4,
     view_proj_prev: Mat4,
@@ -37,7 +71,10 @@ pub const DescriptorManager = struct {
     descriptor_pool: c.VkDescriptorPool,
     descriptor_set_layout: c.VkDescriptorSetLayout,
     descriptor_sets: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet,
+    /// Retained for older initialization paths; LOD rendering uses only the
+    /// explicit immutable stream snapshots below.
     lod_descriptor_sets: [rhi.MAX_FRAMES_IN_FLIGHT]c.VkDescriptorSet,
+    lod_descriptor_snapshots: [rhi.MAX_FRAMES_IN_FLIGHT][LOD_DESCRIPTOR_SNAPSHOT_COUNT]c.VkDescriptorSet = undefined,
 
     global_ubos: [rhi.MAX_FRAMES_IN_FLIGHT]VulkanBuffer,
     global_ubos_mapped: [rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque,
@@ -46,6 +83,8 @@ pub const DescriptorManager = struct {
     shadow_ubos_mapped: [rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque,
 
     dummy_instance_ssbo: VulkanBuffer,
+    dummy_compact_lod_ssbo: VulkanBuffer,
+    dummy_compact_lod_instance_ssbo: VulkanBuffer,
 
     // Dummy textures
     dummy_texture: rhi.TextureHandle,
@@ -62,11 +101,14 @@ pub const DescriptorManager = struct {
             .descriptor_set_layout = null,
             .descriptor_sets = undefined,
             .lod_descriptor_sets = undefined,
+            .lod_descriptor_snapshots = undefined,
             .global_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]VulkanBuffer),
             .global_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
             .shadow_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]VulkanBuffer),
             .shadow_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
             .dummy_instance_ssbo = std.mem.zeroes(VulkanBuffer),
+            .dummy_compact_lod_ssbo = std.mem.zeroes(VulkanBuffer),
+            .dummy_compact_lod_instance_ssbo = std.mem.zeroes(VulkanBuffer),
             .dummy_texture = 0,
             .dummy_texture_3d = 0,
             .dummy_normal_texture = 0,
@@ -89,6 +131,14 @@ pub const DescriptorManager = struct {
         }
 
         self.dummy_instance_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
+            self.deinit();
+            return err;
+        };
+        self.dummy_compact_lod_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
+            self.deinit();
+            return err;
+        };
+        self.dummy_compact_lod_instance_ssbo = Utils.createVulkanBuffer(vulkan_device, 256, c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) catch |err| {
             self.deinit();
             return err;
         };
@@ -132,7 +182,9 @@ pub const DescriptorManager = struct {
         var pool_sizes = [_]c.VkDescriptorPoolSize{
             .{ .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 500 },
             .{ .type = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1000 },
-            .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 100 },
+            // 2 frames × 8 immutable LOD snapshots × 3 storage bindings,
+            // plus legacy, UI, and effect descriptors.
+            .{ .type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 160 },
         };
 
         var pool_info = std.mem.zeroes(c.VkDescriptorPoolCreateInfo);
@@ -181,6 +233,10 @@ pub const DescriptorManager = struct {
             .{ .binding = 14, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
             // 15: Scene depth texture (for water refraction)
             .{ .binding = 15, .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_FRAGMENT_BIT },
+            // 16: Compact LOD sample SSBO, consumed only by vertex-pulling shaders.
+            .{ .binding = 16, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT },
+            // 17: Compact LOD indirect instance SSBO.
+            .{ .binding = 17, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT },
         };
 
         var layout_info = std.mem.zeroes(c.VkDescriptorSetLayoutCreateInfo);
@@ -209,6 +265,12 @@ pub const DescriptorManager = struct {
                 self.deinit();
                 return err;
             };
+            for (&self.lod_descriptor_snapshots[i]) |*snapshot| {
+                Utils.checkVk(c.vkAllocateDescriptorSets(vulkan_device.vk_device, &alloc_info, snapshot)) catch |err| {
+                    self.deinit();
+                    return err;
+                };
+            }
 
             // Write UBO descriptors immediately (they don't change)
             var buffer_info_global = c.VkDescriptorBufferInfo{
@@ -226,6 +288,8 @@ pub const DescriptorManager = struct {
                 .offset = 0,
                 .range = 256,
             };
+            var buffer_info_compact = c.VkDescriptorBufferInfo{ .buffer = self.dummy_compact_lod_ssbo.buffer, .offset = 0, .range = 256 };
+            var buffer_info_compact_instance = c.VkDescriptorBufferInfo{ .buffer = self.dummy_compact_lod_instance_ssbo.buffer, .offset = 0, .range = 256 };
 
             var writes = [_]c.VkWriteDescriptorSet{
                 .{
@@ -252,6 +316,8 @@ pub const DescriptorManager = struct {
                     .descriptorCount = 1,
                     .pBufferInfo = &buffer_info_instance,
                 },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[i], .dstBinding = 16, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.descriptor_sets[i], .dstBinding = 17, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact_instance },
                 .{
                     .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet = self.lod_descriptor_sets[i],
@@ -276,8 +342,70 @@ pub const DescriptorManager = struct {
                     .descriptorCount = 1,
                     .pBufferInfo = &buffer_info_instance,
                 },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.lod_descriptor_sets[i], .dstBinding = 16, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact },
+                .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = self.lod_descriptor_sets[i], .dstBinding = 17, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .pBufferInfo = &buffer_info_compact_instance },
             };
             c.vkUpdateDescriptorSets(vulkan_device.vk_device, writes.len, &writes[0], 0, null);
+
+            // A stream snapshot may be acquired before a material has supplied
+            // its first texture update.  Seed every sampled binding in the
+            // ordinary source set with a type-correct dummy now: copying an
+            // unwritten descriptor into an immutable LOD set is undefined and
+            // in particular turns the sampler3D LPV bindings into arbitrary
+            // 2D views on RADV.
+            const dummy_2d = self.resource_manager.textures.get(self.dummy_texture).?;
+            const dummy_3d = self.resource_manager.textures.get(self.dummy_texture_3d).?;
+            var dummy_2d_info = c.VkDescriptorImageInfo{
+                .sampler = dummy_2d.sampler,
+                .imageView = dummy_2d.view,
+                .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+            var dummy_3d_info = c.VkDescriptorImageInfo{
+                .sampler = dummy_3d.sampler,
+                .imageView = dummy_3d.view,
+                .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+            var texture_writes: [13]c.VkWriteDescriptorSet = undefined;
+            for ([_]u32{ 1, 3, 4, 6, 7, 8, 9, 10, 14, 15 }, 0..) |binding, write_index| {
+                texture_writes[write_index] = .{
+                    .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.descriptor_sets[i],
+                    .dstBinding = binding,
+                    .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .descriptorCount = 1,
+                    .pImageInfo = &dummy_2d_info,
+                };
+            }
+            for ([_]u32{ 11, 12, 13 }, 0..) |binding, offset| {
+                texture_writes[10 + offset] = .{
+                    .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = self.descriptor_sets[i],
+                    .dstBinding = binding,
+                    .descriptorType = c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .descriptorCount = 1,
+                    .pImageInfo = &dummy_3d_info,
+                };
+            }
+            c.vkUpdateDescriptorSets(vulkan_device.vk_device, texture_writes.len, &texture_writes[0], 0, null);
+
+            // Snapshot the bindings used by all LOD shaders.  The render path
+            // subsequently updates only the matching stream's set, so a water
+            // update cannot retroactively change recorded terrain commands.
+            var snapshot_writes: [LOD_DESCRIPTOR_SNAPSHOT_COUNT * 5]c.VkWriteDescriptorSet = undefined;
+            var write_index: usize = 0;
+            for (self.lod_descriptor_snapshots[i]) |snapshot| {
+                for ([_]struct { binding: u32, kind: c.VkDescriptorType, info: *c.VkDescriptorBufferInfo }{
+                    .{ .binding = 0, .kind = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .info = &buffer_info_global },
+                    .{ .binding = 2, .kind = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .info = &buffer_info_shadow },
+                    .{ .binding = 5, .kind = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .info = &buffer_info_instance },
+                    .{ .binding = 16, .kind = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .info = &buffer_info_compact },
+                    .{ .binding = 17, .kind = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .info = &buffer_info_compact_instance },
+                }) |entry| {
+                    snapshot_writes[write_index] = .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = snapshot, .dstBinding = entry.binding, .descriptorType = entry.kind, .descriptorCount = 1, .pBufferInfo = entry.info };
+                    write_index += 1;
+                }
+            }
+            c.vkUpdateDescriptorSets(vulkan_device.vk_device, snapshot_writes.len, &snapshot_writes, 0, null);
         }
 
         return self;
@@ -306,6 +434,16 @@ pub const DescriptorManager = struct {
             c.vkDestroyBuffer(device, self.dummy_instance_ssbo.buffer, null);
             c.vkFreeMemory(device, self.dummy_instance_ssbo.memory, null);
         }
+        if (self.dummy_compact_lod_ssbo.buffer != null) {
+            if (self.dummy_compact_lod_ssbo.mapped_ptr != null) c.vkUnmapMemory(device, self.dummy_compact_lod_ssbo.memory);
+            c.vkDestroyBuffer(device, self.dummy_compact_lod_ssbo.buffer, null);
+            c.vkFreeMemory(device, self.dummy_compact_lod_ssbo.memory, null);
+        }
+        if (self.dummy_compact_lod_instance_ssbo.buffer != null) {
+            if (self.dummy_compact_lod_instance_ssbo.mapped_ptr != null) c.vkUnmapMemory(device, self.dummy_compact_lod_instance_ssbo.memory);
+            c.vkDestroyBuffer(device, self.dummy_compact_lod_instance_ssbo.buffer, null);
+            c.vkFreeMemory(device, self.dummy_compact_lod_instance_ssbo.memory, null);
+        }
 
         if (self.descriptor_set_layout != null) c.vkDestroyDescriptorSetLayout(device, self.descriptor_set_layout, null);
         if (self.descriptor_pool != null) c.vkDestroyDescriptorPool(device, self.descriptor_pool, null);
@@ -326,6 +464,12 @@ pub const DescriptorManager = struct {
             return error.UnmappedBuffer;
         };
         @memcpy(@as([*]u8, @ptrCast(dest))[0..@sizeOf(ShadowUniforms)], std.mem.asBytes(data));
+    }
+
+    /// Returns the descriptor snapshot dedicated to this explicit LOD stream.
+    /// The selected set is safe to bind for the whole frame slot lifetime.
+    pub fn lodDescriptorSet(self: *const DescriptorManager, frame_index: usize, stream: rhi.LODDescriptorStream) c.VkDescriptorSet {
+        return self.lod_descriptor_snapshots[frame_index][@intFromEnum(stream)];
     }
 
     // Additional methods for binding textures would go here

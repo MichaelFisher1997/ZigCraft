@@ -905,6 +905,13 @@ pub const World = struct {
         }
     }
 
+    /// Installs the bounded benchmark-only LOD source set used to exercise the
+    /// production compute/indirect culling path at high cardinality.
+    pub fn installGpuCullingScaleFixture(self: *World) !void {
+        const lod = self.lod orelse return error.LODDisabled;
+        try lod.installGpuCullingScaleFixture();
+    }
+
     /// Returns a resident chunk or creates storage for it.
     /// May allocate chunk data and enqueue follow-up generation or meshing work. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn getOrCreateChunk(self: *World, chunk_x: i32, chunk_z: i32) !*ChunkData {
@@ -983,6 +990,14 @@ pub const World = struct {
     pub fn render(self: *World, view_proj: Mat4, camera_pos: Vec3, render_lod: bool) void {
         const lod_mgr: ?*LODManager = if (self.lod) |lod| lod.manager else null;
         WorldOrchestration.render(self.renderer, self.streamer, lod_mgr, self.lod_enabled, view_proj, camera_pos, render_lod, .all);
+    }
+
+    /// Render-graph prepass entry point: dispatch LOD compute before a graphics
+    /// render pass becomes active. Normal rendering remains a CPU fallback.
+    pub fn prepareLODCulling(self: *World, view_proj: Mat4, camera_pos: Vec3) void {
+        if (self.lod) |lod| {
+            lod.manager.prepareFrame(self.renderer.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(&self.storage), null);
+        }
     }
 
     /// Renders opaque terrain and world geometry for the current camera.
@@ -1164,10 +1179,16 @@ pub const World = struct {
     };
 
     const WORLD_RENDER_VIEW_VTABLE = GraphicsWorldRenderView.VTable{
+        .prepareLODCulling = iprepareLODCulling,
         .render = irender,
         .renderOpaque = irenderOpaque,
         .renderFluid = irenderFluid,
     };
+
+    fn iprepareLODCulling(ptr: *anyopaque, view_proj: Mat4, camera_pos: Vec3) void {
+        const self: *World = @ptrCast(@alignCast(ptr));
+        self.prepareLODCulling(view_proj, camera_pos);
+    }
 
     fn iupdate(ptr: *anyopaque, player_pos: Vec3, dt: f32) anyerror!void {
         const self: *World = @ptrCast(@alignCast(ptr));

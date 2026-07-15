@@ -161,6 +161,11 @@ pub const LODChunk = struct {
     /// Pin count for preventing unload during async work
     pin_count: std.atomic.Value(u32),
 
+    /// Per-region cancellation signal for worker jobs invalidated by pause,
+    /// teleport, or horizon changes. Unlike the manager teardown flag, this
+    /// remains set until a new job is explicitly dispatched for the region.
+    cancel_requested: std.atomic.Value(bool),
+
     /// Chunk data - either full detail or simplified
     data: union(enum) {
         /// LOD0: Full chunk data (pointer to existing Chunk)
@@ -192,6 +197,22 @@ pub const LODChunk = struct {
     /// or edit). The manager writes the region container to disk lazily.
     store_dirty: bool,
 
+    /// Monotonic source revision used to reject stale cache write completions.
+    source_revision: u32,
+
+    /// Cache pipeline state. These flags are owned by the manager update
+    /// thread and prevent duplicate requests without pinning region memory.
+    cache_read_queued: bool,
+    store_write_queued: bool,
+    /// Suppresses retries for a snapshot that cannot fit the current store
+    /// cap. A source revision or cap increase makes it eligible again.
+    store_size_limited: bool,
+    store_size_limit_cap_mb: u32,
+    /// Sticky for the current source revision after a compact runtime
+    /// submission failure, preventing an auto/force rebuild loop on this
+    /// device session. Source changes clear it and may retry compact safely.
+    compact_disabled: bool,
+
     /// Creates an empty LOD region record in the missing state.
     /// Source data, mesh handles, readiness counts, and transition state are initialized to safe defaults.
     pub fn init(rx: i32, rz: i32, lod: LODLevel) LODChunk {
@@ -202,6 +223,7 @@ pub const LODChunk = struct {
             .state = .missing,
             .job_token = 0,
             .pin_count = std.atomic.Value(u32).init(0),
+            .cancel_requested = std.atomic.Value(bool).init(false),
             .data = .{ .empty = {} },
             .mesh_handle = 0,
             .min_height = 0.0,
@@ -210,6 +232,12 @@ pub const LODChunk = struct {
             .transition_frames_remaining = 0,
             .dirty = false,
             .store_dirty = false,
+            .source_revision = 0,
+            .cache_read_queued = false,
+            .store_write_queued = false,
+            .store_size_limited = false,
+            .store_size_limit_cap_mb = 0,
+            .compact_disabled = false,
         };
     }
 
@@ -241,6 +269,18 @@ pub const LODChunk = struct {
     /// This is an atomic read suitable for eviction checks.
     pub fn isPinned(self: *const LODChunk) bool {
         return self.pin_count.load(.monotonic) > 0;
+    }
+
+    pub fn requestCancellation(self: *LODChunk) void {
+        self.cancel_requested.store(true, .release);
+    }
+
+    pub fn resetCancellation(self: *LODChunk) void {
+        self.cancel_requested.store(false, .release);
+    }
+
+    pub fn cancellationRequested(self: *const LODChunk) bool {
+        return self.cancel_requested.load(.acquire);
     }
 
     /// Returns the immutable map key corresponding to this chunk's region coordinates and LOD level.
@@ -341,6 +381,15 @@ pub const LODChunk = struct {
     pub fn markSourceDirty(self: *LODChunk) void {
         self.dirty = true;
         self.store_dirty = true;
+        self.store_size_limited = false;
+        self.bumpSourceRevision();
+    }
+
+    /// Advances the immutable source identity. A fresh source revision is
+    /// allowed to retry compact rendering after a device-local failure.
+    pub fn bumpSourceRevision(self: *LODChunk) void {
+        self.source_revision +%= 1;
+        self.compact_disabled = false;
     }
 
     /// Sets the ready-child count directly, clamped to four direct children.
@@ -437,6 +486,7 @@ pub const ILODConfig = struct {
         getQEMTarget: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
         getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
         getHorizontalDetail: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
+        getSampleDensity: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
         getVerticalSpanBudget: *const fn (ptr: *anyopaque) u8,
         getMeshPath: *const fn (ptr: *anyopaque) LODMeshPath,
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
@@ -519,6 +569,11 @@ pub const ILODConfig = struct {
     pub fn getHorizontalDetail(self: ILODConfig, lod: LODLevel) u32 {
         return self.vtable.getHorizontalDetail(self.ptr, lod);
     }
+    /// Returns the source-sample density used before meshing. Far LODs may
+    /// reduce this independently of their render radius.
+    pub fn getSampleDensity(self: ILODConfig, lod: LODLevel) f32 {
+        return self.vtable.getSampleDensity(self.ptr, lod);
+    }
 
     /// Returns the maximum number of vertical spans retained per LOD column.
     /// Implementations clamp this to the storage capacity of `LODSimplifiedData`.
@@ -590,6 +645,11 @@ pub const LODConfig = struct {
     fog_start_percent: [LODLevel.count]f32 = .{ 0.55, 0.48, 0.38, 0.28, 0.22 },
 
     horizontal_detail: [LODLevel.count]u32 = .{ 33, 65, 65, 129, 129 },
+
+    /// LOD3 reduces worker input where four-block cells remain visually stable.
+    /// Keep the outer horizon at its full 65-sample grid: reducing it to 17
+    /// samples creates 32-block plateaus and visibly detached height seams.
+    sample_density: [LODLevel.count]f32 = .{ 1.0, 1.0, 1.0, 0.5, 1.0 },
 
     vertical_span_budget: u8 = 4,
 
@@ -712,6 +772,7 @@ pub const LODConfig = struct {
         .getQEMTarget = getQEMTargetWrapper,
         .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
         .getHorizontalDetail = getHorizontalDetailWrapper,
+        .getSampleDensity = getSampleDensityWrapper,
         .getVerticalSpanBudget = getVerticalSpanBudgetWrapper,
         .getMeshPath = getMeshPathWrapper,
         .getFogStartPercent = getFogStartPercentWrapper,
@@ -778,6 +839,10 @@ pub const LODConfig = struct {
     fn getHorizontalDetailWrapper(ptr: *anyopaque, lod: LODLevel) u32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return self.horizontal_detail[@intFromEnum(lod)];
+    }
+    fn getSampleDensityWrapper(ptr: *anyopaque, lod: LODLevel) f32 {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return std.math.clamp(self.sample_density[@intFromEnum(lod)], 0.0625, 1.0);
     }
     fn getVerticalSpanBudgetWrapper(ptr: *anyopaque) u8 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -848,6 +913,16 @@ test "LODConfig distance calculation" {
     try std.testing.expectEqual(LODLevel.lod0, config.getLODForDistance(20));
     try std.testing.expectEqual(LODLevel.lod1, config.getLODForDistance(50));
     try std.testing.expectEqual(LODLevel.lod2, config.getLODForDistance(100));
+}
+
+test "LODConfig keeps outer horizon cells below detached-plateau scale" {
+    var config = LODConfig{};
+    const interface = config.interface();
+    const width = world_core.LODSimplifiedData.getGridSizeForDensity(.lod4, interface.getSampleDensity(.lod4));
+    const cell_size = regionSizeBlocks(.lod4) / (width - 1);
+
+    try std.testing.expectEqual(@as(u32, 65), width);
+    try std.testing.expectEqual(@as(u32, 8), cell_size);
 }
 
 test "LODConfig distance calculation respects active LOD count" {

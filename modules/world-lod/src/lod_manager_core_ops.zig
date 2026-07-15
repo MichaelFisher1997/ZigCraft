@@ -1,4 +1,5 @@
 const std = @import("std");
+const lod_options = @import("world_lod_options");
 const Self = @import("lod_manager.zig").LODManager;
 const fs = @import("fs");
 const lod_chunk = @import("lod_chunk.zig");
@@ -65,6 +66,7 @@ const LOD_FRAME_DT_APPROX = manager_ctx.LOD_FRAME_DT_APPROX;
 const lodUploadBudgetBytes = manager_ctx.lodUploadBudgetBytes;
 const wouldExceedUploadBudget = manager_ctx.wouldExceedUploadBudget;
 const isUploadPressureError = manager_ctx.isUploadPressureError;
+const TELEPORT_CANCEL_DISTANCE_CHUNKS: i32 = 32;
 
 pub fn storePlayerChunkPos(self: *Self, cx: i32, cz: i32) void {
     self.player_cx.store(cx, .release);
@@ -132,8 +134,10 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
         .stats = .{},
+        .profiling = .init(engine_core.envFlag("ZIGCRAFT_LOD_PROFILE", false) or lod_options.benchmark_lod_profile),
         .cache_hits = 0,
         .cache_misses = 0,
+        .cancelled_jobs = 0,
         .mutex = .{},
         .gpu_bridge = gpu_bridge,
         .generator = generator,
@@ -144,9 +148,13 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .mesh_disposal = .{},
         .renderer = render_iface,
         .cleanup_covered_regions = true,
-        .cache_store = .{},
+        .cache_store = .{ .store_size_cap_mb = config.getLODStoreSizeCapMB(), .use_config_store_size_cap = true },
+        .cache_io = undefined,
         .ingestion_queue = LODIngestionQueue.init(allocator),
     };
+
+    mgr.cache_io = try @import("lod_cache_io.zig").CacheIoPipeline.init(allocator, &mgr.profiling);
+    errdefer mgr.cache_io.deinit();
 
     const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
     const lod_worker_count = std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS);
@@ -172,6 +180,17 @@ pub fn deinit(self: *Self) void {
     // map-open leave it false so LOD generation runs uninterrupted.
     self.job_dispatcher.stop_flag.store(true, .release);
 
+    const cancellation_lock_wait_timer = self.profiling.begin();
+    self.mutex.lock();
+    self.profiling.end(.manager_lock_wait, cancellation_lock_wait_timer);
+    const cancellation_lock_hold_timer = self.profiling.begin();
+    for (0..LODLevel.count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| entry.value_ptr.*.requestCancellation();
+    }
+    self.profiling.end(.manager_lock_hold, cancellation_lock_hold_timer);
+    self.mutex.unlock();
+
     // Stop and cleanup queues
     for (0..LODLevel.count) |i| {
         self.job_dispatcher.queues[i].stop();
@@ -183,6 +202,17 @@ pub fn deinit(self: *Self) void {
         pool.deinit();
     }
 
+    // This is an explicit shutdown boundary: it is permitted to wait for the
+    // dedicated cache worker and flush source snapshots before region storage
+    // is released. The normal update path only enqueues/drains completions.
+    self.shutdownCacheIO();
+    self.cache_io.deinit();
+
+    // All LOD workers and cache I/O are stopped. This is the sole manager
+    // lifecycle boundary allowed to issue a device-wide synchronization; the
+    // shutdown bucket keeps it out of runtime streaming telemetry.
+    self.waitIdleTracked(.shutdown);
+
     for (0..LODLevel.count) |i| {
         self.job_dispatcher.queues[i].deinit();
         self.allocator.destroy(self.job_dispatcher.queues[i]);
@@ -191,6 +221,7 @@ pub fn deinit(self: *Self) void {
         // Cleanup meshes
         var mesh_iter = self.meshes[i].iterator();
         while (mesh_iter.next()) |entry| {
+            entry.value_ptr.*.releasePendingCompactTile();
             self.gpu_bridge.destroy(entry.value_ptr.*);
             self.allocator.destroy(entry.value_ptr.*);
         }
@@ -216,9 +247,9 @@ pub fn deinit(self: *Self) void {
     }
 
     self.ingestion_queue.deinit(self.allocator);
-    self.generation_candidates_scratch.deinit(self.allocator);
-    self.mesh_candidates_scratch.deinit(self.allocator);
-    self.upload_candidates_scratch.deinit(self.allocator);
+    self.generation_tokens.deinit(self.allocator);
+    self.transition_tokens.deinit(self.allocator);
+    self.fade_tokens.deinit(self.allocator);
 
     // NOTE: LODManager does NOT own the renderer lifetime.
     // The renderer is owned by World and deinit'd there.
@@ -228,11 +259,27 @@ pub fn deinit(self: *Self) void {
 
 /// Update LOD system with player position
 pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
+    const update_timer = self.profiling.begin();
+    defer self.profiling.end(.update, update_timer);
+    // Completion application only: no filesystem or serialization occurs on
+    // this frame/update path.
+    self.drainCacheCompletions();
+    // The GPU-culling scale fixture is already fully resident through the
+    // production upload bridge. Do not let normal streaming add finer coverage
+    // or evict its fixed source set while it is being measured.
+    if (self.benchmark_fixture_active) {
+        self.updateStats();
+        return;
+    }
     if (self.paused) return;
 
-    // Deferred deletion handling. LOD meshes do not carry frame fences yet,
-    // so destruction still waits for idle, but the bounded sweep prevents
-    // unreachable GPU/CPU resources from accumulating through long sessions.
+    // Render detects compact submission failure under its shared lock. Only
+    // this update thread may retire its GPU range and publish CPU fallback.
+    self.recoverCompactDrawFailures();
+
+    // Deferred deletion is frame-safe: renderer resource destruction retires
+    // buffers/ranges through its frame-fence path rather than stalling the
+    // device during routine streaming.
     self.mesh_disposal.timer += LOD_FRAME_DT_APPROX;
     if (self.mesh_disposal.timer >= DELETION_SWEEP_SECONDS) {
         self.processMeshDeletions(MAX_MESH_DELETIONS_PER_SWEEP);
@@ -243,7 +290,14 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     if (!std.math.isFinite(player_pos.x) or !std.math.isFinite(player_pos.z)) return;
 
     const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
+    const previous_pc = self.loadPlayerChunkPos();
     self.storePlayerChunkPos(pc.chunk_x, pc.chunk_z);
+    const moved_x = @abs(@as(i64, pc.chunk_x) - @as(i64, previous_pc.cx));
+    const moved_z = @abs(@as(i64, pc.chunk_z) - @as(i64, previous_pc.cz));
+    const teleport_distance_sq = @as(i64, TELEPORT_CANCEL_DISTANCE_CHUNKS) * TELEPORT_CANCEL_DISTANCE_CHUNKS;
+    if (moved_x * moved_x + moved_z * moved_z >= teleport_distance_sq) {
+        cancelWorkOutsideHorizon(self, pc.chunk_x, pc.chunk_z);
+    }
 
     // Keep LOD job priorities fresh as the player moves. doReprioritize is
     // LOD-aware (scales region coords to chunk space, preserves LOD-bias
@@ -280,6 +334,7 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
 
     // Queue a small horizon seed first so something appears quickly, then
     // let LOD0/LOD1/LOD2 refinements replace the coarse fallback.
+    const scheduling_timer = self.profiling.begin();
     var order_idx: usize = 0;
     while (order_idx < active_lod_count) : (order_idx += 1) {
         const i = lod_scheduler.priorityLevelIndex(order_idx, active_lod_count);
@@ -287,24 +342,29 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
             log.log.warn("LOD queue error for level {}: {} (non-fatal)", .{ i, err });
         };
     }
+    self.profiling.end(.scheduling, scheduling_timer);
 
     self.processQueuedGenerations(player_velocity) catch |err| {
         log.log.warn("LOD cache/generation dispatch error: {} (non-fatal)", .{err});
     };
 
     // Process state transitions
+    const transitions_timer = self.profiling.begin();
     self.processStateTransitions(player_velocity) catch |err| {
         log.log.warn("LOD state transitions error: {} (non-fatal)", .{err});
     };
+    self.profiling.end(.state_transition, transitions_timer);
 
     // Process uploads (limited per frame)
     self.processUploads();
 
     // Update stats
     self.updateStats();
+    const eviction_timer = self.profiling.begin();
     self.enforceMemoryBudget() catch |err| {
         log.log.warn("LOD memory budget eviction error: {} (non-fatal)", .{err});
     };
+    self.profiling.end(.eviction, eviction_timer);
 
     // Periodic WARN-level LOD stats so logs/zigcraft.log shows LOD fill
     // progress by default (no env vars needed). update_tick counts frames;
@@ -327,9 +387,11 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     }
 
     // Unload distant regions
+    const distant_eviction_timer = self.profiling.begin();
     self.unloadDistantRegions() catch |err| {
         log.log.warn("LOD unload error: {} (non-fatal)", .{err});
     };
+    self.profiling.end(.eviction, distant_eviction_timer);
 
     // Chunk-derived ingestion: replay deferred ingestions, flush debounced
     // player edits, and persist any dirty source regions to the store.
@@ -341,7 +403,15 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
 
 /// Get current statistics
 pub fn getStats(self: *Self) LODStats {
-    return self.stats;
+    const lock_wait_timer = self.profiling.begin();
+    self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
+    defer self.mutex.unlockShared();
+    var snapshot = self.stats;
+    snapshot.profiling = self.profiling.snapshot();
+    return snapshot;
 }
 
 /// Pause all LOD generation
@@ -349,6 +419,72 @@ pub fn pause(self: *Self) void {
     self.paused = true;
     for (0..LODLevel.count) |i| {
         self.job_dispatcher.queues[i].setPaused(true);
+    }
+
+    // setPaused clears queued jobs. In-flight jobs are cancelled through their
+    // per-region signal and token so they cannot publish stale data after an
+    // unpause, even when unpause happens before a worker checks cancellation.
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    for (0..LODLevel.count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| {
+            const chunk = entry.value_ptr.*;
+            switch (chunk.getState()) {
+                .generating => {
+                    chunk.requestCancellation();
+                    chunk.job_token +%= 1;
+                    chunk.cache_read_queued = false;
+                    if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                    chunk.setState(.missing);
+                    self.cancelled_jobs +|= 1;
+                },
+                .meshing => {
+                    chunk.requestCancellation();
+                    chunk.job_token +%= 1;
+                    // The generated source data remains valid. Requeue the
+                    // mesh transition after unpause without discarding its
+                    // pending admission slot.
+                    chunk.setState(.generated);
+                    self.cancelled_jobs +|= 1;
+                },
+                .queued_for_generation => {
+                    chunk.requestCancellation();
+                    chunk.job_token +%= 1;
+                    chunk.cache_read_queued = false;
+                    if (self.pending_region_count > 0) self.pending_region_count -= 1;
+                    chunk.setState(.missing);
+                    self.cancelled_jobs +|= 1;
+                },
+                else => {},
+            }
+        }
+    }
+}
+
+pub fn cancelWorkOutsideHorizon(self: *Self, player_cx: i32, player_cz: i32) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    const radii = self.config.getRadii();
+    const active = lod_chunk.activeLODCount(self.config);
+    for (0..LODLevel.count) |i| {
+        var iter = self.regions[i].iterator();
+        while (iter.next()) |entry| {
+            const chunk = entry.value_ptr.*;
+            switch (chunk.getState()) {
+                .queued_for_generation, .generating, .meshing => {},
+                else => continue,
+            }
+            if (i < active and entry.key_ptr.*.chunkBounds().intersectsRadius(player_cx, player_cz, radii[i])) continue;
+
+            const was_generation = chunk.getState() != .meshing;
+            chunk.requestCancellation();
+            chunk.job_token +%= 1;
+            chunk.cache_read_queued = false;
+            if (was_generation and self.pending_region_count > 0) self.pending_region_count -= 1;
+            chunk.setState(if (was_generation) .missing else .generated);
+            self.cancelled_jobs +|= 1;
+        }
     }
 }
 
@@ -391,10 +527,40 @@ pub fn isInRange(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
 /// NOTE: Acquires a shared lock on LODManager. LODRenderer must NOT attempt to acquire
 /// a write lock on LODManager during rendering to avoid deadlocks.
 pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
 
-    self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats);
+    const visibility_timer = self.profiling.begin();
+    defer self.profiling.end(.visibility, visibility_timer);
+    self.renderer.render(&self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
+}
+
+/// Renders a layer using a WorldRenderer-monotonic frame serial. The concrete
+/// LOD renderer projects visibility once for a serial and reuses safe value
+/// snapshots for the terrain and water submissions.
+pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+    const lock_wait_timer = self.profiling.begin();
+    self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
+    defer self.mutex.unlockShared();
+
+    self.renderer.renderFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
+}
+
+pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+    const lock_wait_timer = self.profiling.begin();
+    self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
+    defer self.mutex.unlockShared();
+    self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
 pub fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {

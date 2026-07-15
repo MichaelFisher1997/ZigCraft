@@ -37,7 +37,9 @@ const LODRegionKey = lod_chunk.LODRegionKey;
 const LODRegionKeyContext = lod_chunk.LODRegionKeyContext;
 const LODMesh = @import("lod_mesh.zig").LODMesh;
 const LODMeshResources = @import("lod_mesh.zig").LODMeshResources;
+const LODStagingCost = @import("lod_mesh_resources.zig").LODStagingCost;
 const LODVertexPool = @import("lod_vertex_pool.zig").LODVertexPool;
+const CompactLODPool = @import("lod_compact_pool.zig").CompactLODPool;
 const CHUNK_SIZE_X = @import("world-core").CHUNK_SIZE_X;
 const CHUNK_SIZE_Z = @import("world-core").CHUNK_SIZE_Z;
 const worldToChunkFromFloat = @import("world-core").worldToChunkFromFloat;
@@ -46,10 +48,12 @@ const lod_gpu = @import("lod_upload_queue.zig");
 const LODGPUBridge = lod_gpu.LODGPUBridge;
 const LODRenderInterface = lod_gpu.LODRenderInterface;
 const LODRenderLayer = lod_gpu.LODRenderLayer;
+const LODRendererMemoryStats = lod_gpu.LODRendererMemoryStats;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const ChunkChecker = lod_gpu.ChunkChecker;
 const LODStats = @import("lod_stats.zig").LODStats;
+const LODProfilingCollector = @import("lod_stats.zig").LODProfilingCollector;
 
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
@@ -58,9 +62,91 @@ const rhi_types = @import("engine-rhi");
 const engine_core = @import("engine-core");
 const log = engine_core.log;
 const build_options = @import("world_lod_options");
+const LODCullCandidate = rhi_types.LODCullCandidate;
+const LODCullDispatch = rhi_types.LODCullDispatch;
+const ILODCullingSystem = rhi_types.ILODCullingSystem;
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 const LOD_UNMASKED_SENTINEL: f32 = 0.5;
+const COMPACT_GRID_WIDTHS = [_]u32{ 5, 9, 17, 33, 65, 129 };
+
+fn selectLODDescriptorStream(render_ctx: anytype, layer: LODRenderLayer, compact: bool, gpu: bool) void {
+    if (comptime !@hasDecl(@TypeOf(render_ctx), "setLODDescriptorStream")) return;
+    const stream: rhi_types.LODDescriptorStream = switch (layer) {
+        .terrain => if (compact) if (gpu) .terrain_compact_gpu else .terrain_compact_direct else if (gpu) .terrain_standard_gpu else .terrain_standard_direct,
+        .fluid => if (compact) if (gpu) .water_compact_gpu else .water_compact_direct else if (gpu) .water_standard_gpu else .water_standard_direct,
+    };
+    render_ctx.setLODDescriptorStream(stream);
+}
+
+fn compactGridIndexCount(width: u32, include_skirts: bool) usize {
+    if (width < 2) return 0;
+    const top = @as(usize, width - 1) * @as(usize, width - 1) * 6;
+    const skirts = if (include_skirts) @as(usize, width - 1) * 4 * 6 else 0;
+    return top + skirts;
+}
+
+fn compactGridIndices(allocator: std.mem.Allocator, width: u32, include_skirts: bool) ![]u32 {
+    if (width < 2) return error.InvalidGrid;
+    const result = try allocator.alloc(u32, compactGridIndexCount(width, include_skirts));
+    var out: usize = 0;
+    var z: u32 = 0;
+    while (z + 1 < width) : (z += 1) {
+        var x: u32 = 0;
+        while (x + 1 < width) : (x += 1) {
+            const a = z * width + x;
+            const b = a + 1;
+            const c = a + width;
+            const d = c + 1;
+            result[out + 0] = a;
+            result[out + 1] = c;
+            result[out + 2] = b;
+            result[out + 3] = b;
+            result[out + 4] = c;
+            result[out + 5] = d;
+            out += 6;
+        }
+    }
+
+    if (include_skirts) {
+        const top_vertex_count = width * width;
+        const Edge = struct {
+            fn append(result_slice: []u32, output: *usize, top_a: u32, top_b: u32, bottom_a: u32, bottom_b: u32) void {
+                result_slice[output.* + 0] = top_a;
+                result_slice[output.* + 1] = bottom_a;
+                result_slice[output.* + 2] = top_b;
+                result_slice[output.* + 3] = top_b;
+                result_slice[output.* + 4] = bottom_a;
+                result_slice[output.* + 5] = bottom_b;
+                output.* += 6;
+            }
+        };
+        for (0..width - 1) |edge_index| {
+            const i: u32 = @intCast(edge_index);
+            // North and south.
+            Edge.append(result, &out, i, i + 1, top_vertex_count + i, top_vertex_count + i + 1);
+            const south_top = (width - 1) * width + i;
+            const south_bottom = top_vertex_count + width + i;
+            Edge.append(result, &out, south_top + 1, south_top, south_bottom + 1, south_bottom);
+            // West and east.
+            const west_top = i * width;
+            const west_bottom = top_vertex_count + width * 2 + i;
+            Edge.append(result, &out, west_top + width, west_top, west_bottom + 1, west_bottom);
+            const east_top = i * width + width - 1;
+            const east_bottom = top_vertex_count + width * 3 + i;
+            Edge.append(result, &out, east_top, east_top + width, east_bottom, east_bottom + 1);
+        }
+    }
+    std.debug.assert(out == result.len);
+    return result;
+}
+
+fn compactGridVariant(width: u32) ?usize {
+    for (COMPACT_GRID_WIDTHS, 0..) |candidate, index| {
+        if (candidate == width) return index;
+    }
+    return null;
+}
 
 const RenderDiag = struct {
     meshes_seen: u32 = 0,
@@ -72,6 +158,25 @@ const RenderDiag = struct {
     covered_chunks: u32 = 0,
     frustum_culled: u32 = 0,
     drawn: u32 = 0,
+};
+
+/// A compact tile may be selected before render-graph resources or descriptor
+/// snapshots become usable. That is a retryable availability state, not a
+/// backend submission failure.
+const CompactRenderResult = enum {
+    drawn,
+    unavailable,
+    backend_failed,
+};
+
+/// Value-only result of the frame visibility projection. It deliberately holds
+/// no mesh or region pointer: the projection can survive the terrain pass and
+/// is revalidated under the manager's shared lock before a later water pass.
+const VisibleRegion = struct {
+    key: LODRegionKey,
+    model: Mat4,
+    mask_radius: f32,
+    lod_fade: f32,
 };
 
 const MAX_LOD_MDI_REGIONS: usize = 2048;
@@ -93,14 +198,39 @@ pub fn LODRenderer(comptime RHI: type) type {
         // MDI Resources (Moved from LODManager)
         instance_data: std.ArrayListUnmanaged(rhi_types.InstanceData),
         draw_list: std.ArrayListUnmanaged(*LODMesh),
+        projection_regions: std.ArrayListUnmanaged(VisibleRegion),
+        projection_frame: ?u64,
         draw_commands: [LODLevel.count]std.ArrayListUnmanaged(rhi_types.DrawIndirectCommand),
         instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
         indirect_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
         vertex_pools: [LODLevel.count]LODVertexPool,
+        compact_pool: CompactLODPool,
+        /// Per compact LOD: terrain grid with edge skirts, then water top grid.
+        /// Exact-width topology for each compact LOD and layer. A prefix of a
+        /// wider grid is not valid topology for a decimated tile: its row
+        /// stride remains the wider grid's stride and can feed invalid vertex
+        /// IDs to the water vertex-pulling path on RADV.
+        compact_index_buffers: [2][2][COMPACT_GRID_WIDTHS.len]rhi_types.BufferHandle,
         frame_index: usize,
+        frame_serial: u64,
         enable_mdi: bool,
         gpu_culling_requested: bool,
-        gpu_culling_fallback_logged: bool,
+        gpu_culling: ?ILODCullingSystem,
+        gpu_candidates: std.ArrayListUnmanaged(LODCullCandidate),
+        /// Keys parallel to `gpu_candidates`.  Ineligible meshes stay on the
+        /// CPU path instead of disabling an otherwise valid GPU batch.
+        gpu_candidate_keys: std.ArrayListUnmanaged(LODRegionKey),
+        /// Compact submissions that need a parent fallback after the compact
+        /// timing scope has ended. This keeps expanded fallback draws out of
+        /// compact GPU timing evidence.
+        compact_fallback_regions: std.ArrayListUnmanaged(VisibleRegion),
+        gpu_culling_ready_frame: ?u64,
+        gpu_culling_threshold: usize,
+        gpu_culling_overflow_count: u32,
+        /// GPU culling prepares one candidate projection for terrain and water.
+        /// Keep its benchmark submission counter frame-scoped so those paired
+        /// streams are not reported as two independent culling submissions.
+        gpu_culling_submitted_frame: ?u64,
 
         /// Allocates LOD renderer GPU buffers and per-frame indirect draw resources.
         /// The renderer owns created buffers until `deinit`; allocation failures are returned to the caller.
@@ -129,24 +259,59 @@ pub fn LODRenderer(comptime RHI: type) type {
             for (0..LODLevel.count) |i| {
                 vertex_pools[i] = LODVertexPool.init(allocator, @enumFromInt(@as(u3, @intCast(i))), 8 * 1024 * 1024);
             }
+            var compact_index_buffers = std.mem.zeroes([2][2][COMPACT_GRID_WIDTHS.len]rhi_types.BufferHandle);
+            errdefer for (&compact_index_buffers) |*lod_handles| for (lod_handles) |layer_handles| for (layer_handles) |handle| if (handle != 0) resources.destroyBuffer(handle);
+            inline for (.{ LODLevel.lod3, LODLevel.lod4 }, 0..) |lod, idx| {
+                const max_width = @import("world-core").LODSimplifiedData.getGridSize(lod);
+                inline for (.{ true, false }, 0..) |include_skirts, layer_idx| for (COMPACT_GRID_WIDTHS, 0..) |width, width_idx| {
+                    if (width > max_width) continue;
+                    const indices = try compactGridIndices(allocator, width, include_skirts);
+                    defer allocator.free(indices);
+                    compact_index_buffers[idx][layer_idx][width_idx] = try resources.createBuffer(std.mem.sliceAsBytes(indices).len, .index);
+                    try resources.uploadBuffer(compact_index_buffers[idx][layer_idx][width_idx], std.mem.sliceAsBytes(indices));
+                };
+            }
 
+            const gpu_culling_requested = gpuCullingRequested(build_options.benchmark_gpu_culling, engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false));
+            if (engine_core.envFlag("ZIGCRAFT_LOD_COMPACT_DIAG", false)) {
+                std.debug.print("LOD_COMPACT: event=gpu_culling_init requested={} env={s}\n", .{ gpu_culling_requested, engine_core.getenv("ZIGCRAFT_LOD_GPU_CULLING") orelse "unset" });
+            }
+            var gpu_culling: ?ILODCullingSystem = null;
+            if (gpu_culling_requested and @hasDecl(RHI, "createLODCullingSystem")) {
+                gpu_culling = rhi.createLODCullingSystem(allocator, MAX_LOD_MDI_REGIONS) catch |err| blk: {
+                    log.log.warn("LOD GPU culling unavailable ({}); CPU fallback active", .{err});
+                    break :blk null;
+                };
+            }
             renderer.* = .{
                 .allocator = allocator,
                 .rhi = rhi,
                 .instance_data = .empty,
                 .draw_list = .empty,
+                .projection_regions = .empty,
+                .projection_frame = null,
                 .draw_commands = draw_commands,
                 .instance_buffers = instance_buffers,
                 .indirect_buffers = indirect_buffers,
                 .vertex_pools = vertex_pools,
+                .compact_pool = CompactLODPool.init(allocator),
+                .compact_index_buffers = compact_index_buffers,
                 .frame_index = 0,
-                .enable_mdi = engine_core.envFlag("ZIGCRAFT_ENABLE_LOD_MDI", false),
-                .gpu_culling_requested = engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false),
-                .gpu_culling_fallback_logged = false,
+                .frame_serial = 0,
+                .enable_mdi = !engine_core.envFlag("ZIGCRAFT_DISABLE_LOD_MDI", false),
+                .gpu_culling_requested = gpu_culling_requested,
+                .gpu_culling = gpu_culling,
+                .gpu_candidates = .empty,
+                .gpu_candidate_keys = .empty,
+                .compact_fallback_regions = .empty,
+                .gpu_culling_ready_frame = null,
+                .gpu_culling_threshold = gpuCullingThreshold(),
+                .gpu_culling_overflow_count = 0,
+                .gpu_culling_submitted_frame = null,
             };
 
             if (!renderer.enable_mdi) {
-                log.log.info("LOD MDI disabled by default; set ZIGCRAFT_ENABLE_LOD_MDI=1 to test indirect LOD batches", .{});
+                log.log.info("LOD MDI disabled by ZIGCRAFT_DISABLE_LOD_MDI", .{});
             }
 
             return renderer;
@@ -169,13 +334,171 @@ pub fn LODRenderer(comptime RHI: type) type {
             for (0..LODLevel.count) |i| {
                 self.vertex_pools[i].deinit(mesh_resources);
             }
+            self.compact_pool.deinit(mesh_resources);
+            for (self.compact_index_buffers) |lod_handles| for (lod_handles) |layer_handles| for (layer_handles) |handle| if (handle != 0) resources.destroyBuffer(handle);
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
+            self.projection_regions.deinit(self.allocator);
+            self.gpu_candidates.deinit(self.allocator);
+            self.gpu_candidate_keys.deinit(self.allocator);
+            self.compact_fallback_regions.deinit(self.allocator);
+            if (self.gpu_culling) |gpu| gpu.deinit();
             for (&self.draw_commands) |*commands| commands.deinit(self.allocator);
             self.allocator.destroy(self);
         }
 
         /// Render all LOD meshes using explicitly provided data.
+        ///
+        /// `frame_serial` is supplied by WorldRenderer and advances only from
+        /// its `beginFrame`. Visibility and full-chunk coverage are projected
+        /// once for that frame; terrain and water then consume value-only
+        /// entries without retaining map-owned mesh pointers.
+        pub fn renderFrame(
+            self: *Self,
+            frame_serial: u64,
+            meshes: *const [LODLevel.count]MeshMap,
+            regions: *const [LODLevel.count]RegionMap,
+            config: ILODConfig,
+            view_proj: Mat4,
+            camera_pos: Vec3,
+            chunk_checker: ?ChunkChecker,
+            checker_ctx: ?*anyopaque,
+            use_frustum: bool,
+            max_distance_chunks: ?i32,
+            layer: LODRenderLayer,
+            stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
+        ) void {
+            self.frame_serial = frame_serial;
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            self.frame_index = query.getFrameIndex();
+            // Reusing a frame slot means the RHI has completed that slot's
+            // fence. The compact pool additionally requires a newer monotonic
+            // frame serial before it returns any retired range to allocation.
+            self.compact_pool.collectRetired(frame_serial, self.frame_index);
+            for (&self.vertex_pools) |*pool| pool.collectRetired(frame_serial, self.frame_index);
+            if (self.projection_frame == null or self.projection_frame.? != frame_serial) {
+                const timer = if (profiling) |profile| profile.begin() else null;
+                defer if (profiling) |profile| profile.end(.visibility, timer);
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                    log.log.errWithTrace("Failed to project LOD visibility: {}", .{err});
+                    return;
+                };
+                self.projection_frame = frame_serial;
+            }
+            if (!self.renderProjectedLayer(meshes, layer, stats, profiling)) {
+                // GPU submission can still fail after the compute prepass (for
+                // example if a pooled buffer becomes unavailable). Never feed
+                // the broad GPU candidate projection into the CPU renderer.
+                self.gpu_culling_ready_frame = null;
+                const timer = if (profiling) |profile| profile.begin() else null;
+                defer if (profiling) |profile| profile.end(.visibility, timer);
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                    log.log.errWithTrace("Failed to rebuild CPU LOD visibility: {}", .{err});
+                    self.projection_frame = null;
+                    return;
+                };
+                self.projection_frame = frame_serial;
+                _ = self.renderProjectedLayer(meshes, layer, stats, profiling);
+            }
+        }
+
+        /// Records the LOD compute pass before the render graph enters a graphics
+        /// pass. Hierarchy/readiness/chunk-coverage stay CPU authoritative.
+        pub fn prepareFrame(
+            self: *Self,
+            frame_serial: u64,
+            meshes: *const [LODLevel.count]MeshMap,
+            regions: *const [LODLevel.count]RegionMap,
+            config: ILODConfig,
+            view_proj: Mat4,
+            camera_pos: Vec3,
+            chunk_checker: ?ChunkChecker,
+            checker_ctx: ?*anyopaque,
+            max_distance_chunks: ?i32,
+            stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
+        ) void {
+            self.updateGpuCullingProfiling(profiling);
+            const gpu = self.gpu_culling orelse return;
+            if (!self.gpu_culling_requested or self.projection_frame == frame_serial) return;
+            const visibility_timer = if (profiling) |profile| profile.begin() else null;
+            defer if (profiling) |profile| profile.end(.visibility, visibility_timer);
+            self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, false, null, stats, profiling) catch |err| {
+                log.log.err("LOD GPU culling projection failed: {}", .{err});
+                return;
+            };
+            self.projection_frame = frame_serial;
+            self.gpu_candidates.clearRetainingCapacity();
+            self.gpu_candidate_keys.clearRetainingCapacity();
+            // Never truncate a visibility projection: losing an LOD fallback
+            // region can create a terrain hole, so overflow is CPU-rendered.
+            if (self.projection_regions.items.len > MAX_LOD_MDI_REGIONS) {
+                self.gpu_culling_overflow_count +%= 1;
+                self.updateGpuCullingProfiling(profiling);
+                self.projection_frame = null;
+                return;
+            }
+            for (self.projection_regions.items) |visible| {
+                const lod_index = @intFromEnum(visible.key.lod);
+                const mesh = meshes[lod_index].get(visible.key) orelse continue;
+                const chunk = regions[lod_index].get(visible.key) orelse continue;
+                const terrain = mesh.drawRange(.terrain);
+                const fluid = mesh.drawRange(.fluid);
+                if ((terrain orelse fluid) == null) continue;
+                const compact = mesh.isCompact();
+                // Dedicated expanded fallback meshes are not backed by the
+                // per-LOD vertex pools required for GPU indirect submission.
+                // Omit only those meshes: compact candidates and pooled meshes
+                // still benefit from GPU culling in the same frame.
+                if (!compact and !mesh.isPooled()) continue;
+                const bounds = chunk.worldBounds();
+                const cell_size: f32 = if (compact) @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(visible.key.lod))) / @as(f32, @floatFromInt(mesh.compact_tile_width - 1)) else 0;
+                self.gpu_candidates.append(self.allocator, .{
+                    .min_point = .{ @as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, bounds.min_y - camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z, 0 },
+                    .max_point = .{ @as(f32, @floatFromInt(bounds.max_x)) - camera_pos.x, bounds.max_y - camera_pos.y, @as(f32, @floatFromInt(bounds.max_z)) - camera_pos.z, 0 },
+                    .model = visible.model,
+                    .instance_params = .{ visible.mask_radius, visible.lod_fade, if (compact) cell_size else 0, if (compact) @max(16.0, cell_size * 2.0) else 0 },
+                    .compact_words = .{ mesh.compact_sample_offset, mesh.compact_tile_width, 0, mesh.compactApronMask() },
+                    .compact_metrics = .{ cell_size, @max(16.0, cell_size * 2.0), 0, 0 },
+                    .terrain_command = cullCommandFor(mesh, terrain, compact, true),
+                    .water_command = cullCommandFor(mesh, fluid, compact, false),
+                    .lod_and_padding = .{ @intCast(lod_index), if (compact) 1 else 0, 0, 0 },
+                }) catch return;
+                self.gpu_candidate_keys.append(self.allocator, visible.key) catch {
+                    _ = self.gpu_candidates.pop();
+                    return;
+                };
+            }
+            if (profiling) |profile| profile.setGpuCullingCandidateCount(self.gpu_candidates.items.len);
+            if (self.gpu_candidates.items.len < self.gpu_culling_threshold) {
+                self.projection_frame = null;
+                return;
+            }
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            if (!@hasDecl(@TypeOf(query), "supportsIndirectCount")) {
+                self.projection_frame = null;
+                return;
+            }
+            if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount()) {
+                self.projection_frame = null;
+                return;
+            }
+            const distance_chunks = max_distance_chunks orelse config.getRadii()[lod_chunk.activeLODCount(config) - 1];
+            if (comptime @hasDecl(RHI, "timing")) {
+                const timing = self.rhi.timing();
+                timing.beginPassTiming("LODGpuCullingComputeBarrier");
+                defer timing.endPassTiming("LODGpuCullingComputeBarrier");
+            }
+            if (gpu.dispatch(query.getFrameIndex(), self.gpu_candidates.items, .{
+                .planes = extractPlanes(view_proj),
+                .candidate_count = 0,
+                .max_distance_blocks = @as(f32, @floatFromInt(distance_chunks * CHUNK_SIZE_X)),
+                .max_commands_per_lod = 0,
+            })) self.gpu_culling_ready_frame = frame_serial else self.projection_frame = null;
+            self.updateGpuCullingProfiling(profiling);
+        }
+
         pub fn render(
             self: *Self,
             meshes: *const [LODLevel.count]MeshMap,
@@ -189,19 +512,16 @@ pub fn LODRenderer(comptime RHI: type) type {
             max_distance_chunks: ?i32,
             layer: LODRenderLayer,
             stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
         ) void {
             // Update frame index
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
-            if (self.gpu_culling_requested and !self.gpu_culling_fallback_logged) {
-                log.log.warn("ZIGCRAFT_LOD_GPU_CULLING requested, but LOD GPU culling is using CPU fallback until RHI exposes indirect-command compaction", .{});
-                self.gpu_culling_fallback_logged = true;
-            }
-
             // Use the LOD descriptor set while issuing LOD draws, then restore
             // normal terrain descriptor mode so the chunk pass keeps its textures.
             defer if (@hasDecl(@TypeOf(render_ctx), "setInstanceBuffer")) render_ctx.setInstanceBuffer(0);
+            selectLODDescriptorStream(render_ctx, layer, false, false);
             render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
 
             const frustum = Frustum.fromViewProj(view_proj);
@@ -228,16 +548,33 @@ pub fn LODRenderer(comptime RHI: type) type {
             while (i > 0) {
                 i -= 1;
                 const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
-                self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats) catch |err| {
+                self.collectVisibleMeshes(meshes, regions, lod, config, view_proj, camera_pos, frustum, lod_y_offset, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling) catch |err| {
                     log.log.errWithTrace("Failed to collect visible meshes for LOD{}: {}", .{ i, err });
                 };
             }
 
             if (self.instance_data.items.len == 0) return;
 
-            if (self.enable_mdi and layer == .terrain and self.renderIndirectBatches(render_ctx, query)) return;
+            const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
 
+            const compact_timing_name = if (layer == .terrain) "LODCompactTerrainPass" else "LODCompactWaterPass";
+            if (comptime @hasDecl(RHI, "timing")) self.rhi.timing().beginPassTiming(compact_timing_name);
             for (self.draw_list.items, 0..) |mesh, idx| {
+                if (indirect_drawn and mesh.isPooled()) continue;
+                if (!mesh.isCompact()) continue;
+                const instance = self.instance_data.items[idx];
+                const range = mesh.drawRange(layer) orelse continue;
+                render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
+                if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
+                    render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
+                } else {
+                    render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
+                }
+            }
+            if (comptime @hasDecl(RHI, "timing")) self.rhi.timing().endPassTiming(compact_timing_name);
+            for (self.draw_list.items, 0..) |mesh, idx| {
+                if (indirect_drawn and mesh.isPooled()) continue;
+                if (mesh.isCompact()) continue;
                 const instance = self.instance_data.items[idx];
                 const range = mesh.drawRange(layer) orelse continue;
                 render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
@@ -266,7 +603,6 @@ pub fn LODRenderer(comptime RHI: type) type {
             var total_commands: usize = 0;
             for (self.draw_commands) |commands| total_commands += commands.items.len;
             if (total_commands == 0) return false;
-            if (total_commands != self.draw_list.items.len) return false;
             if (total_commands > MAX_LOD_MDI_REGIONS) {
                 log.log.warn("LOD MDI: command overflow ({} > {}), falling back to CPU draw", .{ total_commands, MAX_LOD_MDI_REGIONS });
                 return false;
@@ -311,6 +647,471 @@ pub fn LODRenderer(comptime RHI: type) type {
             return true;
         }
 
+        fn buildVisibilityProjection(
+            self: *Self,
+            all_meshes: *const [LODLevel.count]MeshMap,
+            all_regions: *const [LODLevel.count]RegionMap,
+            config: ILODConfig,
+            view_proj: Mat4,
+            camera_pos: Vec3,
+            chunk_checker: ?ChunkChecker,
+            checker_ctx: ?*anyopaque,
+            use_frustum: bool,
+            max_distance_chunks: ?i32,
+            stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
+        ) !void {
+            self.projection_regions.clearRetainingCapacity();
+            if (stats) |s| {
+                s.drawn = [_]u32{0} ** LODLevel.count;
+                s.instances = [_]u32{0} ** LODLevel.count;
+                s.fluid_drawn = [_]u32{0} ** LODLevel.count;
+                s.fluid_instances = [_]u32{0} ** LODLevel.count;
+                s.gpu_terrain_candidates = 0;
+                s.gpu_fluid_candidates = 0;
+            }
+
+            const frustum = Frustum.fromViewProj(view_proj);
+            const disable_frustum = engine_core.envFlag("ZIGCRAFT_LOD_DISABLE_FRUSTUM", false);
+            const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
+            const chunk_radius = config.getChunkRenderRadius();
+            var i = lod_chunk.activeLODCount(config);
+            while (i > 0) {
+                i -= 1;
+                const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
+                var telemetry = @import("lod_stats.zig").LODVisibilityLevelSnapshot{};
+                var iter = all_meshes[i].iterator();
+                while (iter.next()) |entry| {
+                    telemetry.candidates += 1;
+                    const mesh = entry.value_ptr.*;
+                    if (!mesh.isReady()) {
+                        telemetry.rejected_not_ready += 1;
+                        if (profiling) |profile| profile.addRejected();
+                        continue;
+                    }
+                    if ((mesh.drawRange(.terrain) orelse mesh.drawRange(.fluid)) == null) {
+                        telemetry.rejected_no_draw += 1;
+                        if (profiling) |profile| profile.addRejected();
+                        continue;
+                    }
+                    const chunk = all_regions[i].get(entry.key_ptr.*) orelse {
+                        telemetry.rejected_missing_region += 1;
+                        if (profiling) |profile| profile.addRejected();
+                        continue;
+                    };
+                    if (!chunk.isRenderable()) {
+                        telemetry.rejected_not_renderable += 1;
+                        if (profiling) |profile| profile.addRejected();
+                        continue;
+                    }
+                    if (self.isCoveredByFinerLOD(chunk, config)) {
+                        telemetry.rejected_finer_coverage += 1;
+                        if (profiling) |profile| profile.addRejected();
+                        continue;
+                    }
+
+                    const bounds = chunk.worldBounds();
+                    const chunk_bounds = chunk.chunkBounds();
+                    // Cheap radial and frustum tests intentionally precede the
+                    // potentially large chunk-coverage scan.
+                    if (max_distance_chunks) |max_dist| {
+                        if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) {
+                            telemetry.rejected_range += 1;
+                            if (profiling) |profile| profile.addRejected();
+                            continue;
+                        }
+                    }
+                    if (use_frustum and !disable_frustum and !isRegionInFrustum(frustum, bounds, camera_pos)) {
+                        telemetry.rejected_frustum += 1;
+                        if (profiling) |profile| profile.addRejected();
+                        continue;
+                    }
+
+                    var mask_radius = config.calculateMaskRadius();
+                    if (chunk_checker) |checker| {
+                        if (checker_ctx) |ctx_ptr| {
+                            const coverage_timer = if (profiling) |profile| profile.begin() else null;
+                            const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, camera_chunk.chunk_x, camera_chunk.chunk_z, chunk_radius);
+                            if (profiling) |profile| {
+                                profile.end(.coverage, coverage_timer);
+                                profile.addCoverage();
+                            }
+                            telemetry.coverage_checks += 1;
+                            if (cov.covered) {
+                                telemetry.rejected_chunk_coverage += 1;
+                                if (profiling) |profile| profile.addRejected();
+                                continue;
+                            }
+                            if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) mask_radius = LOD_UNMASKED_SENTINEL;
+                        }
+                    }
+
+                    try self.projection_regions.append(self.allocator, .{
+                        .key = entry.key_ptr.*,
+                        .model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z)),
+                        .mask_radius = mask_radius,
+                        .lod_fade = chunk.transitionFadeProgress(),
+                    });
+                    telemetry.accepted += 1;
+                    if (profiling) |profile| profile.addVisible();
+                }
+                if (profiling) |profile| profile.addVisibilityLevel(lod, telemetry);
+            }
+        }
+
+        /// Returns false only when a prepared GPU frame could not be submitted;
+        /// callers must rebuild the CPU projection with normal culling first.
+        fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats, profiling: ?*LODProfilingCollector) bool {
+            const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
+            const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
+            self.frame_index = query.getFrameIndex();
+            defer if (@hasDecl(@TypeOf(render_ctx), "setInstanceBuffer")) render_ctx.setInstanceBuffer(0);
+            selectLODDescriptorStream(render_ctx, layer, false, false);
+            render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
+            self.instance_data.clearRetainingCapacity();
+            self.draw_list.clearRetainingCapacity();
+            self.compact_fallback_regions.clearRetainingCapacity();
+            for (&self.draw_commands) |*commands| commands.clearRetainingCapacity();
+            self.updateGpuCullingProfiling(profiling);
+            if (stats) |s| {
+                s.gpu_culling_overflows = self.gpu_culling_overflow_count;
+                s.gpu_culling_requested = self.gpu_culling_requested;
+                s.gpu_culling_threshold = @intCast(@min(self.gpu_culling_threshold, std.math.maxInt(u32)));
+                s.gpu_culling_candidate_count = 0;
+                s.gpu_culling_draw_submissions = 0;
+                if (self.gpu_culling) |gpu| {
+                    const diagnostics = gpu.diagnostics();
+                    s.gpu_culling_validation_mismatches = diagnostics.validation_mismatch_count;
+                    s.gpu_culling_validation_generation = diagnostics.validation_generation;
+                    s.gpu_culling_validation_completed_generation = diagnostics.validation_completed_generation;
+                    s.gpu_culling_validation_completed_count = diagnostics.validation_completed_count;
+                }
+            }
+
+            const gpu_frame_prepared = self.projection_frame != null and self.gpu_culling_ready_frame == self.projection_frame;
+            const gpu_submitted = self.renderGpuCulledLayer(layer, stats, profiling, render_ctx, query);
+            if (gpu_frame_prepared and !gpu_submitted) return false;
+            // GPU and CPU fallbacks use distinct immutable descriptor streams.
+            // Re-select direct before any fallback binding or draw is recorded.
+            selectLODDescriptorStream(render_ctx, layer, false, false);
+            render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
+
+            {
+                var compact_timing_started = false;
+                const compact_timing_name = if (layer == .terrain) "LODCompactTerrainPass" else "LODCompactWaterPass";
+                defer if (compact_timing_started and @hasDecl(RHI, "timing")) self.rhi.timing().endPassTiming(compact_timing_name);
+                for (self.projection_regions.items) |visible| {
+                    const lod_idx = @intFromEnum(visible.key.lod);
+                    const mesh = all_meshes[lod_idx].get(visible.key) orelse continue;
+                    const range = mesh.drawRange(layer) orelse continue;
+                    if (!mesh.isReady() or range.count == 0) continue;
+                    if (gpu_submitted and self.gpuCandidateDraws(visible.key, layer)) continue;
+                    if (mesh.isCompact()) {
+                        if (!compact_timing_started and @hasDecl(RHI, "timing")) {
+                            self.rhi.timing().beginPassTiming(compact_timing_name);
+                            compact_timing_started = true;
+                        }
+                        const result = self.renderCompactMesh(render_ctx, visible, mesh, layer);
+                        if (result == .drawn) {
+                            if (profiling) |profile| profile.addCompactSubmission();
+                            if (stats) |s| if (layer == .fluid) {
+                                s.fluid_drawn[lod_idx] += 1;
+                                s.fluid_instances[lod_idx] += 1;
+                            } else {
+                                s.drawn[lod_idx] += 1;
+                                s.instances[lod_idx] += 1;
+                            };
+                        } else {
+                            self.noteCompactRenderFailure(mesh, result, profiling);
+                            // Draw parent fallbacks only after the compact pass
+                            // scope closes so expanded draws do not contaminate
+                            // compact GPU timing.
+                            self.compact_fallback_regions.append(self.allocator, visible) catch {};
+                        }
+                        continue;
+                    }
+                    const lod_y_offset: f32 = if (layer == .fluid) 0.0 else -0.05;
+                    var instance = rhi_types.InstanceData{ .model = visible.model, .mask_radius = visible.mask_radius, .lod_fade = visible.lod_fade, .padding = .{ 0, 0 } };
+                    instance.model.data[3][1] += lod_y_offset;
+                    self.instance_data.append(self.allocator, instance) catch continue;
+                    self.draw_list.append(self.allocator, mesh) catch {
+                        _ = self.instance_data.pop();
+                        continue;
+                    };
+                    if (mesh.isPooled()) {
+                        self.draw_commands[lod_idx].append(self.allocator, .{
+                            .vertexCount = range.count,
+                            .instanceCount = 1,
+                            .firstVertex = mesh.firstVertex(range),
+                            .firstInstance = @intCast(self.instance_data.items.len - 1),
+                        }) catch {
+                            _ = self.draw_list.pop();
+                            _ = self.instance_data.pop();
+                            continue;
+                        };
+                    }
+                    if (stats) |s| {
+                        if (layer == .fluid) {
+                            s.fluid_drawn[lod_idx] += 1;
+                            s.fluid_instances[lod_idx] += 1;
+                        } else {
+                            s.drawn[lod_idx] += 1;
+                            s.instances[lod_idx] += 1;
+                        }
+                    }
+                }
+            }
+            for (self.compact_fallback_regions.items) |visible| {
+                _ = self.renderParentFallback(all_meshes, visible, layer, render_ctx, profiling);
+            }
+            if (self.instance_data.items.len == 0) return true;
+            const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
+            for (self.draw_list.items, 0..) |mesh, index| {
+                if (indirect_drawn and mesh.isPooled()) continue;
+                const instance = self.instance_data.items[index];
+                const range = mesh.drawRange(layer) orelse continue;
+                render_ctx.setModelMatrix(instance.model, Vec3.one, instance.mask_radius);
+                if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
+                    render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
+                } else render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
+            }
+            return true;
+        }
+
+        fn gpuCandidateDraws(self: *const Self, key: LODRegionKey, layer: LODRenderLayer) bool {
+            for (self.gpu_candidate_keys.items, self.gpu_candidates.items) |candidate_key, candidate| {
+                if (!std.meta.eql(candidate_key, key)) continue;
+                const command = if (layer == .fluid) candidate.water_command else candidate.terrain_command;
+                if (command.count == 0) return false;
+                // Indirect compact streams are currently partitioned by LOD,
+                // not grid width. If async density changes produce two widths
+                // in one LOD, no single index buffer can draw that stream; keep
+                // every affected tile on the width-correct direct path.
+                if (candidate.lod_and_padding[1] != 0) return self.gpuCompactWidthForLOD(key.lod, layer) != null;
+                return true;
+            }
+            return false;
+        }
+
+        fn renderParentFallback(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, child: VisibleRegion, layer: LODRenderLayer, render_ctx: anytype, profiling: ?*LODProfilingCollector) bool {
+            var child_key = child.key;
+            var child_model = child.model;
+            while (child_key.parentKey()) |parent_key| {
+                const child_size: i32 = @intCast(child_key.lod.chunksPerSide() * CHUNK_SIZE_X);
+                const parent_size: i32 = @intCast(parent_key.lod.chunksPerSide() * CHUNK_SIZE_X);
+                child_model.data[3][0] += @floatFromInt(parent_key.rx * parent_size - child_key.rx * child_size);
+                child_model.data[3][2] += @floatFromInt(parent_key.rz * parent_size - child_key.rz * child_size);
+                const mesh = all_meshes[@intFromEnum(parent_key.lod)].get(parent_key) orelse {
+                    child_key = parent_key;
+                    continue;
+                };
+                const range = mesh.drawRange(layer) orelse {
+                    child_key = parent_key;
+                    continue;
+                };
+                if (!mesh.isReady() or range.count == 0) {
+                    child_key = parent_key;
+                    continue;
+                }
+                const parent_visible = VisibleRegion{
+                    .key = parent_key,
+                    .model = child_model,
+                    .mask_radius = LOD_UNMASKED_SENTINEL,
+                    .lod_fade = 1.0,
+                };
+                if (mesh.isCompact()) {
+                    const result = self.renderCompactMesh(render_ctx, parent_visible, mesh, layer);
+                    if (result == .drawn) {
+                        if (profiling) |profile| profile.addCompactSubmission();
+                        return true;
+                    }
+                    self.noteCompactRenderFailure(mesh, result, profiling);
+                    child_key = parent_key;
+                    continue;
+                }
+                selectLODDescriptorStream(render_ctx, layer, false, false);
+                render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
+                render_ctx.setModelMatrix(child_model, Vec3.one, LOD_UNMASKED_SENTINEL);
+                if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
+                    render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
+                } else {
+                    render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        fn noteCompactRenderFailure(_: *Self, mesh: *LODMesh, result: CompactRenderResult, profiling: ?*LODProfilingCollector) void {
+            switch (result) {
+                .drawn => unreachable,
+                .unavailable => if (profiling) |profile| profile.addCompactDrawUnavailable(),
+                .backend_failed => {
+                    if (profiling) |profile| profile.addCompactDrawFailure();
+                    if (mesh.noteCompactBackendDrawFailure()) {
+                        log.log.warn("LOD{} compact draw failed {} times after preflight; scheduling expanded fallback", .{ @intFromEnum(mesh.lodLevel()), LODMesh.COMPACT_BACKEND_FAILURE_LIMIT });
+                    }
+                },
+            }
+        }
+
+        fn renderCompactMesh(self: *Self, render_ctx: anytype, visible: VisibleRegion, mesh: *LODMesh, layer: LODRenderLayer) CompactRenderResult {
+            if (comptime !@hasDecl(@TypeOf(render_ctx), "drawCompactLOD") or !@hasDecl(@TypeOf(render_ctx), "setLODCompactSampleBuffer") or !@hasDecl(@TypeOf(render_ctx), "setLODDescriptorStream")) return .unavailable;
+            const lod = mesh.lodLevel();
+            if ((lod != .lod3 and lod != .lod4) or self.compact_pool.buffer_handle == 0 or mesh.compact_tile_width < 2) return .unavailable;
+            selectLODDescriptorStream(render_ctx, layer, true, false);
+            render_ctx.setLODCompactSampleBuffer(self.compact_pool.buffer_handle);
+            const index_buffer = self.compactIndexBuffer(lod, mesh.compact_tile_width, layer);
+            if (index_buffer == 0) return .unavailable;
+            const index_count: u32 = @intCast(compactGridIndexCount(mesh.compact_tile_width, layer == .terrain));
+            if (index_count == 0) return .unavailable;
+            var model = visible.model;
+            // Match expanded terrain's handoff bias. Water remains at its true
+            // surface height so compact/expanded representation changes do not
+            // introduce a vertical seam.
+            if (layer == .terrain) model.data[3][1] -= 0.05;
+            if (render_ctx.drawCompactLOD(index_buffer, index_count, .{
+                .model = model,
+                .mask_radius = visible.mask_radius,
+                .lod_fade = visible.lod_fade,
+                .sample_offset = mesh.compact_sample_offset,
+                .width = mesh.compact_tile_width,
+                .cell_size = @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(lod))) / @as(f32, @floatFromInt(mesh.compact_tile_width - 1)),
+                .layer = if (layer == .fluid) 1 else 0,
+                .skirt_depth = @max(16.0, @as(f32, @floatFromInt(lod_chunk.regionSizeBlocks(lod))) / @as(f32, @floatFromInt(mesh.compact_tile_width - 1)) * 2.0),
+                .edge_masks = mesh.compactApronMask(),
+            })) {
+                mesh.resetCompactBackendDrawFailures();
+                return .drawn;
+            }
+            return .backend_failed;
+        }
+
+        fn renderGpuCulledLayer(self: *Self, layer: LODRenderLayer, stats: ?*LODStats, profiling: ?*LODProfilingCollector, render_ctx: anytype, query: anytype) bool {
+            const frame = self.projection_frame orelse return false;
+            if (self.gpu_culling_ready_frame != frame) return false;
+            const gpu = self.gpu_culling orelse return false;
+            if (!@hasDecl(@TypeOf(render_ctx), "drawIndirectCount") or !@hasDecl(@TypeOf(query), "supportsIndirectCount")) return false;
+            if (!query.supportsIndirectFirstInstance() or !query.supportsIndirectCount() or self.gpu_candidates.items.len < self.gpu_culling_threshold) return false;
+            var has_standard = false;
+            var has_compact = false;
+            for (self.gpu_candidates.items) |candidate| {
+                const lod_index = candidate.lod_and_padding[0];
+                if (lod_index >= LODLevel.count) return false;
+                const command = if (layer == .fluid) candidate.water_command else candidate.terrain_command;
+                if (candidate.lod_and_padding[1] == 0 and command.count != 0) {
+                    has_standard = true;
+                    if (self.vertex_pools[lod_index].buffer_handle == 0) return false;
+                }
+                if (candidate.lod_and_padding[1] != 0 and command.count != 0) has_compact = true;
+            }
+            const fi = self.frame_index;
+            // Complete validation before emitting any graphics command.  A
+            // false result above is safe to fall back to CPU rendering; after
+            // the first draw is recorded it is not.
+            if ((has_standard or has_compact) and (gpu.countBuffer(fi) == 0 or gpu.indirectBuffer(fi, layer == .fluid, false) == 0)) return false;
+            if (has_standard and gpu.instanceBuffer(fi, layer == .fluid, false) == 0) return false;
+            if (has_compact) {
+                if (!@hasDecl(@TypeOf(render_ctx), "drawCompactLODIndirectCount") or
+                    !@hasDecl(@TypeOf(render_ctx), "setLODCompactSampleBuffer") or
+                    !@hasDecl(@TypeOf(render_ctx), "setLODCompactInstanceBuffer") or
+                    !@hasDecl(@TypeOf(render_ctx), "setLODDescriptorStream") or
+                    self.compact_pool.buffer_handle == 0 or
+                    gpu.instanceBuffer(fi, layer == .fluid, true) == 0 or
+                    gpu.indirectBuffer(fi, layer == .fluid, true) == 0)
+                {
+                    return false;
+                }
+                inline for (.{ LODLevel.lod3, LODLevel.lod4 }) |lod| if (self.gpuCompactWidthForLOD(lod, layer)) |width| {
+                    if (self.compactIndexBuffer(lod, width, layer) == 0) return false;
+                };
+            }
+            selectLODDescriptorStream(render_ctx, layer, false, true);
+            render_ctx.setLODInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid, false));
+            const commands = gpu.indirectBuffer(fi, layer == .fluid, false);
+            const counts = gpu.countBuffer(fi);
+            const stride = @sizeOf(rhi_types.DrawIndirectCommand);
+            if (has_standard) for (0..LODLevel.count) |lod_index| {
+                if (self.vertex_pools[lod_index].buffer_handle == 0) continue;
+                if (!render_ctx.drawIndirectCount(self.vertex_pools[lod_index].buffer_handle, commands, lod_index * MAX_LOD_MDI_REGIONS * stride, counts, (if (layer == .fluid) LODLevel.count + lod_index else lod_index) * @sizeOf(u32), MAX_LOD_MDI_REGIONS, stride)) return false;
+            };
+            if (has_compact) {
+                selectLODDescriptorStream(render_ctx, layer, true, true);
+                render_ctx.setLODCompactSampleBuffer(self.compact_pool.buffer_handle);
+                render_ctx.setLODCompactInstanceBuffer(gpu.instanceBuffer(fi, layer == .fluid, true));
+                const compact_commands = gpu.indirectBuffer(fi, layer == .fluid, true);
+                const compact_count_base: usize = if (layer == .fluid) LODLevel.count * 3 else LODLevel.count * 2;
+                const compact_timing_name = if (layer == .terrain) "LODCompactTerrainPass" else "LODCompactWaterPass";
+                if (comptime @hasDecl(RHI, "timing")) {
+                    const timing = self.rhi.timing();
+                    timing.beginPassTiming(compact_timing_name);
+                    defer timing.endPassTiming(compact_timing_name);
+                }
+                for ([_]LODLevel{ .lod3, .lod4 }) |lod| {
+                    const lod_index = @intFromEnum(lod);
+                    const width = self.gpuCompactWidthForLOD(lod, layer) orelse continue;
+                    const index_buffer = self.compactIndexBuffer(lod, width, layer);
+                    if (!render_ctx.drawCompactLODIndirectCount(index_buffer, compact_commands, lod_index * MAX_LOD_MDI_REGIONS * @sizeOf(rhi_types.DrawIndexedIndirectCommand), counts, (compact_count_base + lod_index) * @sizeOf(u32), MAX_LOD_MDI_REGIONS)) return false;
+                }
+                if (profiling) |profile| profile.addCompactSubmission();
+            }
+            if (stats) |s| {
+                // GPU counters remain device-local; keep submitted streams distinct
+                // from CPU visibility counts without introducing a readback stall.
+                const submitted: u32 = @intCast(self.gpu_candidates.items.len);
+                if (layer == .fluid) s.gpu_fluid_candidates = submitted else s.gpu_terrain_candidates = submitted;
+                s.gpu_culling_candidate_count = submitted;
+                s.gpu_culling_draw_submissions +|= 1;
+                const diagnostics = gpu.diagnostics();
+                s.gpu_culling_overflows = self.gpu_culling_overflow_count + diagnostics.overflow_count;
+                s.gpu_culling_validation_mismatches = diagnostics.validation_mismatch_count;
+                s.gpu_culling_validation_generation = diagnostics.validation_generation;
+                s.gpu_culling_validation_completed_generation = diagnostics.validation_completed_generation;
+                s.gpu_culling_validation_completed_count = diagnostics.validation_completed_count;
+            }
+            if (self.gpu_culling_submitted_frame != frame) {
+                if (profiling) |profile| profile.addGpuCullingSubmission();
+                self.gpu_culling_submitted_frame = frame;
+            }
+            self.updateGpuCullingProfiling(profiling);
+            return true;
+        }
+
+        fn updateGpuCullingProfiling(self: *Self, profiling: ?*LODProfilingCollector) void {
+            const profile = profiling orelse return;
+            profile.setGpuCullingConfiguration(self.gpu_culling_requested, self.gpu_culling_threshold);
+            if (self.gpu_culling) |gpu| {
+                const diagnostics = gpu.diagnostics();
+                profile.setGpuCullingDiagnostics(
+                    self.gpu_culling_overflow_count +| diagnostics.overflow_count,
+                    diagnostics.validation_mismatch_count,
+                    diagnostics.validation_generation,
+                    diagnostics.validation_completed_generation,
+                    diagnostics.validation_completed_count,
+                );
+            } else profile.setGpuCullingDiagnostics(self.gpu_culling_overflow_count, 0, 0, 0, 0);
+        }
+
+        fn compactIndexBuffer(self: *const Self, lod: LODLevel, width: u32, layer: LODRenderLayer) rhi_types.BufferHandle {
+            if (lod != .lod3 and lod != .lod4) return 0;
+            const width_index = compactGridVariant(width) orelse return 0;
+            return self.compact_index_buffers[@intFromEnum(lod) - @intFromEnum(LODLevel.lod3)][if (layer == .fluid) 1 else 0][width_index];
+        }
+
+        fn gpuCompactWidthForLOD(self: *const Self, lod: LODLevel, layer: LODRenderLayer) ?u32 {
+            var result: ?u32 = null;
+            for (self.gpu_candidates.items) |candidate| {
+                if (candidate.lod_and_padding[0] != @intFromEnum(lod) or candidate.lod_and_padding[1] == 0) continue;
+                const command = if (layer == .fluid) candidate.water_command else candidate.terrain_command;
+                if (command.count == 0) continue;
+                const width = candidate.compact_words[1];
+                if (result) |existing| {
+                    if (existing != width) return null;
+                } else result = width;
+            }
+            return result;
+        }
+
         fn collectVisibleMeshes(
             self: *Self,
             all_meshes: *const [LODLevel.count]MeshMap,
@@ -327,6 +1128,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             max_distance_chunks: ?i32,
             layer: LODRenderLayer,
             stats: ?*LODStats,
+            profiling: ?*LODProfilingCollector,
         ) !void {
             const meshes = &all_meshes[@intFromEnum(lod)];
             const regions = &all_regions[@intFromEnum(lod)];
@@ -347,21 +1149,29 @@ pub fn LODRenderer(comptime RHI: type) type {
             while (iter.next()) |entry| {
                 diag.meshes_seen += 1;
                 const mesh = entry.value_ptr.*;
+                // The legacy immediate path has no indexed compact submission
+                // context. Never reinterpret compact samples as expanded
+                // vertices; frame-based rendering owns compact draws.
+                if (mesh.isCompact()) continue;
                 const draw_range = mesh.drawRange(layer) orelse {
                     diag.not_ready += 1;
+                    if (profiling) |profile| profile.addRejected();
                     continue;
                 };
                 if (!mesh.isReady() or draw_range.count == 0) {
                     diag.not_ready += 1;
+                    if (profiling) |profile| profile.addRejected();
                     continue;
                 }
                 if (regions.get(entry.key_ptr.*)) |chunk| {
                     if (!chunk.isRenderable()) {
                         diag.bad_state += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
                     if (self.isCoveredByFinerLOD(chunk, config)) {
                         diag.covered_finer_lod += 1;
+                        if (profiling) |profile| profile.addRejected();
                         continue;
                     }
 
@@ -371,6 +1181,15 @@ pub fn LODRenderer(comptime RHI: type) type {
                     if (max_distance_chunks) |max_dist| {
                         if (!isRegionInRange(chunk_bounds, camera_pos, max_dist)) {
                             diag.out_of_range += 1;
+                            if (profiling) |profile| profile.addRejected();
+                            continue;
+                        }
+                    }
+
+                    if (use_frustum and !disable_frustum) {
+                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) {
+                            diag.frustum_culled += 1;
+                            if (profiling) |profile| profile.addRejected();
                             continue;
                         }
                     }
@@ -382,10 +1201,16 @@ pub fn LODRenderer(comptime RHI: type) type {
                             const pc_x = camera_chunk.chunk_x;
                             const pc_z = camera_chunk.chunk_z;
                             const chunk_radius = config.getChunkRenderRadius();
+                            const coverage_timer = if (profiling) |profile| profile.begin() else null;
                             const cov = self.isCoveredByChunks(bounds, checker, ctx_ptr, pc_x, pc_z, chunk_radius);
+                            if (profiling) |profile| {
+                                profile.end(.coverage, coverage_timer);
+                                profile.addCoverage();
+                            }
                             if (cov.covered) {
                                 lod_covered += 1;
                                 diag.covered_chunks += 1;
+                                if (profiling) |profile| profile.addRejected();
                                 continue;
                             }
                             if (lod_rendered == 0) {
@@ -404,13 +1229,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                     }
 
                     lod_rendered += 1;
-
-                    if (use_frustum and !disable_frustum) {
-                        if (!isRegionInFrustum(frustum, bounds, camera_pos)) {
-                            diag.frustum_culled += 1;
-                            continue;
-                        }
-                    }
 
                     const model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y + lod_y_offset, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z));
 
@@ -434,6 +1252,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                         });
                     }
                     diag.drawn += 1;
+                    if (profiling) |profile| profile.addVisible();
                     if (stats) |s| {
                         const lod_idx = @intFromEnum(lod);
                         if (layer == .fluid) {
@@ -446,6 +1265,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                     }
                 } else {
                     diag.missing_region += 1;
+                    if (profiling) |profile| profile.addRejected();
                 }
             }
 
@@ -578,31 +1398,94 @@ pub fn LODRenderer(comptime RHI: type) type {
                 fn onUpload(mesh: *LODMesh, ctx: *anyopaque) rhi_types.RhiError!void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
-                    if (!renderer.enable_mdi) {
-                        return mesh.upload(resources);
-                    }
+                    if (mesh.isCompact()) return renderer.compact_pool.upload(mesh, resources);
+                    // Expanded far CPU fallback meshes use dedicated buffers.
+                    // Growing a far shared pool republishes its whole shadow
+                    // and can exceed the bounded staging ring in one frame.
+                    if (!renderer.enable_mdi or mesh.lodLevel() == .lod3 or mesh.lodLevel() == .lod4) return mesh.upload(resources);
                     return renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].uploadMesh(mesh, resources);
                 }
                 fn onDestroy(mesh: *LODMesh, ctx: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     const resources = LODMeshResources.fromProvider(RHI, &renderer.rhi);
+                    if (mesh.isCompact()) {
+                        renderer.compact_pool.retireMesh(mesh, renderer.frame_serial, renderer.frame_index);
+                        return;
+                    }
                     if (mesh.isPooled()) {
-                        renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].destroyMesh(mesh);
+                        renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].destroyMeshDeferred(mesh, renderer.frame_serial, renderer.frame_index);
                     } else {
                         mesh.deinit(resources);
                     }
                 }
+                fn onUploadCost(mesh: *LODMesh, ctx: *anyopaque) LODStagingCost {
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    if (mesh.isCompact() or !renderer.enable_mdi or mesh.lodLevel() == .lod3 or mesh.lodLevel() == .lod4) {
+                        return .{ .payload_bytes = mesh.pendingUploadBytes() };
+                    }
+                    return renderer.vertex_pools[@intFromEnum(mesh.lodLevel())].uploadCost(mesh);
+                }
                 fn onWaitIdle(ctx: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(ctx));
                     renderer.rhi.waitIdle();
+                }
+                fn onSupportsCompact(ctx: *anyopaque) bool {
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    const RenderContext = @TypeOf(if (@hasDecl(RHI, "renderContext")) @as(RHI, undefined).renderContext() else @as(RHI, undefined));
+                    if (!@hasDecl(RenderContext, "drawCompactLOD") or
+                        !@hasDecl(RenderContext, "setLODCompactSampleBuffer") or
+                        !@hasDecl(RenderContext, "setLODDescriptorStream")) return false;
+                    inline for (.{ LODLevel.lod3, LODLevel.lod4 }, 0..) |lod, lod_index| {
+                        const max_width = @import("world-core").LODSimplifiedData.getGridSize(lod);
+                        for (COMPACT_GRID_WIDTHS, 0..) |width, width_index| {
+                            if (width > max_width) continue;
+                            for (renderer.compact_index_buffers[lod_index]) |layer_handles| {
+                                if (layer_handles[width_index] == 0) return false;
+                            }
+                        }
+                    }
+                    return true;
+                }
+                fn onSupportsCompactGpuCulling(ctx: *anyopaque) bool {
+                    const renderer: *Self = @ptrCast(@alignCast(ctx));
+                    if (!onSupportsCompact(ctx)) return false;
+                    const Query = @TypeOf(if (@hasDecl(RHI, "query")) @as(RHI, undefined).query() else @as(RHI, undefined));
+                    if (comptime !@hasDecl(Query, "supportsCompactLODGpuCulling")) return false;
+                    return renderer.rhi.query().supportsCompactLODGpuCulling();
                 }
             };
             return .{
                 .on_upload = Wrapper.onUpload,
                 .on_destroy = Wrapper.onDestroy,
                 .on_wait_idle = Wrapper.onWaitIdle,
+                .on_upload_cost = Wrapper.onUploadCost,
                 .ctx = @ptrCast(self),
+                .on_supports_compact = Wrapper.onSupportsCompact,
+                .on_supports_compact_gpu_culling = Wrapper.onSupportsCompactGpuCulling,
             };
+        }
+
+        fn memoryStats(self: *Self) LODRendererMemoryStats {
+            var result = LODRendererMemoryStats{};
+            for (&self.vertex_pools) |*pool| {
+                const capacity = pool.gpuMemoryBytes();
+                const allocated = pool.allocatedBytes();
+                result.pool_gpu_capacity_bytes += capacity;
+                result.pool_gpu_allocated_bytes += allocated;
+                result.pool_gpu_slack_bytes += capacity - allocated;
+                // The pool keeps a full CPU copy so it can grow and compact
+                // without a GPU readback.
+                result.pool_cpu_shadow_bytes += capacity;
+            }
+            const compact = self.compact_pool.memoryStats();
+            result.pool_gpu_capacity_bytes += compact.capacity_bytes;
+            result.pool_gpu_allocated_bytes += compact.allocated_bytes;
+            result.pool_gpu_slack_bytes += compact.free_bytes;
+            result.compact_pool_capacity_bytes = compact.capacity_bytes;
+            result.compact_pool_allocated_bytes = compact.allocated_bytes;
+            result.compact_pool_free_bytes = compact.free_bytes;
+            result.compact_pool_retired_bytes = compact.retired_bytes;
+            return result;
         }
 
         /// Create a type-erased LODRenderInterface from this renderer.
@@ -621,9 +1504,37 @@ pub fn LODRenderer(comptime RHI: type) type {
                     max_distance_chunks: ?i32,
                     layer: LODRenderLayer,
                     stats: ?*LODStats,
+                    profiling: ?*LODProfilingCollector,
                 ) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
-                    renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats);
+                    renderer.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+                }
+                fn renderFrameFn(
+                    self_ptr: *anyopaque,
+                    frame_serial: u64,
+                    meshes: *const [LODLevel.count]MeshMap,
+                    regions: *const [LODLevel.count]RegionMap,
+                    config: ILODConfig,
+                    view_proj: Mat4,
+                    camera_pos: Vec3,
+                    chunk_checker: ?ChunkChecker,
+                    checker_ctx: ?*anyopaque,
+                    use_frustum: bool,
+                    max_distance_chunks: ?i32,
+                    layer: LODRenderLayer,
+                    stats: ?*LODStats,
+                    profiling: ?*LODProfilingCollector,
+                ) void {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    renderer.renderFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+                }
+                fn prepareFrameFn(self_ptr: *anyopaque, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    renderer.prepareFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, stats, profiling);
+                }
+                fn memoryStatsFn(self_ptr: *anyopaque) LODRendererMemoryStats {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    return renderer.memoryStats();
                 }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
@@ -632,6 +1543,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             };
             return .{
                 .render_fn = Wrapper.renderFn,
+                .render_frame_fn = Wrapper.renderFrameFn,
+                .prepare_frame_fn = Wrapper.prepareFrameFn,
+                .memory_stats_fn = Wrapper.memoryStatsFn,
                 .deinit_fn = Wrapper.deinitFn,
                 .ptr = self,
             };
@@ -666,6 +1580,51 @@ fn supports_lod_indirect(comptime RenderCtx: type, comptime Query: type, comptim
         @hasDecl(Query, "supportsIndirectFirstInstance");
 }
 
+fn cullCommandFor(mesh: *const LODMesh, range: ?LODMesh.DrawRange, compact: bool, terrain: bool) rhi_types.LODCullCommand {
+    const draw_range = range orelse return .{ .count = 0, .instance_count = 0, .first = 0 };
+    if (compact) return .{
+        .count = @intCast(compactGridIndexCount(mesh.compact_tile_width, terrain)),
+        .instance_count = 1,
+        .first = 0,
+        .vertex_offset = 0,
+    };
+    return .{
+        .count = draw_range.count,
+        .instance_count = 1,
+        .first = mesh.firstVertex(draw_range),
+    };
+}
+
+fn extractPlanes(view_proj: Mat4) [6][4]f32 {
+    const m = view_proj.data;
+    var planes = [6][4]f32{
+        .{ m[3][0] + m[0][0], m[3][1] + m[0][1], m[3][2] + m[0][2], m[3][3] + m[0][3] },
+        .{ m[3][0] - m[0][0], m[3][1] - m[0][1], m[3][2] - m[0][2], m[3][3] - m[0][3] },
+        .{ m[3][0] - m[1][0], m[3][1] - m[1][1], m[3][2] - m[1][2], m[3][3] - m[1][3] },
+        .{ m[3][0] + m[1][0], m[3][1] + m[1][1], m[3][2] + m[1][2], m[3][3] + m[1][3] },
+        .{ m[3][0] + m[2][0], m[3][1] + m[2][1], m[3][2] + m[2][2], m[3][3] + m[2][3] },
+        .{ m[3][0] - m[2][0], m[3][1] - m[2][1], m[3][2] - m[2][2], m[3][3] - m[2][3] },
+    };
+    for (&planes) |*plane| {
+        const length = @sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
+        if (length > 0.0001) {
+            for (plane) |*value| value.* /= length;
+        }
+    }
+    return planes;
+}
+
+fn gpuCullingThreshold() usize {
+    return engine_core.envInt("ZIGCRAFT_LOD_GPU_CULLING_THRESHOLD", 128);
+}
+
+/// Keep the compile-time benchmark opt-in independent of process environment.
+/// This is intentionally a pure helper so both build-option states are covered
+/// without tests mutating a global environment.
+fn gpuCullingRequested(benchmark_gpu_culling: bool, environment_requested: bool) bool {
+    return benchmark_gpu_culling or environment_requested;
+}
+
 fn isRegionInFrustum(frustum: Frustum, bounds: LODChunk.WorldBounds, camera_pos: Vec3) bool {
     const min_x: f32 = @floatFromInt(bounds.min_x);
     const min_z: f32 = @floatFromInt(bounds.min_z);
@@ -687,6 +1646,25 @@ fn isRegionInFrustum(frustum: Frustum, bounds: LODChunk.WorldBounds, camera_pos:
 }
 
 // Tests
+test "benchmark GPU-culling build option requests telemetry without environment" {
+    try std.testing.expect(gpuCullingRequested(true, false));
+    try std.testing.expect(!gpuCullingRequested(false, false));
+}
+
+test "compact grid variants retain exact decimated topology" {
+    for (COMPACT_GRID_WIDTHS, 0..) |width, expected_variant| {
+        try std.testing.expectEqual(expected_variant, compactGridVariant(width).?);
+        inline for (.{ false, true }) |include_skirts| {
+            const indices = try compactGridIndices(std.testing.allocator, width, include_skirts);
+            defer std.testing.allocator.free(indices);
+            try std.testing.expectEqual(compactGridIndexCount(width, include_skirts), indices.len);
+            const vertex_count = @as(u32, width) * width + if (include_skirts) 4 * width else 0;
+            for (indices) |index| try std.testing.expect(index < vertex_count);
+        }
+    }
+    try std.testing.expect(compactGridVariant(7) == null);
+}
+
 test "LODRenderer init/deinit lifecycle" {
     const allocator = std.testing.allocator;
 
@@ -768,7 +1746,9 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
         pub fn setInstanceBuffer(_: @This(), _: anytype) void {}
         pub fn setSelectionMode(_: @This(), _: bool) void {}
         pub fn draw(_: @This(), _: u32, _: u32, _: anytype) void {}
-        pub fn drawOffset(_: @This(), _: u32, _: u32, _: anytype, _: usize) void {}
+        pub fn drawOffset(self: @This(), _: u32, _: u32, _: anytype, _: usize) void {
+            self.state.direct_draw_calls += 1;
+        }
         pub fn drawIndirect(self: @This(), _: u32, _: u32, _: usize, draw_count: u32, _: u32) void {
             self.state.draw_indirect_calls += 1;
             self.state.last_draw_count += draw_count;
@@ -781,6 +1761,7 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     const Renderer = LODRenderer(MockRHI);
     const renderer = try Renderer.init(allocator, mock_rhi);
     defer renderer.deinit();
+    // Explicitly exercise the default-on MDI path.
     renderer.enable_mdi = true;
 
     renderer.vertex_pools[1].buffer_handle = 101;
@@ -824,10 +1805,31 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     try regions[2].put(.{ .rx = 8, .rz = 0, .lod = .lod2 }, &chunk_lod2);
 
     var mock_config = LODConfig{ .radii = .{ 16, 128, 256, 512, 1024 } };
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+    var profiling = LODProfilingCollector.init(true);
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
 
     try std.testing.expectEqual(@as(u32, 2), mock_state.draw_indirect_calls);
     try std.testing.expectEqual(@as(u32, 2), mock_state.last_draw_count);
+
+    // Water reuses the pooled indirect path rather than falling back to one
+    // direct submission per region.
+    mesh_lod1.water_vertex_offset = 12 * @sizeOf(rhi_types.Vertex);
+    mesh_lod1.water_vertex_count = 6;
+    mesh_lod2.water_vertex_offset = 18 * @sizeOf(rhi_types.Vertex);
+    mesh_lod2.water_vertex_count = 9;
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .fluid, null, &profiling);
+    try std.testing.expectEqual(@as(u32, 4), mock_state.draw_indirect_calls);
+    try std.testing.expectEqual(@as(u32, 0), mock_state.direct_draw_calls);
+    const projection = profiling.snapshot().visibility_levels;
+    try std.testing.expectEqual(@as(u64, 1), projection[1].candidates);
+    try std.testing.expectEqual(@as(u64, 1), projection[2].candidates);
+
+    // A direct-only mesh must not disable indirect submission for its pooled
+    // sibling. This is the upload-transition fallback used in production.
+    mesh_lod2.pooled = false;
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    try std.testing.expectEqual(@as(u32, 5), mock_state.draw_indirect_calls);
+    try std.testing.expectEqual(@as(u32, 1), mock_state.direct_draw_calls);
 }
 
 test "LODRenderer band fade follows configured fog start percent" {
@@ -903,6 +1905,9 @@ test "LODRenderer render draw path" {
     const Renderer = LODRenderer(MockRHI);
     const renderer = try Renderer.init(allocator, mock_rhi);
     defer renderer.deinit();
+    // MDI is enabled, but this RHI intentionally lacks indirect support.
+    // Rendering must preserve the direct fallback for both terrain and water.
+    renderer.enable_mdi = true;
 
     // Create mock mesh
     var mesh = LODMesh.init(allocator, .lod1);
@@ -945,7 +1950,7 @@ test "LODRenderer render draw path" {
     var stats = LODStats{};
 
     // Call render with explicit parameters
-    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .terrain, &stats);
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .terrain, &stats, null);
 
     // Verify draw was called with correct parameters
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
@@ -955,7 +1960,7 @@ test "LODRenderer render draw path" {
     try std.testing.expectEqual(@as(u32, 1), stats.drawn[1]);
     try std.testing.expectEqual(@as(u32, 1), stats.instances[1]);
 
-    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .fluid, &stats);
+    renderer.render(&meshes, &regions, mock_config.interface(), view_proj, camera_pos, null, null, false, null, .fluid, &stats, null);
     try std.testing.expectEqual(@as(u32, 2), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 6), mock_state.last_vertex_count);
     try std.testing.expectEqual(@as(u32, 1), stats.drawn[1]);
@@ -1030,7 +2035,7 @@ test "LODRenderer keeps coarse LOD visible while finer bands stream" {
         .radii = .{ 16, 32, 64, 100, 256 },
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 1), mock_state.set_matrix_calls);
@@ -1104,7 +2109,7 @@ test "LODRenderer disables mask when chunks are missing inside chunk render radi
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missingInRadius, &checker_ctx, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missingInRadius, &checker_ctx, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(LOD_UNMASKED_SENTINEL, mock_state.last_mask_radius);
@@ -1184,7 +2189,7 @@ test "LODRenderer chunk mask uses chunk render radius instead of LOD0 radius" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missing, &checker_ctx, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.missing, &checker_ctx, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
@@ -1258,7 +2263,7 @@ test "LODRenderer keeps mask when only outside-radius chunks are uncovered" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.loaded, &checker_ctx, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.loaded, &checker_ctx, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
@@ -1332,7 +2337,7 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
@@ -1418,7 +2423,7 @@ test "LODRenderer skips coarse LOD when finer coverage is ready" {
         .radii = .{ 16, 32, 64, 100, 256 },
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
 }
@@ -1483,7 +2488,7 @@ test "LODRenderer always renders ready LOD0 regions" {
 
     var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
     var stats = LODStats{};
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, &stats);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, &stats, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 1), stats.drawn[0]);
@@ -1568,7 +2573,7 @@ test "LODRenderer keeps coarse LOD when a finer child is missing" {
 
     var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 106), mock_state.handle_sum);
@@ -1653,10 +2658,311 @@ test "LODRenderer resolves finer coverage across negative region boundaries" {
 
     var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_calls);
     try std.testing.expectEqual(@as(u32, 10), mock_state.handle_sum);
+}
+
+test "LODRenderer counts only consecutive compact backend draw failures" {
+    const allocator = std.testing.allocator;
+    const MockState = struct {
+        draw_available: bool = true,
+        draw_calls: u32 = 0,
+    };
+    const MockRHI = struct {
+        state: *MockState,
+
+        pub fn createBuffer(_: @This(), _: usize, _: anytype) !u32 {
+            return 1;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn uploadBuffer(_: @This(), _: u32, _: []const u8) !void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setLODDescriptorStream(_: @This(), _: rhi_types.LODDescriptorStream) void {}
+        pub fn setLODCompactSampleBuffer(_: @This(), _: u32) void {}
+        pub fn drawCompactLOD(self: @This(), _: u32, _: u32, _: anytype) bool {
+            self.state.draw_calls += 1;
+            return self.state.draw_available;
+        }
+    };
+
+    var state = MockState{};
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, .{ .state = &state });
+    defer renderer.deinit();
+
+    var mesh = LODMesh.init(allocator, .lod3);
+    mesh.compact = true;
+    mesh.compact_tile_width = 3;
+    mesh.compact_index_count = 24;
+    mesh.ready = true;
+    mesh.vertex_count = 24;
+    const visible = VisibleRegion{ .key = .{ .rx = 0, .rz = 0, .lod = .lod3 }, .model = Mat4.identity, .mask_radius = 1, .lod_fade = 1 };
+
+    // A first frame without a ready compact sample buffer is retryable. It
+    // must not disable compact before a backend submission was attempted.
+    try std.testing.expectEqual(CompactRenderResult.unavailable, renderer.renderCompactMesh(renderer.rhi, visible, &mesh, .terrain));
+    try std.testing.expect(mesh.isRenderable());
+
+    renderer.compact_pool.buffer_handle = 7;
+    try std.testing.expectEqual(CompactRenderResult.drawn, renderer.renderCompactMesh(renderer.rhi, visible, &mesh, .terrain));
+    try std.testing.expect(mesh.isRenderable());
+
+    state.draw_available = false;
+    var profiling = LODProfilingCollector.init(true);
+    const first = renderer.renderCompactMesh(renderer.rhi, visible, &mesh, .terrain);
+    renderer.noteCompactRenderFailure(&mesh, first, &profiling);
+    try std.testing.expectEqual(CompactRenderResult.backend_failed, first);
+    try std.testing.expect(mesh.isRenderable());
+
+    // A confirmed draw breaks the failure streak. A transient unavailable
+    // frame remains a non-submission and must not affect that reset state.
+    state.draw_available = true;
+    try std.testing.expectEqual(CompactRenderResult.drawn, renderer.renderCompactMesh(renderer.rhi, visible, &mesh, .terrain));
+    try std.testing.expectEqual(@as(u8, 0), mesh.compact_backend_draw_failures);
+    renderer.compact_pool.buffer_handle = 0;
+    const unavailable = renderer.renderCompactMesh(renderer.rhi, visible, &mesh, .terrain);
+    renderer.noteCompactRenderFailure(&mesh, unavailable, &profiling);
+    try std.testing.expectEqual(CompactRenderResult.unavailable, unavailable);
+    try std.testing.expectEqual(@as(u8, 0), mesh.compact_backend_draw_failures);
+
+    renderer.compact_pool.buffer_handle = 7;
+    state.draw_available = false;
+    var attempt: u8 = 0;
+    while (attempt < LODMesh.COMPACT_BACKEND_FAILURE_LIMIT) : (attempt += 1) {
+        const repeated = renderer.renderCompactMesh(renderer.rhi, visible, &mesh, .terrain);
+        renderer.noteCompactRenderFailure(&mesh, repeated, &profiling);
+        try std.testing.expectEqual(CompactRenderResult.backend_failed, repeated);
+        try std.testing.expectEqual(attempt + 1 < LODMesh.COMPACT_BACKEND_FAILURE_LIMIT, mesh.isRenderable());
+    }
+    try std.testing.expect(!mesh.isRenderable());
+    try std.testing.expectEqual(@as(u64, LODMesh.COMPACT_BACKEND_FAILURE_LIMIT + 1), profiling.snapshot().compact_draw_failures);
+    try std.testing.expectEqual(@as(u64, 1), profiling.snapshot().compact_draw_unavailable);
+}
+
+test "LODRenderer renderFrame times confirmed compact direct terrain and water submissions" {
+    const allocator = std.testing.allocator;
+    const State = struct {
+        next_handle: u32 = 1,
+        compact_draw_succeeds: bool = true,
+        compact_draws: u32 = 0,
+        terrain_timing_begins: u32 = 0,
+        terrain_timing_ends: u32 = 0,
+        water_timing_begins: u32 = 0,
+        water_timing_ends: u32 = 0,
+    };
+    const MockRHI = struct {
+        state: *State,
+
+        const Timing = struct {
+            state: *State,
+
+            fn beginPassTiming(self: @This(), name: []const u8) void {
+                if (std.mem.eql(u8, name, "LODCompactTerrainPass")) self.state.terrain_timing_begins += 1;
+                if (std.mem.eql(u8, name, "LODCompactWaterPass")) self.state.water_timing_begins += 1;
+            }
+            fn endPassTiming(self: @This(), name: []const u8) void {
+                if (std.mem.eql(u8, name, "LODCompactTerrainPass")) self.state.terrain_timing_ends += 1;
+                if (std.mem.eql(u8, name, "LODCompactWaterPass")) self.state.water_timing_ends += 1;
+            }
+        };
+
+        pub fn createBuffer(self: @This(), _: usize, _: anytype) !u32 {
+            const handle = self.state.next_handle;
+            self.state.next_handle += 1;
+            return handle;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn uploadBuffer(_: @This(), _: u32, _: []const u8) !void {}
+        pub fn waitIdle(_: @This()) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn setInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setLODDescriptorStream(_: @This(), _: rhi_types.LODDescriptorStream) void {}
+        pub fn setLODCompactSampleBuffer(_: @This(), _: u32) void {}
+        pub fn drawCompactLOD(self: @This(), _: u32, _: u32, _: anytype) bool {
+            self.state.compact_draws += 1;
+            return self.state.compact_draw_succeeds;
+        }
+        pub fn timing(self: @This()) Timing {
+            return .{ .state = self.state };
+        }
+    };
+
+    var state = State{};
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, .{ .state = &state });
+    defer renderer.deinit();
+    renderer.compact_pool.buffer_handle = 99;
+
+    var mesh = LODMesh.init(allocator, .lod3);
+    mesh.compact = true;
+    mesh.compact_tile_width = 3;
+    mesh.compact_index_count = 24;
+    mesh.compact_has_water = true;
+    mesh.vertex_count = 24;
+    mesh.ready = true;
+    var chunk = LODChunk.init(0, 0, .lod3);
+    chunk.state = .renderable;
+
+    var meshes: [LODLevel.count]MeshMap = undefined;
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (0..LODLevel.count) |i| {
+        meshes[i] = MeshMap.init(allocator);
+        regions[i] = RegionMap.init(allocator);
+    }
+    defer for (0..LODLevel.count) |i| {
+        meshes[i].deinit();
+        regions[i].deinit();
+    };
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod3 };
+    try meshes[@intFromEnum(LODLevel.lod3)].put(key, &mesh);
+    try regions[@intFromEnum(LODLevel.lod3)].put(key, &chunk);
+
+    var config = LODConfig{ .radii = .{ 16, 32, 64, 128, 256 } };
+    var profiling = LODProfilingCollector.init(true);
+    renderer.renderFrame(1, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    renderer.renderFrame(1, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .fluid, null, &profiling);
+
+    try std.testing.expectEqual(@as(u32, 2), state.compact_draws);
+    try std.testing.expectEqual(state.terrain_timing_begins, state.terrain_timing_ends);
+    try std.testing.expectEqual(state.water_timing_begins, state.water_timing_ends);
+    try std.testing.expectEqual(@as(u32, 1), state.terrain_timing_begins);
+    try std.testing.expectEqual(@as(u32, 1), state.water_timing_begins);
+    try std.testing.expectEqual(@as(u64, 2), profiling.snapshot().compact_submissions);
+
+    state.compact_draw_succeeds = false;
+    renderer.renderFrame(2, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    try std.testing.expectEqual(state.terrain_timing_begins, state.terrain_timing_ends);
+    try std.testing.expectEqual(@as(u32, 2), state.terrain_timing_begins);
+    try std.testing.expectEqual(@as(u64, 2), profiling.snapshot().compact_submissions);
+}
+
+test "LODRenderer balances compact indirect timing and counts only emitted streams" {
+    const allocator = std.testing.allocator;
+    const State = struct {
+        next_handle: u32 = 1,
+        indirect_succeeds: bool = true,
+        compact_indirect_draws: u32 = 0,
+        timing_begins: u32 = 0,
+        timing_ends: u32 = 0,
+    };
+    const MockRHI = struct {
+        state: *State,
+
+        const Timing = struct {
+            state: *State,
+
+            fn beginPassTiming(self: @This(), name: []const u8) void {
+                if (std.mem.eql(u8, name, "LODCompactTerrainPass")) self.state.timing_begins += 1;
+            }
+            fn endPassTiming(self: @This(), name: []const u8) void {
+                if (std.mem.eql(u8, name, "LODCompactTerrainPass")) self.state.timing_ends += 1;
+            }
+        };
+
+        pub fn createBuffer(self: @This(), _: usize, _: anytype) !u32 {
+            const handle = self.state.next_handle;
+            self.state.next_handle += 1;
+            return handle;
+        }
+        pub fn destroyBuffer(_: @This(), _: u32) void {}
+        pub fn uploadBuffer(_: @This(), _: u32, _: []const u8) !void {}
+        pub fn waitIdle(_: @This()) void {}
+        pub fn getFrameIndex(_: @This()) usize {
+            return 0;
+        }
+        pub fn supportsIndirectFirstInstance(_: @This()) bool {
+            return true;
+        }
+        pub fn supportsIndirectCount(_: @This()) bool {
+            return true;
+        }
+        pub fn setLODInstanceBuffer(_: @This(), _: anytype) void {}
+        pub fn setLODDescriptorStream(_: @This(), _: rhi_types.LODDescriptorStream) void {}
+        pub fn setLODCompactSampleBuffer(_: @This(), _: u32) void {}
+        pub fn setLODCompactInstanceBuffer(_: @This(), _: u32) void {}
+        pub fn drawIndirectCount(_: @This(), _: u32, _: u32, _: usize, _: u32, _: u32, _: u32, _: u32) bool {
+            return true;
+        }
+        pub fn drawCompactLODIndirectCount(self: @This(), _: u32, _: u32, _: usize, _: u32, _: usize, _: u32) bool {
+            self.state.compact_indirect_draws += 1;
+            return self.state.indirect_succeeds;
+        }
+        pub fn timing(self: @This()) Timing {
+            return .{ .state = self.state };
+        }
+    };
+    const Culling = struct {
+        fn deinit(_: *anyopaque) void {}
+        fn dispatch(_: *anyopaque, _: usize, _: []const LODCullCandidate, _: LODCullDispatch) bool {
+            return true;
+        }
+        fn instanceBuffer(_: *anyopaque, _: usize, _: bool, _: bool) u32 {
+            return 11;
+        }
+        fn indirectBuffer(_: *anyopaque, _: usize, _: bool, _: bool) u32 {
+            return 12;
+        }
+        fn countBuffer(_: *anyopaque, _: usize) u32 {
+            return 13;
+        }
+        fn diagnostics(_: *anyopaque) rhi_types.LODCullDiagnostics {
+            return .{};
+        }
+        const vtable = ILODCullingSystem.VTable{
+            .deinit = deinit,
+            .dispatch = dispatch,
+            .instanceBuffer = instanceBuffer,
+            .indirectBuffer = indirectBuffer,
+            .countBuffer = countBuffer,
+            .diagnostics = diagnostics,
+        };
+    };
+
+    var state = State{};
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(allocator, .{ .state = &state });
+    defer renderer.deinit();
+    renderer.compact_pool.buffer_handle = 99;
+    renderer.gpu_culling_threshold = 1;
+    renderer.projection_frame = 1;
+    renderer.gpu_culling_ready_frame = 1;
+    renderer.gpu_culling = .{ .ptr = @ptrCast(&state), .vtable = &Culling.vtable };
+
+    var candidate = std.mem.zeroes(LODCullCandidate);
+    candidate.terrain_command = .{ .count = 24, .instance_count = 1, .first = 0 };
+    candidate.compact_words[1] = 65;
+    candidate.lod_and_padding = .{ @intFromEnum(LODLevel.lod3), 1, 0, 0 };
+    try renderer.gpu_candidates.append(allocator, candidate);
+    const first_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod3 };
+    try renderer.gpu_candidate_keys.append(allocator, first_key);
+
+    var profiling = LODProfilingCollector.init(true);
+    try std.testing.expect(renderer.renderGpuCulledLayer(.terrain, null, &profiling, renderer.rhi, renderer.rhi));
+    try std.testing.expectEqual(@as(u32, 1), state.compact_indirect_draws);
+    try std.testing.expectEqual(@as(u32, 1), state.timing_begins);
+    try std.testing.expectEqual(state.timing_begins, state.timing_ends);
+    try std.testing.expectEqual(@as(u64, 1), profiling.snapshot().compact_submissions);
+
+    state.indirect_succeeds = false;
+    try std.testing.expect(!renderer.renderGpuCulledLayer(.terrain, null, &profiling, renderer.rhi, renderer.rhi));
+    try std.testing.expectEqual(state.timing_begins, state.timing_ends);
+    try std.testing.expectEqual(@as(u64, 1), profiling.snapshot().compact_submissions);
+
+    var second_candidate = candidate;
+    second_candidate.compact_words[1] = 33;
+    try renderer.gpu_candidates.append(allocator, second_candidate);
+    const second_key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod3 };
+    try renderer.gpu_candidate_keys.append(allocator, second_key);
+    try std.testing.expect(!renderer.gpuCandidateDraws(first_key, .terrain));
+    try std.testing.expect(!renderer.gpuCandidateDraws(second_key, .terrain));
 }
 
 test "LODRenderer createGPUBridge and toInterface round-trip" {
@@ -1751,7 +3057,7 @@ test "LODRenderer createGPUBridge and toInterface round-trip" {
     var mock_config = LODConfig{};
 
     // Render through the type-erased interface
-    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null);
+    iface.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, null);
 
     // Verify the real renderer's draw was invoked through the interface
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
