@@ -125,6 +125,7 @@ pub const RegionFile = struct {
 
         const total_len: u32 = @intCast(compressed.len + 1);
         const sectors_needed = (total_len + 4 + SECTOR_SIZE - 1) / SECTOR_SIZE;
+        if (sectors_needed > std.math.maxInt(u8)) return RegionError.FileTooShort;
 
         const idx = @as(u32, local_z) * 32 + @as(u32, local_x);
         const old_entry = self.header[idx];

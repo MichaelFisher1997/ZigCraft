@@ -64,6 +64,9 @@ const MockContext = struct {
         _ = draw_count;
         _ = stride;
     }
+    fn drawIndirectCount(_: *anyopaque, _: rhi.BufferHandle, _: rhi.BufferHandle, _: usize, _: rhi.BufferHandle, _: usize, _: u32, _: u32) bool {
+        return false;
+    }
     fn drawInstance(ptr: *anyopaque, handle: rhi.BufferHandle, count: u32, instance_index: u32) void {
         _ = ptr;
         _ = handle;
@@ -191,6 +194,9 @@ const MockContext = struct {
         _ = ptr;
         _ = allocator;
         _ = max_chunks;
+        return null;
+    }
+    fn createLODCullingSystem(_: *anyopaque, _: std.mem.Allocator, _: usize) anyerror!?rhi.ILODCullingSystem {
         return null;
     }
 
@@ -471,6 +477,8 @@ const MockContext = struct {
     const MOCK_QUERY_VTABLE = rhi.IDeviceQuery.VTable{
         .getFrameIndex = undefined,
         .supportsIndirectFirstInstance = undefined,
+        .supportsIndirectCount = undefined,
+        .supportsCompactLODGpuCulling = undefined,
         .getMaxAnisotropy = undefined,
         .getMaxMSAASamples = undefined,
         .getFaultCount = undefined,
@@ -568,6 +576,7 @@ const MockContext = struct {
         },
         .culling_factory = .{
             .createCullingSystem = MockContext.createCullingSystem,
+            .createLODCullingSystem = MockContext.createLODCullingSystem,
         },
         .screenshot = .{
             .captureFrame = undefined,
@@ -581,7 +590,10 @@ const MockContext = struct {
         .draw = draw,
         .drawOffset = drawOffset,
         .drawIndexed = drawIndexed,
+        .drawCompactLOD = undefined,
+        .drawCompactLODIndirectCount = undefined,
         .drawIndirect = drawIndirect,
+        .drawIndirectCount = drawIndirectCount,
         .drawInstance = drawInstance,
         .setViewport = setViewport,
     };
@@ -590,6 +602,9 @@ const MockContext = struct {
         .setModelMatrix = undefined,
         .setInstanceBuffer = undefined,
         .setLODInstanceBuffer = undefined,
+        .setLODDescriptorStream = undefined,
+        .setLODCompactSampleBuffer = undefined,
+        .setLODCompactInstanceBuffer = undefined,
         .setTerrainPipelineBound = undefined,
         .setSelectionMode = undefined,
         .updateGlobalUniforms = undefined,

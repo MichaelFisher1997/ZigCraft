@@ -102,6 +102,12 @@ pub fn WorldLOD(comptime RHI: type) type {
             try self.manager.update(player_pos, player_velocity, chunk_checker, checker_ctx);
         }
 
+        /// Benchmark-only forwarding path for the fixed GPU-culling source
+        /// set. The manager remains the sole owner of regions and meshes.
+        pub fn installGpuCullingScaleFixture(self: *Self) !void {
+            try self.manager.installGpuCullingScaleFixture();
+        }
+
         pub fn render(
             self: *Self,
             view_proj: Mat4,

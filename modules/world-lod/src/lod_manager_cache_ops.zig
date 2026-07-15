@@ -1,70 +1,18 @@
 const std = @import("std");
-const Self = @import("lod_manager.zig").LODManager;
 const fs = @import("fs");
+const Self = @import("lod_manager.zig").LODManager;
+const LODRegionKey = @import("lod_chunk.zig").LODRegionKey;
+const LODSimplifiedData = @import("lod_chunk.zig").LODSimplifiedData;
 const lod_chunk = @import("lod_chunk.zig");
-const LODLevel = lod_chunk.LODLevel;
-const LODChunk = lod_chunk.LODChunk;
-const LODRegionKey = lod_chunk.LODRegionKey;
-const LODConfig = lod_chunk.LODConfig;
-const LODState = lod_chunk.LODState;
-const LODSimplifiedData = lod_chunk.LODSimplifiedData;
-const ILODConfig = lod_chunk.ILODConfig;
-const world_core = @import("world-core");
-const Chunk = world_core.Chunk;
-const CHUNK_SIZE_X = world_core.CHUNK_SIZE_X;
-const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
-const LODColumnProvenance = world_core.LODColumnProvenance;
-const Vec3 = @import("engine-math").Vec3;
-const Mat4 = @import("engine-math").Mat4;
-const Vertex = @import("engine-rhi").Vertex;
-const engine_core = @import("engine-core");
-const log = engine_core.log;
-const JobSystem = engine_core.job_system;
-const JobQueue = JobSystem.JobQueue;
-const WorkerPool = JobSystem.WorkerPool;
-const Job = JobSystem.Job;
-const RingBuffer = engine_core.ring_buffer.RingBuffer;
-const LODMesh = @import("lod_mesh.zig").LODMesh;
-const lod_gpu = @import("lod_upload_queue.zig");
-const LODGPUBridge = lod_gpu.LODGPUBridge;
-const LODRenderInterface = lod_gpu.LODRenderInterface;
-const LODRenderLayer = lod_gpu.LODRenderLayer;
-const ChunkChecker = lod_gpu.ChunkChecker;
-const MeshMap = lod_gpu.MeshMap;
-const RegionMap = lod_gpu.RegionMap;
-const lod_scheduler = @import("lod_scheduler.zig");
 const lod_cache = @import("lod_cache.zig");
 const lod_store = @import("lod_store.zig");
-const lod_ingest = @import("lod_ingest.zig");
-const TextureAtlas = @import("engine-assets").TextureAtlas;
-const LODGenerator = @import("lod_generator.zig").LODGenerator;
-const LODStats = @import("lod_stats.zig").LODStats;
-const manager_ctx = @import("lod_manager_context.zig");
-const ChunkCoordKey = manager_ctx.ChunkCoordKey;
-const ChunkCoordKeyContext = manager_ctx.ChunkCoordKeyContext;
-const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std.hash_map.default_max_load_percentage);
-const ChunkResolver = manager_ctx.ChunkResolver;
-const PendingIngestion = manager_ctx.PendingIngestion;
-const PlayerChunkPos = manager_ctx.PlayerChunkPos;
-const MAX_CACHE_LOADS_PER_UPDATE = manager_ctx.MAX_CACHE_LOADS_PER_UPDATE;
-const MAX_MEMORY_EVICTIONS_PER_UPDATE = manager_ctx.MAX_MEMORY_EVICTIONS_PER_UPDATE;
-const MAX_MESH_DELETIONS_PER_SWEEP = manager_ctx.MAX_MESH_DELETIONS_PER_SWEEP;
-const DEFAULT_LOD_UPLOAD_BUDGET_BYTES = manager_ctx.DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
-const LOD_UPLOAD_BUDGET_ENV = manager_ctx.LOD_UPLOAD_BUDGET_ENV;
-const LOD_UPDATE_DIVISOR = manager_ctx.LOD_UPDATE_DIVISOR;
-const DELETION_SWEEP_SECONDS = manager_ctx.DELETION_SWEEP_SECONDS;
-const CHUNK_COVERAGE_PADDING = manager_ctx.CHUNK_COVERAGE_PADDING;
-const MIN_LOD_WORKERS = manager_ctx.MIN_LOD_WORKERS;
-const MAX_LOD_WORKERS = manager_ctx.MAX_LOD_WORKERS;
-const MAX_PENDING_INGESTIONS = manager_ctx.MAX_PENDING_INGESTIONS;
-const PENDING_INGESTION_TTL = manager_ctx.PENDING_INGESTION_TTL;
-const EDIT_FLUSH_COOLDOWN = manager_ctx.EDIT_FLUSH_COOLDOWN;
-const LOD_FRAME_DT_APPROX = manager_ctx.LOD_FRAME_DT_APPROX;
-const lodUploadBudgetBytes = manager_ctx.lodUploadBudgetBytes;
-const wouldExceedUploadBudget = manager_ctx.wouldExceedUploadBudget;
-const isUploadPressureError = manager_ctx.isUploadPressureError;
+const cache_io = @import("lod_cache_io.zig");
+const log = @import("engine-core").log;
 
+/// Cache setup is an explicit world-load operation. It may perform synchronous
+/// filesystem maintenance, unlike the frame/update path.
 pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
+    self.flushCacheIO();
     const cache_dir_path = try self.allocator.dupe(u8, save_dir_path);
     errdefer self.allocator.free(cache_dir_path);
 
@@ -73,115 +21,177 @@ pub fn enableCache(self: *Self, save_dir_path: []const u8) !void {
         .generator_identity_hash = self.generator.identity_hash,
         .generator_version = self.generator.version,
     };
-
     if (try lod_store.readHeader(self.allocator, save_dir_path)) |stored_header| {
-        if (stored_header.seed != live_header.seed) {
-            // Seed mismatch => the entire store is foreign; discard all.
-            log.log.warn("LOD store seed mismatch; discarding foreign LOD source store", .{});
-            try lod_store.deleteStore(self.allocator, save_dir_path);
-        } else if (stored_header.lod_data_version != live_header.lod_data_version) {
-            log.log.warn("LOD store data version changed; discarding stale LOD source store", .{});
-            try lod_store.deleteStore(self.allocator, save_dir_path);
-        } else if (stored_header.generator_identity_hash != live_header.generator_identity_hash or
+        if (stored_header.seed != live_header.seed or
+            stored_header.lod_data_version != live_header.lod_data_version or
+            stored_header.generator_identity_hash != live_header.generator_identity_hash or
             stored_header.generator_version != live_header.generator_version)
         {
-            // Generator changed but seed is the same: worldgen-sampled LOD
-            // is stale, but chunk-derived columns reflect real saved chunks
-            // and remain valid. Cached payloads are keyed by generator
-            // identity/version, so the old data is naturally ignored on
-            // read (cache miss) and regenerated with the new generator;
-            // `setGeneratedColumn` is provenance-aware, so regeneration
-            // preserves any chunk_derived/edited columns. We still delete
-            // the orphaned old-keyed store for disk hygiene.
-            log.log.warn("LOD store generator mismatch; regenerating stale worldgen LOD (chunk-derived data re-ingested from saved chunks)", .{});
+            log.log.warn("LOD store identity changed; discarding stale LOD source store", .{});
             try lod_store.deleteStore(self.allocator, save_dir_path);
         }
     }
-
     try lod_store.writeHeader(self.allocator, save_dir_path, live_header);
 
     self.mutex.lock();
     defer self.mutex.unlock();
-    if (self.cache_store.cache_dir_path) |old_path| {
-        self.allocator.free(old_path);
-    }
+    if (self.cache_store.cache_dir_path) |old_path| self.allocator.free(old_path);
     self.cache_store.cache_dir_path = cache_dir_path;
     self.cache_store.logged_legacy_cache_notice = false;
     log.log.info("LOD source store enabled at '{s}/lod'", .{cache_dir_path});
 }
 
+/// Enqueues at most one source-data snapshot. Cloning is intentionally the
+/// only update-thread cache work; serialization and filesystem writes run on
+/// CacheIoPipeline's dedicated worker.
 pub fn flushDirtyStores(self: *Self) void {
-    const save_dir_path = self.cacheDirPathSnapshot() orelse return;
-    defer self.allocator.free(save_dir_path);
+    _ = queueDirtyStores(self, 1);
+}
 
-    var write_key: ?LODRegionKey = null;
-    var write_bytes: ?[]u8 = null;
+pub fn flushCacheIO(self: *Self) void {
+    self.cache_io.waitUntilIdle();
+    drainCacheCompletions(self);
+}
 
-    {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+/// Deinit-only flushing. Accepted work may block here; normal updates must use
+/// `flushDirtyStores` and never wait for I/O.
+pub fn shutdownCacheIO(self: *Self) void {
+    var attempts: usize = 0;
+    while (attempts < 2048) : (attempts += 1) {
+        const queued = queueDirtyStores(self, cache_io.MAX_PENDING_TASKS);
+        if (queued == 0) break;
+        self.cache_io.waitUntilIdle();
+        drainCacheCompletions(self);
+    }
+    self.flushCacheIO();
+}
 
-        const active = lod_chunk.activeLODCount(self.config);
-        var i: usize = 1;
-        while (i < active) : (i += 1) {
-            var it = self.regions[i].iterator();
-            while (it.next()) |entry| {
-                const lcp = entry.value_ptr.*;
-                if (!lcp.store_dirty) continue;
-                switch (lcp.data) {
-                    .simplified => |*data| {
-                        const key = LODRegionKey{ .rx = lcp.region_x, .rz = lcp.region_z, .lod = lcp.lodLevel() };
-                        const cache_key = self.cacheKey(key);
-                        const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
-                            log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
-                            return;
-                        };
-                        lcp.store_dirty = false;
-                        write_key = key;
-                        write_bytes = bytes;
-                    },
-                    else => {},
+pub fn drainCacheCompletions(self: *Self) void {
+    var completions: std.ArrayListUnmanaged(cache_io.Completion) = .empty;
+    defer {
+        for (completions.items) |*completion| deinitCompletion(completion);
+        completions.deinit(self.allocator);
+    }
+    self.cache_io.drainCompletions(&completions);
+
+    for (completions.items) |*completion| switch (completion.*) {
+        .read => |*read| {
+            var dispatch_generation = false;
+            var log_legacy_notice = false;
+            self.mutex.lock();
+            const chunk = self.regions[@intFromEnum(read.key.lod)].get(read.key);
+            if (chunk) |region| {
+                if (region.cache_read_queued and region.job_token == read.token and region.getState() == .queued_for_generation) {
+                    region.cache_read_queued = false;
+                    log_legacy_notice = read.used_legacy;
+                    switch (read.result) {
+                        .hit => |*data| {
+                            if ((regionRequiresSpans(self, read.key) and !data.hasVerticalSpans()) or
+                                data.width != LODSimplifiedData.getGridSizeForDensity(read.key.lod, self.config.getSampleDensity(read.key.lod)))
+                            {
+                                data.deinit();
+                                read.result = .miss;
+                                self.cache_misses += 1;
+                                dispatch_generation = true;
+                            } else {
+                                region.data = .{ .simplified = data.* };
+                                // Ownership moved into the region. Retag the
+                                // completion so deferred cleanup does not
+                                // deinitialize the consumed payload.
+                                read.result = .miss;
+                                region.updateHeightBoundsFromData();
+                                region.bumpSourceRevision();
+                                region.setState(.generated);
+                                self.enqueueTransition(read.key, region, .mesh);
+                                self.cache_hits += 1;
+                            }
+                        },
+                        .miss => {
+                            self.cache_misses += 1;
+                            dispatch_generation = true;
+                        },
+                    }
                 }
-                break; // one region per frame keeps frame cost bounded
             }
-            if (write_bytes != null) break;
+            self.mutex.unlock();
+            if (log_legacy_notice) self.logLegacyCacheNotice();
+            if (dispatch_generation) self.dispatchCacheMiss(read.key, read.token);
+        },
+        .write => |write| {
+            // Explicit saveCachedSourceData requests are not tied to a live
+            // region lifecycle and use revision zero.
+            if (write.revision == 0) continue;
+            self.mutex.lock();
+            if (self.regions[@intFromEnum(write.key.lod)].get(write.key)) |region| {
+                if (region.store_write_queued and region.source_revision == write.revision) {
+                    region.store_write_queued = false;
+                    region.store_dirty = !write.success;
+                    region.store_size_limited = write.size_limited;
+                    region.store_size_limit_cap_mb = if (write.size_limited) write.store_size_cap_mb else 0;
+                } else if (region.store_write_queued) {
+                    // A newer source snapshot arrived while this write was in
+                    // flight. Preserve dirty state and let a later update
+                    // enqueue that newer revision.
+                    region.store_write_queued = false;
+                }
+            }
+            self.mutex.unlock();
+        },
+    };
+}
+
+fn queueDirtyStores(self: *Self, max_count: usize) usize {
+    const path = self.cacheDirPathSnapshot() orelse return 0;
+    defer self.allocator.free(path);
+    var queued: usize = 0;
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    const active = lod_chunk.activeLODCount(self.config);
+    var level: usize = 1;
+    while (level < active and queued < max_count) : (level += 1) {
+        var iter = self.regions[level].iterator();
+        while (iter.next()) |entry| {
+            if (queued >= max_count) break;
+            const region = entry.value_ptr.*;
+            if (!region.store_dirty or region.store_write_queued) continue;
+            const store_size_cap_mb = if (self.cache_store.use_config_store_size_cap) self.config.getLODStoreSizeCapMB() else self.cache_store.store_size_cap_mb;
+            if (region.store_size_limited and store_size_cap_mb <= region.store_size_limit_cap_mb) continue;
+            const snapshot = switch (region.data) {
+                .simplified => |*data| lod_cache.cloneSourceData(data, entry.key_ptr.*.lod, self.allocator) catch |err| {
+                    log.log.warn("Failed to snapshot LOD{} cache ({}, {}): {}", .{ @intFromEnum(entry.key_ptr.*.lod), entry.key_ptr.*.rx, entry.key_ptr.*.rz, err });
+                    continue;
+                },
+                else => continue,
+            };
+            const key = entry.key_ptr.*;
+            const revision = region.source_revision;
+            region.store_write_queued = true;
+            const accepted = self.cache_io.enqueueWrite(path, key, self.cacheKey(key), revision, snapshot, store_size_cap_mb) catch |err| blk: {
+                log.log.warn("Failed to queue LOD{} cache write ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+                break :blk false;
+            };
+            if (!accepted) {
+                var unused = snapshot;
+                unused.deinit();
+                region.store_write_queued = false;
+                return queued;
+            }
+            queued += 1;
         }
     }
+    return queued;
+}
 
-    const key = write_key orelse return;
-    const bytes = write_bytes orelse return;
-    defer self.allocator.free(bytes);
-
-    const cache_key = self.cacheKey(key);
-    self.writeStorePayload(save_dir_path, cache_key, bytes) catch |err| {
-        log.log.warn("Failed to write LOD{} store ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
-        self.mutex.lock();
-        if (self.regions[@intFromEnum(key.lod)].get(key)) |chunk| {
-            chunk.store_dirty = true;
-        }
-        self.mutex.unlock();
-    };
+fn regionRequiresSpans(self: *Self, key: LODRegionKey) bool {
+    return self.config.getVerticalSpanBudget() > 0 and self.effectiveMeshPath(key.lod) == .column_spans;
 }
 
 pub fn cacheKey(self: *const Self, key: LODRegionKey) lod_cache.Key {
-    return .{
-        .seed = self.generator.seed,
-        .generator_identity_hash = self.generator.identity_hash,
-        .generator_version = self.generator.version,
-        .rx = key.rx,
-        .rz = key.rz,
-        .lod = key.lod,
-    };
+    return .{ .seed = self.generator.seed, .generator_identity_hash = self.generator.identity_hash, .generator_version = self.generator.version, .rx = key.rx, .rz = key.rz, .lod = key.lod };
 }
 
 pub fn legacyCacheFilePath(self: *Self, save_dir_path: []const u8, key: lod_cache.Key) ![]u8 {
-    const filename = try std.fmt.allocPrint(
-        self.allocator,
-        "lod_{}_{}_{}_{}_{}_{}.dat",
-        .{ key.seed, key.generator_identity_hash, key.generator_version, key.rx, key.rz, @intFromEnum(key.lod) },
-    );
-    defer self.allocator.free(filename);
-    return std.fs.path.join(self.allocator, &.{ save_dir_path, "lod_cache", filename });
+    return std.fmt.allocPrint(self.allocator, "{s}/lod_cache/lod_{}_{}_{}_{}_{}_{}.dat", .{ save_dir_path, key.seed, key.generator_identity_hash, key.generator_version, key.rx, key.rz, @intFromEnum(key.lod) });
 }
 
 pub fn logLegacyCacheNotice(self: *Self) void {
@@ -195,9 +205,8 @@ pub fn logLegacyCacheNotice(self: *Self) void {
 pub fn cacheDirPathSnapshot(self: *Self) ?[]u8 {
     self.mutex.lockShared();
     defer self.mutex.unlockShared();
-
-    const cache_dir_path = self.cache_store.cache_dir_path orelse return null;
-    return self.allocator.dupe(u8, cache_dir_path) catch |err| {
+    const path = self.cache_store.cache_dir_path orelse return null;
+    return self.allocator.dupe(u8, path) catch |err| {
         log.log.warn("LOD cache path snapshot allocation failed: {}", .{err});
         return null;
     };
@@ -209,6 +218,8 @@ pub fn cacheEnabled(self: *Self) bool {
     return self.cache_store.cache_dir_path != null;
 }
 
+// Synchronous helpers remain explicit setup/diagnostic APIs. Update and
+// generation paths use CacheIoPipeline exclusively.
 pub fn readStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key) !?[]u8 {
     self.cache_store.store_mutex.lock();
     defer self.cache_store.store_mutex.unlock();
@@ -216,12 +227,9 @@ pub fn readStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_c
 }
 
 pub fn writeStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod_cache.Key, bytes: []const u8) !void {
-    self.mutex.lockShared();
-    const store_size_cap_mb = self.config.getLODStoreSizeCapMB();
-    self.mutex.unlockShared();
-
     self.cache_store.store_mutex.lock();
     defer self.cache_store.store_mutex.unlock();
+    const store_size_cap_mb = if (self.cache_store.use_config_store_size_cap) self.config.getLODStoreSizeCapMB() else self.cache_store.store_size_cap_mb;
     try lod_store.writePayload(self.allocator, save_dir_path, cache_key, bytes, store_size_cap_mb);
 }
 
@@ -234,27 +242,21 @@ pub fn deleteStorePayload(self: *Self, save_dir_path: []const u8, cache_key: lod
 pub fn deleteStoreContainer(self: *Self, path: []const u8) void {
     self.cache_store.store_mutex.lock();
     defer self.cache_store.store_mutex.unlock();
-    fs.cwd().deleteFile(path) catch |delete_err| {
-        if (delete_err != error.FileNotFound) {
-            log.log.warn("Failed to delete corrupt LOD store container '{s}': {}", .{ path, delete_err });
-        }
+    fs.cwd().deleteFile(path) catch |err| {
+        if (err != error.FileNotFound) log.log.warn("Failed to delete corrupt LOD store container '{s}': {}", .{ path, err });
     };
 }
 
 pub fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
-    const save_dir_path = self.cacheDirPathSnapshot() orelse return null;
-    defer self.allocator.free(save_dir_path);
-
+    const path = self.cacheDirPathSnapshot() orelse return null;
+    defer self.allocator.free(path);
     const cache_key = self.cacheKey(key);
-
-    if (self.readStorePayload(save_dir_path, cache_key) catch |err| switch (err) {
+    if (self.readStorePayload(path, cache_key) catch |err| switch (err) {
         lod_store.StoreError.CorruptContainer => {
-            const path = lod_store.containerPath(self.allocator, save_dir_path, cache_key) catch null;
-            if (path) |container_path| {
-                defer self.allocator.free(container_path);
-                log.log.warn("Discarding corrupt LOD store container '{s}'", .{container_path});
-                self.deleteStoreContainer(container_path);
-            }
+            const container_path = lod_store.containerPath(self.allocator, path, cache_key) catch return null;
+            defer self.allocator.free(container_path);
+            log.log.warn("Discarding corrupt LOD store container '{s}'", .{container_path});
+            self.deleteStoreContainer(container_path);
             return null;
         },
         else => {
@@ -265,33 +267,25 @@ pub fn loadCachedSourceData(self: *Self, key: LODRegionKey) ?LODSimplifiedData {
         defer self.allocator.free(bytes);
         return lod_cache.deserialize(bytes, cache_key, self.allocator) catch |err| {
             log.log.warn("Discarding corrupt LOD store payload LOD{} ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
-            self.deleteStorePayload(save_dir_path, cache_key);
+            self.deleteStorePayload(path, cache_key);
             return null;
         };
     }
-
-    const path = self.legacyCacheFilePath(save_dir_path, cache_key) catch |err| {
-        log.log.warn("LOD legacy cache path allocation failed: {}", .{err});
-        return null;
-    };
-    defer self.allocator.free(path);
-
-    const bytes = fs.cwd().readFileAlloc(path, self.allocator, 16 * 1024 * 1024) catch |err| switch (err) {
+    const legacy_path = self.legacyCacheFilePath(path, cache_key) catch return null;
+    defer self.allocator.free(legacy_path);
+    const bytes = fs.cwd().readFileAlloc(legacy_path, self.allocator, 16 * 1024 * 1024) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => {
-            log.log.warn("Failed to read legacy LOD cache '{s}': {}", .{ path, err });
+            log.log.warn("Failed to read legacy LOD cache '{s}': {}", .{ legacy_path, err });
             return null;
         },
     };
     defer self.allocator.free(bytes);
     self.logLegacyCacheNotice();
-
     return lod_cache.deserialize(bytes, cache_key, self.allocator) catch |err| {
-        log.log.warn("Discarding corrupt legacy LOD cache '{s}': {}", .{ path, err });
-        fs.cwd().deleteFile(path) catch |delete_err| {
-            if (delete_err != error.FileNotFound) {
-                log.log.warn("Failed to delete corrupt legacy LOD cache '{s}': {}", .{ path, delete_err });
-            }
+        log.log.warn("Discarding corrupt legacy LOD cache '{s}': {}", .{ legacy_path, err });
+        fs.cwd().deleteFile(legacy_path) catch |delete_err| {
+            if (delete_err != error.FileNotFound) log.log.warn("Failed to delete corrupt legacy LOD cache '{s}': {}", .{ legacy_path, delete_err });
         };
         return null;
     };
@@ -309,26 +303,26 @@ pub fn recordCacheMiss(self: *Self) void {
     self.cache_misses += 1;
 }
 
+/// Explicit API used by tools/tests. Like frame writes, it snapshots then
+/// serializes on the cache worker; callers may use flushCacheIO to wait.
 pub fn saveCachedSourceData(self: *Self, key: LODRegionKey, data: *const LODSimplifiedData) void {
-    const save_dir_path = self.cacheDirPathSnapshot() orelse return;
-    defer self.allocator.free(save_dir_path);
-
-    const cache_key = self.cacheKey(key);
-
-    const bytes = lod_cache.serialize(data, cache_key, self.allocator) catch |err| {
-        log.log.warn("Failed to serialize LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
+    const path = self.cacheDirPathSnapshot() orelse return;
+    defer self.allocator.free(path);
+    const snapshot = lod_cache.cloneSourceData(data, key.lod, self.allocator) catch |err| {
+        log.log.warn("Failed to snapshot LOD{} cache ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
         return;
     };
-    defer self.allocator.free(bytes);
-
-    self.writeStorePayload(save_dir_path, cache_key, bytes) catch |err| {
-        log.log.warn("Failed to write LOD{} store ({}, {}): {}", .{ @intFromEnum(key.lod), key.rx, key.rz, err });
-    };
+    const store_size_cap_mb = if (self.cache_store.use_config_store_size_cap) self.config.getLODStoreSizeCapMB() else self.cache_store.store_size_cap_mb;
+    const accepted = self.cache_io.enqueueWrite(path, key, self.cacheKey(key), 0, snapshot, store_size_cap_mb) catch false;
+    if (!accepted) {
+        var unused = snapshot;
+        unused.deinit();
+    }
 }
 
-pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) Self {
+pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []const u8) !Self {
     _ = cache_dir_path;
-    return .{
+    var manager = Self{
         .allocator = allocator,
         .config = undefined,
         .regions = undefined,
@@ -339,18 +333,13 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
         .stats = .{},
+        .profiling = .init(false),
         .cache_hits = 0,
         .cache_misses = 0,
+        .cancelled_jobs = 0,
         .mutex = .{},
         .gpu_bridge = undefined,
-        .generator = .{
-            .ptr = undefined,
-            .generate_heightmap_only = undefined,
-            .maybe_recenter_cache = undefined,
-            .seed = 42,
-            .identity_hash = 99,
-            .version = 7,
-        },
+        .generator = .{ .ptr = undefined, .generate_heightmap_only = undefined, .maybe_recenter_cache = undefined, .seed = 42, .identity_hash = 99, .version = 7 },
         .atlas = undefined,
         .paused = false,
         .memory_governor = .{},
@@ -358,7 +347,20 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .mesh_disposal = .{},
         .renderer = undefined,
         .cache_store = .{},
+        .cache_io = undefined,
         .cleanup_covered_regions = true,
         .ingestion_queue = @import("lod_manager.zig").LODIngestionQueue.init(allocator),
     };
+    manager.cache_io = try cache_io.CacheIoPipeline.init(allocator, &manager.profiling);
+    return manager;
+}
+
+fn deinitCompletion(completion: *cache_io.Completion) void {
+    switch (completion.*) {
+        .read => |*read| switch (read.result) {
+            .hit => |*data| data.deinit(),
+            .miss => {},
+        },
+        .write => {},
+    }
 }

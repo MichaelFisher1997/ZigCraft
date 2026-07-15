@@ -66,6 +66,7 @@ pub const RenderSystem = struct {
     sky_pass: render_graph_pkg.SkyPass,
     cloud_pass: render_graph_pkg.CloudPass,
     opaque_pass: render_graph_pkg.OpaquePass,
+    lod_culling_pass: render_graph_pkg.LODCullingPass,
     entity_pass: render_graph_pkg.EntityPass,
     taa_pass: render_graph_pkg.TAAPass,
     bloom_pass: render_graph_pkg.BloomPass,
@@ -220,6 +221,7 @@ pub const RenderSystem = struct {
             .sky_pass = .{},
             .cloud_pass = .{},
             .opaque_pass = undefined,
+            .lod_culling_pass = .{},
             .entity_pass = .{},
             .taa_pass = .{ .enabled = !disable_taa and config.taa_enabled },
             .bloom_pass = .{ .enabled = !disable_bloom and config.bloom_enabled },
@@ -277,6 +279,7 @@ pub const RenderSystem = struct {
             if (self.water_reflection_pass.enabled) {
                 try self.render_graph.addPass(self.water_reflection_pass.pass());
             }
+            try self.render_graph.addPass(self.lod_culling_pass.pass());
             try self.render_graph.addPass(self.sky_pass.pass());
             try self.render_graph.addPass(self.cloud_pass.pass());
             try self.render_graph.addPass(self.opaque_pass.pass());

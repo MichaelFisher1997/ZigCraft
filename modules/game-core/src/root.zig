@@ -19,8 +19,10 @@ pub const session_hud = @import("ui/session_hud.zig");
 
 pub const BLOCK_TEXTURE_DEFINITIONS = block_texture_definitions.BLOCK_TEXTURE_DEFINITIONS;
 pub const BenchmarkRunner = benchmark.BenchmarkRunner;
+pub const BENCHMARK_WORLD_SEED = benchmark.BENCHMARK_WORLD_SEED;
 pub const BuildConfig = session.BuildConfig;
 pub const GameSession = session.GameSession;
+pub const phase5CaptureReady = session.phase5CaptureReady;
 pub const InputMapper = input_mapper.InputMapper;
 pub const InputSettings = input_settings.InputSettings;
 pub const Inventory = inventory.Inventory;

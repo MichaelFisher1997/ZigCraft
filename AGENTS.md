@@ -1,207 +1,71 @@
-# ZigCraft Agent Guidelines
+# ZigCraft Agent Guide
 
-Essential instructions for agentic coding agents operating in this Zig voxel engine repository.
+## Toolchain and commands
 
----
+- Use Zig 0.16.0 through Nix. Wrap every Zig build/test/format command in `nix develop --command`; CI uses the narrower `.#ci-unit` and `.#ci-graphics` shells.
+- Build/run:
+  ```bash
+  nix develop --command zig build
+  nix develop --command zig build run
+  nix develop --command zig build -Doptimize=ReleaseFast
+  ```
+- Format all Zig code, not only `src/` (the local hook is less strict than CI):
+  ```bash
+  nix develop --command zig fmt src/ modules/
+  nix develop --command zig fmt --check src/ modules/
+  ```
+- `zig build test` is the broad suite: aggregate/module tests, fuzz roots, shader compilation/validation, SPIR-V size checks, shadow ABI checks, and Phase 5 policy tests.
+  ```bash
+  nix develop --command zig build test
+  nix develop --command zig build test -Dtest-filter="name"
+  # Equivalent runtime-filter form:
+  nix develop --command zig build test -- --test-filter "name"
+  ```
+- Graphics/runtime verification is separate:
+  ```bash
+  nix develop --command zig build test-integration -Dskip-present=true
+  nix develop --command zig build test-robustness
+  nix develop --command zig build phase5-gate
+  nix develop --command zig build phase5-visual-gate
+  ```
+- `-Dskip-present=true` only suppresses presentation; SDL/Vulkan initialization still needs a display/compositor and driver. Use the repo skills `headless-crash-test`, `headless-screenshot`, `headless-benchmark`, or `headless-graphics-verification`, and always bound game/graphics commands with a timeout.
+- For deterministic startup checks, combine `-Dskip-present`, `-Dauto-world=<normal|overworld|overworld-v2|flat|test>`, and `-Dstartup-diagnostic-seconds=N`. `-Dchunk-debug-mode` disables LOD, water, caves, and decorations; selectively restore `lod,water,watergen,waterrender,caves,decorations` with `-Dchunk-debug-enable=`.
 
-## Development Environment
+## Benchmarks and generated artifacts
 
-Uses Nix for dependency management. **All build/test commands MUST be wrapped in `nix develop --command`**.
+- The benchmark harness is a separate build step; do not pass benchmark presets to ordinary `run` and assume benchmarking is active:
+  ```bash
+  nix develop --command zig build benchmark -Doptimize=ReleaseFast \
+    -Dbenchmark-preset=low -Dbenchmark-scenario=traversal \
+    -Dbenchmark-duration=60 -Dbenchmark-output=zig-out/benchmark-low.json
+  ```
+  Scenarios are `stationary`, `traversal`, `rapid-turn`, and `teleport-eviction`. Prefer the `headless-benchmark` skill for bounded runs.
+- Focused CPU-only tools: `nix develop --command zig build worldgen-report` and `nix develop --command zig build lod-bench`. Pass climate snapshot arguments after `--`, e.g. `nix develop --command zig build worldgen-climate-snapshot -- --seed 42 ...`.
+- Building/tests compile GLSL and write tracked `*.spv` files beside sources in `assets/shaders/vulkan/`. After intentional shader-size changes, run `./scripts/update_spirv_baseline.sh`; `docs/shaders/spirv-sizes.json` and shadow runtime SPIR-V parity are test-enforced.
+- New/changed textures go through `./scripts/process_textures.sh <pack> 512`; preserve licensing/attribution for placeholder assets.
 
-### Build & Run
-```bash
-nix develop --command zig build                      # Debug build
-nix develop --command zig build run                  # Run application
-nix develop --command zig build -Doptimize=ReleaseFast  # Release build
-rm -rf zig-out/ .zig-cache/                          # Clean artifacts
-```
+## Architecture boundaries
 
-### Testing
-```bash
-nix develop --command zig build test                 # Unit tests + shader validation
-nix develop --command zig build test -- --test-filter "Vec3 addition"  # Single test
-nix develop --command zig build test-integration     # Window init smoke test
-nix develop --command zig build test-robustness      # GPU robustness test
-```
+- `src/main.zig` and `src/game/app.zig` wire the executable. Reusable session/player/settings/benchmark logic belongs in `modules/game-core`; screens belong in `modules/game-ui`.
+- `engine-rhi` owns rendering contracts and opaque handles; `engine-graphics` owns the Vulkan backend, render passes, resources, and pipelines. Vulkan is currently the only backend, so interface changes usually require both the RHI vtable/contracts and Vulkan implementation.
+- `world-core` owns shared block/chunk/coordinate types; world generation is split across `world-worldgen-*` packages; `world-meshing` owns chunk mesh/storage; `world-lod` owns distant terrain; `world-runtime` coordinates streaming, lighting, GPU meshing, mutation, and rendering; `world-persistence` owns saves/regions.
+- Never call RHI/SDL from worker jobs. Pin chunks while background jobs hold them and synchronize shared mesh/chunk state with the project mutex abstraction.
+- Convert global coordinates with `worldToChunk`/`worldToLocal` from `world-core`; chunk coordinates are floor-divided, so ad-hoc truncating division is wrong for negative positions.
+- GPU-shared structs and shader blocks are ABI contracts. Use explicit layouts (`extern`/packed as appropriate), assert sizes/offsets, and update CPU, GLSL, descriptors, and backend bindings together.
 
-### Headless Runtime Verification
-Use project skills for bounded background runs:
-- `headless-crash-test` for crash, hang, startup, and world-load checks
-- `headless-screenshot` for offscreen screenshots and visual evidence
-- `headless-benchmark` for JSON benchmark runs with full offscreen graphics rendering
-- `headless-graphics-verification` for graphics/RHI/shader verification workflows
+## Graphics hazards
 
-When launching the game from an agent, prefer `-Dskip-present` unless the user explicitly requests a visible window. Always set a tool timeout for runtime, screenshot, and benchmark commands so the agent never gets stuck on a hung game process.
+- `ZIGCRAFT_LOD_COMPACT=auto` is qualified only through immutable per-layer descriptors plus expanded fallback for unsupported shoreline topology; `off` remains the explicit supported fallback. `force` is diagnostic only. Do not weaken the saved-world RADV reload, validation, robustness, and Phase 5 qualification requirements based only on generated-world captures.
+- Dedicated transfer queues cannot upload exclusive graphics buffers safely with semaphore synchronization alone; queue-family release/acquire ownership transfers are required. Until implemented, keep these uploads on the graphics family.
+- A descriptor set update affects all previously recorded commands that bind that set when execution happens. Terrain/water or direct/indirect streams that need different buffers require immutable/per-layer descriptor sets, not sequential updates to one set.
 
-### Formatting & Git Hooks
-```bash
-nix develop --command zig fmt src/                   # Format code
-./scripts/setup-hooks.sh                             # Enable pre-push checks
-```
+## Verification and CI
 
-### Debug Build Options
-```bash
--Ddebug_shadows    # Enable shadow debug visualization
--Dsmoke-test       # Auto-load world and exit (for automated testing)
--Dskip-present     # Full offscreen graphics mode (render without showing/presenting a window)
--Dbenchmark-preset=low  # Graphics preset for benchmark runs (low/medium/high/ultra/extreme)
--Dauto-world=normal  # Auto-open a generator directly (normal/overworld or flat)
--Dmonitor-index=1  # Open the game window on a specific 0-based SDL display index
--Dmonitor-name=DP-2  # Move the game window to a named Hyprland monitor
--Dwindow-video-driver=x11  # Force SDL's video backend (useful when Wayland ignores window placement)
--Dwindow-no-focus  # Create the game window without taking keyboard focus
--Dstartup-diagnostic-seconds=5  # Wait N seconds, log chunk/LOD counts, and exit
--Dchunk-debug-mode  # Disable LOD, water, caves, and decorations for isolation
--Dchunk-debug-enable=lod,caves  # Re-enable individual systems in chunk-debug-mode
-```
+- Match verification to the change, but graphics/RHI/shader/runtime work normally requires: format check, `zig build test`, ReleaseFast build, integration/robustness as relevant, and the appropriate headless graphics skill. CI additionally runs Debug and ReleaseSafe tests, `phase5-gate`, Lavapipe/Weston integration smoke tests, and `phase5-visual-gate`.
+- Install the repo pre-push hook with `./scripts/setup-hooks.sh`, but do not treat it as CI parity: it formats only `src/` and omits ReleaseSafe and graphics jobs.
 
-`-Dchunk-debug-enable=` accepts a comma-separated list of:
-- `lod`
-- `water`
-- `watergen`
-- `waterrender`
-- `caves`
-- `decorations`
+## Git workflow
 
----
-
-## Git Workflow
-
-- **Default branch**: `dev`
-- **All PRs target `dev`** (not `main`)
-- **Never push directly to `dev`** unless the user explicitly instructs you to do so
-- Code changes should land through a pull request targeting `dev` so they receive PR code review
-- Branch naming: `feature/*`, `bug/*`, `hotfix/*`, `ci/*`
-- Conventional commits: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`
-
----
-
-## Project Structure
-
-```
-modules/
-  engine-core/      # Window, time, logging, job system, shared interfaces
-  engine-graphics/  # Render system, Vulkan backend, shaders, textures, camera, shadows
-  engine-rhi/       # RHI contracts, resource manager, render settings, culling interfaces
-  engine-math/      # Vec3, Mat4, AABB, Frustum, ray/voxel helpers
-  engine-input/     # Input handling
-  engine-ui/        # Immediate-mode UI, fonts, widgets, overlays
-  world-core/       # Blocks, chunk data, coordinates, light packing
-  world-worldgen/   # Terrain generation, biomes, caves, decorations, generator registry
-  world-meshing/    # Chunk storage, chunk mesh generation, GPU block buffers, meshing helpers
-  world-lod/        # Distant terrain LOD chunks, meshes, scheduler, renderer, manager
-  world-runtime/    # World facade, streamer, renderer, mutation, GPU meshing runtime
-  world-persistence/# Level data, region files, chunk serialization, save manager
-src/
-  game/             # Application logic, state, menus
-  c.zig             # Central C imports (@cImport for SDL3, Vulkan)
-  main.zig          # Entry point
-  tests.zig         # Unit test suite aggregator
-libs/               # Local dependencies (zig-math, zig-noise)
-assets/shaders/     # GLSL shaders (vulkan/ contains SPIR-V)
-```
-
----
-
-## Code Style
-
-### Naming Conventions
-- **Types/Structs/Enums**: `PascalCase` (`RenderSystem`, `BufferHandle`, `BlockType`)
-- **Functions**: `camelCase` following Zig stdlib convention (`initRenderer`, `meshQueue`, `chunkX`)
-- **Variables**: `snake_case` (`mesh_queue`, `chunk_x`)
-- **Constants/Globals**: `SCREAMING_SNAKE_CASE` (`MAX_CHUNKS`, `CHUNK_SIZE_X`)
-- **Files**: `snake_case.zig`
-
-### Import Order
-```zig
-// 1. Standard library
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
-// 2. C imports (always via c.zig)
-const c = @import("../c.zig").c;
-
-// 3. Project modules by package name
-const Vec3 = @import("engine-math").Vec3;
-const log = @import("engine-core").log;
-```
-
-### Memory Management
-- Functions allocating heap memory MUST accept `std.mem.Allocator`
-- Use `defer`/`errdefer` for cleanup immediately after allocation
-- Prefer `std.ArrayListUnmanaged` in structs that store the allocator elsewhere
-- Use `extern struct` for GPU-shared data layouts (e.g., `Vertex`)
-
-### Error Handling
-- Propagate errors with `try`; define subsystem-specific error sets (`RhiError`)
-- Log errors via `@import("engine-core").log`: `log.log.err("msg: {}", .{err})`
-- Use `//!` for module-level docs, `///` for public API documentation
-
-### Type Patterns
-- GPU resource handles are opaque `u32` (`BufferHandle`, `TextureHandle`, `ShaderHandle`)
-- Invalid handles are `0` (`InvalidBufferHandle`, etc.)
-- Packed data uses `packed struct` (e.g., `PackedLight` for sky/block light)
-- Chunk coordinates: `i32`; local block coordinates: `u32` (0-15 for X/Z, 0-255 for Y)
-
----
-
-## Coordinate Systems
-
-- **World**: Global (x, y, z) in blocks/meters
-- **Chunk**: `(chunk_x, chunk_z)` via `@divFloor(world, 16)`
-- **Local**: (x, y, z) within a chunk
-- Use `worldToChunk()` and `worldToLocal()` from `@import("world-core")`
-
----
-
-## Architecture
-
-### Render Hardware Interface (RHI)
-- All rendering uses the `RHI` interface exported by `engine-rhi`
-- Vulkan is the only backend (`rhi_vulkan.zig`)
-- Extend functionality by updating `RHI.VTable` and backend implementation
-
-### Job System & Concurrency
-- Use `JobSystem` for heavy tasks (world gen, meshing, lighting)
-- **Never call RHI or windowing from worker threads**
-- Synchronize shared state with `std.Thread.Mutex`
-- Use `chunk.pin()`/`chunk.unpin()` when passing chunks to background jobs
-
----
-
-## Common Tasks
-
-### Adding a New Block Type
-1. Add entry to `BlockType` enum in `modules/world-core/src/block.zig`
-2. Register properties in `modules/world-core/src/block_registry.zig`
-3. Add textures to `modules/engine-graphics/src/texture_atlas.zig`
-4. Standardize PBR textures using `./scripts/process_textures.sh`
-5. Update `modules/world-meshing/src/chunk_mesh.zig` for special face/transparency logic
-
-### Modifying Shaders
-1. GLSL sources in `assets/shaders/vulkan/`
-2. Vulkan SPIR-V validated during `zig build test` via `glslangValidator`
-3. Uniform names must match exactly between shader source and RHI backends
-
-### Adding Unit Tests
-- Add tests alongside modules and expose them from the owning module root; aggregate broad suites from `src/tests.zig`
-- Use `std.testing` assertions: `expectEqual`, `expectApproxEqAbs`, `expect`
-- Test naming: descriptive, e.g., `test "Vec3 normalize"`
-
----
-
-## Verification Checklist
-
-Before committing:
-- [ ] Run `zig fmt src/` to format code
-- [ ] Run `zig build test` (includes shader validation)
-- [ ] Run `zig build -Doptimize=ReleaseFast` for performance-critical changes
-- [ ] Run `./scripts/process_textures.sh` for any new texture assets
-
----
-
-## Performance Notes
-
-- Chunk mesh building runs on worker threads; avoid allocations in hot paths
-- Use packed structs for large arrays (e.g., light data)
-- Profile before optimizing; use `ReleaseFast` for benchmarks
+- Branch from and target PRs to `dev`; do not push directly to `dev` unless explicitly requested. Branch prefixes are `feature/`, `bug/`, `hotfix/`, and `ci/`.
+- PR titles and commits use conventional types: `feat`, `fix`, `refactor`, `test`, `docs`, `ci`, `chore`, `perf`, `build`, `style`, or `revert`.
+- Every non-merge PR commit needs a DCO trailer; create commits with `git commit -s`.

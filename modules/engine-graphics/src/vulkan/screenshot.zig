@@ -11,6 +11,7 @@ pub const PendingCapture = struct {
     path: []const u8 = &.{},
     width: u32 = 0,
     height: u32 = 0,
+    row_pitch: usize = 0,
     format: c.VkFormat = c.VK_FORMAT_UNDEFINED,
     source_layout: c.VkImageLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
     source_image: c.VkImage = null,
@@ -35,6 +36,10 @@ pub fn requestCapture(ctx: anytype, path: []const u8) bool {
         log.log.err("screenshot: no swapchain images available", .{});
         return false;
     }
+    if (detectScreenshotFormat(path) == null) {
+        log.log.err("screenshot: unsupported image path '{s}' (use .png, .jpg, .jpeg, .gif, or .webp)", .{path});
+        return false;
+    }
     if (!ctx.swapchain.swapchain.screenshot_capture_supported) {
         log.log.err("screenshot: active surface does not support transfer-source swapchain images", .{});
         return false;
@@ -44,8 +49,13 @@ pub fn requestCapture(ctx: anytype, path: []const u8) bool {
     const image_format = ctx.swapchain.getImageFormat();
     const width = extent.width;
     const height = extent.height;
+    if (width == 0 or height == 0) {
+        log.log.err("screenshot: invalid rendered output extent", .{});
+        return false;
+    }
 
-    const image_size: u64 = @as(u64, width) * height * 4;
+    const row_pitch = tightRowPitch(width);
+    const image_size = row_pitch * @as(usize, height);
 
     const staging = Utils.createVulkanBuffer(
         device,
@@ -67,6 +77,7 @@ pub fn requestCapture(ctx: anytype, path: []const u8) bool {
         .path = owned_path,
         .width = width,
         .height = height,
+        .row_pitch = row_pitch,
         .format = image_format,
         .frame_index = ctx.frames.current_frame,
         .path_owned = true,
@@ -150,7 +161,7 @@ pub fn recordCapture(ctx: anytype) void {
     host_barrier.dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED;
     host_barrier.buffer = staging.buffer;
     host_barrier.offset = 0;
-    host_barrier.size = c.VK_WHOLE_SIZE;
+    host_barrier.size = @intCast(capture.row_pitch * @as(usize, capture.height));
     c.vkCmdPipelineBarrier(
         cmd_buffer,
         c.VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -165,14 +176,18 @@ pub fn recordCapture(ctx: anytype) void {
     );
 
     barrier.srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
-    barrier.dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    const skip_present = ctx.swapchain.skip_present;
+    barrier.dstAccessMask = if (skip_present)
+        c.VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+    else
+        0;
     barrier.oldLayout = dst_layout;
     barrier.newLayout = capture.source_layout;
 
     c.vkCmdPipelineBarrier(
         cmd_buffer,
         c.VK_PIPELINE_STAGE_TRANSFER_BIT,
-        c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        if (skip_present) c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT else c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
         0,
         0,
         null,
@@ -203,7 +218,7 @@ pub fn completeCapture(ctx: anytype) bool {
         return false;
     };
     const bytes: [*]const u8 = @ptrCast(@alignCast(mapped_ptr));
-    return writeImage(bytes, capture.width, capture.height, capture.path, capture.format);
+    return writeImage(bytes, capture.width, capture.height, capture.row_pitch, capture.path, capture.format);
 }
 
 pub fn discardCapture(ctx: anytype) void {
@@ -223,14 +238,18 @@ const ScreenshotFormat = enum {
     webp,
 };
 
-fn writeImage(data: [*]const u8, width: u32, height: u32, path: []const u8, format: c.VkFormat) bool {
+fn tightRowPitch(width: u32) usize {
+    return @as(usize, width) * 4;
+}
+
+fn writeImage(data: [*]const u8, width: u32, height: u32, source_row_pitch: usize, path: []const u8, format: c.VkFormat) bool {
     const output_format = detectScreenshotFormat(path) orelse {
         log.log.err("screenshot: unsupported image path '{s}' (use .png, .jpg, .jpeg, .gif, or .webp)", .{path});
         return false;
     };
 
     return switch (output_format) {
-        .png => writePNG(data, width, height, path, format),
+        .png => writePNG(data, width, height, source_row_pitch, path, format),
         .jpeg, .gif, .webp => unsupportedEncoder(path, output_format),
     };
 }
@@ -257,7 +276,7 @@ fn hasExtension(path: []const u8, ext: []const u8) bool {
     return true;
 }
 
-fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format: c.VkFormat) bool {
+fn writePNG(data: [*]const u8, width: u32, height: u32, source_row_pitch: usize, path: []const u8, format: c.VkFormat) bool {
     if (width > 16384) {
         log.log.err("screenshot: width {} exceeds max supported 16384", .{width});
         return false;
@@ -265,6 +284,10 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
 
     const allocator = std.heap.page_allocator;
     const row_bytes: usize = @as(usize, width) * 3;
+    if (source_row_pitch < tightRowPitch(width)) {
+        log.log.err("screenshot: source row pitch {} is smaller than {} RGBA pixels", .{ source_row_pitch, width });
+        return false;
+    }
     const raw_size: usize = (@as(usize, height) * (row_bytes + 1));
     const raw = allocator.alloc(u8, raw_size) catch {
         log.log.err("screenshot: failed to allocate PNG scanlines", .{});
@@ -280,7 +303,7 @@ fn writePNG(data: [*]const u8, width: u32, height: u32, path: []const u8, format
         raw[row_start] = 0;
         var x: u32 = 0;
         while (x < width) : (x += 1) {
-            const src_offset: usize = (@as(usize, y) * width + x) * 4;
+            const src_offset: usize = @as(usize, y) * source_row_pitch + @as(usize, x) * 4;
             const dst_offset: usize = row_start + 1 + @as(usize, x) * 3;
             const rgb = finalDisplayRgb(data[src_offset..][0..4], is_bgra);
             raw[dst_offset] = if (needs_srgb_encode) linearByteToSrgb(rgb[0]) else rgb[0];

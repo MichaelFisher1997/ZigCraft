@@ -151,8 +151,44 @@ pub const LODSimplifiedData = struct {
         return region_size / @max(grid_size - 1, 1);
     }
 
+    /// Returns a seam-friendly (power-of-two cells plus one edge sample) grid
+    /// at a configurable density.  The edge samples are retained so adjacent
+    /// regions still meet exactly after far-level decimation.
+    pub fn getGridSizeForDensity(lod_level: LODLevel, density: f32) u32 {
+        const base_cells = getGridSize(lod_level) - 1;
+        const clamped = std.math.clamp(density, 0.0625, 1.0);
+        const requested: u32 = @max(1, @as(u32, @intFromFloat(@floor(@as(f32, @floatFromInt(base_cells)) * clamped))));
+        var cells: u32 = 1;
+        while (cells * 2 <= requested) : (cells *= 2) {}
+        return cells + 1;
+    }
+
+    /// Valid source grids retain a power-of-two cell count that divides the
+    /// region's block width. This makes every cell an integral world-space
+    /// span, which is required by heightfield seams and compact index topology.
+    pub fn isSupportedGridSize(lod_level: LODLevel, width: u32) bool {
+        if (width < 2) return false;
+        const cells = width - 1;
+        if ((cells & (cells - 1)) != 0) return false;
+        return regionSizeBlocks(lod_level) % cells == 0;
+    }
+
     pub fn init(allocator: std.mem.Allocator, lod_level: LODLevel) !LODSimplifiedData {
-        const grid_size = getGridSize(lod_level);
+        return initWithSampleDensity(allocator, lod_level, 1.0);
+    }
+
+    /// Allocates source storage using the requested LOD sample density. This
+    /// changes worker sampling and mesh input cost, not just draw culling.
+    pub fn initWithSampleDensity(allocator: std.mem.Allocator, lod_level: LODLevel, density: f32) !LODSimplifiedData {
+        const grid_size = getGridSizeForDensity(lod_level, density);
+        return initWithGridSize(allocator, lod_level, grid_size);
+    }
+
+    /// Allocates a validated, seam-compatible source grid. Cache loading uses
+    /// this exact-width constructor so reduced-density payloads never get
+    /// silently expanded into a different array topology.
+    pub fn initWithGridSize(allocator: std.mem.Allocator, lod_level: LODLevel, grid_size: u32) !LODSimplifiedData {
+        if (!isSupportedGridSize(lod_level, grid_size)) return error.InvalidGridSize;
         const count = grid_size * grid_size;
 
         const heightmap = try allocator.alloc(f32, count);
@@ -203,7 +239,18 @@ pub const LODSimplifiedData = struct {
     }
 
     pub fn initWithVerticalSpans(allocator: std.mem.Allocator, lod_level: LODLevel) !LODSimplifiedData {
-        var data = try init(allocator, lod_level);
+        return initWithVerticalSpansSampleDensity(allocator, lod_level, 1.0);
+    }
+
+    pub fn initWithVerticalSpansSampleDensity(allocator: std.mem.Allocator, lod_level: LODLevel, density: f32) !LODSimplifiedData {
+        var data = try initWithSampleDensity(allocator, lod_level, density);
+        errdefer data.deinit();
+        try data.enableVerticalSpans();
+        return data;
+    }
+
+    pub fn initWithVerticalSpansGridSize(allocator: std.mem.Allocator, lod_level: LODLevel, grid_size: u32) !LODSimplifiedData {
+        var data = try initWithGridSize(allocator, lod_level, grid_size);
         errdefer data.deinit();
         try data.enableVerticalSpans();
         return data;
@@ -468,6 +515,37 @@ pub const LODSimplifiedData = struct {
         if (self.vertical_spans != null) total += @as(usize, @intCast(count)) * MAX_LOD_VERTICAL_SPANS * @sizeOf(LODVerticalSpan);
         return total;
     }
+
+    /// Reuses exact coincident parent samples for one of its four child
+    /// regions. Reuse is permitted only when both grids have the same
+    /// world-space cell size (`parent.width == child.width * 2 - 1`); that
+    /// restriction keeps shared edges byte-for-byte identical rather than
+    /// blending unrelated coarse footprints. Returns copied sample count.
+    pub fn reuseAlignedParentSamples(child: *LODSimplifiedData, parent: *const LODSimplifiedData, child_x: u1, child_z: u1) u32 {
+        if (parent.width != child.width * 2 - 1) return 0;
+        const offset_x = @as(u32, child_x) * (child.width - 1);
+        const offset_z = @as(u32, child_z) * (child.width - 1);
+        var copied: u32 = 0;
+        var z: u32 = 0;
+        while (z < child.width) : (z += 1) {
+            var x: u32 = 0;
+            while (x < child.width) : (x += 1) {
+                if (child.getColumnProvenance(x, z) != .worldgen) continue;
+                const dst = x + z * child.width;
+                const src = (x + offset_x) + (z + offset_z) * parent.width;
+                child.heightmap[dst] = parent.heightmap[src];
+                child.biomes[dst] = parent.biomes[src];
+                child.top_blocks[dst] = parent.top_blocks[src];
+                child.colors[dst] = parent.colors[src];
+                child.material_layers[dst] = parent.material_layers[src];
+                child.water[dst] = parent.water[src];
+                child.lighting[dst] = parent.lighting[src];
+                child.vegetation[dst] = parent.vegetation[src];
+                copied += 1;
+            }
+        }
+        return copied;
+    }
 };
 
 test "LODSimplifiedData initializes rich column defaults" {
@@ -483,12 +561,45 @@ test "LODSimplifiedData initializes rich column defaults" {
     try std.testing.expectEqual(@as(f32, 0.0), data.vegetation[0].tree_coverage);
 }
 
-test "LODSimplifiedData far levels use high-detail grids" {
+test "LODSimplifiedData far levels use configured detail grids" {
     try std.testing.expectEqual(@as(u32, 33), LODSimplifiedData.getGridSize(.lod0));
     try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod1));
     try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod2));
     try std.testing.expectEqual(@as(u32, 129), LODSimplifiedData.getGridSize(.lod3));
-    try std.testing.expectEqual(@as(u32, 129), LODSimplifiedData.getGridSize(.lod4));
+    try std.testing.expectEqual(@as(u32, 65), LODSimplifiedData.getGridSize(.lod4));
+}
+
+test "LODSimplifiedData density reduces far worker and mesh samples" {
+    const allocator = std.testing.allocator;
+    var lod3 = try LODSimplifiedData.initWithSampleDensity(allocator, .lod3, 0.5);
+    defer lod3.deinit();
+    var lod4 = try LODSimplifiedData.initWithSampleDensity(allocator, .lod4, 0.25);
+    defer lod4.deinit();
+
+    try std.testing.expectEqual(@as(u32, 65), lod3.width);
+    try std.testing.expectEqual(@as(u32, 17), lod4.width);
+    try std.testing.expect(lod3.heightmap.len < @as(usize, 129 * 129));
+    try std.testing.expect(lod4.heightmap.len < @as(usize, 65 * 65));
+}
+
+test "LODSimplifiedData accepts every integral far density grid" {
+    try std.testing.expect(LODSimplifiedData.isSupportedGridSize(.lod3, 17));
+    try std.testing.expect(LODSimplifiedData.isSupportedGridSize(.lod3, 65));
+    try std.testing.expect(LODSimplifiedData.isSupportedGridSize(.lod3, 129));
+    try std.testing.expect(LODSimplifiedData.isSupportedGridSize(.lod4, 17));
+    try std.testing.expect(LODSimplifiedData.isSupportedGridSize(.lod4, 65));
+    try std.testing.expect(!LODSimplifiedData.isSupportedGridSize(.lod4, 18));
+}
+
+test "LODSimplifiedData reuses only aligned coarse parent samples" {
+    const allocator = std.testing.allocator;
+    var parent = try LODSimplifiedData.initWithSampleDensity(allocator, .lod4, 1.0);
+    defer parent.deinit();
+    var child = try LODSimplifiedData.initWithSampleDensity(allocator, .lod3, 0.5);
+    defer child.deinit();
+    parent.setHeight(64, 64, 91.0);
+    try std.testing.expectEqual(@as(u32, 65 * 65), child.reuseAlignedParentSamples(&parent, 1, 1));
+    try std.testing.expectEqual(@as(f32, 91.0), child.getHeight(0, 0));
 }
 
 test "LODColumnProvenance orders overwrite authority" {

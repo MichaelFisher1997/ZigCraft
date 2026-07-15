@@ -82,6 +82,7 @@ jobs:
           ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
         with:
           model: zhipuai-coding-plan/glm-5.2
+          variant: max
           use_github_token: true
           prompt: ${{ env.PROMPT }}
 

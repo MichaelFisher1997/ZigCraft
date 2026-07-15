@@ -3,12 +3,10 @@ const testing = std.testing;
 const fs = @import("fs");
 const c = @import("c").c;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     std.debug.print("Running integration tests...\n", .{});
 
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = init.gpa;
 
     // Find the robust-demo executable
     // Typically in zig-out/bin/robust-demo or similar
@@ -18,7 +16,7 @@ pub fn main() !void {
     std.debug.print("Found robust-demo at: {s}\n", .{robust_demo_path});
 
     // Run the demo
-    const run_result = try std.process.run(allocator, std.Options.debug_io, .{
+    const run_result = try std.process.run(allocator, init.io, .{
         .argv = &[_][]const u8{robust_demo_path},
         .stdout_limit = .limited(4096),
         .stderr_limit = .limited(4096),
@@ -27,14 +25,15 @@ pub fn main() !void {
     defer allocator.free(run_result.stderr);
 
     const stdout = run_result.stdout;
+    const stderr = run_result.stderr;
     const result = run_result.term;
 
     // Check exit code
     switch (result) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 std.debug.print("robust-demo failed with exit code {d}\n", .{code});
-                std.debug.print("Output:\n{s}\n", .{stdout});
+                std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ stdout, stderr });
                 return error.DemoFailed;
             }
         },
@@ -46,9 +45,9 @@ pub fn main() !void {
 
     // Verify expected output
     const expected_msg = "[SUCCESS] Command completed successfully. Robustness2 prevented device loss.";
-    if (std.mem.indexOf(u8, stdout, expected_msg) == null) {
+    if (std.mem.indexOf(u8, stdout, expected_msg) == null and std.mem.indexOf(u8, stderr, expected_msg) == null) {
         std.debug.print("robust-demo did not output expected success message.\n", .{});
-        std.debug.print("Output:\n{s}\n", .{stdout});
+        std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ stdout, stderr });
         return error.VerificationFailed;
     }
 

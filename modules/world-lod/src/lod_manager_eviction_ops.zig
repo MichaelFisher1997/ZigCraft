@@ -16,7 +16,6 @@ const CHUNK_SIZE_Z = world_core.CHUNK_SIZE_Z;
 const LODColumnProvenance = world_core.LODColumnProvenance;
 const Vec3 = @import("engine-math").Vec3;
 const Mat4 = @import("engine-math").Mat4;
-const Vertex = @import("engine-rhi").Vertex;
 const engine_core = @import("engine-core");
 const log = engine_core.log;
 const JobSystem = engine_core.job_system;
@@ -50,6 +49,7 @@ const MAX_CACHE_LOADS_PER_UPDATE = manager_ctx.MAX_CACHE_LOADS_PER_UPDATE;
 const MAX_MEMORY_EVICTIONS_PER_UPDATE = manager_ctx.MAX_MEMORY_EVICTIONS_PER_UPDATE;
 const MAX_MESH_DELETIONS_PER_SWEEP = manager_ctx.MAX_MESH_DELETIONS_PER_SWEEP;
 const DEFAULT_LOD_UPLOAD_BUDGET_BYTES = manager_ctx.DEFAULT_LOD_UPLOAD_BUDGET_BYTES;
+const LOGICAL_LOD_REGION_RESERVATION_BYTES = manager_ctx.LOGICAL_LOD_REGION_RESERVATION_BYTES;
 const LOD_UPLOAD_BUDGET_ENV = manager_ctx.LOD_UPLOAD_BUDGET_ENV;
 const LOD_UPDATE_DIVISOR = manager_ctx.LOD_UPDATE_DIVISOR;
 const DELETION_SWEEP_SECONDS = manager_ctx.DELETION_SWEEP_SECONDS;
@@ -83,7 +83,11 @@ pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void 
     defer to_remove.deinit(self.allocator);
 
     // Hold lock for entire operation to prevent races with worker threads
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lock();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlock();
 
     const player = self.loadPlayerChunkPos();
@@ -107,6 +111,9 @@ pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void 
     if (to_remove.items.len > 0) {
         for (to_remove.items) |key| {
             if (storage.get(key)) |chunk| {
+                if (chunk.getState() != .missing and chunk.getState() != .renderable and self.pending_region_count > 0) {
+                    self.pending_region_count -= 1;
+                }
                 // Clean up mesh before removing chunk
                 const meshes = &self.meshes[@intFromEnum(lod)];
                 self.noteRegionRemoved(key, chunk);
@@ -125,24 +132,40 @@ pub fn unloadDistantForLevel(self: *Self, lod: LODLevel, max_radius: i32) !void 
 }
 
 pub fn queueMeshDeletion(self: *Self, mesh: *LODMesh) void {
+    const memory = mesh.memorySnapshot();
     self.mesh_disposal.queue.append(self.allocator, mesh) catch {
+        mesh.releasePendingCompactTile();
         self.gpu_bridge.destroy(mesh);
         self.allocator.destroy(mesh);
+        return;
     };
+    self.profiling.addDeferredDeletionBytes(memory.capacity_bytes);
+    self.profiling.addDeferredDeletionCpuBytes(memory.pending_upload_bytes);
 }
 
 pub fn processMeshDeletions(self: *Self, max_count: usize) void {
+    const lock_wait_timer = self.profiling.begin();
+    self.mutex.lock();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
+    defer self.mutex.unlock();
+
     const count = @min(max_count, self.mesh_disposal.queue.items.len);
     if (count == 0) return;
 
-    // LODMesh does not carry a per-frame fence today, so destruction still
-    // requires GPU idle. Bound each sweep so a memory-pressure eviction burst
-    // cannot turn into an unbounded main-thread stall.
-    self.gpu_bridge.waitIdle();
+    // Meshes have already spent a full disposal grace period outside the
+    // render maps. Whole buffers are retired by the RHI's frame-fence deletion
+    // queue; pooled ranges are only returned here, after that grace period.
+    // Do not turn routine streaming eviction into a device-global stall.
     var processed: usize = 0;
     while (processed < count) : (processed += 1) {
         const idx = self.mesh_disposal.queue.items.len - 1;
         const mesh = self.mesh_disposal.queue.items[idx];
+        const memory = mesh.memorySnapshot();
+        self.profiling.removeDeferredDeletionBytes(memory.capacity_bytes);
+        self.profiling.removeDeferredDeletionCpuBytes(memory.pending_upload_bytes);
+        mesh.releasePendingCompactTile();
         self.gpu_bridge.destroy(mesh);
         self.allocator.destroy(mesh);
         self.mesh_disposal.queue.items.len = idx;
@@ -155,7 +178,12 @@ pub fn regionMemoryBytes(chunk: *const LODChunk, mesh: ?*LODMesh) usize {
         .simplified => |*s| total += s.totalMemoryBytes(),
         else => {},
     }
-    if (mesh) |m| total += m.capacity * @sizeOf(Vertex);
+    if (mesh) |m| {
+        const memory = m.memorySnapshot();
+        // Returning a pooled range does not release the renderer's backing
+        // buffer or CPU shadow, so it cannot lower the known memory total.
+        if (!memory.pooled) total += memory.capacity_bytes;
+    }
     return total;
 }
 
@@ -167,7 +195,10 @@ pub fn enforceMemoryBudget(self: *Self) !void {
 
     // Decay path: comfortably under budget -> gradually re-expand radii.
     if (self.memory_governor.used_bytes < hysteresis_low) {
+        const lock_wait_timer = self.profiling.begin();
         self.mutex.lock();
+        self.profiling.end(.manager_lock_wait, lock_wait_timer);
+        const lock_hold_timer = self.profiling.begin();
         var decayed = false;
         for (&self.memory_governor.radius_shrink_chunks) |*s| {
             if (s.* > 0) {
@@ -175,6 +206,7 @@ pub fn enforceMemoryBudget(self: *Self) !void {
                 decayed = true;
             }
         }
+        self.profiling.end(.manager_lock_hold, lock_hold_timer);
         self.mutex.unlock();
         if (decayed) {
             log.log.trace("LOD memory below 80% budget; re-expanding radii", .{});
@@ -188,7 +220,11 @@ pub fn enforceMemoryBudget(self: *Self) !void {
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
     defer candidates.deinit(self.allocator);
 
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lock();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlock();
 
     const player = self.loadPlayerChunkPos();
@@ -263,45 +299,117 @@ pub fn enforceMemoryBudget(self: *Self) !void {
 /// Update statistics
 pub fn updateStats(self: *Self) void {
     self.stats.reset();
-    var mem_usage: usize = 0;
+    var source_data_cpu_bytes: usize = 0;
+    var direct_mesh_gpu_bytes: usize = 0;
+    var pending_cpu_upload_bytes: usize = 0;
+    var deferred_deletion_gpu_bytes: usize = 0;
+    var deferred_deletion_cpu_bytes: usize = 0;
+    var resident_region_count: usize = 0;
 
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
 
     for (0..LODLevel.count) |i| {
         var iter = self.regions[i].iterator();
         while (iter.next()) |entry| {
             const chunk = entry.value_ptr.*;
+            resident_region_count += 1;
             self.stats.recordState(i, chunk.getState());
 
             // Calculate actual memory usage for this chunk's data
             switch (chunk.data) {
                 .simplified => |*s| {
-                    mem_usage += s.totalMemoryBytes();
+                    source_data_cpu_bytes += s.totalMemoryBytes();
                 },
                 else => {},
             }
         }
 
-        // Add mesh memory
+        // Direct meshes own a dedicated GPU buffer. Pooled mesh capacity is a
+        // sub-allocation and is accounted once by the renderer pool snapshot.
         var mesh_iter = self.meshes[i].iterator();
         while (mesh_iter.next()) |entry| {
             const mesh = entry.value_ptr.*;
+            const memory = mesh.memorySnapshot();
             self.stats.mesh_count[i] += 1;
-            self.stats.mesh_vertices[i] += mesh.vertexCount();
-            mem_usage += mesh.capacity * @sizeOf(Vertex);
+            self.stats.mesh_vertices[i] += memory.vertex_count;
+            pending_cpu_upload_bytes += memory.pending_upload_bytes;
+            if (!memory.pooled) direct_mesh_gpu_bytes += memory.capacity_bytes;
         }
 
         self.stats.gen_queue_depth[i] = @intCast(self.job_dispatcher.queues[i].count());
         self.stats.upload_queue_depth[i] = @intCast(self.upload_queues[i].count());
     }
 
-    self.stats.addMemory(mem_usage);
+    // A queued mesh is no longer in the render map. Count its retained GPU
+    // allocation and pending CPU vertices independently; pooled allocations
+    // remain included in the pool capacity below and must not be double-counted.
+    for (self.mesh_disposal.queue.items) |mesh| {
+        const memory = mesh.memorySnapshot();
+        deferred_deletion_gpu_bytes += memory.capacity_bytes;
+        deferred_deletion_cpu_bytes += memory.pending_upload_bytes;
+        if (!memory.pooled) direct_mesh_gpu_bytes += memory.capacity_bytes;
+    }
+
+    const pool_memory = self.renderer.memoryStats();
+    const known_memory_bytes = source_data_cpu_bytes +
+        direct_mesh_gpu_bytes +
+        pool_memory.pool_gpu_capacity_bytes +
+        pool_memory.pool_cpu_shadow_bytes +
+        // Compact tiles are sub-allocations of this production GPU pool. Its
+        // capacity is the real allocation retained by the renderer and must be
+        // governed alongside source data; allocated bytes would double-count it.
+        pool_memory.compact_pool_capacity_bytes +
+        pending_cpu_upload_bytes +
+        deferred_deletion_cpu_bytes;
+    const budget_bytes = @as(usize, self.config.getMemoryBudgetMB()) * 1024 * 1024;
+    const reservation_per_region = if (budget_bytes == 0) 0 else @min(budget_bytes, LOGICAL_LOD_REGION_RESERVATION_BYTES);
+    const admission_reservation_bytes = std.math.mul(usize, resident_region_count, reservation_per_region) catch std.math.maxInt(usize);
+    const logical_admission_bytes = std.math.add(usize, known_memory_bytes, admission_reservation_bytes) catch std.math.maxInt(usize);
+    self.stats.addMemory(known_memory_bytes);
+    self.stats.pool_gpu_capacity_bytes = @intCast(pool_memory.pool_gpu_capacity_bytes);
+    self.stats.pool_gpu_allocated_bytes = @intCast(pool_memory.pool_gpu_allocated_bytes);
+    self.stats.pool_gpu_slack_bytes = @intCast(pool_memory.pool_gpu_slack_bytes);
+    self.stats.pool_cpu_shadow_bytes = @intCast(pool_memory.pool_cpu_shadow_bytes);
+    self.stats.compact_pool_capacity_bytes = @intCast(pool_memory.compact_pool_capacity_bytes);
+    self.stats.compact_pool_allocated_bytes = @intCast(pool_memory.compact_pool_allocated_bytes);
+    self.stats.compact_pool_free_bytes = @intCast(pool_memory.compact_pool_free_bytes);
+    self.stats.compact_pool_retired_bytes = @intCast(pool_memory.compact_pool_retired_bytes);
+    self.stats.direct_mesh_gpu_bytes = @intCast(direct_mesh_gpu_bytes);
+    self.stats.source_data_cpu_bytes = @intCast(source_data_cpu_bytes);
+    self.stats.resident_region_count = @intCast(resident_region_count);
+    self.stats.logical_admission_reservation_bytes = @intCast(admission_reservation_bytes);
+    self.stats.logical_admission_bytes = @intCast(logical_admission_bytes);
+    self.stats.pending_cpu_upload_bytes = @intCast(pending_cpu_upload_bytes);
+    self.stats.deferred_deletion_gpu_bytes = @intCast(deferred_deletion_gpu_bytes);
+    self.stats.deferred_deletion_cpu_bytes = @intCast(deferred_deletion_cpu_bytes);
     self.stats.store_hits = self.cache_hits;
     self.stats.store_misses = self.cache_misses;
     self.stats.cache_hits = self.cache_hits;
     self.stats.cache_misses = self.cache_misses;
-    self.memory_governor.used_bytes = mem_usage;
+    self.stats.cancelled_jobs = self.cancelled_jobs;
+    self.stats.generation_token_overflows = self.generation_tokens.overflowEvents();
+    self.stats.transition_token_overflows = self.transition_tokens.overflowEvents();
+    self.stats.fade_token_overflows = self.fade_tokens.overflowEvents();
+    self.memory_governor.used_bytes = known_memory_bytes;
+    self.memory_governor.logical_admission_bytes = logical_admission_bytes;
+    self.profiling.setPendingCpuUploadBytes(pending_cpu_upload_bytes);
+    self.profiling.setMemoryAccounting(
+        pool_memory.pool_gpu_capacity_bytes,
+        pool_memory.pool_gpu_allocated_bytes,
+        pool_memory.pool_gpu_slack_bytes,
+        pool_memory.pool_cpu_shadow_bytes,
+        pool_memory.compact_pool_capacity_bytes,
+        pool_memory.compact_pool_allocated_bytes,
+        pool_memory.compact_pool_free_bytes,
+        pool_memory.compact_pool_retired_bytes,
+        direct_mesh_gpu_bytes,
+        known_memory_bytes,
+    );
 
     if (engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false)) {
         const S = struct {
@@ -333,7 +441,11 @@ pub fn updateStats(self: *Self) void {
 /// Free LOD meshes where all underlying chunks are loaded
 pub fn unloadLODWhereChunksLoaded(self: *Self, checker: ChunkChecker, ctx: *anyopaque) void {
     // Lock exclusive because we modify meshes and regions maps
+    const lock_wait_timer = self.profiling.begin();
     self.mutex.lock();
+    self.profiling.end(.manager_lock_wait, lock_wait_timer);
+    const lock_hold_timer = self.profiling.begin();
+    defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlock();
 
     const active_lod_count = lod_chunk.activeLODCount(self.config);
@@ -366,6 +478,9 @@ pub fn unloadLODWhereChunksLoaded(self: *Self, checker: ChunkChecker, ctx: *anyo
                 self.queueMeshDeletion(mesh_entry.value);
             }
             if (storage.fetchRemove(rem_key)) |chunk_entry| {
+                if (chunk_entry.value.getState() != .missing and chunk_entry.value.getState() != .renderable and self.pending_region_count > 0) {
+                    self.pending_region_count -= 1;
+                }
                 chunk_entry.value.deinit(self.allocator);
                 self.allocator.destroy(chunk_entry.value);
             }

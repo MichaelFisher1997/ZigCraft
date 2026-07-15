@@ -25,6 +25,7 @@ test "DescriptorManager default state has null handles" {
         .descriptor_set_layout = null,
         .descriptor_sets = undefined,
         .lod_descriptor_sets = undefined,
+        .lod_descriptor_snapshots = undefined,
         .global_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]@import("resource_manager.zig").VulkanBuffer),
         .global_ubos_mapped = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]?*anyopaque),
         .shadow_ubos = std.mem.zeroes([rhi.MAX_FRAMES_IN_FLIGHT]@import("resource_manager.zig").VulkanBuffer),
@@ -169,6 +170,44 @@ test "descriptor sets arrays match MAX_FRAMES_IN_FLIGHT" {
     try testing.expectEqual(@as(usize, rhi.MAX_FRAMES_IN_FLIGHT), lod_set_count);
 }
 
+test "LOD descriptor snapshots reserve separate terrain and water streams" {
+    try testing.expectEqual(@as(usize, 8), descriptor_manager.LOD_DESCRIPTOR_SNAPSHOT_COUNT);
+    const snapshots = @typeInfo(@TypeOf(@as(DescriptorManager, undefined).lod_descriptor_snapshots)).array;
+    try testing.expectEqual(@as(usize, rhi.MAX_FRAMES_IN_FLIGHT), snapshots.len);
+    try testing.expectEqual(@as(usize, descriptor_manager.LOD_DESCRIPTOR_SNAPSHOT_COUNT), @typeInfo(snapshots.child).array.len);
+}
+
+test "GPU terrain snapshot bindings survive later CPU fallback and water preparation" {
+    var bindings = descriptor_manager.LODDescriptorSnapshotBindings{};
+    const gpu_terrain = @intFromEnum(rhi.LODDescriptorStream.terrain_standard_gpu);
+    const cpu_terrain = @intFromEnum(rhi.LODDescriptorStream.terrain_standard_direct);
+    const gpu_water = @intFromEnum(rhi.LODDescriptorStream.water_compact_gpu);
+
+    bindings.instance[gpu_terrain] = 101;
+    bindings.compact_samples[gpu_terrain] = 102;
+    bindings.compact_instances[gpu_terrain] = 103;
+
+    // These are the updates that previously shared and mutated terrain's set.
+    bindings.instance[cpu_terrain] = 201;
+    bindings.compact_samples[gpu_water] = 301;
+    bindings.compact_instances[gpu_water] = 302;
+
+    try testing.expectEqual(@as(rhi.BufferHandle, 101), bindings.instance[gpu_terrain]);
+    try testing.expectEqual(@as(rhi.BufferHandle, 102), bindings.compact_samples[gpu_terrain]);
+    try testing.expectEqual(@as(rhi.BufferHandle, 103), bindings.compact_instances[gpu_terrain]);
+}
+
+test "LOD texture snapshot seals once and rejects a later material revision" {
+    var seal = descriptor_manager.LODDescriptorSnapshotSeal{};
+    try testing.expect(try seal.acquire(.terrain_standard_gpu, 41));
+    try testing.expect(!(try seal.acquire(.terrain_standard_gpu, 41)));
+    try testing.expectError(error.TextureStateChanged, seal.acquire(.terrain_standard_gpu, 42));
+
+    // Later water preparation is independent and does not reopen GPU terrain.
+    try testing.expect(try seal.acquire(.water_compact_direct, 42));
+    try testing.expectError(error.TextureStateChanged, seal.acquire(.terrain_standard_gpu, 42));
+}
+
 test "UBO arrays match MAX_FRAMES_IN_FLIGHT" {
     // global_ubos and shadow_ubos should have MAX_FRAMES_IN_FLIGHT elements
 
@@ -210,11 +249,11 @@ test "TextureHandle type is appropriate for handle values" {
 
 test "descriptor pool sizes are within Vulkan limits" {
     // The pool sizes defined in init() should be within reasonable limits
-    // From the source: 500 uniform buffers, 1000 samplers, 100 storage buffers
+    // From the source: 500 uniform buffers, 1000 samplers, 160 storage buffers
 
     const max_uniform_buffers = 500;
     const max_samplers = 1000;
-    const max_storage_buffers = 100;
+    const max_storage_buffers = 160;
     const max_sets = 1000;
 
     // These should be positive

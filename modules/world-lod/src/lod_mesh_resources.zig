@@ -1,5 +1,6 @@
 //! RHI resource adapter for LOD mesh GPU buffers.
 
+const std = @import("std");
 const rhi_pkg = @import("engine-rhi").rhi;
 const rhi_types = @import("engine-rhi");
 const BufferHandle = rhi_types.BufferHandle;
@@ -140,6 +141,18 @@ pub const LODMeshResources = struct {
             }
         }.f,
     };
+};
+
+/// The staging work an upload will record this frame. Pool replacement copies
+/// are deliberately separate from the payload so a frame budget cannot hide a
+/// full-pool migration behind a small incoming mesh.
+pub const LODStagingCost = struct {
+    payload_bytes: usize = 0,
+    migration_bytes: usize = 0,
+
+    pub fn total(self: LODStagingCost) usize {
+        return std.math.add(usize, self.payload_bytes, self.migration_bytes) catch std.math.maxInt(usize);
+    }
 };
 
 /// Keep individual Vulkan staging-ring allocations bounded. Large LOD meshes
