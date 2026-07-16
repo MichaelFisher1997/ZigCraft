@@ -67,6 +67,7 @@ pub const StreamingFrame = struct {
     moved: bool,
     target_render_dist: i32,
     render_dist: i32,
+    stream_dist: i32,
     movement: PlayerMovement,
 };
 
@@ -84,9 +85,12 @@ pub const LODStreamingCoordinator = struct {
     effective_render_dist: i32 = 0,
     startup_stream_radius: i32 = 0,
     startup_mesh_finalized: bool = false,
+    horizon_bootstrap_ready: bool = false,
 
     const STARTUP_RADIUS_INITIAL = 3;
     const STARTUP_RADIUS_STEP = 2;
+    const STARTUP_PREFETCH_RINGS = 2;
+    const STARTUP_RADIUS_CHECK_PERIOD = 10;
 
     pub fn init(render_distance: i32) LODStreamingCoordinator {
         return .{
@@ -102,6 +106,7 @@ pub const LODStreamingCoordinator = struct {
         self.startup_stream_radius = @min(distance, STARTUP_RADIUS_INITIAL);
         self.effective_render_dist = 0;
         self.startup_mesh_finalized = false;
+        self.horizon_bootstrap_ready = false;
         self.forceRescan();
         return true;
     }
@@ -111,6 +116,7 @@ pub const LODStreamingCoordinator = struct {
         if (lod_manager != null) {
             self.startup_stream_radius = @min(self.render_distance, STARTUP_RADIUS_INITIAL);
             self.effective_render_dist = 0;
+            self.horizon_bootstrap_ready = false;
         }
     }
 
@@ -135,6 +141,16 @@ pub const LODStreamingCoordinator = struct {
 
         self.updateStartupRadius(storage, pc.chunk_x, pc.chunk_z, target_render_dist, frame_counter);
         const render_dist = if (self.startup_stream_radius > 0) self.startup_stream_radius else target_render_dist;
+        if (self.lod_manager) |manager| {
+            self.horizon_bootstrap_ready = manager.hasRenderableCoarsestNear(pc.chunk_x, pc.chunk_z);
+        }
+        // Keep generation and meshing ahead of the visible startup radius so
+        // expansion does not serialize one ring behind another.
+        const prefetch_distance = if (self.lod_manager != null and !self.horizon_bootstrap_ready)
+            @as(i32, 0)
+        else
+            STARTUP_RADIUS_STEP * STARTUP_PREFETCH_RINGS;
+        const stream_dist = @min(target_render_dist, render_dist + prefetch_distance);
         self.effective_render_dist = render_dist;
 
         if (moved) {
@@ -149,6 +165,7 @@ pub const LODStreamingCoordinator = struct {
             .moved = moved,
             .target_render_dist = target_render_dist,
             .render_dist = render_dist,
+            .stream_dist = stream_dist,
             .movement = self.player_movement,
         };
     }
@@ -191,7 +208,7 @@ pub const LODStreamingCoordinator = struct {
             return;
         }
 
-        if (frame_counter % 30 != 0) return;
+        if (frame_counter % STARTUP_RADIUS_CHECK_PERIOD != 0) return;
 
         var total_in_radius: u32 = 0;
         var ready_in_radius: u32 = 0;
@@ -223,3 +240,16 @@ pub const LODStreamingCoordinator = struct {
         log.log.info("STARTUP_STREAM_RADIUS: expanded to {} / {}", .{ self.startup_stream_radius, target_render_dist });
     }
 };
+
+test "startup streaming prefetches two rings beyond visible radius" {
+    var coordinator = LODStreamingCoordinator.init(22);
+    coordinator.startup_stream_radius = 3;
+
+    const render_dist = coordinator.startup_stream_radius;
+    const stream_dist = @min(
+        coordinator.targetRenderDistance(),
+        render_dist + LODStreamingCoordinator.STARTUP_RADIUS_STEP * LODStreamingCoordinator.STARTUP_PREFETCH_RINGS,
+    );
+    try std.testing.expectEqual(@as(i32, 3), render_dist);
+    try std.testing.expectEqual(@as(i32, 7), stream_dist);
+}

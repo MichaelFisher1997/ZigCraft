@@ -157,6 +157,10 @@ pub const LODChunk = struct {
 
     /// Job token for tracking async work
     job_token: u32,
+    /// Encoded scheduling priority retained across cache lookup and lifecycle
+    /// transitions so bootstrap horizon seeds keep their spatial ordering.
+    job_priority: i32,
+    preserve_job_priority: bool,
 
     /// Pin count for preventing unload during async work
     pin_count: std.atomic.Value(u32),
@@ -222,6 +226,8 @@ pub const LODChunk = struct {
             .lod_level = lod,
             .state = .missing,
             .job_token = 0,
+            .job_priority = 0,
+            .preserve_job_priority = false,
             .pin_count = std.atomic.Value(u32).init(0),
             .cancel_requested = std.atomic.Value(bool).init(false),
             .data = .{ .empty = {} },
@@ -487,6 +493,7 @@ pub const ILODConfig = struct {
         getQEMMinInputTriangles: *const fn (ptr: *anyopaque) u32,
         getHorizontalDetail: *const fn (ptr: *anyopaque, lod: LODLevel) u32,
         getSampleDensity: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
+        getCompactTilesEnabled: *const fn (ptr: *anyopaque) bool,
         getVerticalSpanBudget: *const fn (ptr: *anyopaque) u8,
         getMeshPath: *const fn (ptr: *anyopaque) LODMeshPath,
         getFogStartPercent: *const fn (ptr: *anyopaque, lod: LODLevel) f32,
@@ -574,6 +581,11 @@ pub const ILODConfig = struct {
     pub fn getSampleDensity(self: ILODConfig, lod: LODLevel) f32 {
         return self.vtable.getSampleDensity(self.ptr, lod);
     }
+    /// Returns whether far LODs may use compact GPU tiles. Callers can disable
+    /// them for retained-overlay scenes that require the expanded fallback.
+    pub fn getCompactTilesEnabled(self: ILODConfig) bool {
+        return self.vtable.getCompactTilesEnabled(self.ptr);
+    }
 
     /// Returns the maximum number of vertical spans retained per LOD column.
     /// Implementations clamp this to the storage capacity of `LODSimplifiedData`.
@@ -650,6 +662,8 @@ pub const LODConfig = struct {
     /// Keep the outer horizon at its full 65-sample grid: reducing it to 17
     /// samples creates 32-block plateaus and visibly detached height seams.
     sample_density: [LODLevel.count]f32 = .{ 1.0, 1.0, 1.0, 0.5, 1.0 },
+
+    compact_tiles_enabled: bool = true,
 
     vertical_span_budget: u8 = 4,
 
@@ -773,6 +787,7 @@ pub const LODConfig = struct {
         .getQEMMinInputTriangles = getQEMMinInputTrianglesWrapper,
         .getHorizontalDetail = getHorizontalDetailWrapper,
         .getSampleDensity = getSampleDensityWrapper,
+        .getCompactTilesEnabled = getCompactTilesEnabledWrapper,
         .getVerticalSpanBudget = getVerticalSpanBudgetWrapper,
         .getMeshPath = getMeshPathWrapper,
         .getFogStartPercent = getFogStartPercentWrapper,
@@ -843,6 +858,10 @@ pub const LODConfig = struct {
     fn getSampleDensityWrapper(ptr: *anyopaque, lod: LODLevel) f32 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
         return std.math.clamp(self.sample_density[@intFromEnum(lod)], 0.0625, 1.0);
+    }
+    fn getCompactTilesEnabledWrapper(ptr: *anyopaque) bool {
+        const self: *LODConfig = @ptrCast(@alignCast(ptr));
+        return self.compact_tiles_enabled;
     }
     fn getVerticalSpanBudgetWrapper(ptr: *anyopaque) u8 {
         const self: *LODConfig = @ptrCast(@alignCast(ptr));
@@ -1028,10 +1047,12 @@ test "ILODConfig exposes LOD quality tuning controls" {
         .horizontal_detail = .{ 16, 24, 32, 40, 24 },
         .vertical_span_budget = 99,
         .mesh_path = .qem,
+        .compact_tiles_enabled = false,
     };
     const interface = config.interface();
 
     try std.testing.expectEqual(@as(u32, 32), interface.getHorizontalDetail(.lod2));
     try std.testing.expectEqual(@as(u8, world_core.MAX_LOD_VERTICAL_SPANS), interface.getVerticalSpanBudget());
     try std.testing.expectEqual(LODMeshPath.qem, interface.getMeshPath());
+    try std.testing.expect(!interface.getCompactTilesEnabled());
 }

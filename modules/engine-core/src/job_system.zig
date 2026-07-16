@@ -91,6 +91,9 @@ pub const Job = struct {
         /// Normal chunk jobs use chunk coords directly (1); LOD jobs store
         /// region coords and set this to that LOD's chunks-per-side.
         coord_scale: i32 = 1,
+        /// Keep an explicitly assigned bootstrap order instead of replacing
+        /// its low priority bits when the player position changes.
+        preserve_priority: bool = false,
         /// Immutable LOD config snapshot captured when a generation job is queued.
         lod_radius: i32 = 0,
         use_vertical_spans: bool = false,
@@ -239,7 +242,7 @@ pub const JobQueue = struct {
             var updated_job = job;
 
             // Only update distance for chunk-based jobs
-            if (job.getChunkCoords()) |coords| {
+            if (job.getChunkCoords()) |coords| if (!job.data.chunk.preserve_priority) {
                 const scale: i32 = @max(updated_job.data.chunk.coord_scale, 1);
                 // Compute squared distance in i64 then clamp, matching
                 // lod_manager/lod_scheduler — i32 dx*dx can overflow at large
@@ -254,7 +257,7 @@ pub const JobQueue = struct {
                 // ordering.
                 const bias_bits = updated_job.dist_sq & ~@as(i32, 0x0FFFFFFF);
                 updated_job.dist_sq = bias_bits | new_dist;
-            }
+            };
 
             temp.append(self.allocator, updated_job) catch {
                 log.log.warn("Job queue: dropped job during priority update (allocation failed)", .{});
@@ -541,6 +544,21 @@ test "JobQueue reprioritizes region-scaled chunk jobs" {
     const first = queue.pop() orelse return error.TestExpectedEqual;
     try testing.expectEqual(@as(u32, 2), first.data.chunk.job_token);
     try testing.expectEqual(@as(i32, 50), first.data.chunk.x);
+}
+
+test "JobQueue retains explicit bootstrap priorities" {
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    try queue.push(.{
+        .type = .chunk_generation,
+        .dist_sq = 7,
+        .data = .{ .chunk = .{ .x = 100, .z = 0, .job_token = 1, .preserve_priority = true } },
+    });
+    try queue.updatePlayerPos(100, 0);
+
+    const job = queue.pop() orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(i32, 7), job.dist_sq);
 }
 
 test "JobQueue.clear calls cleanup on generic jobs" {

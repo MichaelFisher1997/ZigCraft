@@ -109,3 +109,18 @@ test "Job.cleanup is no-op for chunk jobs (signature change)" {
     job.cleanup();
     try testing.expectEqual(@as(usize, 0), test_cleanup_count);
 }
+
+test "JobQueue retains explicit bootstrap priorities" {
+    var queue = JobQueue.init(testing.allocator);
+    defer queue.deinit();
+
+    try queue.push(.{
+        .type = .chunk_generation,
+        .dist_sq = 7,
+        .data = .{ .chunk = .{ .x = 100, .z = 0, .job_token = 1, .preserve_priority = true } },
+    });
+    try queue.updatePlayerPos(100, 0);
+
+    const job = queue.pop() orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(i32, 7), job.dist_sq);
+}

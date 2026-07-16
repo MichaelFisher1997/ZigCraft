@@ -10,6 +10,13 @@ const LpvGridBuilder = @import("lpv_grid_builder.zig").LpvGridBuilder;
 const RenderLayer = @import("world_renderer.zig").RenderLayer;
 const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
 const SaveManager = @import("world-persistence").SaveManager;
+const World = world_mod.World;
+
+test "full-detail radius follows active preset cap" {
+    try testing.expectEqual(@as(i32, 12), World.effectiveChunkRenderRadius(16, 12, true));
+    try testing.expectEqual(@as(i32, 16), World.effectiveChunkRenderRadius(16, 16, true));
+    try testing.expectEqual(@as(i32, 22), World.effectiveChunkRenderRadius(22, 10, false));
+}
 
 const MockWorld = struct {
     update_count: u32 = 0,

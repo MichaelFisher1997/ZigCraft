@@ -144,7 +144,6 @@ pub fn processQueuedGenerations(self: *Self, velocity: Vec3) !void {
 
 pub fn dispatchCacheMiss(self: *Self, key: LODRegionKey, token: u32) void {
     const lod_idx = @intFromEnum(key.lod);
-    const player = self.loadPlayerChunkPos();
     self.mutex.lock();
     const chunk = self.regions[lod_idx].get(key) orelse {
         self.mutex.unlock();
@@ -154,12 +153,11 @@ pub fn dispatchCacheMiss(self: *Self, key: LODRegionKey, token: u32) void {
         self.mutex.unlock();
         return;
     }
-    const active_lod_count = lod_chunk.activeLODCount(self.config);
     const scale: i32 = @intCast(key.lod.chunksPerSide());
     const candidate = GenerationCandidate{
         .key = key,
         .chunk = chunk,
-        .encoded_priority = lod_scheduler.encodePriority(key.lod, key.rx * scale + @divFloor(scale, 2) - player.cx, key.rz * scale + @divFloor(scale, 2) - player.cz, Vec3.zero, active_lod_count),
+        .encoded_priority = chunk.job_priority,
         .level = @intCast(lod_idx),
         .coord_scale = scale,
         .job_token = token,
@@ -173,19 +171,18 @@ pub fn dispatchCacheMiss(self: *Self, key: LODRegionKey, token: u32) void {
 }
 
 fn generationCandidateFromToken(self: *Self, token: LifecycleToken, velocity: Vec3) ?GenerationCandidate {
+    _ = velocity;
     if (token.stage != .generation) return null;
     const lod_idx = @intFromEnum(token.key.lod);
-    const player = self.loadPlayerChunkPos();
     self.mutex.lock();
     defer self.mutex.unlock();
     const chunk = self.regions[lod_idx].get(token.key) orelse return null;
     if (chunk.getState() != .queued_for_generation or !token.matches(chunk)) return null;
-    const active = lod_chunk.activeLODCount(self.config);
     const scale: i32 = @intCast(token.key.lod.chunksPerSide());
     return .{
         .key = token.key,
         .chunk = chunk,
-        .encoded_priority = lod_scheduler.encodePriority(token.key.lod, token.key.rx * scale + @divFloor(scale, 2) - player.cx, token.key.rz * scale + @divFloor(scale, 2) - player.cz, velocity, active),
+        .encoded_priority = chunk.job_priority,
         .level = @intCast(lod_idx),
         .coord_scale = scale,
         .job_token = token.job_token,
@@ -214,6 +211,7 @@ fn dispatchGenerationCandidate(self: *Self, candidate: GenerationCandidate) !voi
             .job_token = candidate.job_token,
             .lod_level = candidate.level,
             .coord_scale = candidate.coord_scale,
+            .preserve_priority = candidate.chunk.preserve_job_priority,
             .lod_radius = candidate.lod_radius,
             .use_vertical_spans = candidate.want_spans,
         } },
@@ -278,6 +276,7 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
                     .job_token = token.job_token,
                     .lod_level = @intCast(lod_idx),
                     .coord_scale = scale,
+                    .preserve_priority = chunk.preserve_job_priority,
                     .lod_radius = self.config.getRadii()[lod_idx],
                 },
             },
@@ -306,7 +305,7 @@ pub fn processStateTransitions(self: *Self, velocity: Vec3) !void {
 fn reconcileLifecycleTokens(self: *Self) void {
     self.mutex.lock();
     defer self.mutex.unlock();
-    for (&self.regions, 0..) |*regions, lod_idx| {
+    for (&self.regions) |*regions| {
         var it = regions.iterator();
         while (it.next()) |entry| {
             const chunk = entry.value_ptr.*;
@@ -321,7 +320,7 @@ fn reconcileLifecycleTokens(self: *Self) void {
                 .key = entry.key_ptr.*,
                 .job_token = chunk.job_token,
                 .source_revision = chunk.source_revision,
-                .priority = @as(i32, @intCast(lod_idx)) << 28,
+                .priority = chunk.job_priority,
                 .stage = stage,
             };
             if (stage == .generation) {
@@ -334,14 +333,11 @@ fn reconcileLifecycleTokens(self: *Self) void {
 }
 
 pub fn enqueueTransition(self: *Self, key: LODRegionKey, chunk: *const LODChunk, stage: LifecycleStage) void {
-    const player = self.loadPlayerChunkPos();
-    const scale: i32 = @intCast(key.lod.chunksPerSide());
-    const priority = lod_scheduler.encodePriority(key.lod, key.rx * scale + @divFloor(scale, 2) - player.cx, key.rz * scale + @divFloor(scale, 2) - player.cz, Vec3.zero, lod_chunk.activeLODCount(self.config));
     const token = LifecycleToken{
         .key = key,
         .job_token = chunk.job_token,
         .source_revision = chunk.source_revision,
-        .priority = priority,
+        .priority = chunk.job_priority,
         .stage = stage,
     };
     if (stage == .generation) {
@@ -493,6 +489,7 @@ pub fn fallbackCompactMeshToCpu(self: *Self, mesh: *LODMesh, chunk: *LODChunk) !
 
 fn shouldUseCompactTiles(self: *Self, chunk: *const LODChunk) bool {
     if (chunk.compact_disabled) return false;
+    if (!self.config.getCompactTilesEnabled()) return false;
     const lod = chunk.lodLevel();
     if (lod != .lod3 and lod != .lod4) return false;
     const mode = engine_core.getenv("ZIGCRAFT_LOD_COMPACT") orelse "auto";

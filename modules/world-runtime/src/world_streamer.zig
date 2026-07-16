@@ -103,16 +103,20 @@ pub const WorldStreamer = struct {
     last_missing_scan_pc_x: i32 = 0,
     last_missing_scan_pc_z: i32 = 0,
     last_missing_scan_render_dist: i32 = 0,
+    has_processed_unloads: bool = false,
+    last_unload_pc_x: i32 = 0,
+    last_unload_pc_z: i32 = 0,
+    last_unload_render_dist: i32 = 0,
     last_diag_generated: u64 = 0,
     last_diag_meshed: u64 = 0,
     last_diag_uploaded: u64 = 0,
 
     const MIN_GEN_WORKERS = 2;
-    const MAX_GEN_WORKERS = 4;
+    const MAX_GEN_WORKERS = 10;
     const MIN_MESH_WORKERS = 2;
-    const MAX_MESH_WORKERS = 6;
-    const MIN_LOD_WORKERS = 2;
-    const MAX_LOD_WORKERS = 6;
+    const MAX_MESH_WORKERS = 8;
+    const MIN_LOD_WORKERS = 1;
+    const MAX_LOD_WORKERS = 8;
 
     pub fn init(allocator: std.mem.Allocator, storage: *ChunkStorage, generator: Generator, atlas: *const TextureAtlas, render_distance: i32, lod_enabled: bool, vertex_allocator: *GlobalVertexAllocator, max_uploads_per_frame: usize, gpu_block_buffer: ?*GpuBlockBuffer, gpu_mesher: ?*GpuMesher) !*WorldStreamer {
         const streamer = try allocator.create(WorldStreamer);
@@ -124,14 +128,18 @@ pub const WorldStreamer = struct {
         // This keeps horizon generation responsive without creating two pools
         // that each try to saturate every core.
         const cpu_count = std.Thread.getCpuCount() catch MIN_GEN_WORKERS + MIN_MESH_WORKERS;
-        const total_budget = @max(@as(usize, 4), cpu_count -| 1);
+        const total_budget = @max(@as(usize, 5), cpu_count -| 1);
         const requested_lod_workers = if (lod_enabled)
             std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS)
         else
             0;
         const lod_worker_reserve = @min(requested_lod_workers, total_budget -| (MIN_GEN_WORKERS + MIN_MESH_WORKERS));
         const foreground_budget = total_budget - lod_worker_reserve;
-        const default_gen = std.math.clamp(foreground_budget / 2, MIN_GEN_WORKERS, MAX_GEN_WORKERS);
+        // Generation is the dominant startup stage after coalescing boundary
+        // remeshes, so allocate roughly two thirds of the foreground workers
+        // to generation and the remainder to meshing.
+        const gen_capacity = @max(MIN_GEN_WORKERS, foreground_budget -| MIN_MESH_WORKERS);
+        const default_gen = @min(std.math.clamp((foreground_budget * 2 + 2) / 3, MIN_GEN_WORKERS, MAX_GEN_WORKERS), gen_capacity);
         const default_mesh = std.math.clamp(foreground_budget - default_gen, MIN_MESH_WORKERS, MAX_MESH_WORKERS);
         const gen_worker_count = engine_core.envInt("ZIGCRAFT_GEN_WORKERS", default_gen);
         const mesh_worker_count = engine_core.envInt("ZIGCRAFT_MESH_WORKERS", default_mesh);
@@ -180,11 +188,13 @@ pub const WorldStreamer = struct {
         errdefer streamer.mesh_pool.deinit();
 
         try streamer.warmupInitialChunks();
+        if (gpu_mesher) |mesher| mesher.setRemeshCallback(&streamer.queue_coordinator, enqueueGpuRemesh);
 
         return streamer;
     }
 
     pub fn deinit(self: *WorldStreamer) void {
+        if (self.gpu_acceleration.gpu_mesher) |mesher| mesher.setRemeshCallback(null, null);
         self.gen_queue.stop();
         self.mesh_queue.stop();
 
@@ -200,6 +210,11 @@ pub const WorldStreamer = struct {
         self.allocator.destroy(self);
     }
 
+    fn enqueueGpuRemesh(context: *anyopaque, cx: i32, cz: i32, job_token: u32) void {
+        const coordinator: *ChunkQueueCoordinator = @ptrCast(@alignCast(context));
+        coordinator.enqueuePendingMesh(cx, cz, job_token);
+    }
+
     pub fn setPaused(self: *WorldStreamer, paused: bool) void {
         self.paused = paused;
         self.gen_queue.setPaused(paused);
@@ -209,6 +224,7 @@ pub const WorldStreamer = struct {
             self.queue_coordinator.resetPausedChunks();
         } else {
             self.lod_coordinator.forceRescan();
+            self.has_processed_unloads = false;
         }
     }
 
@@ -221,11 +237,35 @@ pub const WorldStreamer = struct {
     }
 
     pub fn isStartupBusy(self: *WorldStreamer, target_render_dist: i32) bool {
-        return self.lod_coordinator.isStartupBusy(self.getStats(), target_render_dist);
+        if (self.lod_coordinator.isStartupBusy(self.getStats(), target_render_dist)) return true;
+
+        const radius = @min(target_render_dist, self.lod_coordinator.targetRenderDistance());
+        const pc_x = self.lod_coordinator.last_pc.x;
+        const pc_z = self.lod_coordinator.last_pc.z;
+        self.storage.chunks_mutex.lockShared();
+        defer self.storage.chunks_mutex.unlockShared();
+
+        var cz = pc_z - radius;
+        while (cz <= pc_z + radius) : (cz += 1) {
+            var cx = pc_x - radius;
+            while (cx <= pc_x + radius) : (cx += 1) {
+                const dx: i64 = @as(i64, cx) - pc_x;
+                const dz: i64 = @as(i64, cz) - pc_z;
+                const radius_i64: i64 = radius;
+                if (dx * dx + dz * dz > radius_i64 * radius_i64) continue;
+                const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse return true;
+                if (data.chunk.state != .renderable or !data.render.mesh.ready) return true;
+            }
+        }
+        return false;
     }
 
     fn warmupInitialChunks(self: *WorldStreamer) !void {
-        const warmup_radius: i32 = 1;
+        // Keep only the center chunk on the synchronous startup path. The
+        // normal prioritized worker pipeline fills the surrounding ring after
+        // the first frame instead of serially generating and meshing nine
+        // chunks before the world can appear.
+        const warmup_radius: i32 = 0;
 
         var cz: i32 = -warmup_radius;
         while (cz <= warmup_radius) : (cz += 1) {
@@ -343,9 +383,26 @@ pub const WorldStreamer = struct {
             log.log.warn("updateStreaming error (non-fatal): {}", .{err});
         };
         self.queue_coordinator.processUploads();
-        self.processUnloads(player_pos) catch |err| {
-            log.log.warn("processUnloads error (non-fatal): {}", .{err});
-        };
+        const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
+        const unload_render_dist = self.lod_coordinator.targetRenderDistance();
+        const needs_unload_scan = !self.has_processed_unloads or
+            self.last_unload_pc_x != pc.chunk_x or
+            self.last_unload_pc_z != pc.chunk_z or
+            self.last_unload_render_dist != unload_render_dist or
+            self.frame_counter % 60 == 0;
+        if (needs_unload_scan) {
+            var unload_succeeded = true;
+            self.processUnloads(player_pos) catch |err| {
+                log.log.warn("processUnloads error (non-fatal): {}", .{err});
+                unload_succeeded = false;
+            };
+            if (unload_succeeded) {
+                self.has_processed_unloads = true;
+                self.last_unload_pc_x = pc.chunk_x;
+                self.last_unload_pc_z = pc.chunk_z;
+                self.last_unload_render_dist = unload_render_dist;
+            }
+        }
         if (self.frame_counter % 300 == 0) {
             self.logChunkStateSummary();
         }
@@ -438,7 +495,7 @@ pub const WorldStreamer = struct {
         self.gpu_acceleration.refreshForceCpuMeshing(self.frame_counter, self.storage);
 
         const frame = self.lod_coordinator.beginFrame(self.storage, self.gen_queue, self.mesh_queue, player_pos, dt, self.frame_counter);
-        self.queue_coordinator.setView(frame.pc_x, frame.pc_z, frame.render_dist);
+        self.queue_coordinator.setView(frame.pc_x, frame.pc_z, frame.stream_dist);
 
         if (self.frame_counter % 600 == 0) {
             self.logMissingChunkDiagnostic(frame.pc_x, frame.pc_z);
@@ -450,18 +507,18 @@ pub const WorldStreamer = struct {
         const needs_missing_scan = !self.has_scanned_missing_chunks or
             self.last_missing_scan_pc_x != frame.pc_x or
             self.last_missing_scan_pc_z != frame.pc_z or
-            self.last_missing_scan_render_dist != frame.render_dist or
+            self.last_missing_scan_render_dist != frame.stream_dist or
             self.frame_counter % 60 == 0;
         if (needs_missing_scan) {
-            self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.render_dist, frame.movement) catch |err| {
+            self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.stream_dist, frame.movement) catch |err| {
                 log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
             };
             self.has_scanned_missing_chunks = true;
             self.last_missing_scan_pc_x = frame.pc_x;
             self.last_missing_scan_pc_z = frame.pc_z;
-            self.last_missing_scan_render_dist = frame.render_dist;
+            self.last_missing_scan_render_dist = frame.stream_dist;
         }
-        self.queue_coordinator.processChunkStates(frame.pc_x, frame.pc_z, frame.render_dist, self.frame_counter);
+        self.queue_coordinator.processChunkStates(frame.pc_x, frame.pc_z, frame.stream_dist, self.frame_counter);
         self.lod_coordinator.updateLOD(player_pos, self.storage);
 
         if (!self.lod_coordinator.startup_mesh_finalized and !self.isStartupBusy(self.lod_coordinator.render_distance)) {
@@ -481,16 +538,21 @@ pub const WorldStreamer = struct {
     }
 
     fn finalizeChunkMesh(self: *WorldStreamer, cx: i32, cz: i32) void {
-        self.storage.chunks_mutex.lockShared();
+        self.storage.chunks_mutex.lock();
         const chunk_data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse {
-            self.storage.chunks_mutex.unlockShared();
+            self.storage.chunks_mutex.unlock();
             return;
         };
 
-        if (!chunk_data.chunk.generated and chunk_data.chunk.state != .renderable) {
-            self.storage.chunks_mutex.unlockShared();
+        // Claim mesh ownership through the same state machine used by workers.
+        // Pins prevent eviction, but do not prevent a queued worker from
+        // mutating the mesh concurrently.
+        const previous_state = chunk_data.chunk.state;
+        if (previous_state != .generated and previous_state != .renderable) {
+            self.storage.chunks_mutex.unlock();
             return;
         }
+        chunk_data.chunk.state = .meshing;
 
         chunk_data.chunk.pin();
         const neighbors = NeighborChunks{
@@ -511,7 +573,7 @@ pub const WorldStreamer = struct {
                 break :d &d.chunk;
             } else null,
         };
-        self.storage.chunks_mutex.unlockShared();
+        self.storage.chunks_mutex.unlock();
 
         defer {
             chunk_data.chunk.unpin();
@@ -523,15 +585,24 @@ pub const WorldStreamer = struct {
 
         chunk_data.render.mesh.buildWithNeighbors(&chunk_data.chunk, neighbors, self.atlas) catch |err| {
             log.log.warn("STARTUP_FINALIZE_MESH_FAILED: ({},{}) {}", .{ cx, cz, err });
+            self.storage.chunks_mutex.lock();
+            if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+                if (data.chunk.state == .meshing) data.chunk.state = previous_state;
+            }
+            self.storage.chunks_mutex.unlock();
             return;
         };
         chunk_data.render.mesh.upload(self.vertex_allocator);
 
         self.storage.chunks_mutex.lock();
         if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
-            data.chunk.state = .renderable;
-            data.chunk.dirty = false;
-            data.chunk.mesh_attempts = 0;
+            if (data.chunk.state == .meshing) {
+                data.chunk.state = if (data.render.mesh.ready) .renderable else previous_state;
+                if (data.render.mesh.ready) {
+                    data.chunk.dirty = false;
+                    data.chunk.mesh_attempts = 0;
+                }
+            }
         }
         self.storage.chunks_mutex.unlock();
     }

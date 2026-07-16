@@ -66,10 +66,38 @@ const QueueDiag = struct {
 
 const LOD0_QUEUE_CANDIDATE_LIMIT: usize = 96;
 const LOD1_QUEUE_CANDIDATE_LIMIT: usize = 64;
-const HORIZON_QUEUE_CANDIDATE_LIMIT: usize = 24;
+const HORIZON_QUEUE_CANDIDATE_LIMIT: usize = 64;
 const REFINEMENT_QUEUE_CANDIDATE_LIMIT: usize = 48;
 const MAX_PENDING_LOD_REGIONS = @import("lod_manager_context.zig").MAX_PENDING_LOD_REGIONS;
 const MAX_LOD_REGIONS = @import("lod_manager_context.zig").MAX_LOD_REGIONS;
+
+const HORIZON_SEED_DIRECTIONS = [_][2]i32{
+    .{ 1024, 0 },  .{ 946, 392 },   .{ 724, 724 },   .{ 392, 946 },
+    .{ 0, 1024 },  .{ -392, 946 },  .{ -724, 724 },  .{ -946, 392 },
+    .{ -1024, 0 }, .{ -946, -392 }, .{ -724, -724 }, .{ -392, -946 },
+    .{ 0, -1024 }, .{ 392, -946 },  .{ 724, -724 },  .{ 946, -392 },
+};
+
+fn scaledSeedOffset(component: i32, radius: i32) i32 {
+    const product = component * radius;
+    return @divTrunc(product + (if (product >= 0) @as(i32, 512) else -512), 1024);
+}
+
+fn initialHorizonSeedRank(rx: i32, rz: i32, player_rx: i32, player_rz: i32, region_radius: i32) ?usize {
+    const outer_radius = @max(1, region_radius - 1);
+    for (HORIZON_SEED_DIRECTIONS, 0..) |dir, i| {
+        if (rx == player_rx + scaledSeedOffset(dir[0], outer_radius) and
+            rz == player_rz + scaledSeedOffset(dir[1], outer_radius)) return i;
+    }
+
+    const middle_radius = @max(1, @divFloor(outer_radius, 2));
+    for (0..8) |i| {
+        const dir = HORIZON_SEED_DIRECTIONS[i * 2];
+        if (rx == player_rx + scaledSeedOffset(dir[0], middle_radius) and
+            rz == player_rz + scaledSeedOffset(dir[1], middle_radius)) return HORIZON_SEED_DIRECTIONS.len + i;
+    }
+    return null;
+}
 
 pub fn priorityRank(lod: LODLevel, active_lod_count: usize) usize {
     const lod_idx: usize = @intFromEnum(lod);
@@ -124,6 +152,17 @@ pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec
 
 /// Queue LOD regions that need generation.
 pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque) !void {
+    // Do not rescan thousands of horizon candidates while the bounded
+    // lifecycle pipeline cannot admit another region.
+    ctx.mutex.lockShared();
+    if (ctx.pending_regions) |pending| {
+        if (pending.* >= MAX_PENDING_LOD_REGIONS) {
+            ctx.mutex.unlockShared();
+            return;
+        }
+    }
+    ctx.mutex.unlockShared();
+
     const radii = ctx.radii;
     const idx: u32 = @intFromEnum(lod);
     // Apply dynamic radius reduction (hysteresis) to every level except the
@@ -147,10 +186,17 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
     // Keep only the bounded best candidates while walking the horizon. This
     // avoids allocating/sorting an entry for every potential region.
-    const Candidate = struct { key: LODRegionKey, encoded_priority: i32 };
+    const Candidate = struct { key: LODRegionKey, encoded_priority: i32, selection_priority: i64, preserve_priority: bool };
     const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
     defer candidates.deinit(ctx.allocator);
+
+    // Existing active regions must not consume the bounded candidate window.
+    // Repeatedly selecting the same nearest horizon regions otherwise prevents
+    // the coarsest band from progressing beyond its first batch.
+    ctx.mutex.lockShared();
+    const candidate_storage = &ctx.regions[@intFromEnum(lod)];
+    const seed_initial_horizon = is_coarsest and candidate_storage.count() == 0;
 
     var rz = player_rz - region_radius;
     while (rz <= player_rz + region_radius) : (rz += 1) {
@@ -174,19 +220,48 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
                 }
             }
 
+            if (candidate_storage.get(key)) |chunk| {
+                diag.existing += 1;
+                if (chunk.getState() != .missing or chunk.isPinned()) continue;
+            }
+
             const center_cx = key.rx * scale + @divFloor(scale, 2);
             const center_cz = key.rz * scale + @divFloor(scale, 2);
-            const encoded_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
-            const candidate = Candidate{ .key = key, .encoded_priority = encoded_priority };
+            const distance_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
+            const seed_rank = if (seed_initial_horizon) initialHorizonSeedRank(rx, rz, player_rx, player_rz, region_radius) else null;
+            // Preserve the spatial seed order in the worker queue as well as
+            // candidate admission; otherwise distance reprioritization makes
+            // the newly admitted outer shell wait behind nearby coarse tiles.
+            const encoded_priority = if (seed_rank) |rank|
+                lodPriorityBias(lod, active_lod_count) | @as(i32, @intCast(rank))
+            else
+                distance_priority;
+            const selection_priority: i64 = if (seed_initial_horizon)
+                if (seed_rank) |rank|
+                    @intCast(rank)
+                else
+                    @as(i64, 1_000_000_000) + @as(i64, distance_priority & 0x0FFFFFFF)
+            else
+                distance_priority;
+            const candidate = Candidate{
+                .key = key,
+                .encoded_priority = encoded_priority,
+                .selection_priority = selection_priority,
+                .preserve_priority = seed_rank != null,
+            };
             var insert_at: usize = 0;
-            while (insert_at < candidates.items.len and candidates.items[insert_at].encoded_priority <= encoded_priority) : (insert_at += 1) {}
+            while (insert_at < candidates.items.len and candidates.items[insert_at].selection_priority <= selection_priority) : (insert_at += 1) {}
             if (insert_at < max_candidates) {
-                try candidates.insert(ctx.allocator, insert_at, candidate);
+                candidates.insert(ctx.allocator, insert_at, candidate) catch |err| {
+                    ctx.mutex.unlockShared();
+                    return err;
+                };
                 if (candidates.items.len > max_candidates) _ = candidates.pop();
             }
             diag.candidates += 1;
         }
     }
+    ctx.mutex.unlockShared();
 
     var queued_count: usize = 0;
 
@@ -203,7 +278,6 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         }
 
         const existing = storage.get(cand.key);
-        if (existing != null) diag.existing += 1;
         if (existing == null and resident_regions >= ctx.resident_region_limit) break;
         if (existing == null) if (ctx.logical_memory_bytes) |logical| {
             const reservation = ctx.logical_region_reservation_bytes;
@@ -229,6 +303,8 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
         chunk.job_token = ctx.next_job_token.*;
         ctx.next_job_token.* += 1;
+        chunk.job_priority = cand.encoded_priority;
+        chunk.preserve_job_priority = cand.preserve_priority;
         if (ctx.defer_generation_dispatch) {
             chunk.setState(.queued_for_generation);
             if (ctx.generation_tokens) |tokens| {
@@ -483,7 +559,72 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
 
     try std.testing.expectEqual(LOD0_QUEUE_CANDIDATE_LIMIT, lod0_count);
     try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, horizon_count);
-    try std.testing.expect(max_horizon_dist_sq <= 128 * 128);
+    // The bootstrap batch includes azimuthally distributed outer-horizon
+    // seeds instead of spending every admission near the player.
+    try std.testing.expect(max_horizon_dist_sq >= 400 * 400);
+}
+
+test "LOD scheduling advances horizon beyond existing nearest batch" {
+    const allocator = std.testing.allocator;
+
+    var regions: [LODLevel.count]RegionMap = undefined;
+    for (&regions) |*region_map| region_map.* = RegionMap.init(allocator);
+    defer {
+        for (&regions) |*region_map| {
+            var it = region_map.iterator();
+            while (it.next()) |entry| {
+                const chunk = entry.value_ptr.*;
+                chunk.deinit(allocator);
+                allocator.destroy(chunk);
+            }
+            region_map.deinit();
+        }
+    }
+
+    var queues: [LODLevel.count]JobQueue = undefined;
+    var queue_ptrs: [LODLevel.count]*JobQueue = undefined;
+    for (&queues, 0..) |*queue, i| {
+        queue.* = JobQueue.init(allocator);
+        queue_ptrs[i] = queue;
+    }
+    defer for (&queues) |*queue| queue.deinit();
+
+    var config = LODConfig{
+        .chunk_render_radius = 16,
+        .radii = .{ 64, 128, 256, 384, 512 },
+    };
+    const config_iface = config.interface();
+    var mutex: sync.RwLock = .{};
+    var next_job_token: u32 = 1;
+    var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var coverage_ctx: u8 = 0;
+    const Coverage = struct {
+        fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
+            return false;
+        }
+    };
+    const ctx = SchedulerContext{
+        .allocator = allocator,
+        .config = config_iface,
+        .radii = config_iface.getRadii(),
+        .active_lod_count = lod_chunk.activeLODCount(config_iface),
+        .regions = &regions,
+        .gen_queues = &queue_ptrs,
+        .mutex = &mutex,
+        .player_cx = 0,
+        .player_cz = 0,
+        .next_job_token = &next_job_token,
+        .cleanup_covered_regions = false,
+        .coverage_ptr = &coverage_ctx,
+        .are_all_chunks_loaded = Coverage.neverCovered,
+        .radius_reduction = &radius_reduction,
+    };
+
+    try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
+    try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, queue_ptrs[LODLevel.count - 1].count());
+
+    try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
+    try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT * 2, queue_ptrs[LODLevel.count - 1].count());
 }
 
 test "LOD scheduling biases priorities toward movement direction" {

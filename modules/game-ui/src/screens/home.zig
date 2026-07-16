@@ -105,7 +105,9 @@ pub const HomeScreen = struct {
     fn isReadyForPresentation(ptr: *anyopaque) bool {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const stats = self.preview.getWorldStats() orelse return false;
-        return stats.chunks_rendered > 0 and !self.preview.world.telemetry().isStartupBusy();
+        // Reveal once terrain is drawable; the remaining preview chunks keep
+        // streaming behind the menu instead of blocking the hidden window.
+        return stats.chunks_rendered > 0;
     }
 
     pub fn screen(self: *@This()) IScreen {

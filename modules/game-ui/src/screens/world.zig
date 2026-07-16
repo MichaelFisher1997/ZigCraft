@@ -80,15 +80,13 @@ pub const WorldScreen = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
-        return initWithDistance(allocator, context, seed, generator_index, context.settings.render_distance, context.settings.horizon_distance, context.settings.lod_enabled, false);
+        return initWithDistance(allocator, context, seed, generator_index, context.settings.render_distance, context.settings.horizon_distance, context.settings.lod_enabled, true, false);
     }
 
     pub fn initMenuPreview(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize) !*WorldScreen {
-        // The rotating menu preview is intentionally bounded to full-detail
-        // chunks. It does not need the distant hierarchy, and continuously
-        // streaming compact tiles underneath a retained RmlUi overlay can
-        // trigger a RADV command-stream rejection on RDNA1. Normal worlds keep
-        // the user's LOD setting and the complete compact pipeline.
+        // Keep the distant hierarchy in the rotating preview, but use its
+        // expanded fallback: continuously streaming compact tiles underneath a
+        // retained RmlUi overlay can trigger a RADV rejection on RDNA1.
         return initWithDistance(
             allocator,
             context,
@@ -96,14 +94,15 @@ pub const WorldScreen = struct {
             generator_index,
             context.settings.render_distance,
             context.settings.horizon_distance,
+            context.settings.lod_enabled,
             false,
             true,
         );
     }
 
-    fn initWithDistance(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize, render_distance: i32, horizon_distance: i32, lod_enabled: bool, menu_preview: bool) !*WorldScreen {
+    fn initWithDistance(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize, render_distance: i32, horizon_distance: i32, lod_enabled: bool, compact_tiles_enabled: bool, menu_preview: bool) !*WorldScreen {
         const render_system = context.render_system;
-        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, render_distance, horizon_distance, lod_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, render_distance, horizon_distance, lod_enabled, compact_tiles_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
         errdefer session.deinit();
         const world = session.world.interface();
 
@@ -170,6 +169,8 @@ pub const WorldScreen = struct {
 
         const world_telemetry = self.world.telemetry();
         if (!self.menu_preview) {
+            const preset = rhi_pkg.getPresetConfig(ctx.settings.render_distance_preset);
+            self.session.world.setLODChunkRenderRadiusLimit(preset.lod_radii[0]);
             if (world_telemetry.getRenderDistance() != ctx.settings.render_distance) {
                 world_telemetry.setRenderDistance(ctx.settings.render_distance);
             }

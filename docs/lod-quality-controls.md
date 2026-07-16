@@ -8,6 +8,9 @@ The render distance preset is the supported user-facing control for distant LOD 
   containers. The cache worker evicts the oldest containers after atomic
   writes and compacts live entries when sector growth reaches the cap.
 - `horizontal_detail`: target horizontal detail per LOD. This is used as a floor for QEM triangle targets when the experimental QEM mesh path is enabled.
+- `sample_density`: source-grid density per LOD. Medium uses half density for
+  LOD4 so its initial 512-chunk horizon has 33x33 source grids instead of
+  65x65 grids; finer LODs replace those 16-block cells as they stream in.
 - `vertical_span_budget`: enables rich column/span source data when nonzero.
   The numeric values are reserved preset policy; current source allocation is
   bounded by the engine-wide `MAX_LOD_VERTICAL_SPANS` limit.
@@ -22,7 +25,7 @@ The render distance preset is the supported user-facing control for distant LOD 
 | Preset | Horizon | Horizontal detail LOD0–4 | Span setting | RAM budget | Store cap | Uploads/frame |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
 | Low | 256 chunks | 33/33/33/65/65 | 2 | 128 MB | 512 MB | 4 |
-| Medium | 512 chunks | 33/49/49/65/65 | 2 | 256 MB | 1,024 MB | 8 |
+| Medium | 512 chunks | 33/49/49/65/33 | 2 | 256 MB | 1,024 MB | 8 |
 | High | 512 chunks | 33/65/65/97/97 | 3 | 384 MB | 1,536 MB | 8 |
 | Ultra | 1,024 chunks | 33/65/65/129/129 | 4 | 512 MB | 3,072 MB | 12 |
 | Extreme | 2,048 chunks | 33/65/65/129/129 | 4 | 1,024 MB | 4,096 MB | 16 |

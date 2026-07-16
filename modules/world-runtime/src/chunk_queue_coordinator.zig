@@ -432,29 +432,50 @@ pub const ChunkQueueCoordinator = struct {
 
                 // Main-thread invariant: only this upload path mutates `.uploading`
                 // chunks until GPU meshing finalization runs from the render graph.
-                if (!self.gpu.queueGpuMesh(data)) {
-                    data.render.mesh.upload(self.vertex_allocator);
+                switch (self.gpu.queueGpuMesh(data)) {
+                    .queued => {},
+                    .deferred => {
+                        data.chunk.mesh_attempts +|= 1;
+                        if (data.chunk.mesh_attempts >= 8) {
+                            // Persistent GPU queue or block-buffer pressure must
+                            // not leave the chunk invisible forever.
+                            data.chunk.force_cpu_mesh = true;
+                            data.chunk.state = .generated;
+                            self.enqueuePendingMesh(key.x, key.z, data.chunk.job_token);
+                        } else {
+                            self.enqueuePendingUpload(key.x, key.z);
+                        }
+                    },
+                    .unavailable => {
+                        data.render.mesh.upload(self.vertex_allocator);
 
-                    if (data.render.mesh.diag_tile0_count > 0) {
-                        log.log.warn("TILE0_MESH: chunk ({},{}) has {}/{} vertices with tile_id=0 (WHITE)", .{
-                            data.chunk.chunk_x,                data.chunk.chunk_z,
-                            data.render.mesh.diag_tile0_count, data.render.mesh.diag_total_verts,
-                        });
-                    }
+                        if (data.render.mesh.diag_tile0_count > 0) {
+                            log.log.warn("TILE0_MESH: chunk ({},{}) has {}/{} vertices with tile_id=0 (WHITE)", .{
+                                data.chunk.chunk_x,                data.chunk.chunk_z,
+                                data.render.mesh.diag_tile0_count, data.render.mesh.diag_total_verts,
+                            });
+                        }
 
-                    if (data.render.mesh.ready) {
-                        data.chunk.state = .renderable;
-                        data.chunk.dirty = false;
-                        _ = self.chunks_uploaded_total.fetchAdd(1, .monotonic);
-                    } else {
-                        log.log.warn("CHUNK_UPLOAD: ({},{}) upload FAILED (ready=false), reverting to mesh_ready | solid={} cutout={} fluid={}", .{
-                            key.x,                                     key.z,
-                            data.render.mesh.solid_allocation != null, data.render.mesh.cutout_allocation != null,
-                            data.render.mesh.fluid_allocation != null,
-                        });
-                        data.chunk.state = .mesh_ready;
-                        self.enqueuePendingUpload(key.x, key.z);
-                    }
+                        if (data.render.mesh.ready) {
+                            if (data.chunk.dirty) {
+                                data.chunk.state = .generated;
+                                self.enqueuePendingMesh(key.x, key.z, data.chunk.job_token);
+                            } else {
+                                data.chunk.state = .renderable;
+                                data.chunk.mesh_attempts = 0;
+                                data.chunk.force_cpu_mesh = false;
+                                _ = self.chunks_uploaded_total.fetchAdd(1, .monotonic);
+                            }
+                        } else {
+                            log.log.warn("CHUNK_UPLOAD: ({},{}) upload FAILED (ready=false), reverting to mesh_ready | solid={} cutout={} fluid={}", .{
+                                key.x,                                     key.z,
+                                data.render.mesh.solid_allocation != null, data.render.mesh.cutout_allocation != null,
+                                data.render.mesh.fluid_allocation != null,
+                            });
+                            data.chunk.state = .mesh_ready;
+                            self.enqueuePendingUpload(key.x, key.z);
+                        }
+                    },
                 }
                 uploads += 1;
             }
@@ -563,15 +584,29 @@ pub const ChunkQueueCoordinator = struct {
                 chunk_data.chunk.lighting_valid = true;
             }
 
+            // Validate worker-owned block data before taking the global storage
+            // writer lock. Scanning all 65,536 blocks under that lock serialized
+            // otherwise independent generation completions and render access.
+            var non_air_count: u32 = 0;
+            if (chunk_data.chunk.generated) {
+                for (chunk_data.chunk.blocks) |block| {
+                    if (block != .air) non_air_count += 1;
+                }
+            }
+
             self.storage.chunks_mutex.lock();
+            const publishable = if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data|
+                data == chunk_data and data.chunk.state == .generating and data.chunk.job_token == job.data.chunk.job_token
+            else
+                false;
+            if (!publishable) {
+                self.storage.chunks_mutex.unlock();
+                return;
+            }
             if (!chunk_data.chunk.generated) {
                 log.log.warn("CHUNK_GEN_FAILED: ({},{}) generator returned without setting generated=true, resetting to missing", .{ cx, cz });
                 chunk_data.chunk.state = .missing;
             } else {
-                var non_air_count: u32 = 0;
-                for (chunk_data.chunk.blocks) |block| {
-                    if (block != .air) non_air_count += 1;
-                }
                 if (non_air_count == 0) {
                     log.log.warn("CHUNK_GEN_EMPTY: ({},{}) generated chunk has ZERO non-air blocks, resetting to missing", .{ cx, cz });
                     chunk_data.chunk.generated = false;
@@ -582,9 +617,9 @@ pub const ChunkQueueCoordinator = struct {
                 }
             }
             self.storage.chunks_mutex.unlock();
-            if (chunk_data.chunk.generated) {
-                self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
+            if (chunk_data.chunk.state == .generated and chunk_data.chunk.job_token == job.data.chunk.job_token) {
                 self.markNeighborsForRemesh(cx, cz);
+                self.enqueueReadyNeighborhood(cx, cz);
                 // Feed the real chunk into the LOD system so distant terrain is
                 // derived from actual blocks (chunk_derived provenance) instead
                 // of worldgen sampling. The chunk is pinned for this call.
@@ -673,13 +708,14 @@ pub const ChunkQueueCoordinator = struct {
         self.storage.chunks_mutex.unlock();
 
         if (chunk_data.chunk.state == .meshing and chunk_data.chunk.job_token == job.data.chunk.job_token) {
-            if (self.gpu.shouldUseGpuMeshReadyPath()) {
+            if (self.gpu.shouldUseGpuMeshReadyPath() and !chunk_data.chunk.force_cpu_mesh) {
                 self.storage.chunks_mutex.lock();
                 const publishable = if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data|
                     data.chunk.state == .meshing and data.chunk.job_token == job.data.chunk.job_token and mesh_revisions.matches(&data.chunk, neighbors)
                 else
                     false;
                 chunk_data.chunk.state = if (publishable) .mesh_ready else .generated;
+                if (publishable) chunk_data.chunk.dirty = false;
                 self.storage.chunks_mutex.unlock();
                 if (!publishable) {
                     self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
@@ -710,6 +746,7 @@ pub const ChunkQueueCoordinator = struct {
             else
                 false;
             chunk_data.chunk.state = if (publishable) .mesh_ready else .generated;
+            if (publishable) chunk_data.chunk.dirty = false;
             self.storage.chunks_mutex.unlock();
             if (!publishable) {
                 self.enqueuePendingMesh(cx, cz, chunk_data.chunk.job_token);
@@ -723,24 +760,65 @@ pub const ChunkQueueCoordinator = struct {
     fn markNeighborsForRemesh(self: *ChunkQueueCoordinator, cx: i32, cz: i32) void {
         const offsets = [_][2]i32{ .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
 
-        var enqueue_refs: [4]PendingMeshRef = undefined;
-        var enqueue_count: usize = 0;
-
         self.storage.chunks_mutex.lock();
         for (offsets) |off| {
             if (self.storage.chunks.get(ChunkKey{ .x = cx + off[0], .z = cz + off[1] })) |data| {
                 switch (data.chunk.state) {
-                    .renderable => {
-                        data.chunk.state = .generated;
-                        enqueue_refs[enqueue_count] = .{ .x = data.chunk.chunk_x, .z = data.chunk.chunk_z, .job_token = data.chunk.job_token };
-                        enqueue_count += 1;
-                    },
+                    .renderable => data.chunk.state = .generated,
                     .mesh_ready, .uploading, .meshing => data.chunk.dirty = true,
                     else => {},
                 }
             }
         }
         self.storage.chunks_mutex.unlock();
+    }
+
+    /// Coalesce startup boundary invalidations by waiting until each generated
+    /// chunk's currently-required cardinal neighbors exist before its first or
+    /// replacement mesh is queued. The periodic recovery scan remains the
+    /// fallback for failed generation or dropped notifications.
+    fn enqueueReadyNeighborhood(self: *ChunkQueueCoordinator, cx: i32, cz: i32) void {
+        const offsets = [_][2]i32{ .{ 0, 0 }, .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
+        const neighbor_offsets = [_][2]i32{ .{ 0, 1 }, .{ 0, -1 }, .{ 1, 0 }, .{ -1, 0 } };
+        const pc_x = self.last_pc_x.load(.acquire);
+        const pc_z = self.last_pc_z.load(.acquire);
+        const render_dist = self.effective_render_dist.load(.acquire);
+
+        var enqueue_refs: [offsets.len]PendingMeshRef = undefined;
+        var enqueue_count: usize = 0;
+
+        self.storage.chunks_mutex.lockShared();
+        for (offsets) |off| {
+            const candidate_x = cx + off[0];
+            const candidate_z = cz + off[1];
+            const data = self.storage.chunks.get(ChunkKey{ .x = candidate_x, .z = candidate_z }) orelse continue;
+            if (data.chunk.state != .generated) continue;
+
+            var neighborhood_ready = true;
+            for (neighbor_offsets) |neighbor_off| {
+                const neighbor_x = candidate_x + neighbor_off[0];
+                const neighbor_z = candidate_z + neighbor_off[1];
+                const dx: i64 = @as(i64, neighbor_x) - pc_x;
+                const dz: i64 = @as(i64, neighbor_z) - pc_z;
+                const render_dist_i64: i64 = render_dist;
+                if (dx * dx + dz * dz > render_dist_i64 * render_dist_i64) continue;
+
+                const neighbor = self.storage.chunks.get(ChunkKey{ .x = neighbor_x, .z = neighbor_z });
+                if (neighbor == null or !neighbor.?.chunk.generated) {
+                    neighborhood_ready = false;
+                    break;
+                }
+            }
+            if (!neighborhood_ready) continue;
+
+            enqueue_refs[enqueue_count] = .{
+                .x = candidate_x,
+                .z = candidate_z,
+                .job_token = data.chunk.job_token,
+            };
+            enqueue_count += 1;
+        }
+        self.storage.chunks_mutex.unlockShared();
 
         // Enqueue outside chunks_mutex to keep lock ordering consistent with
         // drainPendingMesh (pending mutex first, then chunks_mutex).

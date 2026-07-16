@@ -290,6 +290,30 @@ pub const LODManager = struct {
         return lod_manager_core.getStats(self);
     }
 
+    /// Returns whether the coarsest active level has produced drawable fallback
+    /// terrain within the current horizon. Scoping this to the player prevents
+    /// stale regions after a teleport from releasing foreground prefetch early.
+    pub fn hasRenderableCoarsestNear(self: *Self, player_cx: i32, player_cz: i32) bool {
+        self.mutex.lockShared();
+        defer self.mutex.unlockShared();
+        const active_count = lod_chunk.activeLODCount(self.config);
+        if (active_count == 0) return false;
+        const lod: LODLevel = @enumFromInt(active_count - 1);
+        const scale: i64 = @intCast(lod.chunksPerSide());
+        const radius: i64 = self.config.getRadii()[active_count - 1];
+        var it = self.regions[active_count - 1].iterator();
+        while (it.next()) |entry| {
+            const chunk = entry.value_ptr.*;
+            if (chunk.getState() != .renderable) continue;
+            const center_x = @as(i64, chunk.region_x) * scale + @divFloor(scale, 2);
+            const center_z = @as(i64, chunk.region_z) * scale + @divFloor(scale, 2);
+            const dx = center_x - player_cx;
+            const dz = center_z - player_cz;
+            if (dx * dx + dz * dz <= radius * radius) return true;
+        }
+        return false;
+    }
+
     /// Pauses new LOD generation and scheduling work.
     /// Existing regions and meshes remain available for rendering while paused.
     pub fn pause(self: *Self) void {
