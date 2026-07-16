@@ -103,7 +103,9 @@ pub const RmlHomeScreen = struct {
     fn isReadyForPresentation(ptr: *anyopaque) bool {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const stats = self.preview.getWorldStats() orelse return false;
-        return stats.chunks_rendered > 0 and !self.preview.world.telemetry().isStartupBusy();
+        // RmlUi can be presented as soon as its background has one drawable
+        // terrain batch; subsequent rings continue loading asynchronously.
+        return stats.chunks_rendered > 0;
     }
 
     fn onDocumentAction(context: *anyopaque, _: []const u8, target_id: []const u8) void {

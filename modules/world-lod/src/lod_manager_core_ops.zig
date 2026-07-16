@@ -157,7 +157,10 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
     errdefer mgr.cache_io.deinit();
 
     const cpu_count = std.Thread.getCpuCount() catch MIN_LOD_WORKERS;
-    const lod_worker_count = std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS);
+    const total_budget = @max(@as(usize, 5), cpu_count -| 1);
+    const foreground_minimum: usize = 4;
+    const lod_capacity = @max(MIN_LOD_WORKERS, total_budget -| foreground_minimum);
+    const lod_worker_count = @min(std.math.clamp(cpu_count / 2, MIN_LOD_WORKERS, MAX_LOD_WORKERS), lod_capacity);
 
     // All LOD jobs go through one shared queue. LOD-aware priority bits keep
     // fine near-detail jobs ahead of coarse fallback regions.

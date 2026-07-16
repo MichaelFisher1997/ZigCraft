@@ -176,6 +176,7 @@ pub const GpuMesher = struct {
 
                 if (result.overflow_mask != 0) {
                     log.log.warn("GpuMesher overflow for chunk ({}, {}), falling back to CPU meshing", .{ req.cx, req.cz });
+                    data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
                     continue;
                 }
@@ -191,18 +192,21 @@ pub const GpuMesher = struct {
                 if (result.solid_count > 0 and solid_alloc == null) {
                     log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve solid allocation ({} verts)", .{ req.cx, req.cz, result.solid_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
                     continue;
                 }
                 if (result.cutout_count > 0 and cutout_alloc == null) {
                     log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve cutout allocation ({} verts)", .{ req.cx, req.cz, result.cutout_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
                     continue;
                 }
                 if (result.fluid_count > 0 and fluid_alloc == null) {
                     log.log.warn("GPU_MESHER: ({},{}) FAILED to reserve fluid allocation ({} verts)", .{ req.cx, req.cz, result.fluid_count });
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
+                    data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
                     continue;
                 }
@@ -223,8 +227,7 @@ pub const GpuMesher = struct {
                 }
 
                 data.render.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
-                data.chunk.state = .renderable;
-                data.chunk.dirty = false;
+                data.chunk.state = if (data.chunk.dirty) .generated else .renderable;
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
             }
         }

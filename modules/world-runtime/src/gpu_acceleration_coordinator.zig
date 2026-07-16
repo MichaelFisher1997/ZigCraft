@@ -13,6 +13,12 @@ fn getenv(name: [:0]const u8) ?[]const u8 {
 }
 
 pub const GpuAccelerationCoordinator = struct {
+    pub const QueueResult = enum {
+        unavailable,
+        queued,
+        deferred,
+    };
+
     gpu_block_buffer: ?*GpuBlockBuffer,
     gpu_mesher: ?*GpuMesher,
 
@@ -64,9 +70,10 @@ pub const GpuAccelerationCoordinator = struct {
 
     /// Queues GPU meshing and updates the chunk state for success or CPU retry.
     /// Caller must uphold the main-thread upload invariant documented by ChunkQueueCoordinator.
-    pub fn queueGpuMesh(self: *GpuAccelerationCoordinator, data: *ChunkData) bool {
-        if (!self.isGpuMeshingEnabled()) return false;
-        const buf = self.gpu_block_buffer orelse return false;
+    pub fn queueGpuMesh(self: *GpuAccelerationCoordinator, data: *ChunkData) QueueResult {
+        if (data.chunk.force_cpu_mesh) return .unavailable;
+        if (!self.isGpuMeshingEnabled()) return .unavailable;
+        const buf = self.gpu_block_buffer orelse return .unavailable;
         const mesher = self.gpu_mesher.?;
 
         const slot = if (buf.getSlotForChunk(data.chunk.chunk_x, data.chunk.chunk_z)) |existing|
@@ -74,24 +81,25 @@ pub const GpuAccelerationCoordinator = struct {
         else
             buf.allocate(data.chunk.chunk_x, data.chunk.chunk_z) catch |err| {
                 log.log.err("GpuBlockBuffer allocation failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, err });
-                data.chunk.state = .generated;
-                return true;
+                data.chunk.state = .mesh_ready;
+                return .deferred;
             };
 
         const blocks_slice: []const u8 = @as([]const u8, @ptrCast(&data.chunk.blocks));
         buf.upload(slot, blocks_slice) catch |upload_err| {
             log.log.err("GpuBlockBuffer upload failed for chunk ({}, {}): {}", .{ data.chunk.chunk_x, data.chunk.chunk_z, upload_err });
             buf.free(slot);
-            data.chunk.state = .generated;
-            return true;
+            data.chunk.state = .mesh_ready;
+            return .deferred;
         };
 
         if (mesher.queueMesh(data.chunk.chunk_x, data.chunk.chunk_z, slot, data.chunk.job_token)) {
             data.chunk.state = .uploading;
+            return .queued;
         } else {
             data.chunk.state = .mesh_ready;
+            return .deferred;
         }
-        return true;
     }
 
     pub fn freeChunk(self: *GpuAccelerationCoordinator, cx: i32, cz: i32) void {

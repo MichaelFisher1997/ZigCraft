@@ -42,6 +42,7 @@ pub const Chunk = struct {
     light_revision: std.atomic.Value(u64) = .init(0),
     dirty: bool = true,
     mesh_attempts: u8 = 0,
+    force_cpu_mesh: bool = false,
     generated: bool = false,
     modified: bool = false,
     /// Persisted with chunk format v3; v2 chunks are treated as stale lighting.

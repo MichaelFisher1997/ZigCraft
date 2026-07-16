@@ -343,6 +343,9 @@ pub fn adjustParentReadyChildren(self: *Self, key: LODRegionKey, delta: i8) void
 pub fn markRegionRenderable(self: *Self, key: LODRegionKey, chunk: *LODChunk) void {
     if (chunk.isRenderable()) return;
     chunk.markRenderable(self.countRenderableChildren(key));
+    if (engine_core.envFlag("ZIGCRAFT_LOD_DIAG", false)) {
+        log.log.warn("LOD_REGION_RENDERABLE: lod={} region=({}, {})", .{ @intFromEnum(key.lod), key.rx, key.rz });
+    }
     self.enqueueFade(key, chunk);
     if (self.pending_region_count > 0) self.pending_region_count -= 1;
     if (self.regionContributesGeometry(key, chunk)) {

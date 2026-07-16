@@ -184,8 +184,8 @@ pub const CHUNK_COVERAGE_PADDING: i32 = 1;
 pub const LOD_UPDATE_DIVISOR: u32 = 2;
 // WorldStreamer reserves these workers from its foreground pools whenever LOD
 // is enabled, so horizon generation can be fast without oversubscribing CPUs.
-pub const MIN_LOD_WORKERS: usize = 2;
-pub const MAX_LOD_WORKERS: usize = 6;
+pub const MIN_LOD_WORKERS: usize = 1;
+pub const MAX_LOD_WORKERS: usize = 8;
 pub const MAX_MEMORY_EVICTIONS_PER_UPDATE: usize = 32;
 pub const MAX_MESH_DELETIONS_PER_SWEEP: usize = 64;
 pub const DELETION_SWEEP_SECONDS: f32 = 1.0;

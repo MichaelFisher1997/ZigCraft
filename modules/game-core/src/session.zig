@@ -124,7 +124,7 @@ pub const GameSession = struct {
     phase5_motion_evidence_emitted: bool = false,
     gpu_culling_scale_fixture_installed: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, horizon_distance: i32, lod_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
+    pub fn init(allocator: std.mem.Allocator, rhi: *RHI, atlas: *const TextureAtlas, seed: u64, render_distance: i32, horizon_distance: i32, lod_enabled: bool, compact_tiles_enabled: bool, generator_index: usize, render_distance_preset: RenderDistancePreset, build_config: BuildConfig) !*GameSession {
         const session = try allocator.create(GameSession);
         errdefer allocator.destroy(session);
         if (phase5EvidenceEnabled(build_config)) resetPhase5CaptureReady();
@@ -178,6 +178,7 @@ pub const GameSession = struct {
                 .radii = preset_radii,
                 .memory_budget_mb = @min(preset_cfg.memory_budget_mb, 256),
                 .max_uploads_per_frame = @min(preset_cfg.max_uploads_per_frame, 8),
+                .compact_tiles_enabled = compact_tiles_enabled,
             }
         else
             LODConfig{
@@ -185,6 +186,8 @@ pub const GameSession = struct {
                 .radii = preset_radii,
                 .fog_start_percent = preset_cfg.fog_start_percent,
                 .horizontal_detail = preset_cfg.horizontal_detail,
+                .sample_density = preset_cfg.sample_density,
+                .compact_tiles_enabled = compact_tiles_enabled,
                 .vertical_span_budget = preset_cfg.vertical_span_budget,
                 .mesh_path = preset_cfg.mesh_path,
                 .qem_triangle_targets = preset_cfg.qem_targets,

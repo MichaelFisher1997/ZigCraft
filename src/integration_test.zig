@@ -104,6 +104,7 @@ fn initStorageOnlyPersistenceWorld(allocator: std.mem.Allocator) world_runtime.W
         .allocator = allocator,
         .generator = undefined,
         .render_distance = 8,
+        .lod_chunk_render_radius_limit = 8,
         .horizon_distance = 512,
         .rhi = undefined,
         .paused = false,

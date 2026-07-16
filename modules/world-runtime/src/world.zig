@@ -618,6 +618,7 @@ pub const World = struct {
     allocator: std.mem.Allocator,
     generator: Generator,
     render_distance: i32,
+    lod_chunk_render_radius_limit: i32,
     horizon_distance: i32,
     rhi: RHI,
     paused: bool = false,
@@ -671,6 +672,7 @@ pub const World = struct {
             .renderer = undefined,
             .allocator = allocator,
             .render_distance = safe_render_distance,
+            .lod_chunk_render_radius_limit = streamer_render_distance,
             .horizon_distance = if (options.lod_config) |lod_config| lod_config.getRadii()[LODLevel.count - 1] else LODConfig.default_horizon_radius,
             .generator = try registry.createGenerator(options.generator_index, options.seed, allocator),
             .rhi = options.rhi,
@@ -880,15 +882,34 @@ pub const World = struct {
             }
             log.log.info("Render distance changed: {} -> {}", .{ self.render_distance, target });
             self.render_distance = target;
-            self.streamer.setRenderDistance(target);
-
-            if (self.lod) |lod| {
-                const radii = LODConfig.radiiForDistances(target, self.horizon_distance);
-                lod.setChunkRenderRadius(target);
-                lod.setRadii(radii);
-                lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(target));
-            }
+            self.applyRenderDistance();
         }
+    }
+
+    /// Updates the preset-owned full-detail radius cap. This is separate from
+    /// the user-facing distance so manual values above a preset's LOD0 radius
+    /// still expand the horizon rather than flooding full-detail chunks.
+    pub fn setLODChunkRenderRadiusLimit(self: *World, limit: i32) void {
+        const target = @max(limit, 1);
+        if (self.lod_chunk_render_radius_limit == target) return;
+        self.lod_chunk_render_radius_limit = target;
+        self.applyRenderDistance();
+    }
+
+    fn applyRenderDistance(self: *World) void {
+        const chunk_render_radius = effectiveChunkRenderRadius(self.render_distance, self.lod_chunk_render_radius_limit, self.lod != null);
+        self.streamer.setRenderDistance(chunk_render_radius);
+
+        if (self.lod) |lod| {
+            const radii = LODConfig.radiiForDistances(self.render_distance, self.horizon_distance);
+            lod.setChunkRenderRadius(chunk_render_radius);
+            lod.setRadii(radii);
+            lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(self.render_distance));
+        }
+    }
+
+    pub fn effectiveChunkRenderRadius(render_distance: i32, preset_limit: i32, lod_enabled: bool) i32 {
+        return if (lod_enabled) @min(render_distance, preset_limit) else render_distance;
     }
 
     /// Changes the distant-terrain horizon distance.
