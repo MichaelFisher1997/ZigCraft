@@ -51,6 +51,8 @@ pub const GpuMesherStats = struct {
 };
 
 pub const GpuMesher = struct {
+    pub const RemeshCallback = *const fn (context: *anyopaque, cx: i32, cz: i32, job_token: u32) void;
+
     allocator: std.mem.Allocator,
     rhi: rhi_pkg.RHI,
     rm: rhi_pkg.ResourceManager,
@@ -67,6 +69,8 @@ pub const GpuMesher = struct {
     submitted: [MAX_FRAMES_IN_FLIGHT]std.ArrayListUnmanaged(ChunkMeshRequest),
 
     stats: GpuMesherStats,
+    remesh_context: ?*anyopaque = null,
+    remesh_callback: ?RemeshCallback = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -145,6 +149,11 @@ pub const GpuMesher = struct {
         return self.stats;
     }
 
+    pub fn setRemeshCallback(self: *GpuMesher, context: ?*anyopaque, callback: ?RemeshCallback) void {
+        self.remesh_context = context;
+        self.remesh_callback = callback;
+    }
+
     fn finalizeCompletedMeshes(self: *GpuMesher, vertex_allocator: *GlobalVertexAllocator, storage: *ChunkStorage) void {
         const fi = self.rhi.query().getFrameIndex();
         const prev_fi = (fi + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
@@ -164,8 +173,10 @@ pub const GpuMesher = struct {
             return;
         };
 
+        var remesh_requests: [MAX_GPU_MESH_BATCH]ChunkMeshRequest = undefined;
+        var remesh_count: usize = 0;
+
         storage.chunks_mutex.lock();
-        defer storage.chunks_mutex.unlock();
 
         for (self.submitted[prev_fi].items, 0..) |req, idx| {
             if (idx >= results.len) break;
@@ -178,6 +189,8 @@ pub const GpuMesher = struct {
                     log.log.warn("GpuMesher overflow for chunk ({}, {}), falling back to CPU meshing", .{ req.cx, req.cz });
                     data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
+                    remesh_requests[remesh_count] = req;
+                    remesh_count += 1;
                     continue;
                 }
 
@@ -194,6 +207,8 @@ pub const GpuMesher = struct {
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                     data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
+                    remesh_requests[remesh_count] = req;
+                    remesh_count += 1;
                     continue;
                 }
                 if (result.cutout_count > 0 and cutout_alloc == null) {
@@ -201,6 +216,8 @@ pub const GpuMesher = struct {
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                     data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
+                    remesh_requests[remesh_count] = req;
+                    remesh_count += 1;
                     continue;
                 }
                 if (result.fluid_count > 0 and fluid_alloc == null) {
@@ -208,6 +225,8 @@ pub const GpuMesher = struct {
                     freeTempAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                     data.chunk.force_cpu_mesh = true;
                     data.chunk.state = .generated;
+                    remesh_requests[remesh_count] = req;
+                    remesh_count += 1;
                     continue;
                 }
 
@@ -228,11 +247,22 @@ pub const GpuMesher = struct {
 
                 data.render.mesh.replaceAllocations(vertex_allocator, solid_alloc, cutout_alloc, fluid_alloc);
                 data.chunk.state = if (data.chunk.dirty) .generated else .renderable;
+                if (data.chunk.dirty) {
+                    remesh_requests[remesh_count] = req;
+                    remesh_count += 1;
+                }
                 self.stats.vertices_produced += result.solid_count + result.cutout_count + result.fluid_count;
             }
         }
 
         self.submitted[prev_fi].clearRetainingCapacity();
+        storage.chunks_mutex.unlock();
+
+        if (self.remesh_context) |context| if (self.remesh_callback) |callback| {
+            for (remesh_requests[0..remesh_count]) |req| {
+                callback(context, req.cx, req.cz, req.job_token);
+            }
+        };
     }
 
     fn dispatchQueuedMeshes(self: *GpuMesher, gpu_block_buffer: *GpuBlockBuffer) void {

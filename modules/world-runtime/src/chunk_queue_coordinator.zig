@@ -798,9 +798,10 @@ pub const ChunkQueueCoordinator = struct {
             for (neighbor_offsets) |neighbor_off| {
                 const neighbor_x = candidate_x + neighbor_off[0];
                 const neighbor_z = candidate_z + neighbor_off[1];
-                const dx = neighbor_x - pc_x;
-                const dz = neighbor_z - pc_z;
-                if (dx * dx + dz * dz > render_dist * render_dist) continue;
+                const dx: i64 = @as(i64, neighbor_x) - pc_x;
+                const dz: i64 = @as(i64, neighbor_z) - pc_z;
+                const render_dist_i64: i64 = render_dist;
+                if (dx * dx + dz * dz > render_dist_i64 * render_dist_i64) continue;
 
                 const neighbor = self.storage.chunks.get(ChunkKey{ .x = neighbor_x, .z = neighbor_z });
                 if (neighbor == null or !neighbor.?.chunk.generated) {

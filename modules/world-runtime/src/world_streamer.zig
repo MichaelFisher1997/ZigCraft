@@ -188,11 +188,13 @@ pub const WorldStreamer = struct {
         errdefer streamer.mesh_pool.deinit();
 
         try streamer.warmupInitialChunks();
+        if (gpu_mesher) |mesher| mesher.setRemeshCallback(&streamer.queue_coordinator, enqueueGpuRemesh);
 
         return streamer;
     }
 
     pub fn deinit(self: *WorldStreamer) void {
+        if (self.gpu_acceleration.gpu_mesher) |mesher| mesher.setRemeshCallback(null, null);
         self.gen_queue.stop();
         self.mesh_queue.stop();
 
@@ -206,6 +208,11 @@ pub const WorldStreamer = struct {
 
         self.queue_coordinator.deinit();
         self.allocator.destroy(self);
+    }
+
+    fn enqueueGpuRemesh(context: *anyopaque, cx: i32, cz: i32, job_token: u32) void {
+        const coordinator: *ChunkQueueCoordinator = @ptrCast(@alignCast(context));
+        coordinator.enqueuePendingMesh(cx, cz, job_token);
     }
 
     pub fn setPaused(self: *WorldStreamer, paused: bool) void {
@@ -242,9 +249,10 @@ pub const WorldStreamer = struct {
         while (cz <= pc_z + radius) : (cz += 1) {
             var cx = pc_x - radius;
             while (cx <= pc_x + radius) : (cx += 1) {
-                const dx = cx - pc_x;
-                const dz = cz - pc_z;
-                if (dx * dx + dz * dz > radius * radius) continue;
+                const dx: i64 = @as(i64, cx) - pc_x;
+                const dz: i64 = @as(i64, cz) - pc_z;
+                const radius_i64: i64 = radius;
+                if (dx * dx + dz * dz > radius_i64 * radius_i64) continue;
                 const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse return true;
                 if (data.chunk.state != .renderable or !data.render.mesh.ready) return true;
             }
