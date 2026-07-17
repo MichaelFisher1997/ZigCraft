@@ -588,3 +588,29 @@ test "World saveAllModifiedChunks and loadChunkFromSave round-trip chunk data" {
     try testing.expectEqual(world_core.BlockType.stone, loaded.getBlock(4, 64, 5));
     try testing.expectEqual(world_core.BiomeId.forest, loaded.getBiome(4, 5));
 }
+
+test "World loaded map capture reflects foliage placement and removal" {
+    var world = makeStorageOnlyWorld(testing.allocator);
+    defer deinitStorageOnlyWorld(&world);
+    const data = try world.storage.getOrCreate(0, 0);
+    data.chunk.generated = true;
+    data.chunk.setBlock(3, 64, 5, .grass);
+    data.chunk.setBlock(3, 72, 5, .leaves);
+
+    var map = try worldgen.WorldMap.init(testing.allocator, 16, 16);
+    defer map.deinit();
+    const first = try map.createLoadedSurfaceOverlay();
+    defer first.deinit();
+    try world.captureLoadedMapSurface(first, 8, 8, 1, 16, 16);
+    const canopy = first.sample(3, 5).?;
+    try testing.expectEqual(world_core.BlockType.leaves, canopy.block);
+    try testing.expectEqual(@as(i16, 72), canopy.height);
+
+    data.chunk.setBlock(3, 72, 5, .air);
+    const second = try map.createLoadedSurfaceOverlay();
+    defer second.deinit();
+    try world.captureLoadedMapSurface(second, 8, 8, 1, 16, 16);
+    const exposed = second.sample(3, 5).?;
+    try testing.expectEqual(world_core.BlockType.grass, exposed.block);
+    try testing.expectEqual(@as(i16, 64), exposed.height);
+}

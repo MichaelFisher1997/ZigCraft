@@ -11,6 +11,7 @@ const Texture = @import("engine-rhi").Texture;
 const Font = @import("engine-ui").font;
 const log = @import("engine-core").log;
 const Vec3 = @import("engine-math").Vec3;
+const World = @import("world-runtime").World;
 
 const input_mapper_pkg = @import("input_mapper.zig");
 const InputMapper = input_mapper_pkg.InputMapper;
@@ -20,8 +21,13 @@ const GameAction = input_mapper_pkg.GameAction;
 pub const MapController = struct {
     const MIN_ZOOM: f32 = 0.05;
     const MAX_ZOOM: f32 = 128.0;
-    const MAP_SCREEN_FRACTION: f32 = 0.82;
-    const MAP_PADDING: f32 = 28.0;
+    const MAP_REFERENCE_SIZE: f32 = 256.0;
+    const MAP_SCREEN_FRACTION: f32 = 0.96;
+    const MAP_PADDING: f32 = 16.0;
+    const KEYBOARD_PAN_SPEED: f32 = 320.0;
+    const DRAG_SENSITIVITY: f32 = 1.0;
+    const KEY_ZOOM_RATE: f32 = 2.0;
+    const WHEEL_ZOOM_RATE: f32 = 0.28;
 
     pub const MapRect = struct {
         x: f32,
@@ -48,8 +54,16 @@ pub const MapController = struct {
     vel_x: f32 = 0.0,
     vel_z: f32 = 0.0,
     is_dragging: bool = false,
+    texture_center_x: f32 = 0.0,
+    texture_center_z: f32 = 0.0,
+    texture_scale: f32 = 1.0,
+    has_texture_view: bool = false,
+    last_surface_revision: u64 = 0,
+    observed_residency_revision: u64 = 0,
+    captured_residency_revision: u64 = 0,
+    residency_stable_frames: u8 = 0,
 
-    pub fn update(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, camera: *const Camera, time_delta: f32, window: *c.SDL_Window, screen_w: f32, screen_h: f32, world_map_width: u32) void {
+    pub fn update(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, camera: *const Camera, time_delta: f32, window: *c.SDL_Window, screen_w: f32, screen_h: f32) void {
         if (mapper.isActionPressed(input, .toggle_map)) {
             self.toggle(camera.position, input, window);
         }
@@ -59,30 +73,60 @@ pub const MapController = struct {
         const dt = @min(time_delta, 0.05);
         const rect = getMapRect(screen_w, screen_h);
 
-        self.handleZoom(input, mapper, dt);
+        self.handleZoom(input, mapper, dt, rect);
 
         if (mapper.isActionPressed(input, .map_center)) {
             self.recenter(camera.position);
         }
 
-        self.handlePan(input, mapper, dt, rect.size, world_map_width);
+        self.handlePan(input, mapper, dt, rect.size);
         self.smoothView(dt);
     }
 
-    pub fn draw(self: *MapController, u: *UISystem, screen_w: f32, screen_h: f32, world_map: *WorldMap, world_map_texture: *const Texture, generator: Generator, camera_pos: Vec3) !void {
+    pub fn draw(self: *MapController, u: *UISystem, screen_w: f32, screen_h: f32, world_map: *WorldMap, world_map_texture: *const Texture, world: *World, generator: Generator, camera_pos: Vec3) !void {
         if (!self.show_map) return;
 
+        const surface_revision = world.getMapSurfaceRevision();
+        if (surface_revision != self.last_surface_revision) self.map_needs_update = true;
+        const residency_revision = world.getMapResidencyRevision();
+        if (residency_revision != self.observed_residency_revision) {
+            self.observed_residency_revision = residency_revision;
+            self.residency_stable_frames = 0;
+        } else if (self.residency_stable_frames < 15) {
+            self.residency_stable_frames += 1;
+        }
+        // Debounce streaming churn so refinement is not cancelled for every
+        // arriving chunk, then refresh once the loaded set has settled.
+        if (self.residency_stable_frames >= 15 and self.captured_residency_revision != residency_revision) {
+            self.map_needs_update = true;
+        }
+
         if (self.map_needs_update) {
-            world_map.update(generator, self.map_pos_x, self.map_pos_z, self.map_zoom);
-            try world_map_texture.update(world_map.pixels);
+            const sample_scale = textureSamplingScale(self.map_zoom, world_map.width);
+            const overlay = try world_map.createLoadedSurfaceOverlay();
+            world.captureLoadedMapSurface(overlay, self.map_pos_x, self.map_pos_z, sample_scale, world_map.width, world_map.height) catch |err| {
+                overlay.deinit();
+                return err;
+            };
+            try world_map.requestUpdate(generator, self.map_pos_x, self.map_pos_z, sample_scale, overlay);
             self.map_needs_update = false;
+            self.last_surface_revision = surface_revision;
+            self.captured_residency_revision = residency_revision;
+        }
+        if (world_map.consumeCompleted()) |view| {
+            try world_map_texture.update(world_map.pixels);
+            self.texture_center_x = view.center_x;
+            self.texture_center_z = view.center_z;
+            self.texture_scale = view.scale;
+            self.has_texture_view = true;
         }
 
         const rect = getMapRect(screen_w, screen_h);
         self.drawBackdrop(u, screen_w, screen_h);
         self.drawFrame(u, rect);
-        u.drawTexture(@intCast(world_map_texture.handle), .{ .x = rect.x, .y = rect.y, .width = rect.size, .height = rect.size });
+        self.drawMapTexture(u, rect, world_map_texture, world_map.width);
         self.drawGrid(u, rect);
+        self.drawScaleBar(u, rect);
         self.drawPlayerMarker(u, rect, world_map.width, world_map.height, camera_pos);
         self.drawHeader(u, rect);
         self.drawFooter(u, rect, camera_pos);
@@ -122,28 +166,43 @@ pub const MapController = struct {
         self.map_needs_update = true;
     }
 
-    fn handleZoom(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, dt: f32) void {
+    fn handleZoom(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, dt: f32, rect: MapRect) void {
         const before = self.map_target_zoom;
-        if (mapper.isActionActive(input, .map_zoom_in)) self.map_target_zoom /= @exp(3.0 * dt);
-        if (mapper.isActionActive(input, .map_zoom_out)) self.map_target_zoom *= @exp(3.0 * dt);
+        if (mapper.isActionActive(input, .map_zoom_in)) self.map_target_zoom /= @exp(KEY_ZOOM_RATE * dt);
+        if (mapper.isActionActive(input, .map_zoom_out)) self.map_target_zoom *= @exp(KEY_ZOOM_RATE * dt);
 
         const scroll_y = input.getScrollDelta().y;
-        if (scroll_y != 0) self.map_target_zoom /= @exp(scroll_y * 0.45);
+        if (scroll_y != 0) self.map_target_zoom /= @exp(scroll_y * WHEEL_ZOOM_RATE);
 
         self.map_target_zoom = std.math.clamp(self.map_target_zoom, MIN_ZOOM, MAX_ZOOM);
+        if (scroll_y != 0 and self.map_target_zoom != before) {
+            const mouse = input.getMousePosition();
+            const cursor_x = @as(f32, @floatFromInt(mouse.x)) - (rect.x + rect.size * 0.5);
+            const cursor_z = @as(f32, @floatFromInt(mouse.y)) - (rect.y + rect.size * 0.5);
+            const old_world_per_pixel = screenPixelToWorldScale(self.map_zoom, rect.size);
+            const new_world_per_pixel = screenPixelToWorldScale(self.map_target_zoom, rect.size);
+            self.map_pos_x += cursor_x * (old_world_per_pixel - new_world_per_pixel);
+            self.map_pos_z += cursor_z * (old_world_per_pixel - new_world_per_pixel);
+            self.map_target_pos_x = self.map_pos_x;
+            self.map_target_pos_z = self.map_pos_z;
+            self.map_zoom = self.map_target_zoom;
+            self.vel_x = 0;
+            self.vel_z = 0;
+        }
         if (self.map_target_zoom != before) self.map_needs_update = true;
     }
 
-    fn handlePan(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, dt: f32, map_ui_size: f32, world_map_width: u32) void {
+    fn handlePan(self: *MapController, input: IRawInputProvider, mapper: IInputMapper, dt: f32, map_ui_size: f32) void {
         const mouse_pos = input.getMousePosition();
         const mouse_x: f32 = @floatFromInt(mouse_pos.x);
         const mouse_y: f32 = @floatFromInt(mouse_pos.y);
-        const safe_dt = @max(dt, 0.001);
-        const pixel_world_scale = screenPixelToWorldScale(self.map_zoom, map_ui_size, world_map_width);
+        const pixel_world_scale = screenPixelToWorldScale(self.map_zoom, map_ui_size);
 
         if (input.isMouseButtonPressed(.left)) {
             self.last_mouse_x = mouse_x;
             self.last_mouse_y = mouse_y;
+            self.map_pos_x = self.map_target_pos_x;
+            self.map_pos_z = self.map_target_pos_z;
             self.is_dragging = true;
             self.vel_x = 0;
             self.vel_z = 0;
@@ -153,12 +212,14 @@ pub const MapController = struct {
             const drag_dx = mouse_x - self.last_mouse_x;
             const drag_dz = mouse_y - self.last_mouse_y;
             if (@abs(drag_dx) > 0.5 or @abs(drag_dz) > 0.5) {
-                const pan_dx = drag_dx * pixel_world_scale;
-                const pan_dz = drag_dz * pixel_world_scale;
+                const pan_dx = drag_dx * pixel_world_scale * DRAG_SENSITIVITY;
+                const pan_dz = drag_dz * pixel_world_scale * DRAG_SENSITIVITY;
                 self.map_target_pos_x -= pan_dx;
                 self.map_target_pos_z -= pan_dz;
-                self.vel_x = -pan_dx / safe_dt;
-                self.vel_z = -pan_dz / safe_dt;
+                self.map_pos_x -= pan_dx;
+                self.map_pos_z -= pan_dz;
+                self.vel_x = 0;
+                self.vel_z = 0;
                 self.map_needs_update = true;
             }
             self.last_mouse_x = mouse_x;
@@ -189,7 +250,7 @@ pub const MapController = struct {
     }
 
     fn applyKeyboardPan(self: *MapController, mapper: IInputMapper, input: IRawInputProvider, dt: f32) void {
-        const pan_kb_speed = 1600.0 * self.map_zoom;
+        const pan_kb_speed = KEYBOARD_PAN_SPEED * self.map_zoom;
         const move_vec = mapper.getMovementVector(input);
         if (move_vec.x == 0 and move_vec.z == 0) return;
 
@@ -222,14 +283,93 @@ pub const MapController = struct {
         u.drawRectOutline(.{ .x = rect.x, .y = rect.y, .width = rect.size, .height = rect.size }, Color.white, 2.0);
     }
 
-    fn drawGrid(_: *MapController, u: *UISystem, rect: MapRect) void {
-        const grid_color = Color.rgba(1.0, 1.0, 1.0, 0.12);
-        var i: u32 = 1;
-        while (i < 4) : (i += 1) {
-            const offset = rect.size * @as(f32, @floatFromInt(i)) * 0.25;
-            u.drawRect(.{ .x = rect.x + offset, .y = rect.y, .width = 1, .height = rect.size }, grid_color);
-            u.drawRect(.{ .x = rect.x, .y = rect.y + offset, .width = rect.size, .height = 1 }, grid_color);
+    fn drawGrid(self: *MapController, u: *UISystem, rect: MapRect) void {
+        const world_per_pixel = screenPixelToWorldScale(self.map_zoom, rect.size);
+        const spacing = gridSpacing(world_per_pixel, 112.0);
+        const half_span = rect.size * world_per_pixel * 0.5;
+        const min_x = self.map_pos_x - half_span;
+        const max_x = self.map_pos_x + half_span;
+        const min_z = self.map_pos_z - half_span;
+        const max_z = self.map_pos_z + half_span;
+        const grid_color = Color.rgba(0.92, 0.96, 1.0, 0.14);
+        const label_color = Color.rgba(0.90, 0.95, 1.0, 0.72);
+
+        var world_x = @floor(min_x / spacing) * spacing;
+        while (world_x <= max_x) : (world_x += spacing) {
+            const screen_x = rect.x + (world_x - min_x) / world_per_pixel;
+            u.drawRect(.{ .x = screen_x, .y = rect.y, .width = 1, .height = rect.size }, grid_color);
+            if (screen_x < rect.x + rect.size - 68) {
+                var label_buf: [32]u8 = undefined;
+                const label = std.fmt.bufPrint(&label_buf, "X {d:.0}", .{world_x}) catch "X ?";
+                Font.drawText(u, label, screen_x + 4, rect.y + 5, 1.15, label_color);
+            }
         }
+
+        var world_z = @floor(min_z / spacing) * spacing;
+        while (world_z <= max_z) : (world_z += spacing) {
+            const screen_y = rect.y + (world_z - min_z) / world_per_pixel;
+            u.drawRect(.{ .x = rect.x, .y = screen_y, .width = rect.size, .height = 1 }, grid_color);
+            if (screen_y < rect.y + rect.size - 16) {
+                var label_buf: [32]u8 = undefined;
+                const label = std.fmt.bufPrint(&label_buf, "Z {d:.0}", .{world_z}) catch "Z ?";
+                Font.drawText(u, label, rect.x + 5, screen_y + 4, 1.15, label_color);
+            }
+        }
+    }
+
+    fn drawScaleBar(self: *MapController, u: *UISystem, rect: MapRect) void {
+        const world_per_pixel = screenPixelToWorldScale(self.map_zoom, rect.size);
+        const world_length = gridSpacing(world_per_pixel, 120.0);
+        const pixel_length = world_length / world_per_pixel;
+        const x = rect.x + 20;
+        const y = rect.y + rect.size - 28;
+        u.drawRect(.{ .x = x - 8, .y = y - 13, .width = pixel_length + 16, .height = 31 }, Color.rgba(0.015, 0.02, 0.025, 0.72));
+        u.drawRect(.{ .x = x, .y = y, .width = pixel_length, .height = 3 }, Color.white);
+        u.drawRect(.{ .x = x, .y = y - 4, .width = 2, .height = 11 }, Color.white);
+        u.drawRect(.{ .x = x + pixel_length - 2, .y = y - 4, .width = 2, .height = 11 }, Color.white);
+
+        var label_buf: [32]u8 = undefined;
+        const label = std.fmt.bufPrint(&label_buf, "{d:.0} blocks", .{world_length}) catch "? blocks";
+        Font.drawText(u, label, x + 4, y - 13, 1.15, Color.white);
+    }
+
+    fn gridSpacing(world_per_pixel: f32, target_pixels: f32) f32 {
+        const target_world = @max(world_per_pixel * target_pixels, 1.0);
+        var spacing: f32 = 1.0;
+        while (spacing < target_world) spacing *= 2.0;
+        return spacing;
+    }
+
+    fn drawMapTexture(self: *MapController, u: *UISystem, rect: MapRect, texture: *const Texture, texture_width: u32) void {
+        // Unknown coverage uses a map-like ocean tint rather than flashing to
+        // black while the tiny progressive preview is being generated.
+        u.drawRect(.{ .x = rect.x, .y = rect.y, .width = rect.size, .height = rect.size }, Color.rgba(0.025, 0.10, 0.14, 1.0));
+        if (!self.has_texture_view) return;
+
+        const current_scale = textureSamplingScale(self.map_zoom, texture_width);
+        const texture_width_f: f32 = @floatFromInt(texture_width);
+        const world_per_screen_pixel = current_scale * texture_width_f / rect.size;
+        const draw_size = rect.size * self.texture_scale / current_scale;
+        const transformed_x = rect.x + rect.size * 0.5 + (self.texture_center_x - self.map_pos_x) / world_per_screen_pixel - draw_size * 0.5;
+        const transformed_y = rect.y + rect.size * 0.5 + (self.texture_center_z - self.map_pos_z) / world_per_screen_pixel - draw_size * 0.5;
+
+        const visible_x0 = @max(rect.x, transformed_x);
+        const visible_y0 = @max(rect.y, transformed_y);
+        const visible_x1 = @min(rect.x + rect.size, transformed_x + draw_size);
+        const visible_y1 = @min(rect.y + rect.size, transformed_y + draw_size);
+        if (visible_x1 <= visible_x0 or visible_y1 <= visible_y0) return;
+
+        u.drawTextureRegion(
+            @intCast(texture.handle),
+            .{ .x = visible_x0, .y = visible_y0, .width = visible_x1 - visible_x0, .height = visible_y1 - visible_y0 },
+            .{
+                .u0 = (visible_x0 - transformed_x) / draw_size,
+                .v0 = (visible_y0 - transformed_y) / draw_size,
+                .u1 = (visible_x1 - transformed_x) / draw_size,
+                .v1 = (visible_y1 - transformed_y) / draw_size,
+            },
+            Color.white,
+        );
     }
 
     fn drawPlayerMarker(self: *MapController, u: *UISystem, rect: MapRect, map_width: u32, map_height: u32, camera_pos: Vec3) void {
@@ -242,11 +382,12 @@ pub const MapController = struct {
     }
 
     fn drawHeader(self: *MapController, u: *UISystem, rect: MapRect) void {
-        Font.drawText(u, "WORLD MAP", rect.x, rect.y - 58.0, 3.0, Color.white);
+        Font.drawText(u, "WORLD MAP", rect.x, rect.y - 48.0, 3.0, Color.white);
         Font.drawText(u, "Drag to pan  |  Scroll/+/- to zoom  |  Space to center  |  M to close", rect.x + 4.0, rect.y + rect.size + 16.0, 1.5, Color.rgba(0.78, 0.84, 0.9, 1.0));
 
         var buf: [48]u8 = undefined;
-        const zoom_text = std.fmt.bufPrint(&buf, "scale: {d:.2} blocks/px", .{self.map_zoom}) catch "scale: ?";
+        const screen_scale = self.map_zoom * MAP_REFERENCE_SIZE / rect.size;
+        const zoom_text = std.fmt.bufPrint(&buf, "scale: {d:.2} blocks/screen px", .{screen_scale}) catch "scale: ?";
         Font.drawText(u, zoom_text, rect.x + rect.size - 210.0, rect.y - 38.0, 1.5, Color.rgba(0.78, 0.84, 0.9, 1.0));
     }
 
@@ -258,22 +399,29 @@ pub const MapController = struct {
 
     pub fn getMapRect(screen_w: f32, screen_h: f32) MapRect {
         const available_w = @max(screen_w - MAP_PADDING * 2.0, 64.0);
-        const available_h = @max(screen_h - 150.0, 64.0);
+        // Keep enough room for the title and controls while using nearly the
+        // full display height. Width remains square so map scale is uniform.
+        const available_h = @max(screen_h - 100.0, 64.0);
         const size = @min(@min(available_w, available_h), @min(screen_w, screen_h) * MAP_SCREEN_FRACTION);
         return .{
             .x = (screen_w - size) * 0.5,
-            .y = (screen_h - size) * 0.5 + 10.0,
+            .y = (screen_h - size) * 0.5 + 4.0,
             .size = size,
         };
     }
 
-    pub fn screenPixelToWorldScale(zoom: f32, map_ui_size: f32, world_map_width: u32) f32 {
-        return zoom * @as(f32, @floatFromInt(world_map_width)) / map_ui_size;
+    pub fn screenPixelToWorldScale(zoom: f32, map_ui_size: f32) f32 {
+        return zoom * MAP_REFERENCE_SIZE / map_ui_size;
+    }
+
+    pub fn textureSamplingScale(zoom: f32, texture_width: u32) f32 {
+        return zoom * MAP_REFERENCE_SIZE / @as(f32, @floatFromInt(texture_width));
     }
 
     pub fn playerMarker(self: *const MapController, rect: MapRect, map_width: u32, map_height: u32, camera_pos: Vec3) MarkerPosition {
-        const rx = (camera_pos.x - self.map_pos_x) / (self.map_zoom * @as(f32, @floatFromInt(map_width)));
-        const rz = (camera_pos.z - self.map_pos_z) / (self.map_zoom * @as(f32, @floatFromInt(map_height)));
+        const sample_scale = textureSamplingScale(self.map_zoom, map_width);
+        const rx = (camera_pos.x - self.map_pos_x) / (sample_scale * @as(f32, @floatFromInt(map_width)));
+        const rz = (camera_pos.z - self.map_pos_z) / (sample_scale * @as(f32, @floatFromInt(map_height)));
         const px = rect.x + (rx + 0.5) * rect.size;
         const py = rect.y + (rz + 0.5) * rect.size;
 
@@ -295,7 +443,17 @@ test "MapController getMapRect fits display" {
 }
 
 test "MapController screenPixelToWorldScale includes zoom and texture ratio" {
-    try std.testing.expectApproxEqAbs(@as(f32, 2.0), MapController.screenPixelToWorldScale(4.0, 512.0, 256), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), MapController.screenPixelToWorldScale(4.0, 512.0), 0.001);
+}
+
+test "MapController textureSamplingScale preserves map span at higher resolution" {
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), MapController.textureSamplingScale(4.0, 512), 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), MapController.textureSamplingScale(4.0, 1024), 0.001);
+}
+
+test "MapController grid spacing stays legible across zoom levels" {
+    try std.testing.expectEqual(@as(f32, 128), MapController.gridSpacing(1.0, 112.0));
+    try std.testing.expectEqual(@as(f32, 512), MapController.gridSpacing(4.0, 112.0));
 }
 
 test "MapController playerMarker centers player at map center" {

@@ -126,6 +126,7 @@ pub const FlatWorldGenerator = struct {
         .getSeed = getSeedWrapper,
         .getRegionInfo = getRegionInfoWrapper,
         .getColumnInfo = getColumnInfoWrapper,
+        .column_info_thread_safe = true,
         .deinit = deinitWrapper,
     };
 

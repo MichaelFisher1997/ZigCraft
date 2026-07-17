@@ -218,12 +218,15 @@ pub const GameSession = struct {
         });
         errdefer world.deinit();
 
-        var world_map = try WorldMap.init(allocator, 256, 256);
+        // Keep source texels near 1:1 with the fullscreen map on common
+        // displays. At the default zoom this also samples one world block per
+        // texel, so individual builds and canopy shapes remain visible.
+        var world_map = try WorldMap.init(allocator, 1024, 1024);
         errdefer world_map.deinit();
 
         var world_map_texture = try Texture.initEmpty(rhi.resourceManager(), world_map.width, world_map.height, .rgba, .{
-            .min_filter = .nearest,
-            .mag_filter = .nearest,
+            .min_filter = .linear,
+            .mag_filter = .linear,
             .generate_mipmaps = false,
             .wrap_s = .clamp_to_edge,
             .wrap_t = .clamp_to_edge,
@@ -300,9 +303,10 @@ pub const GameSession = struct {
     pub fn deinit(self: *GameSession) void {
         self.ecs_render_system.deinit();
         self.ecs_registry.deinit();
+        // The map worker reads the generator, so it must join before World.
+        self.world_map.deinit();
         self.world.interface().deinit();
         self.world_map_texture.deinit();
-        self.world_map.deinit();
         self.block_outline.deinit();
         self.hand_renderer.deinit();
         self.allocator.destroy(self);
@@ -339,7 +343,7 @@ pub const GameSession = struct {
                     input.setMouseCapture(@ptrCast(@alignCast(window)), !self.inventory_ui_state.visible);
                 }
 
-                if (!self.inventory_ui_state.visible) {
+                if (!self.inventory_ui_state.visible and !self.map_controller.show_map) {
                     if (mapper.isActionPressed(input, .slot_1)) self.inventory.selectSlot(0);
                     if (mapper.isActionPressed(input, .slot_2)) self.inventory.selectSlot(1);
                     if (mapper.isActionPressed(input, .slot_3)) self.inventory.selectSlot(2);
@@ -355,7 +359,7 @@ pub const GameSession = struct {
                     }
                 }
 
-                self.map_controller.update(input, mapper, &self.camera, dt, window, screen_w, screen_h, self.world_map.width);
+                self.map_controller.update(input, mapper, &self.camera, dt, window, screen_w, screen_h);
 
                 if (self.map_controller.show_map) {
                     // map open – skip player/world update

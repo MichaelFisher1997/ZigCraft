@@ -35,6 +35,11 @@ pub const Chunk = struct {
     light: [CHUNK_VOLUME]PackedLight,
     biomes: [CHUNK_SIZE_X * CHUNK_SIZE_Z]BiomeId,
     heightmap: [CHUNK_SIZE_X * CHUNK_SIZE_Z]i16,
+    /// Highest live non-air block per column for maps and other surface views.
+    /// Unlike `heightmap`, this includes water, leaves, logs, and foliage.
+    map_surface_blocks: [CHUNK_SIZE_X * CHUNK_SIZE_Z]BlockType,
+    map_surface_heights: [CHUNK_SIZE_X * CHUNK_SIZE_Z]i16,
+    map_surface_revision: u64 = 0,
     state: State = .missing,
     job_token: u32 = 0,
     /// Monotonic mesh-input revisions. They are updated while storage owns the chunk.
@@ -59,6 +64,8 @@ pub const Chunk = struct {
             .light = [_]PackedLight{PackedLight.init(0, 0)} ** CHUNK_VOLUME,
             .biomes = [_]BiomeId{.plains} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
             .heightmap = [_]i16{0} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
+            .map_surface_blocks = [_]BlockType{.air} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
+            .map_surface_heights = [_]i16{-1} ** (CHUNK_SIZE_X * CHUNK_SIZE_Z),
             .state = .missing,
             .pin_count = std.atomic.Value(u32).init(0),
         };
@@ -214,6 +221,39 @@ pub const Chunk = struct {
             if (block != .air and block != .water) return @intCast(y);
         }
         return 0;
+    }
+
+    /// Rebuilds the live top-surface cache in one pass over block storage.
+    /// Returns the total number of non-air blocks, allowing generation
+    /// publication to reuse this scan for empty-chunk validation.
+    pub fn rebuildMapSurface(self: *Chunk) u32 {
+        @memset(&self.map_surface_blocks, .air);
+        @memset(&self.map_surface_heights, -1);
+
+        var non_air_count: u32 = 0;
+        var y: i32 = CHUNK_SIZE_Y - 1;
+        while (y >= 0) : (y -= 1) {
+            var z: u32 = 0;
+            while (z < CHUNK_SIZE_Z) : (z += 1) {
+                var x: u32 = 0;
+                while (x < CHUNK_SIZE_X) : (x += 1) {
+                    const block = self.getBlock(x, @intCast(y), z);
+                    if (block == .air) continue;
+                    non_air_count += 1;
+                    const column = x + z * CHUNK_SIZE_X;
+                    if (self.map_surface_heights[column] < 0) {
+                        self.map_surface_blocks[column] = block;
+                        self.map_surface_heights[column] = @intCast(y);
+                    }
+                }
+            }
+        }
+        self.map_surface_revision = self.content_revision.load(.acquire);
+        return non_air_count;
+    }
+
+    pub fn mapSurfaceIsCurrent(self: *const Chunk) bool {
+        return self.map_surface_revision == self.content_revision.load(.acquire);
     }
 
     /// Increments the async-work pin count for this chunk.

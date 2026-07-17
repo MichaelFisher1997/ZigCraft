@@ -355,6 +355,7 @@ pub const OverworldV2Generator = struct {
         .getSeed = getSeedWrapper,
         .getRegionInfo = getRegionInfoWrapper,
         .getColumnInfo = getColumnInfoWrapper,
+        .column_info_thread_safe = true,
         .deinit = deinitWrapper,
     };
 

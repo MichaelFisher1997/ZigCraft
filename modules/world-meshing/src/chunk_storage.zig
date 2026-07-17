@@ -73,6 +73,7 @@ pub const ChunkStorage = struct {
     lighting_mutex: sync.Mutex,
     allocator: std.mem.Allocator,
     next_job_token: u32,
+    map_surface_revision: std.atomic.Value(u64),
 
     pub fn init(allocator: std.mem.Allocator) ChunkStorage {
         return .{
@@ -82,6 +83,7 @@ pub const ChunkStorage = struct {
             .lighting_mutex = .{},
             .allocator = allocator,
             .next_job_token = 1,
+            .map_surface_revision = .init(0),
         };
     }
 
@@ -145,6 +147,14 @@ pub const ChunkStorage = struct {
         self.chunks_mutex.lockShared();
         defer self.chunks_mutex.unlockShared();
         return self.chunks.count();
+    }
+
+    pub fn markMapSurfaceChanged(self: *ChunkStorage) void {
+        _ = self.map_surface_revision.fetchAdd(1, .release);
+    }
+
+    pub fn getMapSurfaceRevision(self: *const ChunkStorage) u64 {
+        return self.map_surface_revision.load(.acquire);
     }
 
     /// Sum total vertex count across all chunk meshes
@@ -231,6 +241,7 @@ pub const ChunkStorage = struct {
             } else {
                 self.allocator.destroy(entry.value);
             }
+            self.markMapSurfaceChanged();
             return true;
         }
         return false;

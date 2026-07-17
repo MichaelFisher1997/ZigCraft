@@ -28,6 +28,7 @@ const Generator = gen_interface.Generator;
 const GeneratorInfo = gen_interface.GeneratorInfo;
 const WorldgenError = gen_interface.WorldgenError;
 const ColumnInfo = gen_interface.ColumnInfo;
+const MapSample = gen_interface.MapSample;
 const log = @import("engine-core").log;
 
 const terrain_shape_mod = @import("terrain_shape_generator.zig");
@@ -126,7 +127,39 @@ pub const OverworldGenerator = struct {
     }
 
     pub fn getColumnInfo(self: *const OverworldGenerator, wx: f32, wz: f32) ColumnInfo {
-        const column = self.terrain_shape.sampleColumnData(wx, wz, 0);
+        return self.getColumnInfoReduced(wx, wz, 0);
+    }
+
+    pub fn getColumnInfoReduced(self: *const OverworldGenerator, wx: f32, wz: f32, reduction: u8) ColumnInfo {
+        const column = self.terrain_shape.sampleColumnData(wx, wz, @min(reduction, 4));
+        return .{
+            .height = column.terrain_height_i,
+            .biome = self.selectColumnBiome(column),
+            .is_ocean = column.continentalness < self.terrain_shape.getOceanThreshold(),
+            .temperature = column.temperature,
+            .humidity = column.humidity,
+            .continentalness = column.continentalness,
+        };
+    }
+
+    /// Samples terrain, biome, climate, and water in one terrain-shape query.
+    /// Rivers remain encoded by the biome and river mask.
+    pub fn getMapSampleReduced(self: *const OverworldGenerator, wx: f32, wz: f32, reduction: u8) MapSample {
+        const column = self.terrain_shape.sampleMapColumnData(wx, wz, @min(reduction, 4));
+        return .{
+            .terrain_height = column.terrain_height_i,
+            .biome = self.selectColumnBiome(column),
+            .water = classifyMapWater(column),
+            .sea_level = self.terrain_shape.getSeaLevel(),
+            .temperature = column.temperature,
+            .humidity = column.humidity,
+            .continentalness = column.continentalness,
+            .river_mask = column.river_mask,
+            .ridge_mask = column.ridge_mask,
+        };
+    }
+
+    fn selectColumnBiome(self: *const OverworldGenerator, column: terrain_shape_mod.ColumnData) BiomeId {
         const climate = self.terrain_shape.biome_source.computeClimate(
             column.temperature,
             column.humidity,
@@ -142,16 +175,16 @@ pub const OverworldGenerator = struct {
             .continentalness = column.continentalness,
             .ridge_mask = column.ridge_mask,
         };
+        return self.terrain_shape.biome_source.selectBiome(climate, structural, column.river_mask);
+    }
 
-        const biome_id = self.terrain_shape.biome_source.selectBiome(climate, structural, column.river_mask);
-        return .{
-            .height = column.terrain_height_i,
-            .biome = biome_id,
-            .is_ocean = column.continentalness < self.terrain_shape.getOceanThreshold(),
-            .temperature = column.temperature,
-            .humidity = column.humidity,
-            .continentalness = column.continentalness,
-        };
+    fn classifyMapWater(column: terrain_shape_mod.ColumnData) gen_interface.MapWaterClassification {
+        if (!column.is_underwater) return .none;
+        // sampleColumnData already computed warped, coast-jittered
+        // continentalness. Re-running the full-resolution warp and continent
+        // noise here doubled the expensive work for every underwater inland
+        // sample without adding useful map detail.
+        return if (column.is_ocean) .ocean else .inland;
     }
 
     pub fn maybeRecenterCache(self: *OverworldGenerator, player_x: i32, player_z: i32) bool {
@@ -777,6 +810,9 @@ pub const OverworldGenerator = struct {
         .getSeed = getSeedWrapper,
         .getRegionInfo = getRegionInfoWrapper,
         .getColumnInfo = getColumnInfoWrapper,
+        .getColumnInfoReduced = getColumnInfoReducedWrapper,
+        .getMapSampleReduced = getMapSampleReducedWrapper,
+        .column_info_thread_safe = true,
         .deinit = deinitWrapper,
     };
 
@@ -808,6 +844,16 @@ pub const OverworldGenerator = struct {
     fn getColumnInfoWrapper(ptr: *anyopaque, wx: f32, wz: f32) ColumnInfo {
         const self: *OverworldGenerator = @ptrCast(@alignCast(ptr));
         return self.getColumnInfo(wx, wz);
+    }
+
+    fn getColumnInfoReducedWrapper(ptr: *anyopaque, wx: f32, wz: f32, reduction: u8) ColumnInfo {
+        const self: *OverworldGenerator = @ptrCast(@alignCast(ptr));
+        return self.getColumnInfoReduced(wx, wz, reduction);
+    }
+
+    fn getMapSampleReducedWrapper(ptr: *anyopaque, wx: f32, wz: f32, reduction: u8) MapSample {
+        const self: *OverworldGenerator = @ptrCast(@alignCast(ptr));
+        return self.getMapSampleReduced(wx, wz, reduction);
     }
 
     fn deinitWrapper(ptr: *anyopaque, allocator: std.mem.Allocator) void {
