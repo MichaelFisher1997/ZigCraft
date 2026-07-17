@@ -13,7 +13,7 @@ const block_registry = world_core.block_registry;
 
 pub const WorldMap = struct {
     const COARSE_TARGET_RESOLUTION: u32 = 256;
-    const FULL_RENDER_WORKERS: u32 = 4;
+    const MAX_FULL_RENDER_WORKERS: u32 = 8;
 
     pub const View = struct {
         center_x: f32,
@@ -68,7 +68,7 @@ pub const WorldMap = struct {
         }
 
         pub fn sampleRepresentative(self: *const LoadedSurfaceOverlay, wx: f32, wz: f32, scale: f32) ?LoadedSurfaceCell {
-            const radius = if (scale <= 8.0) @max(scale * 0.5, 0.5) else 0.0;
+            const radius = @max(scale * 0.5, 0.5);
             const min_x: i32 = @intFromFloat(@floor(wx - radius));
             const max_x: i32 = @intFromFloat(@ceil(wx + radius) - 1.0);
             const min_z: i32 = @intFromFloat(@floor(wz - radius));
@@ -125,6 +125,7 @@ pub const WorldMap = struct {
         sample_step: u32,
         reduction: u8,
         start_slice: u32,
+        slice_stride: u32,
         cancelled: *std.atomic.Value(bool),
     };
 
@@ -324,11 +325,12 @@ pub const WorldMap = struct {
     }
 
     fn renderParallel(self: *WorldMap, request: Request, sample_step: u32, reduction: u8) bool {
+        const worker_count: u32 = @intCast(@min(@max(std.Thread.getCpuCount() catch 4, 2), MAX_FULL_RENDER_WORKERS));
         var cancelled = std.atomic.Value(bool).init(false);
-        var threads: [FULL_RENDER_WORKERS - 1]?std.Thread = .{ null, null, null };
-        var slices: [FULL_RENDER_WORKERS - 1]RenderSlice = undefined;
+        var threads: [MAX_FULL_RENDER_WORKERS - 1]?std.Thread = @splat(null);
+        var slices: [MAX_FULL_RENDER_WORKERS - 1]RenderSlice = undefined;
 
-        for (1..FULL_RENDER_WORKERS) |worker_index| {
+        for (1..worker_count) |worker_index| {
             const slot = worker_index - 1;
             slices[slot] = .{
                 .map = self,
@@ -336,26 +338,27 @@ pub const WorldMap = struct {
                 .sample_step = sample_step,
                 .reduction = reduction,
                 .start_slice = @intCast(worker_index),
+                .slice_stride = worker_count,
                 .cancelled = &cancelled,
             };
             threads[slot] = std.Thread.spawn(.{}, renderSliceMain, .{slices[slot]}) catch null;
         }
 
-        var rendered = self.renderRows(request, sample_step, reduction, 0, FULL_RENDER_WORKERS);
-        for (&threads) |*thread| if (thread.*) |running| running.join();
+        var rendered = self.renderRows(request, sample_step, reduction, 0, worker_count);
+        for (threads[0 .. worker_count - 1]) |thread| if (thread) |running| running.join();
 
         // Thread creation failure is rare, but rendering the missing slice on
         // this worker preserves a complete map instead of publishing stripes.
-        for (threads, 1..) |thread, worker_index| {
+        for (threads[0 .. worker_count - 1], 1..) |thread, worker_index| {
             if (thread == null and rendered) {
-                rendered = self.renderRows(request, sample_step, reduction, @intCast(worker_index), FULL_RENDER_WORKERS);
+                rendered = self.renderRows(request, sample_step, reduction, @intCast(worker_index), worker_count);
             }
         }
         return rendered and !cancelled.load(.acquire);
     }
 
     fn renderSliceMain(slice: RenderSlice) void {
-        if (!slice.map.renderRows(slice.request, slice.sample_step, slice.reduction, slice.start_slice, FULL_RENDER_WORKERS)) {
+        if (!slice.map.renderRows(slice.request, slice.sample_step, slice.reduction, slice.start_slice, slice.slice_stride)) {
             slice.cancelled.store(true, .release);
         }
     }
@@ -367,8 +370,13 @@ pub const WorldMap = struct {
         const start_z = request.center_z - (hh * request.scale);
 
         var py = start_slice * sample_step;
+        var rows_since_cancel_check: u32 = 16;
         while (py < self.height) : (py += sample_step * slice_stride) {
-            if (self.shouldCancel(request.generation)) return false;
+            if (rows_since_cancel_check >= 16) {
+                if (self.shouldCancel(request.generation)) return false;
+                rows_since_cancel_check = 0;
+            }
+            rows_since_cancel_check += 1;
             const sample_y = @min(py + sample_step / 2, self.height - 1);
             const wz = start_z + @as(f32, @floatFromInt(sample_y)) * request.scale;
             var px: u32 = 0;

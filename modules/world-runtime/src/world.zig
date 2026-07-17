@@ -1037,7 +1037,10 @@ pub const World = struct {
             const key = entry.key_ptr.*;
             if (key.x < min_chunk.chunk_x or key.x > max_chunk.chunk_x or key.z < min_chunk.chunk_z or key.z > max_chunk.chunk_z) continue;
             const chunk = &entry.value_ptr.*.chunk;
-            if (!chunk.generated) continue;
+            // Generation rebuilds the cached surface before publishing the
+            // chunk as generated. Skip chunks still owned by a worker so this
+            // shared-lock copy never races that unlocked rebuild.
+            if (!chunk.generated or chunk.state != .generated) continue;
             if (!chunk.mapSurfaceIsCurrent()) _ = chunk.rebuildMapSurface();
             overlay.appendAssumeCapacity(.{
                 .chunk_x = key.x,
