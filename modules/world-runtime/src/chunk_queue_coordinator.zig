@@ -587,12 +587,10 @@ pub const ChunkQueueCoordinator = struct {
             // Validate worker-owned block data before taking the global storage
             // writer lock. Scanning all 65,536 blocks under that lock serialized
             // otherwise independent generation completions and render access.
-            var non_air_count: u32 = 0;
-            if (chunk_data.chunk.generated) {
-                for (chunk_data.chunk.blocks) |block| {
-                    if (block != .air) non_air_count += 1;
-                }
-            }
+            const non_air_count = if (chunk_data.chunk.generated)
+                chunk_data.chunk.rebuildMapSurface()
+            else
+                0;
 
             self.storage.chunks_mutex.lock();
             const publishable = if (self.storage.chunks.get(ChunkKey{ .x = cx, .z = cz })) |data|
@@ -613,6 +611,7 @@ pub const ChunkQueueCoordinator = struct {
                     chunk_data.chunk.state = .missing;
                 } else {
                     chunk_data.chunk.state = .generated;
+                    self.storage.markMapSurfaceChanged();
                     _ = self.chunks_generated_total.fetchAdd(1, .monotonic);
                 }
             }

@@ -4,6 +4,7 @@ const BuildOptions = struct {
     options: *std.Build.Step.Options,
     engine_ui_options: *std.Build.Step.Options,
     world_lod_options: *std.Build.Step.Options,
+    worldgen_overworld_options: *std.Build.Step.Options,
     world_runtime_options: *std.Build.Step.Options,
     engine_graphics_options: *std.Build.Step.Options,
     enable_debug_shadows: bool,
@@ -91,8 +92,6 @@ fn defineModules(
     const world_lod_options = opts.world_lod_options;
     const world_runtime_options = opts.world_runtime_options;
     const engine_graphics_options = opts.engine_graphics_options;
-    const chunk_debug_mode = opts.chunk_debug_mode;
-    const chunk_debug_enable = opts.chunk_debug_enable;
     const shadow_test_variant = opts.shadow_test_variant;
     const sanitize_c = opts.sanitize_c;
 
@@ -336,9 +335,7 @@ fn defineModules(
     worldgen_api.addImport("world-core", world_core);
     addSharedImports(worldgen_common, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     worldgen_common.addImport("world-core", world_core);
-    const worldgen_overworld_options = b.addOptions();
-    worldgen_overworld_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
-    worldgen_overworld_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
+    const worldgen_overworld_options = opts.worldgen_overworld_options;
     addSharedImports(worldgen_overworld, zig_math, zig_noise, fs_module, sync_module, c_module, options);
     worldgen_overworld.addImport("engine-core", engine_core);
     worldgen_overworld.addImport("engine-rhi", engine_rhi);
@@ -737,6 +734,28 @@ fn defineBuildSteps(
     run_world_lod_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
     test_step.dependOn(&run_world_lod_tests.step);
 
+    const worldgen_overworld_test_root = b.createModule(.{
+        .root_source_file = b.path("modules/worldgen-overworld/src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .sanitize_c = sanitize_c,
+    });
+    addSharedImports(worldgen_overworld_test_root, modules.zig_math, modules.zig_noise, modules.fs_module, modules.sync_module, modules.c_module, options);
+    worldgen_overworld_test_root.addImport("engine-core", modules.engine_core);
+    worldgen_overworld_test_root.addImport("engine-rhi", modules.engine_rhi);
+    worldgen_overworld_test_root.addImport("world-core", modules.world_core);
+    worldgen_overworld_test_root.addImport("worldgen-api", modules.worldgen_api);
+    worldgen_overworld_test_root.addImport("worldgen-common", modules.worldgen_common);
+    worldgen_overworld_test_root.addOptions("worldgen_overworld_options", opts.worldgen_overworld_options);
+
+    const worldgen_overworld_tests = b.addTest(.{
+        .root_module = worldgen_overworld_test_root,
+        .filters = test_filters,
+    });
+    const run_worldgen_overworld_tests = addRunArtifact(b, worldgen_overworld_tests);
+    run_worldgen_overworld_tests.setEnvironmentVariable("ZIGCRAFT_LOG_LEVEL", "fatal");
+    test_step.dependOn(&run_worldgen_overworld_tests.step);
+
     const benchmark_phase5_gate_root = b.createModule(.{
         .root_source_file = b.path("phase5_benchmark_gate_tests.zig"),
         .target = target,
@@ -1016,6 +1035,10 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
     world_runtime_options.addOption(u32, "startup_diagnostic_seconds", startup_diagnostic_seconds);
     world_runtime_options.addOption(bool, "world_runtime_module", true);
 
+    const worldgen_overworld_options = b.addOptions();
+    worldgen_overworld_options.addOption(bool, "chunk_debug_mode", chunk_debug_mode);
+    worldgen_overworld_options.addOption([]const u8, "chunk_debug_enable", chunk_debug_enable);
+
     const skip_present = b.option(bool, "skip-present", "Skip presentation (headless mode) to avoid driver crashes") orelse false;
     options.addOption(bool, "skip_present", skip_present);
 
@@ -1117,6 +1140,7 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
         .options = options,
         .engine_ui_options = engine_ui_options,
         .world_lod_options = world_lod_options,
+        .worldgen_overworld_options = worldgen_overworld_options,
         .world_runtime_options = world_runtime_options,
         .engine_graphics_options = engine_graphics_options,
         .enable_debug_shadows = enable_debug_shadows,

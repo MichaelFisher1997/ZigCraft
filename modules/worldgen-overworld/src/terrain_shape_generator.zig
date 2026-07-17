@@ -190,6 +190,19 @@ pub const TerrainShapeGenerator = struct {
         return self.sampleColumnDataWithControls(wx, wz, reduction, controls);
     }
 
+    /// High-detail map sampling without the generation-only nine-point biome
+    /// terrain blend. This preserves the requested noise octave detail while
+    /// using one representative terrain modifier, reducing near-map sampling
+    /// from roughly ten column evaluations to two.
+    pub fn sampleMapColumnData(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8) ColumnData {
+        const region_seed = self.getRegionSeed();
+        const wx_i = floatToI32(@floor(wx));
+        const wz_i = floatToI32(@floor(wz));
+        const controls = region_pkg.getBlendedControls(region_seed, wx_i, wz_i);
+        const terrain_modifier = self.sampleTerrainModifierAt(wx, wz, reduction);
+        return self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, terrain_modifier);
+    }
+
     pub fn sampleColumnDataWithControls(self: *const TerrainShapeGenerator, wx: f32, wz: f32, reduction: u8, controls: region_pkg.RegionControls) ColumnData {
         const terrain_modifier = self.sampleBlendedTerrainModifier(wx, wz, reduction, controls);
         return self.sampleColumnDataWithControlsAndTerrainModifier(wx, wz, reduction, controls, terrain_modifier);

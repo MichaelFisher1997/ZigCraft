@@ -46,7 +46,7 @@ pub fn draw(session: anytype, ui: *UISystem, atlas: *const TextureAtlas, active_
     const telemetry = world.telemetry();
 
     if (session.map_controller.show_map) {
-        try session.map_controller.draw(ui, screen_w, screen_h, &session.world_map, &session.world_map_texture, telemetry.getGenerator(), session.camera.position);
+        try session.map_controller.draw(ui, screen_w, screen_h, &session.world_map, &session.world_map_texture, session.world, telemetry.getGenerator(), session.camera.position);
         return;
     }
 

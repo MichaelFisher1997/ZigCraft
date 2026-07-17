@@ -123,3 +123,31 @@ test "Chunk.setBlockLight and getBlockLight" {
     chunk.setBlockLight(5, 64, 5, 7);
     try testing.expectEqual(@as(u4, 7), chunk.getBlockLight(5, 64, 5));
 }
+
+test "Chunk live map surface includes foliage and reacts to removal" {
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(3, 64, 5, .grass);
+    chunk.setBlock(3, 70, 5, .leaves);
+
+    try testing.expectEqual(@as(u32, 2), chunk.rebuildMapSurface());
+    const column = 3 + 5 * CHUNK_SIZE_X;
+    try testing.expectEqual(BlockType.leaves, chunk.map_surface_blocks[column]);
+    try testing.expectEqual(@as(i16, 70), chunk.map_surface_heights[column]);
+    try testing.expect(chunk.mapSurfaceIsCurrent());
+
+    chunk.setBlock(3, 70, 5, .air);
+    try testing.expect(!chunk.mapSurfaceIsCurrent());
+    _ = chunk.rebuildMapSurface();
+    try testing.expectEqual(BlockType.grass, chunk.map_surface_blocks[column]);
+    try testing.expectEqual(@as(i16, 64), chunk.map_surface_heights[column]);
+}
+
+test "Chunk live map surface includes water" {
+    var chunk = Chunk.init(0, 0);
+    chunk.setBlock(8, 60, 8, .sand);
+    chunk.setBlock(8, 64, 8, .water);
+    _ = chunk.rebuildMapSurface();
+    const column = 8 + 8 * CHUNK_SIZE_X;
+    try testing.expectEqual(BlockType.water, chunk.map_surface_blocks[column]);
+    try testing.expectEqual(@as(i16, 64), chunk.map_surface_heights[column]);
+}

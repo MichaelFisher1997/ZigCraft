@@ -16,6 +16,7 @@ const ChunkStorage = world_meshing.ChunkStorage;
 const ChunkData = world_meshing.ChunkData;
 const gen_interface = @import("world-worldgen");
 const Generator = gen_interface.Generator;
+const WorldMap = gen_interface.WorldMap;
 const registry = @import("world-worldgen").registry;
 const rhi_mod = @import("engine-rhi").rhi;
 const RHI = rhi_mod.RHI;
@@ -624,6 +625,7 @@ pub const World = struct {
     paused: bool = false,
     safe_mode: bool,
     safe_render_distance: i32,
+    map_mutation_revision: std.atomic.Value(u64) = .init(0),
 
     // LOD System (Issue #114, #293)
     lod: ?*WorldLOD,
@@ -679,6 +681,7 @@ pub const World = struct {
             .paused = false,
             .safe_mode = safe_mode,
             .safe_render_distance = safe_render_distance,
+            .map_mutation_revision = .init(0),
             .lod = null,
             .lod_enabled = false,
             .save_manager = null,
@@ -979,6 +982,8 @@ pub const World = struct {
     /// Updates chunk data and schedules affected mesh/render state refreshes. Propagates errors from streaming, persistence, meshing, or mutation subsystems.
     pub fn setBlock(self: *World, world_x: i32, world_y: i32, world_z: i32, block: BlockType) !void {
         const result = (try self.mutation.applyBlockMutation(world_x, world_y, world_z, block)) orelse return;
+        self.storage.markMapSurfaceChanged();
+        _ = self.map_mutation_revision.fetchAdd(1, .release);
         self.streamer.enqueueMutationLighting(&self.mutation, result) catch |err| {
             log.log.warn("Failed to enqueue block lighting update, applying synchronously: {}", .{err});
             try self.mutation.updateLighting(result);
@@ -990,6 +995,63 @@ pub const World = struct {
             const wc = world_core.worldToChunk(world_x, world_z);
             lod.manager.markChunkEdited(wc.chunk_x, wc.chunk_z);
         }
+    }
+
+    pub fn getMapSurfaceRevision(self: *const World) u64 {
+        return self.map_mutation_revision.load(.acquire);
+    }
+
+    pub fn getMapResidencyRevision(self: *const World) u64 {
+        return self.storage.getMapSurfaceRevision();
+    }
+
+    /// Copies actual loaded top surfaces for a map viewport. The map worker
+    /// receives only immutable values, never live chunk pointers.
+    pub fn captureLoadedMapSurface(
+        self: *World,
+        overlay: *WorldMap.LoadedSurfaceOverlay,
+        center_x: f32,
+        center_z: f32,
+        scale: f32,
+        width: u32,
+        height: u32,
+    ) !void {
+        const half_width = @as(f32, @floatFromInt(width)) * scale * 0.5;
+        const half_height = @as(f32, @floatFromInt(height)) * scale * 0.5;
+        const min_world_x: i32 = @intFromFloat(@floor(center_x - half_width));
+        const max_world_x: i32 = @intFromFloat(@ceil(center_x + half_width));
+        const min_world_z: i32 = @intFromFloat(@floor(center_z - half_height));
+        const max_world_z: i32 = @intFromFloat(@ceil(center_z + half_height));
+        const min_chunk = worldToChunk(min_world_x, min_world_z);
+        const max_chunk = worldToChunk(max_world_x, max_world_z);
+
+        try overlay.ensureUnusedCapacity(self.storage.count());
+
+        // Match mutation/lighting lock order. Generated chunks are immutable
+        // for this short copy except for mutations, which lighting_mutex blocks.
+        self.storage.lighting_mutex.lock();
+        self.storage.chunks_mutex.lockShared();
+
+        var iterator = self.storage.iteratorUnsafe();
+        while (iterator.next()) |entry| {
+            const key = entry.key_ptr.*;
+            if (key.x < min_chunk.chunk_x or key.x > max_chunk.chunk_x or key.z < min_chunk.chunk_z or key.z > max_chunk.chunk_z) continue;
+            const chunk = &entry.value_ptr.*.chunk;
+            // Generation rebuilds the cached surface before publishing the
+            // chunk as generated. Skip chunks still owned by a worker so this
+            // shared-lock copy never races that unlocked rebuild.
+            if (!chunk.generated or chunk.state != .generated) continue;
+            if (!chunk.mapSurfaceIsCurrent()) _ = chunk.rebuildMapSurface();
+            overlay.appendAssumeCapacity(.{
+                .chunk_x = key.x,
+                .chunk_z = key.z,
+                .heights = chunk.map_surface_heights,
+                .blocks = chunk.map_surface_blocks,
+            });
+        }
+        self.storage.chunks_mutex.unlockShared();
+        self.storage.lighting_mutex.unlock();
+        overlay.finish();
     }
 
     /// Get chunk data at chunk coordinates.
