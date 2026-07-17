@@ -109,7 +109,8 @@ pub const ChunkBounds = struct {
     pub fn distanceSquaredToPoint(self: ChunkBounds, point_x: i32, point_z: i32) i64 {
         const dx = axisDistance(point_x, self.min_x, self.max_x);
         const dz = axisDistance(point_z, self.min_z, self.max_z);
-        return dx * dx + dz * dz;
+        const distance_sq = @as(i128, dx) * dx + @as(i128, dz) * dz;
+        return @intCast(@min(distance_sq, std.math.maxInt(i64)));
     }
 
     /// Tests whether this chunk bounds intersects a radius around a chunk-coordinate center.
@@ -634,9 +635,13 @@ pub fn activeLODCount(config: ILODConfig) usize {
 pub const LODConfig = struct {
     pub const default_chunk_render_radius: i32 = 16;
     pub const default_horizon_radius: i32 = 512;
+    pub const minimum_horizon_radius: i32 = 256;
     pub const target_lod1_radius: i32 = 96; // keep 2-block cells visible farther out.
     pub const target_lod2_radius: i32 = 256;
     pub const target_lod3_radius: i32 = 512;
+    /// Keep enough horizon beyond full detail for the complete LOD ladder to
+    /// remain useful as users raise render distance.
+    pub const horizon_render_distance_scale: i64 = 32;
 
     /// Radius of real full-detail chunks. LOD0 is a separate 1-block-column
     /// LOD ring that extends beyond this radius.
@@ -692,16 +697,40 @@ pub const LODConfig = struct {
     }
 
     /// Expands a full-detail render distance into the default LOD radius ladder.
-    /// The farthest radius uses the default horizon distance.
+    /// The farthest radius scales with full-detail distance while retaining the
+    /// default horizon for ordinary settings.
     pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
-        return radiiForDistances(distance, default_horizon_radius);
+        return radiiForDistances(distance, normalizeHorizonDistance(distance, default_horizon_radius));
+    }
+
+    /// Returns the minimum useful distant-LOD horizon for a full-detail radius.
+    /// Arithmetic saturates at the coordinate representation limit rather than
+    /// introducing an arbitrary settings cap.
+    pub fn recommendedHorizonDistance(distance: i32) i32 {
+        const requested = @as(i64, @max(distance, 1));
+        const scaled = @min(requested * horizon_render_distance_scale, @as(i64, std.math.maxInt(i32)));
+        return @intCast(@max(@as(i64, minimum_horizon_radius), scaled));
+    }
+
+    /// Normalizes an explicit horizon so it never collapses distant LOD bands.
+    pub fn normalizeHorizonDistance(render_distance: i32, horizon_distance: i32) i32 {
+        return @max(horizon_distance, recommendedHorizonDistance(render_distance));
+    }
+
+    /// Steps an uncapped horizon geometrically while respecting the dynamic
+    /// minimum required by the full-detail render distance.
+    pub fn stepHorizonDistance(render_distance: i32, horizon_distance: i32, increase: bool) i32 {
+        const minimum = recommendedHorizonDistance(render_distance);
+        const current = @max(horizon_distance, minimum);
+        if (!increase) return @max(minimum, @divFloor(current, 2));
+        return @intCast(@min(@as(i64, current) * 2, @as(i64, std.math.maxInt(i32))));
     }
 
     /// Expands full-detail and horizon distances into monotonically increasing LOD radii.
     /// Radii are expressed in chunks and are clamped so they do not exceed the horizon.
     pub fn radiiForDistances(distance: i32, horizon_distance: i32) [LODLevel.count]i32 {
         const requested = @max(distance, 1);
-        const lod0_target = @max(@as(i64, requested) * 3, @as(i64, requested + 16));
+        const lod0_target = @max(@as(i64, requested) * 3, @as(i64, requested) + 16);
         const lod0 = @as(i32, @intCast(@min(lod0_target, @as(i64, @max(horizon_distance, requested)))));
         const horizon = @max(horizon_distance, lod0);
         const max_radius_i64 = @as(i64, horizon);
@@ -987,8 +1016,13 @@ test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(i32, 96), radii[0]);
     try std.testing.expectEqual(@as(i32, 192), radii[1]);
     try std.testing.expectEqual(@as(i32, 384), radii[2]);
-    try std.testing.expectEqual(@as(i32, 512), radii[3]);
-    try std.testing.expectEqual(@as(i32, 512), radii[4]);
+    try std.testing.expectEqual(@as(i32, 768), radii[3]);
+    try std.testing.expectEqual(@as(i32, 1024), radii[4]);
+
+    try std.testing.expectEqual(@as(i32, 256), LODConfig.recommendedHorizonDistance(8));
+    try std.testing.expectEqual(@as(i32, 131_072), LODConfig.recommendedHorizonDistance(4096));
+    try std.testing.expectEqual(std.math.maxInt(i32), LODConfig.recommendedHorizonDistance(std.math.maxInt(i32)));
+    try std.testing.expectEqual(@as(i32, 131_072), LODConfig.normalizeHorizonDistance(4096, 2048));
 
     const custom_horizon = LODConfig.radiiForDistances(12, 1024);
     try std.testing.expectEqual(@as(i32, 36), custom_horizon[0]);
@@ -996,6 +1030,13 @@ test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(i32, 256), custom_horizon[2]);
     try std.testing.expectEqual(@as(i32, 512), custom_horizon[3]);
     try std.testing.expectEqual(@as(i32, 1024), custom_horizon[4]);
+
+    const beyond_horizon = LODConfig.radiiForDistances(4096, 2048);
+    try std.testing.expectEqual([_]i32{4096} ** LODLevel.count, beyond_horizon);
+    try std.testing.expectEqual(@as(u32, 1), LODConfig.activeCountForRadii(beyond_horizon));
+
+    const integer_limit = LODConfig.radiiForDistances(std.math.maxInt(i32), 2048);
+    try std.testing.expectEqual([_]i32{std.math.maxInt(i32)} ** LODLevel.count, integer_limit);
 }
 
 test "LODConfig keeps the coarse fallback when tail radii match" {
@@ -1016,6 +1057,14 @@ test "ChunkBounds intersects radius radially" {
     const diagonal_region = ChunkBounds{ .min_x = 16, .min_z = 16, .max_x = 31, .max_z = 31 };
     try std.testing.expect(!diagonal_region.intersectsRadius(0, 0, 16));
     try std.testing.expectEqual(@as(i64, 16 * 16 + 16 * 16), diagonal_region.distanceSquaredToPoint(0, 0));
+
+    const extreme_region = ChunkBounds{
+        .min_x = std.math.maxInt(i32),
+        .min_z = std.math.maxInt(i32),
+        .max_x = std.math.maxInt(i32),
+        .max_z = std.math.maxInt(i32),
+    };
+    try std.testing.expectEqual(std.math.maxInt(i64), extreme_region.distanceSquaredToPoint(std.math.minInt(i32), std.math.minInt(i32)));
 }
 
 test "ILODConfig.calculateMaskRadius" {

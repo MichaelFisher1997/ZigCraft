@@ -133,6 +133,7 @@ pub fn init(allocator: std.mem.Allocator, config: ILODConfig, gpu_bridge: LODGPU
         .transition_queue = .empty,
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
+        .scan_states = [_]manager_ctx.LODScanState{manager_ctx.LODScanState{}} ** LODLevel.count,
         .stats = .{},
         .profiling = .init(engine_core.envFlag("ZIGCRAFT_LOD_PROFILE", false) or lod_options.benchmark_lod_profile),
         .cache_hits = 0,
@@ -545,7 +546,7 @@ pub fn render(self: *Self, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?Ch
 /// Renders a layer using a WorldRenderer-monotonic frame serial. The concrete
 /// LOD renderer projects visibility once for a serial and reuses safe value
 /// snapshots for the terrain and water submissions.
-pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
+pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, detail_render_radius: i32, layer: LODRenderLayer) void {
     const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
     self.profiling.end(.manager_lock_wait, lock_wait_timer);
@@ -553,21 +554,22 @@ pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: 
     defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
 
-    self.renderer.renderFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
+    self.renderer.renderFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, layer, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
-pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
+pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, detail_render_radius: i32) void {
     const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
     self.profiling.end(.manager_lock_wait, lock_wait_timer);
     const lock_hold_timer = self.profiling.begin();
     defer self.profiling.end(.manager_lock_hold, lock_hold_timer);
     defer self.mutex.unlockShared();
-    self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, &self.stats, if (self.profiling.enabled) &self.profiling else null);
+    self.renderer.prepareFrame(frame_serial, &self.meshes, &self.regions, self.config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, detail_render_radius, &self.stats, if (self.profiling.enabled) &self.profiling else null);
 }
 
 pub fn pointDistanceSquared(x0: i32, z0: i32, x1: i32, z1: i32) i64 {
     const dx = @as(i64, x0) - @as(i64, x1);
     const dz = @as(i64, z0) - @as(i64, z1);
-    return dx * dx + dz * dz;
+    const distance_sq = @as(i128, dx) * dx + @as(i128, dz) * dz;
+    return @intCast(@min(distance_sq, std.math.maxInt(i64)));
 }

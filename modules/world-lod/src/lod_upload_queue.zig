@@ -163,6 +163,7 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        detail_render_radius: i32,
         layer: LODRenderLayer,
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
@@ -178,9 +179,13 @@ pub const LODRenderInterface = struct {
         chunk_checker: ?ChunkChecker,
         checker_ctx: ?*anyopaque,
         max_distance_chunks: ?i32,
+        detail_render_radius: i32,
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void = null,
+    /// Frame-stable terrain ownership query. A true result means a visible LOD
+    /// region owns this chunk until the contiguous detail disk reaches it.
+    suppresses_detail_chunk_fn: ?*const fn (self_ptr: *anyopaque, chunk_x: i32, chunk_z: i32) bool = null,
     memory_stats_fn: ?*const fn (self_ptr: *anyopaque) LODRendererMemoryStats = null,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
@@ -217,12 +222,13 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        detail_render_radius: i32,
         layer: LODRenderLayer,
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void {
         if (self.render_frame_fn) |render_frame| {
-            render_frame(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+            render_frame(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, layer, stats, profiling);
         } else {
             self.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
         }
@@ -232,12 +238,17 @@ pub const LODRenderInterface = struct {
         self.deinit_fn(self.ptr);
     }
 
-    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
-        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, stats, profiling);
+    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, detail_render_radius: i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, detail_render_radius, stats, profiling);
     }
 
     pub fn memoryStats(self: LODRenderInterface) LODRendererMemoryStats {
         if (self.memory_stats_fn) |memory_stats| return memory_stats(self.ptr);
         return .{};
+    }
+
+    pub fn suppressesDetailChunk(self: LODRenderInterface, chunk_x: i32, chunk_z: i32) bool {
+        const query = self.suppresses_detail_chunk_fn orelse return false;
+        return query(self.ptr, chunk_x, chunk_z);
     }
 };

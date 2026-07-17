@@ -16,6 +16,7 @@ const ChunkChecker = lod_gpu.ChunkChecker;
 const RegionMap = lod_gpu.RegionMap;
 const LifecycleQueue = @import("lod_manager_context.zig").LifecycleQueue;
 const LifecycleToken = @import("lod_manager_context.zig").LifecycleToken;
+const LODScanState = @import("lod_manager_context.zig").LODScanState;
 
 pub const CoverageFn = *const fn (ptr: *anyopaque, bounds: LODChunk.WorldBounds, checker: ChunkChecker, ctx: *anyopaque) bool;
 
@@ -29,6 +30,7 @@ pub const SchedulerContext = struct {
     mutex: *sync.RwLock,
     player_cx: i32,
     player_cz: i32,
+    scan_states: *[LODLevel.count]LODScanState,
     next_job_token: *u32,
     cleanup_covered_regions: bool,
     coverage_ptr: *anyopaque,
@@ -56,18 +58,21 @@ pub const SchedulerContext = struct {
 const std = @import("std");
 
 const QueueDiag = struct {
-    considered: u32 = 0,
-    outside_radius: u32 = 0,
-    covered_chunks: u32 = 0,
-    existing: u32 = 0,
-    candidates: u32 = 0,
-    queued: u32 = 0,
+    considered: u64 = 0,
+    outside_radius: u64 = 0,
+    covered_chunks: u64 = 0,
+    existing: u64 = 0,
+    candidates: u64 = 0,
+    queued: u64 = 0,
 };
 
 const LOD0_QUEUE_CANDIDATE_LIMIT: usize = 96;
 const LOD1_QUEUE_CANDIDATE_LIMIT: usize = 64;
 const HORIZON_QUEUE_CANDIDATE_LIMIT: usize = 64;
 const REFINEMENT_QUEUE_CANDIDATE_LIMIT: usize = 48;
+/// Hard per-update work budget. Large configured horizons advance through a
+/// persistent ring cursor instead of blocking a frame on a full-area scan.
+pub const MAX_LOD_SCAN_STEPS: usize = 512;
 const MAX_PENDING_LOD_REGIONS = @import("lod_manager_context.zig").MAX_PENDING_LOD_REGIONS;
 const MAX_LOD_REGIONS = @import("lod_manager_context.zig").MAX_LOD_REGIONS;
 
@@ -78,25 +83,77 @@ const HORIZON_SEED_DIRECTIONS = [_][2]i32{
     .{ 0, -1024 }, .{ 392, -946 },  .{ 724, -724 },  .{ 946, -392 },
 };
 
-fn scaledSeedOffset(component: i32, radius: i32) i32 {
-    const product = component * radius;
-    return @divTrunc(product + (if (product >= 0) @as(i32, 512) else -512), 1024);
+fn scaledSeedOffset(component: i32, radius: i64) i64 {
+    const product = @as(i64, component) * radius;
+    return @divTrunc(product + (if (product >= 0) @as(i64, 512) else -512), 1024);
 }
 
-fn initialHorizonSeedRank(rx: i32, rz: i32, player_rx: i32, player_rz: i32, region_radius: i32) ?usize {
+fn initialHorizonSeedRank(rx: i32, rz: i32, player_rx: i32, player_rz: i32, region_radius: i64) ?usize {
     const outer_radius = @max(1, region_radius - 1);
     for (HORIZON_SEED_DIRECTIONS, 0..) |dir, i| {
-        if (rx == player_rx + scaledSeedOffset(dir[0], outer_radius) and
-            rz == player_rz + scaledSeedOffset(dir[1], outer_radius)) return i;
+        if (@as(i64, rx) == @as(i64, player_rx) + scaledSeedOffset(dir[0], outer_radius) and
+            @as(i64, rz) == @as(i64, player_rz) + scaledSeedOffset(dir[1], outer_radius)) return i;
     }
 
     const middle_radius = @max(1, @divFloor(outer_radius, 2));
     for (0..8) |i| {
         const dir = HORIZON_SEED_DIRECTIONS[i * 2];
-        if (rx == player_rx + scaledSeedOffset(dir[0], middle_radius) and
-            rz == player_rz + scaledSeedOffset(dir[1], middle_radius)) return HORIZON_SEED_DIRECTIONS.len + i;
+        if (@as(i64, rx) == @as(i64, player_rx) + scaledSeedOffset(dir[0], middle_radius) and
+            @as(i64, rz) == @as(i64, player_rz) + scaledSeedOffset(dir[1], middle_radius)) return HORIZON_SEED_DIRECTIONS.len + i;
     }
     return null;
+}
+
+fn regionCoordinateRepresentable(region: i64, scale: i32) bool {
+    const min_chunk = region * @as(i64, scale);
+    const max_chunk = min_chunk + @as(i64, scale) - 1;
+    return min_chunk >= std.math.minInt(i32) and max_chunk <= std.math.maxInt(i32);
+}
+
+fn horizonSeedCoordinate(index: usize, player_rx: i32, player_rz: i32, region_radius: i64) [2]i64 {
+    const outer_radius = @max(1, region_radius - 1);
+    const middle_radius = @max(1, @divFloor(outer_radius, 2));
+    const direction = if (index < HORIZON_SEED_DIRECTIONS.len)
+        HORIZON_SEED_DIRECTIONS[index]
+    else
+        HORIZON_SEED_DIRECTIONS[(index - HORIZON_SEED_DIRECTIONS.len) * 2];
+    const radius = if (index < HORIZON_SEED_DIRECTIONS.len) outer_radius else middle_radius;
+    return .{
+        @as(i64, player_rx) + scaledSeedOffset(direction[0], radius),
+        @as(i64, player_rz) + scaledSeedOffset(direction[1], radius),
+    };
+}
+
+fn nextRingCoordinate(state: *LODScanState, player_rx: i32, player_rz: i32, region_radius: i64) [2]i64 {
+    if (state.next_ring > region_radius) {
+        state.next_ring = 0;
+        state.ring_index = 0;
+    }
+    if (state.next_ring == 0) {
+        state.next_ring = 1;
+        state.ring_index = 0;
+        return .{ player_rx, player_rz };
+    }
+
+    const ring = state.next_ring;
+    const side_length = ring * 2;
+    const perimeter_length = side_length * 4;
+    const index = state.ring_index;
+    const side = @divFloor(index, side_length);
+    const offset = @mod(index, side_length);
+    const relative = switch (side) {
+        0 => [2]i64{ -ring + offset, -ring },
+        1 => [2]i64{ ring, -ring + offset },
+        2 => [2]i64{ ring - offset, ring },
+        else => [2]i64{ -ring, ring - offset },
+    };
+
+    state.ring_index += 1;
+    if (state.ring_index >= perimeter_length) {
+        state.next_ring += 1;
+        state.ring_index = 0;
+    }
+    return .{ @as(i64, player_rx) + relative[0], @as(i64, player_rz) + relative[1] };
 }
 
 pub fn priorityRank(lod: LODLevel, active_lod_count: usize) usize {
@@ -128,7 +185,7 @@ fn maxQueueCandidatesForLOD(lod: LODLevel, active_lod_count: usize) usize {
     return REFINEMENT_QUEUE_CANDIDATE_LIMIT;
 }
 
-pub fn priorityWeightForVelocity(velocity: Vec3, chunk_dx: i32, chunk_dz: i32) f32 {
+pub fn priorityWeightForVelocity(velocity: Vec3, chunk_dx: i64, chunk_dz: i64) f32 {
     const speed = @sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
     if (speed < 2.0) return 1.0;
 
@@ -143,9 +200,10 @@ pub fn priorityWeightForVelocity(velocity: Vec3, chunk_dx: i32, chunk_dz: i32) f
     return 1.0 - dot * 0.5;
 }
 
-pub fn encodePriority(lod: LODLevel, chunk_dx: i32, chunk_dz: i32, velocity: Vec3, active_lod_count: usize) i32 {
-    const dist_sq = @as(i64, chunk_dx) * @as(i64, chunk_dx) + @as(i64, chunk_dz) * @as(i64, chunk_dz);
-    const weighted = @as(f64, @floatFromInt(dist_sq)) * @as(f64, priorityWeightForVelocity(velocity, chunk_dx, chunk_dz));
+pub fn encodePriority(lod: LODLevel, chunk_dx: i64, chunk_dz: i64, velocity: Vec3, active_lod_count: usize) i32 {
+    const dx: f64 = @floatFromInt(chunk_dx);
+    const dz: f64 = @floatFromInt(chunk_dz);
+    const weighted = (dx * dx + dz * dz) * @as(f64, priorityWeightForVelocity(velocity, chunk_dx, chunk_dz));
     const priority: i32 = @intFromFloat(@min(weighted, @as(f64, @floatFromInt(@as(i32, 0x0FFFFFFF)))));
     return (priority & 0x0FFFFFFF) | lodPriorityBias(lod, active_lod_count);
 }
@@ -171,7 +229,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     const radius = if (is_coarsest) radii[idx] else @max(0, radii[idx] - ctx.radius_reduction[idx]);
 
     const scale: i32 = @intCast(lod.chunksPerSide());
-    const region_radius = @divFloor(radius, scale) + 1;
+    const region_radius = @divFloor(@as(i64, radius), @as(i64, scale)) + 1;
 
     const player_rx = @divFloor(ctx.player_cx, scale);
     const player_rz = @divFloor(ctx.player_cz, scale);
@@ -192,76 +250,106 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     defer candidates.deinit(ctx.allocator);
 
     // Existing active regions must not consume the bounded candidate window.
-    // Repeatedly selecting the same nearest horizon regions otherwise prevents
-    // the coarsest band from progressing beyond its first batch.
-    ctx.mutex.lockShared();
+    // A persistent concentric-ring cursor guarantees bounded frame work while
+    // eventually visiting every coordinate in the configured horizon.
+    ctx.mutex.lock();
     const candidate_storage = &ctx.regions[@intFromEnum(lod)];
-    const seed_initial_horizon = is_coarsest and candidate_storage.count() == 0;
-
-    var rz = player_rz - region_radius;
-    while (rz <= player_rz + region_radius) : (rz += 1) {
-        var rx = player_rx - region_radius;
-        while (rx <= player_rx + region_radius) : (rx += 1) {
-            diag.considered += 1;
-            const key = LODRegionKey{ .rx = rx, .rz = rz, .lod = lod };
-            const chunk_bounds = key.chunkBounds();
-            if (!chunk_bounds.intersectsRadius(ctx.player_cx, ctx.player_cz, radius)) {
-                diag.outside_radius += 1;
-                continue;
-            }
-
-            if (ctx.cleanup_covered_regions) {
-                if (chunk_checker) |checker| {
-                    const temp_chunk = LODChunk.init(rx, rz, lod);
-                    if (ctx.are_all_chunks_loaded(ctx.coverage_ptr, temp_chunk.worldBounds(), checker, checker_ctx.?)) {
-                        diag.covered_chunks += 1;
-                        continue;
-                    }
-                }
-            }
-
-            if (candidate_storage.get(key)) |chunk| {
-                diag.existing += 1;
-                if (chunk.getState() != .missing or chunk.isPinned()) continue;
-            }
-
-            const center_cx = key.rx * scale + @divFloor(scale, 2);
-            const center_cz = key.rz * scale + @divFloor(scale, 2);
-            const distance_priority = encodePriority(lod, center_cx - ctx.player_cx, center_cz - ctx.player_cz, velocity, active_lod_count);
-            const seed_rank = if (seed_initial_horizon) initialHorizonSeedRank(rx, rz, player_rx, player_rz, region_radius) else null;
-            // Preserve the spatial seed order in the worker queue as well as
-            // candidate admission; otherwise distance reprioritization makes
-            // the newly admitted outer shell wait behind nearby coarse tiles.
-            const encoded_priority = if (seed_rank) |rank|
-                lodPriorityBias(lod, active_lod_count) | @as(i32, @intCast(rank))
-            else
-                distance_priority;
-            const selection_priority: i64 = if (seed_initial_horizon)
-                if (seed_rank) |rank|
-                    @intCast(rank)
-                else
-                    @as(i64, 1_000_000_000) + @as(i64, distance_priority & 0x0FFFFFFF)
-            else
-                distance_priority;
-            const candidate = Candidate{
-                .key = key,
-                .encoded_priority = encoded_priority,
-                .selection_priority = selection_priority,
-                .preserve_priority = seed_rank != null,
-            };
-            var insert_at: usize = 0;
-            while (insert_at < candidates.items.len and candidates.items[insert_at].selection_priority <= selection_priority) : (insert_at += 1) {}
-            if (insert_at < max_candidates) {
-                candidates.insert(ctx.allocator, insert_at, candidate) catch |err| {
-                    ctx.mutex.unlockShared();
-                    return err;
-                };
-                if (candidates.items.len > max_candidates) _ = candidates.pop();
-            }
-            diag.candidates += 1;
+    const state = &ctx.scan_states[@intFromEnum(lod)];
+    const moved_rx = @as(i64, player_rx) - @as(i64, state.player_rx);
+    const moved_rz = @as(i64, player_rz) - @as(i64, state.player_rz);
+    const radius_changed = state.effective_radius != radius;
+    if (radius_changed) {
+        state.* = .{
+            .player_rx = player_rx,
+            .player_rz = player_rz,
+            .effective_radius = radius,
+        };
+    } else if (player_rx != state.player_rx or player_rz != state.player_rz) {
+        state.player_rx = player_rx;
+        state.player_rz = player_rz;
+        if (is_coarsest) state.seed_index = 0;
+        // Preserve outward progress during ordinary traversal, but restart near
+        // the player after a teleport so the new location receives fallback.
+        if (@max(@abs(moved_rx), @abs(moved_rz)) > 8) {
+            state.next_ring = 0;
+            state.ring_index = 0;
         }
     }
-    ctx.mutex.unlockShared();
+    if (state.next_ring > region_radius) {
+        state.next_ring = 0;
+        state.ring_index = 0;
+    }
+
+    var examined: usize = 0;
+    while (examined < MAX_LOD_SCAN_STEPS and candidates.items.len < max_candidates) : (examined += 1) {
+        const coordinate = if (is_coarsest and state.seed_index < HORIZON_SEED_DIRECTIONS.len + 8) blk: {
+            const seed = horizonSeedCoordinate(state.seed_index, player_rx, player_rz, region_radius);
+            state.seed_index += 1;
+            break :blk seed;
+        } else nextRingCoordinate(state, player_rx, player_rz, region_radius);
+        const rx = coordinate[0];
+        const rz = coordinate[1];
+        diag.considered += 1;
+        if (!regionCoordinateRepresentable(rx, scale) or !regionCoordinateRepresentable(rz, scale)) continue;
+        const key = LODRegionKey{ .rx = @intCast(rx), .rz = @intCast(rz), .lod = lod };
+        const chunk_bounds = key.chunkBounds();
+        if (!chunk_bounds.intersectsRadius(ctx.player_cx, ctx.player_cz, radius)) {
+            diag.outside_radius += 1;
+            continue;
+        }
+
+        var duplicate = false;
+        for (candidates.items) |candidate| {
+            if (candidate.key.eql(key)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
+
+        if (candidate_storage.get(key)) |chunk| {
+            diag.existing += 1;
+            if (chunk.getState() != .missing or chunk.isPinned()) continue;
+        }
+
+        if (ctx.cleanup_covered_regions) {
+            if (chunk_checker) |checker| {
+                const temp_chunk = LODChunk.init(key.rx, key.rz, lod);
+                if (ctx.are_all_chunks_loaded(ctx.coverage_ptr, temp_chunk.worldBounds(), checker, checker_ctx.?)) {
+                    diag.covered_chunks += 1;
+                    continue;
+                }
+            }
+        }
+
+        const center_cx = @as(i64, key.rx) * @as(i64, scale) + @divFloor(scale, 2);
+        const center_cz = @as(i64, key.rz) * @as(i64, scale) + @divFloor(scale, 2);
+        const distance_priority = encodePriority(lod, center_cx - @as(i64, ctx.player_cx), center_cz - @as(i64, ctx.player_cz), velocity, active_lod_count);
+        const seed_rank = if (is_coarsest) initialHorizonSeedRank(key.rx, key.rz, player_rx, player_rz, region_radius) else null;
+        // Preserve the spatial seed order in the worker queue as well as
+        // candidate admission; otherwise distance reprioritization makes
+        // the newly admitted outer shell wait behind nearby coarse tiles.
+        const encoded_priority = if (seed_rank) |rank|
+            lodPriorityBias(lod, active_lod_count) | @as(i32, @intCast(rank))
+        else
+            distance_priority;
+        const selection_priority: i64 = if (seed_rank) |rank| @intCast(rank) else distance_priority;
+        const candidate = Candidate{
+            .key = key,
+            .encoded_priority = encoded_priority,
+            .selection_priority = selection_priority,
+            .preserve_priority = seed_rank != null,
+        };
+        var insert_at: usize = 0;
+        while (insert_at < candidates.items.len and candidates.items[insert_at].selection_priority <= selection_priority) : (insert_at += 1) {}
+        candidates.insert(ctx.allocator, insert_at, candidate) catch |err| {
+            ctx.mutex.unlock();
+            return err;
+        };
+        diag.candidates += 1;
+    }
+    state.last_examined = examined;
+    ctx.mutex.unlock();
 
     var queued_count: usize = 0;
 
@@ -416,6 +504,7 @@ test "LOD scheduling caps resident regions and logical admission memory" {
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var scan_states = [_]LODScanState{LODScanState{}} ** LODLevel.count;
     var pending_regions: usize = 0;
     var logical_memory_bytes: usize = 0;
     const reservation_bytes: usize = 1024;
@@ -436,6 +525,7 @@ test "LOD scheduling caps resident regions and logical admission memory" {
         .mutex = &mutex,
         .player_cx = 0,
         .player_cz = 0,
+        .scan_states = &scan_states,
         .next_job_token = &next_job_token,
         .cleanup_covered_regions = false,
         .coverage_ptr = &coverage_ctx,
@@ -488,12 +578,13 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
 
     var config = LODConfig{
         .chunk_render_radius = 16,
-        .radii = .{ 64, 128, 256, 384, 512 },
+        .radii = .{ 4096, 8192, 16_384, 32_768, 131_072 },
     };
     const config_iface = config.interface();
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var scan_states = [_]LODScanState{LODScanState{}} ** LODLevel.count;
     var coverage_ctx: u8 = 0;
     const Coverage = struct {
         fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
@@ -510,6 +601,7 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
         .mutex = &mutex,
         .player_cx = 0,
         .player_cz = 0,
+        .scan_states = &scan_states,
         .next_job_token = &next_job_token,
         .cleanup_covered_regions = false,
         .coverage_ptr = &coverage_ctx,
@@ -519,6 +611,8 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
 
     try queueLODRegions(ctx, .lod0, Vec3.zero, null, null);
     try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
+    try std.testing.expect(scan_states[@intFromEnum(LODLevel.lod0)].last_examined <= MAX_LOD_SCAN_STEPS);
+    try std.testing.expect(scan_states[@intFromEnum(LODLevel.lod4)].last_examined <= MAX_LOD_SCAN_STEPS);
 
     const queue = queue_ptrs[LODLevel.count - 1];
     const total = queue.count();
@@ -597,6 +691,7 @@ test "LOD scheduling advances horizon beyond existing nearest batch" {
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
+    var scan_states = [_]LODScanState{LODScanState{}} ** LODLevel.count;
     var coverage_ctx: u8 = 0;
     const Coverage = struct {
         fn neverCovered(_: *anyopaque, _: LODChunk.WorldBounds, _: ChunkChecker, _: *anyopaque) bool {
@@ -613,6 +708,7 @@ test "LOD scheduling advances horizon beyond existing nearest batch" {
         .mutex = &mutex,
         .player_cx = 0,
         .player_cz = 0,
+        .scan_states = &scan_states,
         .next_job_token = &next_job_token,
         .cleanup_covered_regions = false,
         .coverage_ptr = &coverage_ctx,

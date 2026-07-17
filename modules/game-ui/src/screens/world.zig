@@ -1,4 +1,5 @@
 const std = @import("std");
+const LODConfig = @import("world-lod").lod_chunk.LODConfig;
 const UISystem = @import("engine-ui").UISystem;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
@@ -169,8 +170,7 @@ pub const WorldScreen = struct {
 
         const world_telemetry = self.world.telemetry();
         if (!self.menu_preview) {
-            const preset = rhi_pkg.getPresetConfig(ctx.settings.render_distance_preset);
-            self.session.world.setLODChunkRenderRadiusLimit(preset.lod_radii[0]);
+            ctx.settings.horizon_distance = LODConfig.normalizeHorizonDistance(ctx.settings.render_distance, ctx.settings.horizon_distance);
             if (world_telemetry.getRenderDistance() != ctx.settings.render_distance) {
                 world_telemetry.setRenderDistance(ctx.settings.render_distance);
             }

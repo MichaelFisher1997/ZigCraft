@@ -81,6 +81,13 @@ const SpawnColumn = struct {
     info: @import("world-worldgen").ColumnInfo,
 };
 
+/// The explicit numeric render-distance setting owns full-detail reach.
+/// Quality and safe-mode profiles tune implementation budgets without silently
+/// reducing the player's requested value.
+pub fn fullDetailRenderDistance(render_distance: i32) i32 {
+    return World.effectiveChunkRenderRadius(render_distance);
+}
+
 pub const GameSession = struct {
     allocator: std.mem.Allocator,
     world: *World,
@@ -131,7 +138,7 @@ pub const GameSession = struct {
 
         const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
-        const effective_render_distance: i32 = render_distance;
+        const effective_render_distance: i32 = @max(render_distance, 2);
         const chunk_debug_restore_lod = chunkDebugRestoreEnabled(build_config, "lod");
         const effective_lod_enabled = if (build_config.chunk_debug_mode)
             chunk_debug_restore_lod
@@ -149,22 +156,20 @@ pub const GameSession = struct {
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
-        const effective_horizon_distance = @max(horizon_distance, effective_render_distance);
+        const effective_horizon_distance = LODConfig.normalizeHorizonDistance(effective_render_distance, horizon_distance);
         const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0] or effective_horizon_distance != preset_cfg.horizon_radius;
-        const chunk_render_radius = if (strict_safe_mode)
-            @min(effective_render_distance, 8)
-        else if (effective_lod_enabled and manual_distance_expanded)
-            @min(effective_render_distance, preset_cfg.lod_radii[0])
-        else
-            effective_render_distance;
+        const chunk_render_radius = fullDetailRenderDistance(effective_render_distance);
         var preset_radii = if (strict_safe_mode)
             LODConfig.radiiForDistances(chunk_render_radius, @max(effective_horizon_distance, 64))
         else if (effective_lod_enabled and manual_distance_expanded)
-            LODConfig.radiiForDistances(chunk_render_radius, effective_horizon_distance)
+            LODConfig.radiiForDistances(effective_render_distance, effective_horizon_distance)
         else
             preset_cfg.lod_radii;
 
-        const active_count = preset_cfg.active_lod_count;
+        const active_count = if (effective_lod_enabled and manual_distance_expanded)
+            LODConfig.activeCountForRadii(preset_radii)
+        else
+            preset_cfg.active_lod_count;
         if (active_count < LODLevel.count) {
             var i: usize = active_count;
             while (i < LODLevel.count) : (i += 1) {

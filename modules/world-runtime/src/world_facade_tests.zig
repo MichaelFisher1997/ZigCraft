@@ -7,15 +7,30 @@ const world_meshing = @import("world-meshing");
 const worldgen = @import("world-worldgen");
 const math = @import("engine-math");
 const LpvGridBuilder = @import("lpv_grid_builder.zig").LpvGridBuilder;
-const RenderLayer = @import("world_renderer.zig").RenderLayer;
+const world_renderer = @import("world_renderer.zig");
+const RenderLayer = world_renderer.RenderLayer;
 const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoordinator;
 const SaveManager = @import("world-persistence").SaveManager;
 const World = world_mod.World;
 
-test "full-detail radius follows active preset cap" {
-    try testing.expectEqual(@as(i32, 12), World.effectiveChunkRenderRadius(16, 12, true));
-    try testing.expectEqual(@as(i32, 16), World.effectiveChunkRenderRadius(16, 16, true));
-    try testing.expectEqual(@as(i32, 22), World.effectiveChunkRenderRadius(22, 10, false));
+test "explicit render distance controls full-detail reach" {
+    try testing.expectEqual(@as(i32, 22), World.effectiveChunkRenderRadius(22));
+    try testing.expectEqual(@as(i32, 4096), World.effectiveChunkRenderRadius(4096));
+    try testing.expectEqual(std.math.maxInt(i32), World.effectiveChunkRenderRadius(std.math.maxInt(i32)));
+    try testing.expectEqual(@as(i32, 6), World.effectiveChunkRenderRadius(6));
+}
+
+test "full-detail render candidates use the streaming disk" {
+    try testing.expect(world_renderer.isWithinChunkRenderRadius(10, 0, 0, 0, 10));
+    try testing.expect(world_renderer.isWithinChunkRenderRadius(-10, 0, 0, 0, 10));
+    try testing.expect(!world_renderer.isWithinChunkRenderRadius(10, 10, 0, 0, 10));
+    try testing.expect(!world_renderer.isWithinChunkRenderRadius(-11, 0, 0, 0, 10));
+}
+
+test "full-detail MDI overflow falls back before truncating visibility" {
+    try testing.expect(world_renderer.hasMdiCapacity(16_383, 49_149, 3));
+    try testing.expect(!world_renderer.hasMdiCapacity(16_384, 0, 1));
+    try testing.expect(!world_renderer.hasMdiCapacity(1, 49_151, 2));
 }
 
 const MockWorld = struct {
@@ -287,8 +302,6 @@ fn makeStorageOnlyWorld(allocator: std.mem.Allocator) world_mod.World {
         .horizon_distance = 512,
         .rhi = undefined,
         .paused = false,
-        .safe_mode = false,
-        .safe_render_distance = 8,
         .lod = null,
         .lod_enabled = false,
         .save_manager = null,

@@ -619,7 +619,6 @@ pub const World = struct {
     allocator: std.mem.Allocator,
     generator: Generator,
     render_distance: i32,
-    lod_chunk_render_radius_limit: i32,
     horizon_distance: i32,
     rhi: RHI,
     paused: bool = false,
@@ -653,11 +652,8 @@ pub const World = struct {
         const storage = ChunkStorage.init(allocator);
         const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
-        const safe_render_distance: i32 = options.render_distance;
-        const streamer_render_distance: i32 = if (options.lod_config) |lod_config|
-            @min(safe_render_distance, lod_config.getChunkRenderRadius())
-        else
-            safe_render_distance;
+        const requested_render_distance: i32 = @max(options.render_distance, 2);
+        const streamer_render_distance = effectiveChunkRenderRadius(requested_render_distance);
         const max_uploads: usize = if (strict_safe_mode)
             @as(usize, 4)
         else if (safe_mode)
@@ -673,8 +669,7 @@ pub const World = struct {
             .streamer = undefined,
             .renderer = undefined,
             .allocator = allocator,
-            .render_distance = safe_render_distance,
-            .lod_chunk_render_radius_limit = streamer_render_distance,
+            .render_distance = requested_render_distance,
             .horizon_distance = if (options.lod_config) |lod_config| lod_config.getRadii()[LODLevel.count - 1] else LODConfig.default_horizon_radius,
             .generator = try registry.createGenerator(options.generator_index, options.seed, allocator),
             .rhi = options.rhi,
@@ -715,12 +710,13 @@ pub const World = struct {
             world.renderer.getGpuMesher() != null,
         );
 
-        log.log.info("World.init: initializing WorldStreamer (render_distance={}, requested={})", .{ streamer_render_distance, safe_render_distance });
+        log.log.info("World.init: initializing WorldStreamer (render_distance={}, requested={})", .{ streamer_render_distance, requested_render_distance });
         world.streamer = try WorldStreamer.init(allocator, &world.storage, world.generator, options.atlas, streamer_render_distance, options.lod_config != null, world.renderer.vertex_allocator, max_uploads, world.gpu_block_buffer, world.renderer.getGpuMesher());
         errdefer world.streamer.deinit();
 
         if (options.lod_config) |lod_config| {
             world.lod = try WorldLOD.init(allocator, options.rhi, lod_config, lodGeneratorFromGenerator(world.generator), options.atlas);
+            world.lod.?.setChunkRenderRadius(streamer_render_distance);
             world.lod_enabled = true;
             world.streamer.setLODManager(world.lod.?.manager);
         }
@@ -877,55 +873,43 @@ pub const World = struct {
 
     /// Set render distance and trigger chunk loading/unloading update
     pub fn setRenderDistance(self: *World, distance: i32) void {
-        const target = if (self.safe_mode) @min(distance, self.safe_render_distance) else distance;
+        const target = @max(distance, 2);
 
         if (self.render_distance != target) {
-            if (self.safe_mode and target != distance) {
-                log.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance {} -> {}", .{ distance, target });
-            }
             log.log.info("Render distance changed: {} -> {}", .{ self.render_distance, target });
             self.render_distance = target;
             self.applyRenderDistance();
         }
     }
 
-    /// Updates the preset-owned full-detail radius cap. This is separate from
-    /// the user-facing distance so manual values above a preset's LOD0 radius
-    /// still expand the horizon rather than flooding full-detail chunks.
-    pub fn setLODChunkRenderRadiusLimit(self: *World, limit: i32) void {
-        const target = @max(limit, 1);
-        if (self.lod_chunk_render_radius_limit == target) return;
-        self.lod_chunk_render_radius_limit = target;
-        self.applyRenderDistance();
-    }
-
     fn applyRenderDistance(self: *World) void {
-        const chunk_render_radius = effectiveChunkRenderRadius(self.render_distance, self.lod_chunk_render_radius_limit, self.lod != null);
-        self.streamer.setRenderDistance(chunk_render_radius);
+        const chunk_render_radius = effectiveChunkRenderRadius(self.render_distance);
+        self.horizon_distance = LODConfig.normalizeHorizonDistance(self.render_distance, self.horizon_distance);
 
         if (self.lod) |lod| {
             const radii = LODConfig.radiiForDistances(self.render_distance, self.horizon_distance);
             lod.setChunkRenderRadius(chunk_render_radius);
             lod.setRadii(radii);
-            lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(self.render_distance));
+            lod.setActiveLODCount(LODConfig.activeCountForRadii(radii));
         }
+        self.streamer.setRenderDistance(chunk_render_radius);
     }
 
-    pub fn effectiveChunkRenderRadius(render_distance: i32, preset_limit: i32, lod_enabled: bool) i32 {
-        return if (lod_enabled) @min(render_distance, preset_limit) else render_distance;
+    pub fn effectiveChunkRenderRadius(render_distance: i32) i32 {
+        return @max(render_distance, 2);
     }
 
     /// Changes the distant-terrain horizon distance.
     /// LOD queues and visibility update on subsequent world ticks.
     pub fn setHorizonDistance(self: *World, distance: i32) void {
-        const target = @max(distance, self.render_distance);
+        const target = LODConfig.normalizeHorizonDistance(self.render_distance, distance);
         if (self.horizon_distance == target) return;
         log.log.info("Horizon distance changed: {} -> {}", .{ self.horizon_distance, target });
         self.horizon_distance = target;
         if (self.lod) |lod| {
             const radii = LODConfig.radiiForDistances(self.render_distance, target);
             lod.setRadii(radii);
-            lod.setActiveLODCount(LODLevel.count);
+            lod.setActiveLODCount(LODConfig.activeCountForRadii(radii));
         }
     }
 
@@ -1079,7 +1063,8 @@ pub const World = struct {
     /// render pass becomes active. Normal rendering remains a CPU fallback.
     pub fn prepareLODCulling(self: *World, view_proj: Mat4, camera_pos: Vec3) void {
         if (self.lod) |lod| {
-            lod.manager.prepareFrame(self.renderer.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(&self.storage), null);
+            const detail_render_radius = @min(self.streamer.getActiveRenderDistance(), lod.manager.config.getChunkRenderRadius());
+            lod.manager.prepareFrame(self.renderer.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(&self.storage), null, detail_render_radius);
         }
     }
 

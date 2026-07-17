@@ -30,8 +30,21 @@ layout(set = 0, binding = 0) uniform Global {
     vec4 lpv_origin;
 } global;
 
+const float LOD_CHUNK_SIZE = 16.0;
+
+bool shouldDiscardLODFragment(float encodedMaskRadius, vec2 cameraRelativeXZ) {
+    float maskRadius = abs(encodedMaskRadius);
+    if (maskRadius < 1.0) return false;
+
+    bool readyDiskMask = encodedMaskRadius < 0.0;
+    vec2 cameraChunkLocal = mod(global.cam_pos.xz, LOD_CHUNK_SIZE);
+    vec2 chunkDelta = floor((cameraRelativeXZ + cameraChunkLocal) / LOD_CHUNK_SIZE);
+    float detailRadiusChunks = floor(maskRadius / LOD_CHUNK_SIZE) + (readyDiskMask ? 0.0 : 2.0);
+    return dot(chunkDelta, chunkDelta) <= detailRadiusChunks * detailRadiusChunks;
+}
+
 void main() {
-    if (vMaskRadius >= 1.0 && length(vFragPosWorld.xz) < vMaskRadius) discard;
+    if (shouldDiscardLODFragment(vMaskRadius, vFragPosWorld.xz)) discard;
     vec3 normal = normalize(vNormal);
     vec3 light_dir = normalize(global.sun_dir.xyz);
     float diffuse = max(dot(normal, light_dir), 0.0);

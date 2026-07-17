@@ -198,15 +198,12 @@ pub const Settings = struct {
     pub const metadata = struct {
         pub const render_distance = SettingMetadata{
             .label = "RENDER DISTANCE",
-            .kind = .{ .int_range = .{ .min = 2, .max = 32, .step = 1 } },
+            .kind = .{ .int_range = .{ .min = 2, .max = std.math.maxInt(i32), .step = 1 } },
         };
         pub const horizon_distance = SettingMetadata{
             .label = "HORIZON DISTANCE",
-            .description = "Coarsest LOD radius in chunks, independent of full-detail render distance",
-            .kind = .{ .choice = .{
-                .labels = &[_][]const u8{ "256 CHUNKS", "512 CHUNKS", "1024 CHUNKS", "2048 CHUNKS" },
-                .values = &[_]u32{ 256, 512, 1024, 2048 },
-            } },
+            .description = "Coarsest LOD radius; scales with full-detail render distance",
+            .kind = .{ .int_range = .{ .min = 256, .max = std.math.maxInt(i32), .step = 2 } },
         };
         pub const mouse_sensitivity = SettingMetadata{
             .label = "SENSITIVITY",

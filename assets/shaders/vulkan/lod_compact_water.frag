@@ -15,6 +15,9 @@ layout(location = 11) in float vLODFade;
 
 layout(location = 0) out vec4 outColor;
 
+// Matches the two-chunk overlap reserved by LODConfig.calculateMaskRadius().
+const float LOD_MASK_BLEND_WIDTH = 32.0;
+
 layout(set = 0, binding = 0) uniform Global {
     mat4 view_proj;
     mat4 view_proj_prev;
@@ -35,7 +38,19 @@ layout(set = 0, binding = 0) uniform Global {
 } global;
 
 void main() {
-    if (vMaskRadius >= 1.0 && length(vFragPosWorld.xz) < vMaskRadius) discard;
+    float lodMaskAlpha = 1.0;
+    if (abs(vMaskRadius) >= 1.0) {
+        // A negative radius carries the outer edge of the ready detail disk;
+        // begin water's translucent handoff two chunks inside that edge.
+        bool readyDiskMask = vMaskRadius < 0.0;
+        float maskRadius = abs(vMaskRadius);
+        if (readyDiskMask) maskRadius = max(maskRadius - LOD_MASK_BLEND_WIDTH, 0.0);
+        float maskDistance = length(vFragPosWorld.xz);
+        if (maskDistance < maskRadius) discard;
+        // Fade the translucent LOD underlay in across the detailed-water
+        // overlap instead of changing its contribution at a hard circle.
+        lodMaskAlpha = smoothstep(maskRadius, maskRadius + LOD_MASK_BLEND_WIDTH, maskDistance);
+    }
     // Far water deliberately avoids scene-depth, reflection, SSR, atlas, and
     // thickness reads. It uses stable low-frequency waves and atmospheric fog.
     float wave = sin(vFragPosWorld.x * 0.012 + global.params.x * 0.55) *
@@ -54,5 +69,5 @@ void main() {
         base = mix(base, global.fog_color.rgb, fog);
     }
 
-    outColor = vec4(base, 0.78 * clamp(vLODFade, 0.0, 1.0));
+    outColor = vec4(base, 0.78 * clamp(vLODFade, 0.0, 1.0) * lodMaskAlpha);
 }

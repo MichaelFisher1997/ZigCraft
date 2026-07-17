@@ -85,6 +85,7 @@ const MeshInputRevisions = struct {
 /// every frame by the pending queues; the scan only catches stuck chunks and
 /// any state that was reset outside the worker path (e.g. resetPausedChunks).
 const RECOVERY_SCAN_PERIOD: u64 = 60;
+const MAX_MISSING_SCAN_STEPS: usize = 1024;
 
 pub const ChunkQueueCoordinator = struct {
     allocator: std.mem.Allocator,
@@ -104,9 +105,18 @@ pub const ChunkQueueCoordinator = struct {
     chunks_generated_total: std.atomic.Value(u64) = .init(0),
     chunks_meshed_total: std.atomic.Value(u64) = .init(0),
     chunks_uploaded_total: std.atomic.Value(u64) = .init(0),
+    generation_jobs_in_flight: std.atomic.Value(u32) = .init(0),
+    mesh_jobs_in_flight: std.atomic.Value(u32) = .init(0),
     last_pc_x: std.atomic.Value(i32) = .init(0),
     last_pc_z: std.atomic.Value(i32) = .init(0),
     effective_render_dist: std.atomic.Value(i32) = .init(0),
+    missing_scan_initialized: bool = false,
+    missing_scan_player_x: i32 = 0,
+    missing_scan_player_z: i32 = 0,
+    missing_scan_radius: i32 = -1,
+    missing_scan_ring: i64 = 0,
+    missing_scan_ring_index: i64 = 0,
+    missing_rescan_requested: std.atomic.Value(bool) = .init(false),
 
     // Pending transition queues. Workers append under the respective mutex
     // when they flip a chunk into `.generated` or `.mesh_ready`; the main
@@ -153,9 +163,73 @@ pub const ChunkQueueCoordinator = struct {
         self.effective_render_dist.store(render_dist, .release);
     }
 
+    pub fn takeMissingRescanRequest(self: *ChunkQueueCoordinator) bool {
+        return self.missing_rescan_requested.swap(false, .acq_rel);
+    }
+
+    pub fn hasInFlightWork(self: *const ChunkQueueCoordinator) bool {
+        return self.generation_jobs_in_flight.load(.acquire) > 0 or self.mesh_jobs_in_flight.load(.acquire) > 0;
+    }
+
+    pub fn restartMissingScan(self: *ChunkQueueCoordinator) void {
+        self.missing_scan_initialized = false;
+    }
+
     fn weightedDistanceSq(dist_sq: i32, movement: anytype, dx: i32, dz: i32) i32 {
         const weighted = @as(f32, @floatFromInt(dist_sq)) * movement.priorityWeight(dx, dz);
         return @max(0, @as(i32, @intFromFloat(@min(weighted, @as(f32, @floatFromInt(std.math.maxInt(i32)))))));
+    }
+
+    fn isWithinDistance(dx: i64, dz: i64, radius: i64) bool {
+        const wide_dx: i128 = dx;
+        const wide_dz: i128 = dz;
+        const safe_radius: i128 = @max(radius, 0);
+        return wide_dx * wide_dx + wide_dz * wide_dz <= safe_radius * safe_radius;
+    }
+
+    fn clampedDistanceSquared(dx: i64, dz: i64) i32 {
+        const wide_dx: i128 = dx;
+        const wide_dz: i128 = dz;
+        const distance_sq = wide_dx * wide_dx + wide_dz * wide_dz;
+        return @intCast(@min(distance_sq, std.math.maxInt(i32)));
+    }
+
+    fn resetMissingScan(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, radius: i32) void {
+        self.missing_scan_initialized = true;
+        self.missing_scan_player_x = pc_x;
+        self.missing_scan_player_z = pc_z;
+        self.missing_scan_radius = radius;
+        self.missing_scan_ring = 0;
+        self.missing_scan_ring_index = 0;
+    }
+
+    fn nextMissingScanCoordinate(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, radius: i64) ?[2]i64 {
+        if (self.missing_scan_ring > radius) return null;
+        if (self.missing_scan_ring == 0) {
+            self.missing_scan_ring = 1;
+            self.missing_scan_ring_index = 0;
+            return .{ pc_x, pc_z };
+        }
+
+        const ring = self.missing_scan_ring;
+        const side_length = ring * 2;
+        const perimeter_length = side_length * 4;
+        const index = self.missing_scan_ring_index;
+        const side = @divFloor(index, side_length);
+        const offset = @mod(index, side_length);
+        const relative = switch (side) {
+            0 => [2]i64{ -ring + offset, -ring },
+            1 => [2]i64{ ring, -ring + offset },
+            2 => [2]i64{ ring - offset, ring },
+            else => [2]i64{ -ring, ring - offset },
+        };
+
+        self.missing_scan_ring_index += 1;
+        if (self.missing_scan_ring_index >= perimeter_length) {
+            self.missing_scan_ring += 1;
+            self.missing_scan_ring_index = 0;
+        }
+        return .{ @as(i64, pc_x) + relative[0], @as(i64, pc_z) + relative[1] };
     }
 
     pub fn resetPausedChunks(self: *ChunkQueueCoordinator) void {
@@ -173,41 +247,80 @@ pub const ChunkQueueCoordinator = struct {
         }
     }
 
-    pub fn scanForMissingChunks(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32, movement: anytype) !void {
+    /// Scans a bounded portion of the full-detail disk. Returns true after one
+    /// complete pass; false asks the streamer to continue on the next frame.
+    pub fn scanForMissingChunks(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32, movement: anytype) !bool {
         self.storage.chunks_mutex.lock();
         defer self.storage.chunks_mutex.unlock();
 
-        var cz: i32 = pc_z - render_dist;
-        while (cz <= pc_z + render_dist) : (cz += 1) {
-            var cx: i32 = pc_x - render_dist;
-            while (cx <= pc_x + render_dist) : (cx += 1) {
-                const dx = cx - pc_x;
-                const dz = cz - pc_z;
-                const dist_sq = dx * dx + dz * dz;
-
-                if (dist_sq > render_dist * render_dist) continue;
-
-                const key = ChunkKey{ .x = cx, .z = cz };
-                const data = self.storage.chunks.get(key) orelse data: {
-                    const created = try self.storage.createChunkDataUnlocked(cx, cz);
-                    try self.storage.chunks.put(key, created);
-                    break :data created;
-                };
-
-                switch (data.chunk.state) {
-                    .missing => {
-                        const priority_dist_sq = weightedDistanceSq(dist_sq, movement, dx, dz);
-                        self.gen_queue.push(.{
-                            .type = .chunk_generation,
-                            .dist_sq = priority_dist_sq,
-                            .data = .{ .chunk = .{ .x = cx, .z = cz, .job_token = data.chunk.job_token } },
-                        }) catch continue;
-                        data.chunk.state = .queued_for_generation;
-                    },
-                    else => {},
+        const safe_radius = @max(render_dist, 0);
+        const radius = @as(i64, safe_radius);
+        if (!self.missing_scan_initialized) {
+            self.resetMissingScan(pc_x, pc_z, safe_radius);
+        } else {
+            const previous_radius = self.missing_scan_radius;
+            const previous_pass_complete = self.missing_scan_ring > previous_radius;
+            if (safe_radius < previous_radius) {
+                self.resetMissingScan(pc_x, pc_z, safe_radius);
+            } else {
+                self.missing_scan_radius = safe_radius;
+                if (pc_x != self.missing_scan_player_x or pc_z != self.missing_scan_player_z) {
+                    const moved_x = @abs(@as(i64, pc_x) - @as(i64, self.missing_scan_player_x));
+                    const moved_z = @abs(@as(i64, pc_z) - @as(i64, self.missing_scan_player_z));
+                    self.missing_scan_player_x = pc_x;
+                    self.missing_scan_player_z = pc_z;
+                    if (previous_pass_complete or @max(moved_x, moved_z) > 8) {
+                        self.missing_scan_ring = 0;
+                        self.missing_scan_ring_index = 0;
+                    }
+                } else if (safe_radius == previous_radius and previous_pass_complete) {
+                    // Same-radius calls after a completed pass are periodic
+                    // recovery scans; start a fresh bounded traversal.
+                    self.missing_scan_ring = 0;
+                    self.missing_scan_ring_index = 0;
                 }
             }
         }
+
+        var examined: usize = 0;
+        while (examined < MAX_MISSING_SCAN_STEPS) : (examined += 1) {
+            const coordinate = self.nextMissingScanCoordinate(pc_x, pc_z, radius) orelse {
+                return true;
+            };
+            const cx = coordinate[0];
+            const cz = coordinate[1];
+            const dx = cx - @as(i64, pc_x);
+            const dz = cz - @as(i64, pc_z);
+            if (!isWithinDistance(dx, dz, radius)) continue;
+            if (cx < std.math.minInt(i32) or cx > std.math.maxInt(i32) or cz < std.math.minInt(i32) or cz > std.math.maxInt(i32)) continue;
+            const chunk_x: i32 = @intCast(cx);
+            const chunk_z: i32 = @intCast(cz);
+            const dist_sq = clampedDistanceSquared(dx, dz);
+
+            const key = ChunkKey{ .x = chunk_x, .z = chunk_z };
+            const data = self.storage.chunks.get(key) orelse data: {
+                const created = try self.storage.createChunkDataUnlocked(chunk_x, chunk_z);
+                try self.storage.chunks.put(key, created);
+                break :data created;
+            };
+
+            switch (data.chunk.state) {
+                .missing => {
+                    const priority_dist_sq = weightedDistanceSq(dist_sq, movement, @intCast(dx), @intCast(dz));
+                    self.gen_queue.push(.{
+                        .type = .chunk_generation,
+                        .dist_sq = priority_dist_sq,
+                        .data = .{ .chunk = .{ .x = chunk_x, .z = chunk_z, .job_token = data.chunk.job_token } },
+                    }) catch {
+                        self.missing_rescan_requested.store(true, .release);
+                        continue;
+                    };
+                    data.chunk.state = .queued_for_generation;
+                },
+                else => {},
+            }
+        }
+        return false;
     }
 
     pub fn processChunkStates(self: *ChunkQueueCoordinator, pc_x: i32, pc_z: i32, render_dist: i32, frame_counter: u64) void {
@@ -237,12 +350,12 @@ pub const ChunkQueueCoordinator = struct {
             if (data.chunk.state == .generated) {
                 // Safety net in case a worker's pending-mesh notification was
                 // lost (e.g. allocation failure on append).
-                const dx = data.chunk.chunk_x - pc_x;
-                const dz = data.chunk.chunk_z - pc_z;
-                if (dx * dx + dz * dz <= render_dist * render_dist) {
+                const dx = @as(i64, data.chunk.chunk_x) - @as(i64, pc_x);
+                const dz = @as(i64, data.chunk.chunk_z) - @as(i64, pc_z);
+                if (isWithinDistance(dx, dz, render_dist)) {
                     self.mesh_queue.push(.{
                         .type = .chunk_meshing,
-                        .dist_sq = dx * dx + dz * dz,
+                        .dist_sq = clampedDistanceSquared(dx, dz),
                         .data = .{ .chunk = .{ .x = data.chunk.chunk_x, .z = data.chunk.chunk_z, .job_token = data.chunk.job_token } },
                     }) catch continue;
                     data.chunk.state = .queued_for_mesh;
@@ -272,18 +385,18 @@ pub const ChunkQueueCoordinator = struct {
                     }
                 }
             } else if (data.chunk.state == .generating and !data.chunk.isPinned() and frame_counter % 120 == 0) {
-                const dx = data.chunk.chunk_x - pc_x;
-                const dz = data.chunk.chunk_z - pc_z;
-                const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
-                if (dx * dx + dz * dz <= max_dist * max_dist) {
+                const dx = @as(i64, data.chunk.chunk_x) - @as(i64, pc_x);
+                const dz = @as(i64, data.chunk.chunk_z) - @as(i64, pc_z);
+                const max_dist = @as(i64, render_dist) + CHUNK_UNLOAD_BUFFER;
+                if (isWithinDistance(dx, dz, max_dist)) {
                     data.chunk.job_token += 1;
                     data.chunk.state = .missing;
                     log.log.warn("CHUNK_STUCK: ({},{}) in generating state too long, resetting to missing", .{ data.chunk.chunk_x, data.chunk.chunk_z });
                 }
             } else if (data.chunk.state == .uploading and frame_counter % 60 == 0) {
-                const dx = data.chunk.chunk_x - pc_x;
-                const dz = data.chunk.chunk_z - pc_z;
-                if (dx * dx + dz * dz <= render_dist * render_dist) {
+                const dx = @as(i64, data.chunk.chunk_x) - @as(i64, pc_x);
+                const dz = @as(i64, data.chunk.chunk_z) - @as(i64, pc_z);
+                if (isWithinDistance(dx, dz, render_dist)) {
                     data.chunk.mesh_attempts +|= 1;
                     if (data.chunk.mesh_attempts < 3) {
                         log.log.warn("CHUNK_UPLOAD_STUCK: ({},{}) in uploading state too long, resetting to generated (attempt {})", .{ data.chunk.chunk_x, data.chunk.chunk_z, data.chunk.mesh_attempts });
@@ -384,10 +497,10 @@ pub const ChunkQueueCoordinator = struct {
         for (local.items) |ref| {
             const data = self.storage.chunks.get(.{ .x = ref.x, .z = ref.z }) orelse continue;
             if (data.chunk.state != .generated or data.chunk.job_token != ref.job_token) continue;
-            const dx = ref.x - pc_x;
-            const dz = ref.z - pc_z;
-            const dist_sq = dx * dx + dz * dz;
-            if (dist_sq > render_dist * render_dist) continue;
+            const dx = @as(i64, ref.x) - @as(i64, pc_x);
+            const dz = @as(i64, ref.z) - @as(i64, pc_z);
+            if (!isWithinDistance(dx, dz, render_dist)) continue;
+            const dist_sq = clampedDistanceSquared(dx, dz);
             self.mesh_queue.push(.{
                 .type = .chunk_meshing,
                 .dist_sq = dist_sq,
@@ -484,6 +597,8 @@ pub const ChunkQueueCoordinator = struct {
 
     pub fn processGenJob(ctx: *anyopaque, job: Job) void {
         const self: *ChunkQueueCoordinator = @ptrCast(@alignCast(ctx));
+        _ = self.generation_jobs_in_flight.fetchAdd(1, .acq_rel);
+        defer _ = self.generation_jobs_in_flight.fetchSub(1, .acq_rel);
         const cx = job.data.chunk.x;
         const cz = job.data.chunk.z;
 
@@ -496,10 +611,10 @@ pub const ChunkQueueCoordinator = struct {
         const pc_x = self.last_pc_x.load(.acquire);
         const pc_z = self.last_pc_z.load(.acquire);
         const render_dist = self.effective_render_dist.load(.acquire);
-        const dx = cx - pc_x;
-        const dz = cz - pc_z;
-        const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
-        if (dx * dx + dz * dz > max_dist * max_dist) {
+        const dx = @as(i64, cx) - @as(i64, pc_x);
+        const dz = @as(i64, cz) - @as(i64, pc_z);
+        const max_dist = @as(i64, render_dist) + CHUNK_UNLOAD_BUFFER;
+        if (!isWithinDistance(dx, dz, max_dist)) {
             self.storage.chunks_mutex.unlockShared();
 
             self.storage.chunks_mutex.lock();
@@ -547,12 +662,14 @@ pub const ChunkQueueCoordinator = struct {
                     self.storage.chunks_mutex.lock();
                     chunk_data.chunk.state = .missing;
                     chunk_data.chunk.generated = false;
+                    self.missing_rescan_requested.store(true, .release);
                     self.storage.chunks_mutex.unlock();
                     return;
                 };
                 if (self.gen_queue.abort_worker) {
                     self.storage.chunks_mutex.lock();
                     chunk_data.chunk.state = .missing;
+                    self.missing_rescan_requested.store(true, .release);
                     self.storage.chunks_mutex.unlock();
                     return;
                 }
@@ -633,6 +750,8 @@ pub const ChunkQueueCoordinator = struct {
 
     pub fn processMeshJob(ctx: *anyopaque, job: Job) void {
         const self: *ChunkQueueCoordinator = @ptrCast(@alignCast(ctx));
+        _ = self.mesh_jobs_in_flight.fetchAdd(1, .acq_rel);
+        defer _ = self.mesh_jobs_in_flight.fetchSub(1, .acq_rel);
         const cx = job.data.chunk.x;
         const cz = job.data.chunk.z;
 
@@ -645,10 +764,10 @@ pub const ChunkQueueCoordinator = struct {
         const pc_x = self.last_pc_x.load(.acquire);
         const pc_z = self.last_pc_z.load(.acquire);
         const render_dist = self.effective_render_dist.load(.acquire);
-        const dx = cx - pc_x;
-        const dz = cz - pc_z;
-        const max_dist = render_dist + CHUNK_UNLOAD_BUFFER;
-        if (dx * dx + dz * dz > max_dist * max_dist) {
+        const dx = @as(i64, cx) - @as(i64, pc_x);
+        const dz = @as(i64, cz) - @as(i64, pc_z);
+        const max_dist = @as(i64, render_dist) + CHUNK_UNLOAD_BUFFER;
+        if (!isWithinDistance(dx, dz, max_dist)) {
             self.storage.chunks_mutex.unlockShared();
 
             self.storage.chunks_mutex.lock();
@@ -931,4 +1050,23 @@ test "runtime edits enqueue dirty renderable chunks immediately" {
 
     try testing.expectEqual(Chunk.State.generated, data.chunk.state);
     try testing.expectEqual(@as(usize, 1), coordinator.pending_mesh_incoming.items.len);
+}
+
+test "missing chunk scan cursor covers concentric square rings without duplicates" {
+    var coordinator: ChunkQueueCoordinator = undefined;
+    coordinator.resetMissingScan(10, -5, 2);
+
+    var coordinates: [25][2]i64 = undefined;
+    var count: usize = 0;
+    while (coordinator.nextMissingScanCoordinate(10, -5, 2)) |coordinate| {
+        try std.testing.expect(count < coordinates.len);
+        for (coordinates[0..count]) |previous| {
+            try std.testing.expect(previous[0] != coordinate[0] or previous[1] != coordinate[1]);
+        }
+        coordinates[count] = coordinate;
+        count += 1;
+    }
+
+    try std.testing.expectEqual(coordinates.len, count);
+    try std.testing.expect(MAX_MISSING_SCAN_STEPS < @as(usize, 4096) * 4096);
 }

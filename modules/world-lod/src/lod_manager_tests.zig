@@ -114,7 +114,7 @@ test "LODManager initialization" {
             fn f(_: *anyopaque, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: bool, _: ?i32, _: lod_gpu.LODRenderLayer, _: ?*LODStats, _: ?*LODProfilingCollector) void {}
         }.f,
         .prepare_frame_fn = struct {
-            fn f(ctx: *anyopaque, _: u64, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+            fn f(ctx: *anyopaque, _: u64, _: *const [LODLevel.count]MeshMap, _: *const [LODLevel.count]RegionMap, _: ILODConfig, _: Mat4, _: Vec3, _: ?LODManager.ChunkChecker, _: ?*anyopaque, _: ?i32, _: i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
                 const state: *MockState = @ptrCast(@alignCast(ctx));
                 state.prepare_saw_stats = stats != null;
                 state.prepare_saw_profiling = profiling != null;
@@ -146,7 +146,7 @@ test "LODManager initialization" {
     try std.testing.expectEqual(@as(u32, 0), stats.totalLoaded());
     try std.testing.expectEqual(@as(u32, 0), stats.totalGenerating());
     mgr.profiling.enabled = true;
-    mgr.prepareFrame(1, Mat4.identity, Vec3.zero, null, null, null);
+    mgr.prepareFrame(1, Mat4.identity, Vec3.zero, null, null, null, mgr.config.getChunkRenderRadius());
     try std.testing.expect(mock_state.prepare_saw_stats);
     try std.testing.expect(mock_state.prepare_saw_profiling);
 

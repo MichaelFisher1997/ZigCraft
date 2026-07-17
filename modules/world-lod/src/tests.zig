@@ -9,4 +9,6 @@ test {
     _ = @import("lod_mesh.zig");
     _ = @import("lod_vertex_pool.zig");
     _ = @import("lod_store.zig");
+    _ = @import("lod_streaming_coordinator.zig");
+    _ = @import("lod_scheduler.zig");
 }

@@ -68,7 +68,74 @@ const ILODCullingSystem = rhi_types.ILODCullingSystem;
 
 const CHUNK_COVERAGE_PADDING: i32 = 1;
 const LOD_UNMASKED_SENTINEL: f32 = 0.5;
+// Positive radii retain the legacy two-chunk overlap. A negative radius marks
+// an exact contiguous ready-detail disk without consuming float precision in a
+// fractional tag at large render distances.
 const COMPACT_GRID_WIDTHS = [_]u32{ 5, 9, 17, 33, 65, 129 };
+
+fn conservativeChunkDiskMaskRadius(mask_radius: f32) f32 {
+    return if (mask_radius >= 1.0) -mask_radius else LOD_UNMASKED_SENTINEL;
+}
+
+fn readyDiskMaskRadius(ready_radius: i32) f32 {
+    if (ready_radius < 0) return LOD_UNMASKED_SENTINEL;
+    const radius_blocks = @as(f32, @floatFromInt(@as(i64, ready_radius) * CHUNK_SIZE_X));
+    return -@max(radius_blocks, 1.0);
+}
+
+fn contiguousReadyDiskRadius(checker: ?ChunkChecker, checker_ctx: ?*anyopaque, camera_chunk_x: i32, camera_chunk_z: i32, max_radius: i32) i32 {
+    return expandContiguousReadyDiskRadius(checker, checker_ctx, camera_chunk_x, camera_chunk_z, -1, max_radius);
+}
+
+fn readyDetailChunkAtOffset(check: ChunkChecker, ctx: *anyopaque, camera_chunk_x: i32, camera_chunk_z: i32, dx: i64, dz: i64) bool {
+    const cx = @as(i64, camera_chunk_x) + dx;
+    const cz = @as(i64, camera_chunk_z) + dz;
+    if (cx < std.math.minInt(i32) or cx > std.math.maxInt(i32) or cz < std.math.minInt(i32) or cz > std.math.maxInt(i32)) return false;
+    return check(@intCast(cx), @intCast(cz), ctx);
+}
+
+fn expandContiguousReadyDiskRadius(checker: ?ChunkChecker, checker_ctx: ?*anyopaque, camera_chunk_x: i32, camera_chunk_z: i32, known_ready_radius: i32, max_radius: i32) i32 {
+    const check = checker orelse return -1;
+    const ctx = checker_ctx orelse return -1;
+    if (known_ready_radius >= max_radius) return max_radius;
+
+    var radius = @as(i64, @max(known_ready_radius + 1, 0));
+    const max_radius_i64 = @as(i64, @max(max_radius, 0));
+    while (radius <= max_radius_i64) : (radius += 1) {
+        const radius_sq = radius * radius;
+        const previous_radius = radius - 1;
+        const previous_sq = previous_radius * previous_radius;
+        var max_dx = radius;
+        var previous_max_dx = previous_radius;
+        var abs_dz: i64 = 0;
+        while (abs_dz <= radius) : (abs_dz += 1) {
+            while (max_dx * max_dx + abs_dz * abs_dz > radius_sq) max_dx -= 1;
+            if (abs_dz <= previous_radius) {
+                while (previous_max_dx * previous_max_dx + abs_dz * abs_dz > previous_sq) previous_max_dx -= 1;
+            } else {
+                previous_max_dx = -1;
+            }
+
+            const first_new_x = previous_max_dx + 1;
+            var abs_dx = first_new_x;
+            while (abs_dx <= max_dx) : (abs_dx += 1) {
+                if (!readyDetailChunkAtOffset(check, ctx, camera_chunk_x, camera_chunk_z, abs_dx, abs_dz)) return @intCast(radius - 1);
+                if (abs_dx > 0 and !readyDetailChunkAtOffset(check, ctx, camera_chunk_x, camera_chunk_z, -abs_dx, abs_dz)) return @intCast(radius - 1);
+                if (abs_dz > 0) {
+                    if (!readyDetailChunkAtOffset(check, ctx, camera_chunk_x, camera_chunk_z, abs_dx, -abs_dz)) return @intCast(radius - 1);
+                    if (abs_dx > 0 and !readyDetailChunkAtOffset(check, ctx, camera_chunk_x, camera_chunk_z, -abs_dx, -abs_dz)) return @intCast(radius - 1);
+                }
+            }
+        }
+    }
+    return @max(max_radius, 0);
+}
+
+fn detailChunkKey(chunk_x: i32, chunk_z: i32) u64 {
+    const x_bits: u32 = @bitCast(chunk_x);
+    const z_bits: u32 = @bitCast(chunk_z);
+    return (@as(u64, x_bits) << 32) | @as(u64, z_bits);
+}
 
 fn selectLODDescriptorStream(render_ctx: anytype, layer: LODRenderLayer, compact: bool, gpu: bool) void {
     if (comptime !@hasDecl(@TypeOf(render_ctx), "setLODDescriptorStream")) return;
@@ -177,6 +244,7 @@ const VisibleRegion = struct {
     model: Mat4,
     mask_radius: f32,
     lod_fade: f32,
+    suppresses_detail: bool = false,
 };
 
 const MAX_LOD_MDI_REGIONS: usize = 2048;
@@ -199,6 +267,21 @@ pub fn LODRenderer(comptime RHI: type) type {
         instance_data: std.ArrayListUnmanaged(rhi_types.InstanceData),
         draw_list: std.ArrayListUnmanaged(*LODMesh),
         projection_regions: std.ArrayListUnmanaged(VisibleRegion),
+        /// Number of projected LOD terrain regions that currently cover each
+        /// detailed chunk. Counts let a failed region release only its own
+        /// provisional ownership without flashing unrelated chunks back on.
+        suppressed_detail_chunks: std.AutoHashMapUnmanaged(u64, u16),
+        suppression_camera_chunk_x: i32,
+        suppression_camera_chunk_z: i32,
+        suppression_detail_radius: i32,
+        suppression_ready_radius: i32,
+        suppression_failed: bool,
+        cached_ready_disk_camera_x: i32,
+        cached_ready_disk_camera_z: i32,
+        cached_ready_disk_max_radius: i32,
+        cached_ready_disk_radius: i32,
+        cached_ready_disk_checker: ?ChunkChecker,
+        cached_ready_disk_checker_ctx: ?*anyopaque,
         projection_frame: ?u64,
         draw_commands: [LODLevel.count]std.ArrayListUnmanaged(rhi_types.DrawIndirectCommand),
         instance_buffers: [rhi_types.MAX_FRAMES_IN_FLIGHT]rhi_types.BufferHandle,
@@ -295,6 +378,18 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .instance_data = .empty,
                 .draw_list = .empty,
                 .projection_regions = .empty,
+                .suppressed_detail_chunks = .empty,
+                .suppression_camera_chunk_x = 0,
+                .suppression_camera_chunk_z = 0,
+                .suppression_detail_radius = 0,
+                .suppression_ready_radius = -1,
+                .suppression_failed = false,
+                .cached_ready_disk_camera_x = 0,
+                .cached_ready_disk_camera_z = 0,
+                .cached_ready_disk_max_radius = -1,
+                .cached_ready_disk_radius = -1,
+                .cached_ready_disk_checker = null,
+                .cached_ready_disk_checker_ctx = null,
                 .projection_frame = null,
                 .draw_commands = draw_commands,
                 .instance_buffers = instance_buffers,
@@ -345,6 +440,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
             self.projection_regions.deinit(self.allocator);
+            self.suppressed_detail_chunks.deinit(self.allocator);
             self.gpu_candidates.deinit(self.allocator);
             self.gpu_candidate_keys.deinit(self.allocator);
             self.compact_fallback_regions.deinit(self.allocator);
@@ -371,6 +467,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
             max_distance_chunks: ?i32,
+            detail_render_radius: i32,
             layer: LODRenderLayer,
             stats: ?*LODStats,
             profiling: ?*LODProfilingCollector,
@@ -386,7 +483,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             if (self.projection_frame == null or self.projection_frame.? != frame_serial) {
                 const timer = if (profiling) |profile| profile.begin() else null;
                 defer if (profiling) |profile| profile.end(.visibility, timer);
-                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, stats, profiling) catch |err| {
                     log.log.errWithTrace("Failed to project LOD visibility: {}", .{err});
                     return;
                 };
@@ -399,7 +496,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 self.gpu_culling_ready_frame = null;
                 const timer = if (profiling) |profile| profile.begin() else null;
                 defer if (profiling) |profile| profile.end(.visibility, timer);
-                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, stats, profiling) catch |err| {
+                self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, stats, profiling) catch |err| {
                     log.log.errWithTrace("Failed to rebuild CPU LOD visibility: {}", .{err});
                     self.projection_frame = null;
                     return;
@@ -422,6 +519,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             chunk_checker: ?ChunkChecker,
             checker_ctx: ?*anyopaque,
             max_distance_chunks: ?i32,
+            detail_render_radius: i32,
             stats: ?*LODStats,
             profiling: ?*LODProfilingCollector,
         ) void {
@@ -430,7 +528,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             if (!self.gpu_culling_requested or self.projection_frame == frame_serial) return;
             const visibility_timer = if (profiling) |profile| profile.begin() else null;
             defer if (profiling) |profile| profile.end(.visibility, visibility_timer);
-            self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, false, null, stats, profiling) catch |err| {
+            self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, false, null, detail_render_radius, stats, profiling) catch |err| {
                 log.log.err("LOD GPU culling projection failed: {}", .{err});
                 return;
             };
@@ -649,6 +747,40 @@ pub fn LODRenderer(comptime RHI: type) type {
             return true;
         }
 
+        fn readyDiskRadiusForProjection(self: *Self, checker: ?ChunkChecker, checker_ctx: ?*anyopaque, camera_chunk_x: i32, camera_chunk_z: i32, max_radius: i32) i32 {
+            const safe_max_radius = @max(max_radius, 0);
+            const cache_source_matches = self.cached_ready_disk_max_radius >= 0 and
+                self.cached_ready_disk_checker == checker and
+                self.cached_ready_disk_checker_ctx == checker_ctx;
+            const cache_matches = cache_source_matches and
+                self.cached_ready_disk_camera_x == camera_chunk_x and
+                self.cached_ready_disk_camera_z == camera_chunk_z;
+
+            const ready_radius = if (!cache_matches)
+                if (cache_source_matches) shifted: {
+                    // A disk reduced by the camera's Manhattan displacement is
+                    // guaranteed to remain inside the previously verified disk.
+                    // Expand only the newly exposed shells instead of rescanning
+                    // the full area whenever the player crosses a chunk edge.
+                    const shift_x: i64 = @intCast(@abs(@as(i64, camera_chunk_x) - @as(i64, self.cached_ready_disk_camera_x)));
+                    const shift_z: i64 = @intCast(@abs(@as(i64, camera_chunk_z) - @as(i64, self.cached_ready_disk_camera_z)));
+                    const retained_radius: i32 = @intCast(@max(@as(i64, self.cached_ready_disk_radius) - shift_x - shift_z, -1));
+                    break :shifted expandContiguousReadyDiskRadius(checker, checker_ctx, camera_chunk_x, camera_chunk_z, retained_radius, safe_max_radius);
+                } else contiguousReadyDiskRadius(checker, checker_ctx, camera_chunk_x, camera_chunk_z, safe_max_radius)
+            else if (self.cached_ready_disk_radius >= safe_max_radius)
+                safe_max_radius
+            else
+                expandContiguousReadyDiskRadius(checker, checker_ctx, camera_chunk_x, camera_chunk_z, self.cached_ready_disk_radius, safe_max_radius);
+
+            self.cached_ready_disk_camera_x = camera_chunk_x;
+            self.cached_ready_disk_camera_z = camera_chunk_z;
+            self.cached_ready_disk_max_radius = safe_max_radius;
+            self.cached_ready_disk_radius = ready_radius;
+            self.cached_ready_disk_checker = checker;
+            self.cached_ready_disk_checker_ctx = checker_ctx;
+            return ready_radius;
+        }
+
         fn buildVisibilityProjection(
             self: *Self,
             all_meshes: *const [LODLevel.count]MeshMap,
@@ -660,10 +792,16 @@ pub fn LODRenderer(comptime RHI: type) type {
             checker_ctx: ?*anyopaque,
             use_frustum: bool,
             max_distance_chunks: ?i32,
+            detail_render_radius: i32,
             stats: ?*LODStats,
             profiling: ?*LODProfilingCollector,
         ) !void {
             self.projection_regions.clearRetainingCapacity();
+            self.suppressed_detail_chunks.clearRetainingCapacity();
+            errdefer {
+                self.projection_regions.clearRetainingCapacity();
+                self.suppressed_detail_chunks.clearRetainingCapacity();
+            }
             if (stats) |s| {
                 s.drawn = [_]u32{0} ** LODLevel.count;
                 s.instances = [_]u32{0} ** LODLevel.count;
@@ -676,7 +814,13 @@ pub fn LODRenderer(comptime RHI: type) type {
             const frustum = Frustum.fromViewProj(view_proj);
             const disable_frustum = engine_core.envFlag("ZIGCRAFT_LOD_DISABLE_FRUSTUM", false);
             const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
-            const chunk_radius = config.getChunkRenderRadius();
+            const chunk_radius = @max(detail_render_radius, 0);
+            const ready_detail_radius = self.readyDiskRadiusForProjection(chunk_checker, checker_ctx, camera_chunk.chunk_x, camera_chunk.chunk_z, chunk_radius);
+            const handoff_mask_radius = readyDiskMaskRadius(ready_detail_radius);
+            self.suppression_camera_chunk_x = camera_chunk.chunk_x;
+            self.suppression_camera_chunk_z = camera_chunk.chunk_z;
+            self.suppression_detail_radius = chunk_radius;
+            self.suppression_ready_radius = ready_detail_radius;
             var i = lod_chunk.activeLODCount(config);
             while (i > 0) {
                 i -= 1;
@@ -729,7 +873,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                         continue;
                     }
 
-                    var mask_radius = config.calculateMaskRadius();
+                    const mask_radius = handoff_mask_radius;
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
                             const coverage_timer = if (profiling) |profile| profile.begin() else null;
@@ -744,15 +888,16 @@ pub fn LODRenderer(comptime RHI: type) type {
                                 if (profiling) |profile| profile.addRejected();
                                 continue;
                             }
-                            if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) mask_radius = LOD_UNMASKED_SENTINEL;
                         }
                     }
 
+                    const suppresses_detail = mesh.drawRange(.terrain) != null;
                     try self.projection_regions.append(self.allocator, .{
                         .key = entry.key_ptr.*,
                         .model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z)),
                         .mask_radius = mask_radius,
                         .lod_fade = chunk.transitionFadeProgress(),
+                        .suppresses_detail = suppresses_detail,
                     });
                     telemetry.accepted += 1;
                     if (profiling) |profile| profile.addVisible();
@@ -761,9 +906,73 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
         }
 
+        fn addPartialDetailSuppression(self: *Self, region_key: LODRegionKey) void {
+            self.adjustPartialDetailSuppression(region_key, true);
+        }
+
+        fn resetProjectedDetailSuppression(self: *Self) void {
+            self.suppressed_detail_chunks.clearRetainingCapacity();
+            self.suppression_failed = false;
+            for (self.projection_regions.items) |visible| {
+                if (visible.suppresses_detail) self.addPartialDetailSuppression(visible.key);
+            }
+        }
+
+        fn releasePartialDetailSuppression(self: *Self, visible: VisibleRegion) void {
+            if (!visible.suppresses_detail) return;
+            self.adjustPartialDetailSuppression(visible.key, false);
+        }
+
+        fn adjustPartialDetailSuppression(self: *Self, region_key: LODRegionKey, add: bool) void {
+            if (self.suppression_failed) return;
+            const bounds = region_key.chunkBounds();
+            const detail_radius = @as(i64, self.suppression_ready_radius);
+            const detail_radius_sq = if (detail_radius >= 0) detail_radius * detail_radius else -1;
+            const chunk_radius_sq = @as(i64, self.suppression_detail_radius) * @as(i64, self.suppression_detail_radius);
+
+            var cz = bounds.min_z;
+            while (cz <= bounds.max_z) : (cz += 1) {
+                var cx = bounds.min_x;
+                while (cx <= bounds.max_x) : (cx += 1) {
+                    const dx = @as(i64, cx) - @as(i64, self.suppression_camera_chunk_x);
+                    const dz = @as(i64, cz) - @as(i64, self.suppression_camera_chunk_z);
+                    const dist_sq = dx * dx + dz * dz;
+                    if (dist_sq > chunk_radius_sq or dist_sq <= detail_radius_sq) continue;
+                    const key = detailChunkKey(cx, cz);
+                    if (add) {
+                        if (self.suppressed_detail_chunks.getPtr(key)) |count| {
+                            count.* +|= 1;
+                        } else {
+                            self.suppressed_detail_chunks.put(self.allocator, key, 1) catch {
+                                // Ownership bookkeeping must fail open: render
+                                // detail rather than leaving a terrain hole.
+                                self.suppressed_detail_chunks.clearRetainingCapacity();
+                                self.suppression_failed = true;
+                                return;
+                            };
+                        }
+                    } else if (self.suppressed_detail_chunks.getPtr(key)) |count| {
+                        if (count.* > 1) {
+                            count.* -= 1;
+                        } else {
+                            _ = self.suppressed_detail_chunks.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+
+        pub fn suppressesDetailChunk(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
+            return self.suppressed_detail_chunks.contains(detailChunkKey(chunk_x, chunk_z));
+        }
+
         /// Returns false only when a prepared GPU frame could not be submitted;
         /// callers must rebuild the CPU projection with normal culling first.
         fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats, profiling: ?*LODProfilingCollector) bool {
+            // A frame can render terrain more than once (for example G-pass and
+            // opaque). Rebuild provisional ownership for each terrain pass so a
+            // failure in one pass cannot make a later pass inherit stale releases.
+            if (layer == .terrain) self.resetProjectedDetailSuppression();
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
@@ -804,9 +1013,18 @@ pub fn LODRenderer(comptime RHI: type) type {
                 defer if (compact_timing_started and @hasDecl(RHI, "timing")) self.rhi.timing().endPassTiming(compact_timing_name);
                 for (self.projection_regions.items) |visible| {
                     const lod_idx = @intFromEnum(visible.key.lod);
-                    const mesh = all_meshes[lod_idx].get(visible.key) orelse continue;
-                    const range = mesh.drawRange(layer) orelse continue;
-                    if (!mesh.isReady() or range.count == 0) continue;
+                    const mesh = all_meshes[lod_idx].get(visible.key) orelse {
+                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
+                        continue;
+                    };
+                    const range = mesh.drawRange(layer) orelse {
+                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
+                        continue;
+                    };
+                    if (!mesh.isReady() or range.count == 0) {
+                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
+                        continue;
+                    }
                     if (gpu_submitted and self.gpuCandidateDraws(visible.key, layer)) continue;
                     if (mesh.isCompact()) {
                         if (!compact_timing_started and @hasDecl(RHI, "timing")) {
@@ -828,16 +1046,22 @@ pub fn LODRenderer(comptime RHI: type) type {
                             // Draw parent fallbacks only after the compact pass
                             // scope closes so expanded draws do not contaminate
                             // compact GPU timing.
-                            self.compact_fallback_regions.append(self.allocator, visible) catch {};
+                            self.compact_fallback_regions.append(self.allocator, visible) catch {
+                                if (layer == .terrain) self.releasePartialDetailSuppression(visible);
+                            };
                         }
                         continue;
                     }
                     const lod_y_offset: f32 = if (layer == .fluid) 0.0 else -0.05;
                     var instance = rhi_types.InstanceData{ .model = visible.model, .mask_radius = visible.mask_radius, .lod_fade = visible.lod_fade, .padding = .{ 0, 0 } };
                     instance.model.data[3][1] += lod_y_offset;
-                    self.instance_data.append(self.allocator, instance) catch continue;
+                    self.instance_data.append(self.allocator, instance) catch {
+                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
+                        continue;
+                    };
                     self.draw_list.append(self.allocator, mesh) catch {
                         _ = self.instance_data.pop();
+                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
                         continue;
                     };
                     if (mesh.isPooled()) {
@@ -849,6 +1073,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }) catch {
                             _ = self.draw_list.pop();
                             _ = self.instance_data.pop();
+                            if (layer == .terrain) self.releasePartialDetailSuppression(visible);
                             continue;
                         };
                     }
@@ -864,7 +1089,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                 }
             }
             for (self.compact_fallback_regions.items) |visible| {
-                _ = self.renderParentFallback(all_meshes, visible, layer, render_ctx, profiling);
+                const fallback_drawn = self.renderParentFallback(all_meshes, visible, layer, render_ctx, profiling);
+                if (!fallback_drawn and layer == .terrain) self.releasePartialDetailSuppression(visible);
             }
             if (self.instance_data.items.len == 0) return true;
             const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
@@ -918,13 +1144,15 @@ pub fn LODRenderer(comptime RHI: type) type {
                 const parent_visible = VisibleRegion{
                     .key = parent_key,
                     .model = child_model,
-                    .mask_radius = LOD_UNMASKED_SENTINEL,
+                    .mask_radius = child.mask_radius,
                     .lod_fade = 1.0,
+                    .suppresses_detail = child.suppresses_detail,
                 };
                 if (mesh.isCompact()) {
                     const result = self.renderCompactMesh(render_ctx, parent_visible, mesh, layer);
                     if (result == .drawn) {
                         if (profiling) |profile| profile.addCompactSubmission();
+                        if (layer == .terrain) self.addPartialDetailSuppression(parent_key);
                         return true;
                     }
                     self.noteCompactRenderFailure(mesh, result, profiling);
@@ -933,12 +1161,13 @@ pub fn LODRenderer(comptime RHI: type) type {
                 }
                 selectLODDescriptorStream(render_ctx, layer, false, false);
                 render_ctx.setLODInstanceBuffer(self.instance_buffers[self.frame_index]);
-                render_ctx.setModelMatrix(child_model, Vec3.one, LOD_UNMASKED_SENTINEL);
+                render_ctx.setModelMatrix(child_model, Vec3.one, child.mask_radius);
                 if (@hasDecl(@TypeOf(render_ctx), "drawOffset")) {
                     render_ctx.drawOffset(mesh.bufferHandle(), range.count, .triangles, mesh.vertexOffset() + range.offset);
                 } else {
                     render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
                 }
+                if (layer == .terrain) self.addPartialDetailSuppression(parent_key);
                 return true;
             }
             return false;
@@ -1196,7 +1425,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }
                     }
 
-                    var mask_radius = config.calculateMaskRadius();
+                    const exact_mask_radius = config.calculateMaskRadius();
+                    var mask_radius = conservativeChunkDiskMaskRadius(exact_mask_radius);
                     if (chunk_checker) |checker| {
                         if (checker_ctx) |ctx_ptr| {
                             const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
@@ -1221,11 +1451,13 @@ pub fn LODRenderer(comptime RHI: type) type {
                                 first_missing_in_radius = cov.missing_chunk_in_radius;
                             }
                             // A single LOD instance cannot exclude individual loaded
-                            // chunks. Keep the radial mask while any full-detail chunk
-                            // is present so LOD never phases through that foreground
-                            // terrain. Only unmask when the entire area is missing.
-                            if (cov.missing_chunk_in_radius and !cov.has_chunk_coverage_in_radius) {
-                                mask_radius = LOD_UNMASKED_SENTINEL;
+                            // chunks while this boundary region is incomplete. Keep
+                            // the conservative inner chunk disk until all of its detail
+                            // cells are ready, then switch to exact chunk ownership.
+                            if (cov.missing_chunk_in_radius) {
+                                if (!cov.has_chunk_coverage_in_radius) mask_radius = LOD_UNMASKED_SENTINEL;
+                            } else {
+                                mask_radius = exact_mask_radius;
                             }
                         }
                     }
@@ -1523,20 +1755,25 @@ pub fn LODRenderer(comptime RHI: type) type {
                     checker_ctx: ?*anyopaque,
                     use_frustum: bool,
                     max_distance_chunks: ?i32,
+                    detail_render_radius: i32,
                     layer: LODRenderLayer,
                     stats: ?*LODStats,
                     profiling: ?*LODProfilingCollector,
                 ) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
-                    renderer.renderFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+                    renderer.renderFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, layer, stats, profiling);
                 }
-                fn prepareFrameFn(self_ptr: *anyopaque, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+                fn prepareFrameFn(self_ptr: *anyopaque, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, detail_render_radius: i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
-                    renderer.prepareFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, stats, profiling);
+                    renderer.prepareFrame(frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, detail_render_radius, stats, profiling);
                 }
                 fn memoryStatsFn(self_ptr: *anyopaque) LODRendererMemoryStats {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     return renderer.memoryStats();
+                }
+                fn suppressesDetailChunkFn(self_ptr: *anyopaque, chunk_x: i32, chunk_z: i32) bool {
+                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
+                    return renderer.suppressesDetailChunk(chunk_x, chunk_z);
                 }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
@@ -1547,6 +1784,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .render_fn = Wrapper.renderFn,
                 .render_frame_fn = Wrapper.renderFrameFn,
                 .prepare_frame_fn = Wrapper.prepareFrameFn,
+                .suppresses_detail_chunk_fn = Wrapper.suppressesDetailChunkFn,
                 .memory_stats_fn = Wrapper.memoryStatsFn,
                 .deinit_fn = Wrapper.deinitFn,
                 .ptr = self,
@@ -1665,6 +1903,36 @@ test "compact grid variants retain exact decimated topology" {
         }
     }
     try std.testing.expect(compactGridVariant(7) == null);
+}
+
+test "ready detail disk stops at the first incomplete chunk ring" {
+    const CheckerState = struct {
+        missing_x: i32,
+        missing_z: i32,
+
+        fn isLoaded(cx: i32, cz: i32, ctx: *anyopaque) bool {
+            const state: *@This() = @ptrCast(@alignCast(ctx));
+            return cx != state.missing_x or cz != state.missing_z;
+        }
+    };
+
+    try std.testing.expectEqual(@as(i32, -1), contiguousReadyDiskRadius(null, null, 0, 0, 4));
+
+    var state = CheckerState{ .missing_x = -7, .missing_z = 3 };
+    try std.testing.expectEqual(@as(i32, -1), contiguousReadyDiskRadius(CheckerState.isLoaded, &state, -7, 3, 4));
+
+    state = .{ .missing_x = -5, .missing_z = 3 };
+    try std.testing.expectEqual(@as(i32, 1), contiguousReadyDiskRadius(CheckerState.isLoaded, &state, -7, 3, 4));
+
+    state = .{ .missing_x = 100, .missing_z = 100 };
+    try std.testing.expectEqual(@as(i32, 4), contiguousReadyDiskRadius(CheckerState.isLoaded, &state, -7, 3, 4));
+}
+
+test "ready detail disk mask uses sign encoding" {
+    try std.testing.expectEqual(@as(f32, 0.5), readyDiskMaskRadius(-1));
+    try std.testing.expectEqual(@as(f32, -1.0), readyDiskMaskRadius(0));
+    try std.testing.expectEqual(@as(f32, -16.0), readyDiskMaskRadius(1));
+    try std.testing.expectEqual(@as(f32, -64.0), readyDiskMaskRadius(4));
 }
 
 test "LODRenderer init/deinit lifecycle" {
@@ -1808,7 +2076,7 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
 
     var mock_config = LODConfig{ .radii = .{ 16, 128, 256, 512, 1024 } };
     var profiling = LODProfilingCollector.init(true);
-    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, mock_config.chunk_render_radius, .terrain, null, &profiling);
 
     try std.testing.expectEqual(@as(u32, 2), mock_state.draw_indirect_calls);
     try std.testing.expectEqual(@as(u32, 2), mock_state.last_draw_count);
@@ -1819,7 +2087,7 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     mesh_lod1.water_vertex_count = 6;
     mesh_lod2.water_vertex_offset = 18 * @sizeOf(rhi_types.Vertex);
     mesh_lod2.water_vertex_count = 9;
-    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .fluid, null, &profiling);
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, mock_config.chunk_render_radius, .fluid, null, &profiling);
     try std.testing.expectEqual(@as(u32, 4), mock_state.draw_indirect_calls);
     try std.testing.expectEqual(@as(u32, 0), mock_state.direct_draw_calls);
     const projection = profiling.snapshot().visibility_levels;
@@ -1829,7 +2097,7 @@ test "LODRenderer batches pooled meshes into per-LOD indirect draws" {
     // A direct-only mesh must not disable indirect submission for its pooled
     // sibling. This is the upload-transition fallback used in production.
     mesh_lod2.pooled = false;
-    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    renderer.renderFrame(99, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, mock_config.chunk_render_radius, .terrain, null, &profiling);
     try std.testing.expectEqual(@as(u32, 5), mock_state.draw_indirect_calls);
     try std.testing.expectEqual(@as(u32, 1), mock_state.direct_draw_calls);
 }
@@ -2331,7 +2599,7 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
     try meshes[1].put(key, &mesh);
     try regions[1].put(key, &chunk);
 
-    var mock_config = LODConfig{ .radii = .{ 16, 32, 64, 100, 256 } };
+    var mock_config = LODConfig{ .chunk_render_radius = 4, .radii = .{ 16, 32, 64, 100, 256 } };
     var checker_ctx: u8 = 0;
     const Checker = struct {
         fn partiallyLoaded(cx: i32, cz: i32, _: *anyopaque) bool {
@@ -2339,10 +2607,13 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
         }
     };
 
-    renderer.render(&meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null, .terrain, null, null);
+    renderer.renderFrame(1, &meshes, &regions, mock_config.interface(), Mat4.identity, Vec3.zero, Checker.partiallyLoaded, &checker_ctx, false, null, mock_config.chunk_render_radius, .terrain, null, null);
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
-    try std.testing.expectEqual(mock_config.interface().calculateMaskRadius(), mock_state.last_mask_radius);
+    try std.testing.expectEqual(readyDiskMaskRadius(0), mock_state.last_mask_radius);
+    try std.testing.expect(!renderer.suppressesDetailChunk(0, 0));
+    try std.testing.expect(renderer.suppressesDetailChunk(2, 0));
+    try std.testing.expect(renderer.suppressesDetailChunk(3, 0));
 }
 
 test "LODRenderer skips coarse LOD when finer coverage is ready" {
@@ -2829,8 +3100,8 @@ test "LODRenderer renderFrame times confirmed compact direct terrain and water s
 
     var config = LODConfig{ .radii = .{ 16, 32, 64, 128, 256 } };
     var profiling = LODProfilingCollector.init(true);
-    renderer.renderFrame(1, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
-    renderer.renderFrame(1, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .fluid, null, &profiling);
+    renderer.renderFrame(1, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, config.chunk_render_radius, .terrain, null, &profiling);
+    renderer.renderFrame(1, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, config.chunk_render_radius, .fluid, null, &profiling);
 
     try std.testing.expectEqual(@as(u32, 2), state.compact_draws);
     try std.testing.expectEqual(state.terrain_timing_begins, state.terrain_timing_ends);
@@ -2840,7 +3111,7 @@ test "LODRenderer renderFrame times confirmed compact direct terrain and water s
     try std.testing.expectEqual(@as(u64, 2), profiling.snapshot().compact_submissions);
 
     state.compact_draw_succeeds = false;
-    renderer.renderFrame(2, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, .terrain, null, &profiling);
+    renderer.renderFrame(2, &meshes, &regions, config.interface(), Mat4.identity, Vec3.zero, null, null, false, null, config.chunk_render_radius, .terrain, null, &profiling);
     try std.testing.expectEqual(state.terrain_timing_begins, state.terrain_timing_ends);
     try std.testing.expectEqual(@as(u32, 2), state.terrain_timing_begins);
     try std.testing.expectEqual(@as(u64, 2), profiling.snapshot().compact_submissions);

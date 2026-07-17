@@ -4,6 +4,7 @@ const Self = @import("lod_manager.zig").LODManager;
 const LODRegionKey = @import("lod_chunk.zig").LODRegionKey;
 const LODSimplifiedData = @import("lod_chunk.zig").LODSimplifiedData;
 const lod_chunk = @import("lod_chunk.zig");
+const manager_ctx = @import("lod_manager_context.zig");
 const lod_cache = @import("lod_cache.zig");
 const lod_store = @import("lod_store.zig");
 const cache_io = @import("lod_cache_io.zig");
@@ -332,6 +333,7 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .transition_queue = .empty,
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
+        .scan_states = [_]manager_ctx.LODScanState{manager_ctx.LODScanState{}} ** lod_chunk.LODLevel.count,
         .stats = .{},
         .profiling = .init(false),
         .cache_hits = 0,

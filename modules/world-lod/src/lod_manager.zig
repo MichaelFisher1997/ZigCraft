@@ -82,6 +82,7 @@ const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std
 const PendingIngestion = lod_manager_context.PendingIngestion;
 const PlayerChunkPos = lod_manager_context.PlayerChunkPos;
 const LifecycleQueue = lod_manager_context.LifecycleQueue;
+const LODScanState = lod_manager_context.LODScanState;
 pub const ChunkResolver = lod_manager_context.ChunkResolver;
 const MAX_LOD_REGIONS = lod_manager_context.MAX_LOD_REGIONS;
 
@@ -169,6 +170,7 @@ pub const LODManager = struct {
     // Current player position (chunk coords), read by worker threads for stale-job checks.
     player_cx: std.atomic.Value(i32),
     player_cz: std.atomic.Value(i32),
+    scan_states: [LODLevel.count]LODScanState,
 
     // Stats
     stats: LODStats,
@@ -309,7 +311,7 @@ pub const LODManager = struct {
             const center_z = @as(i64, chunk.region_z) * scale + @divFloor(scale, 2);
             const dx = center_x - player_cx;
             const dz = center_z - player_cz;
-            if (dx * dx + dz * dz <= radius * radius) return true;
+            if (@as(i128, dx) * dx + @as(i128, dz) * dz <= @as(i128, radius) * radius) return true;
         }
         return false;
     }
@@ -346,13 +348,20 @@ pub const LODManager = struct {
 
     /// Renders a frame-aware LOD layer. The monotonic WorldRenderer serial
     /// allows terrain and water to share one visibility projection.
-    pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
-        return lod_manager_core.renderFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer);
+    pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, detail_render_radius: i32, layer: LODRenderLayer) void {
+        return lod_manager_core.renderFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, layer);
+    }
+
+    /// Returns the immutable projection decision produced by the current LOD
+    /// frame. The main-thread full-detail pass consumes it immediately after
+    /// LOD rendering, so no manager lock is needed or acquired here.
+    pub fn suppressesDetailChunk(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
+        return self.renderer.suppressesDetailChunk(chunk_x, chunk_z);
     }
 
     /// Prepares same-frame GPU LOD culling before active graphics passes.
-    pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
-        return lod_manager_core.prepareFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, detail_render_radius: i32) void {
+        return lod_manager_core.prepareFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, detail_render_radius);
     }
 
     /// Enables persistent source-data caching for LOD regions below `save_dir_path`.

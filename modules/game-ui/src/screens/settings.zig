@@ -13,6 +13,7 @@ const apply_logic = settings_pkg.apply_logic;
 const Settings = settings_pkg.Settings;
 const render_settings_mod = @import("engine-rhi").render_settings;
 const RenderDistancePreset = render_settings_mod.RenderDistancePreset;
+const LODConfig = @import("world-lod").lod_chunk.LODConfig;
 
 const PANEL_WIDTH_MAX = 1360.0;
 const PANEL_HEIGHT_MAX = 820.0;
@@ -295,22 +296,18 @@ fn drawWorldTab(ui: *UISystem, settings: anytype, rs: anytype, layout: ColumnLay
     y_left += 28.0 * scale;
 
     const render_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.render_distance}) catch "?";
-    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "RENDER DISTANCE", "Near-field chunk budget.", render_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
-        if (step == .previous and settings.render_distance > 1) settings.render_distance -= 1;
-        if (step == .next) settings.render_distance += 1;
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "RENDER DISTANCE", "Full-detail chunk radius.", render_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        if (step == .previous and settings.render_distance > 2) settings.render_distance -= 1;
+        if (step == .next and settings.render_distance < std.math.maxInt(i32)) {
+            settings.render_distance += 1;
+            settings.horizon_distance = LODConfig.normalizeHorizonDistance(settings.render_distance, settings.horizon_distance);
+        }
     }
     y_left += row_h + 8.0 * scale;
 
     const horizon_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.horizon_distance}) catch "?";
-    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "HORIZON DISTANCE", "Coarsest LOD radius, independent of near chunks.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
-        const values = [_]i32{ 256, 512, 1024, 2048 };
-        var current_idx: usize = 1;
-        for (values, 0..) |value, i| {
-            if (settings.horizon_distance == value) current_idx = i;
-        }
-        if (step == .previous) current_idx = if (current_idx == 0) values.len - 1 else current_idx - 1;
-        if (step == .next) current_idx = (current_idx + 1) % values.len;
-        settings.horizon_distance = values[current_idx];
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "HORIZON DISTANCE", "Coarsest LOD radius; scales with full-detail distance.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        settings.horizon_distance = LODConfig.stepHorizonDistance(settings.render_distance, settings.horizon_distance, step == .next);
     }
 
     var y_right = if (layout.two_column) layout.top_y else y_left + row_h + 22.0 * scale;
