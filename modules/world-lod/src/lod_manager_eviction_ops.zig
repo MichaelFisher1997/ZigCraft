@@ -305,6 +305,7 @@ pub fn updateStats(self: *Self) void {
     var deferred_deletion_gpu_bytes: usize = 0;
     var deferred_deletion_cpu_bytes: usize = 0;
     var resident_region_count: usize = 0;
+    var unmaterialized_region_count: usize = 0;
 
     const lock_wait_timer = self.profiling.begin();
     self.mutex.lockShared();
@@ -325,7 +326,8 @@ pub fn updateStats(self: *Self) void {
                 .simplified => |*s| {
                     source_data_cpu_bytes += s.totalMemoryBytes();
                 },
-                else => {},
+                .empty => unmaterialized_region_count += 1,
+                .full => {},
             }
         }
 
@@ -368,7 +370,10 @@ pub fn updateStats(self: *Self) void {
         deferred_deletion_cpu_bytes;
     const budget_bytes = @as(usize, self.config.getMemoryBudgetMB()) * 1024 * 1024;
     const reservation_per_region = if (budget_bytes == 0) 0 else @min(budget_bytes, LOGICAL_LOD_REGION_RESERVATION_BYTES);
-    const admission_reservation_bytes = std.math.mul(usize, resident_region_count, reservation_per_region) catch std.math.maxInt(usize);
+    // Reserve conservatively only for regions that do not have measurable
+    // source data yet. Materialized regions are governed by their actual CPU
+    // and GPU footprint instead of a permanent per-region distance cap.
+    const admission_reservation_bytes = std.math.mul(usize, unmaterialized_region_count, reservation_per_region) catch std.math.maxInt(usize);
     const logical_admission_bytes = std.math.add(usize, known_memory_bytes, admission_reservation_bytes) catch std.math.maxInt(usize);
     self.stats.addMemory(known_memory_bytes);
     self.stats.pool_gpu_capacity_bytes = @intCast(pool_memory.pool_gpu_capacity_bytes);

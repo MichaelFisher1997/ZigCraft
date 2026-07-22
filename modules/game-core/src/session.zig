@@ -81,6 +81,22 @@ const SpawnColumn = struct {
     info: @import("world-worldgen").ColumnInfo,
 };
 
+/// Keeps the projection volume large enough for the configured coarsest LOD
+/// radius plus one outer-region margin. A fixed 10,000-block far plane clips a
+/// 1,024-chunk horizon at roughly 625 chunks even when those regions are loaded.
+pub fn cameraFarPlaneForHorizon(horizon_distance_chunks: i32) f32 {
+    const horizon_chunks: i64 = @max(horizon_distance_chunks, 1);
+    const horizon_blocks = horizon_chunks * 16;
+    const outer_region_margin: i64 = 1024;
+    return @floatFromInt(@max(horizon_blocks + outer_region_margin, 10_000));
+}
+
+/// Uses the effective horizon so a manually lowered horizon setting cannot
+/// clip a larger full-detail render distance.
+pub fn cameraFarPlaneForDistances(render_distance_chunks: i32, horizon_distance_chunks: i32) f32 {
+    return cameraFarPlaneForHorizon(@max(render_distance_chunks, horizon_distance_chunks));
+}
+
 pub const GameSession = struct {
     allocator: std.mem.Allocator,
     world: *World,
@@ -149,7 +165,7 @@ pub const GameSession = struct {
 
         const preset_cfg = render_settings.getPresetConfig(render_distance_preset);
 
-        const effective_horizon_distance = @max(horizon_distance, effective_render_distance);
+        const effective_horizon_distance = LODConfig.normalizeHorizonDistance(effective_render_distance, horizon_distance);
         const manual_distance_expanded = effective_render_distance > preset_cfg.lod_radii[0] or effective_horizon_distance != preset_cfg.horizon_radius;
         const chunk_render_radius = if (strict_safe_mode)
             @min(effective_render_distance, 8)
@@ -247,6 +263,7 @@ pub const GameSession = struct {
         const spawn = findActualSpawnColumn(world_sim, seed_spawn.x, seed_spawn.z) orelse seed_spawn;
         const spawn_y: f32 = @floatFromInt(spawn.info.height + 16);
         var player = Player.init(Vec3.init(@floatFromInt(spawn.x), spawn_y, @floatFromInt(spawn.z)), true);
+        player.camera.far = cameraFarPlaneForDistances(effective_render_distance, effective_horizon_distance);
         // Aim toward the terrain so the first frame shows the ground.
         player.camera.setYawPitch(player.camera.yaw, -std.math.degreesToRadians(35.0));
 
@@ -523,7 +540,7 @@ pub const GameSession = struct {
             for (20..31) |x| for (0..10) |z| {
                 try world_sim.setBlock(@intCast(x), 65, @intCast(z), .water);
             };
-        } else if (std.ascii.eqlIgnoreCase(scene, "lod-handoff") or std.ascii.eqlIgnoreCase(scene, "lod-handoff-traversal") or std.ascii.eqlIgnoreCase(scene, "teleport-handoff")) {
+        } else if (std.ascii.eqlIgnoreCase(scene, "lod-handoff") or std.ascii.eqlIgnoreCase(scene, "lod-aerial") or std.ascii.eqlIgnoreCase(scene, "lod-handoff-traversal") or std.ascii.eqlIgnoreCase(scene, "teleport-handoff")) {
             const motion_scene = std.ascii.eqlIgnoreCase(scene, "lod-handoff-traversal") or std.ascii.eqlIgnoreCase(scene, "teleport-handoff");
             const base_x: i32 = if (motion_scene) -130 else -2;
             const base_z: i32 = if (motion_scene) -24 else 8;
@@ -736,6 +753,7 @@ pub fn parsePhase5VisualScene(name: []const u8) ?Phase5VisualScene {
     if (std.ascii.eqlIgnoreCase(name, "seam")) return .{ .position = Vec3.init(16.0, 74.0, -18.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(15.0) };
     if (std.ascii.eqlIgnoreCase(name, "water")) return .{ .position = Vec3.init(25.0, 75.0, -16.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(17.0) };
     if (std.ascii.eqlIgnoreCase(name, "lod-handoff")) return .{ .position = Vec3.init(0.0, 110.0, -80.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(13.0) };
+    if (std.ascii.eqlIgnoreCase(name, "lod-aerial")) return .{ .position = Vec3.init(0.0, 900.0, -100.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(60.0) };
     if (std.ascii.eqlIgnoreCase(name, "saved-world-create") or std.ascii.eqlIgnoreCase(name, "saved-world-reload")) return .{ .position = Vec3.init(8.0, 78.0, -88.0), .yaw = forward_z, .pitch = -std.math.degreesToRadians(18.0) };
     if (std.ascii.eqlIgnoreCase(name, "lod-handoff-traversal")) return .{ .position = Vec3.init(-128.0, 110.0, -32.0), .yaw = 0.0, .pitch = -std.math.degreesToRadians(13.0), .motion = .lod_handoff_traversal };
     if (std.ascii.eqlIgnoreCase(name, "fog-rapid-turn")) return .{ .position = Vec3.init(0.0, 110.0, 0.0), .yaw = -std.math.pi, .pitch = -std.math.degreesToRadians(10.0), .motion = .fog_rapid_turn };
@@ -782,12 +800,14 @@ fn phase5MotionEvidence(motion: Phase5VisualMotion) struct { distance: f32, yaw_
 }
 
 test "Phase 5 visual scene parser exposes bounded motion poses" {
+    const aerial = parsePhase5VisualScene("lod-aerial").?;
     const traversal = parsePhase5VisualScene("lod-handoff-traversal").?;
     const turn = parsePhase5VisualScene("fog-rapid-turn").?;
     const teleport = parsePhase5VisualScene("teleport-handoff").?;
     try std.testing.expectEqual(Phase5VisualMotion.lod_handoff_traversal, traversal.motion);
     try std.testing.expectEqual(Phase5VisualMotion.fog_rapid_turn, turn.motion);
     try std.testing.expectEqual(Phase5VisualMotion.teleport_handoff, teleport.motion);
+    try std.testing.expect(aerial.position.y >= 900.0);
     try std.testing.expect(parsePhase5VisualScene("unbounded-motion") == null);
 
     const traversal_end = phase5VisualPoseAtFrame(traversal, phase5MotionFrameTarget(traversal.motion));

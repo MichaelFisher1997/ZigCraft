@@ -118,12 +118,12 @@ pub fn initPresets(allocator: std.mem.Allocator) !void {
             log.log.warn("Skipping preset '{s}': invalid lpv_propagation_iterations {}", .{ p.name, p.lpv_propagation_iterations });
             continue;
         }
-        if (p.render_distance < 2 or p.render_distance > 32) {
+        if (p.render_distance < 2) {
             log.log.warn("Skipping preset '{s}': invalid render_distance {}", .{ p.name, p.render_distance });
             continue;
         }
         if (p.horizon_distance) |horizon_distance| {
-            if (horizon_distance != 256 and horizon_distance != 512 and horizon_distance != 1024 and horizon_distance != 2048) {
+            if (horizon_distance < 1) {
                 log.log.warn("Skipping preset '{s}': invalid horizon_distance {}", .{ p.name, horizon_distance });
                 continue;
             }

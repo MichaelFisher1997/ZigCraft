@@ -49,7 +49,7 @@ pub const PausedScreen = struct {
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         const ctx = self.context;
-        try ctx.screen_manager.drawParentScreen(ptr, ui);
+        try ctx.screen_manager.drawBackgroundFor(ptr, ui);
 
         ui.begin();
         defer ui.end();
@@ -81,13 +81,13 @@ pub const PausedScreen = struct {
         if (Theme.drawButtonFocused(ui, .{ .x = bx, .y = by, .width = bw, .height = bh }, "RESUME", btn_scale, mouse_x, mouse_y, mouse_clicked, .primary, self.focused_action == 0, ui_scale) or (confirm and self.focused_action == 0)) ctx.screen_manager.popScreen();
         by += bh + gap;
         if (Theme.drawButtonFocused(ui, .{ .x = bx, .y = by, .width = bw, .height = bh }, "SETTINGS", btn_scale, mouse_x, mouse_y, mouse_clicked, .secondary, self.focused_action == 1, ui_scale) or (confirm and self.focused_action == 1)) {
-            const settings_screen = try SettingsScreen.init(ctx.allocator, ctx);
-            errdefer settings_screen.deinit(settings_screen);
-            ctx.screen_manager.pushScreen(settings_screen.screen());
+            const factory = try Screen.makeScreenFactory(SettingsScreenFactory, ctx.allocator, .{ .context = ctx });
+            ctx.screen_manager.pushScreenFactory(factory);
         }
         by += bh + gap;
         if (Theme.drawButtonFocused(ui, .{ .x = bx, .y = by, .width = bw, .height = bh }, "QUIT TO TITLE", btn_scale, mouse_x, mouse_y, mouse_clicked, .ghost, self.focused_action == 2, ui_scale) or (confirm and self.focused_action == 2)) {
-            ctx.screen_manager.setScreen(try createHomeScreen(ctx));
+            const factory = try Screen.makeScreenFactory(HomeScreenFactory, ctx.allocator, .{ .context = ctx });
+            ctx.screen_manager.setScreenFactory(factory);
         }
         Font.drawTextCentered(ui, "ESC / BACK TO RESUME", panel_x + panel_w * 0.5, shell.footer_y + 12.0 * ui_scale, 0.86 * ui_scale, Theme.muted);
     }
@@ -99,7 +99,7 @@ pub const PausedScreen = struct {
 
     fn drawBackground(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
-        try self.context.screen_manager.drawParentScreen(ptr, ui);
+        try self.context.screen_manager.drawBackgroundFor(ptr, ui);
     }
 
     pub fn onExit(ptr: *anyopaque) void {
@@ -119,3 +119,20 @@ fn createHomeScreen(ctx: EngineContext) !IScreen {
     const screen = try HomeScreen.init(ctx.allocator, ctx);
     return screen.screen();
 }
+
+const SettingsScreenFactory = struct {
+    context: EngineContext,
+
+    pub fn construct(self: *@This()) !IScreen {
+        const settings_screen = try SettingsScreen.init(self.context.allocator, self.context);
+        return settings_screen.screen();
+    }
+};
+
+const HomeScreenFactory = struct {
+    context: EngineContext,
+
+    pub fn construct(self: *@This()) !IScreen {
+        return createHomeScreen(self.context);
+    }
+};

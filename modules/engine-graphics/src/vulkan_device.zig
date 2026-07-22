@@ -63,7 +63,8 @@ pub const VulkanDevice = struct {
     // Extension function pointers
     vkGetDeviceFaultInfoEXT: ?*const fn (
         device: c.VkDevice,
-        pFaultInfo: *c.VkDeviceFaultInfoEXT,
+        pFaultCounts: *c.VkDeviceFaultCountsEXT,
+        pFaultInfo: ?*c.VkDeviceFaultInfoEXT,
     ) callconv(.c) c.VkResult = null,
 
     fault_count: u32 = 0,
@@ -493,7 +494,7 @@ pub const VulkanDevice = struct {
 
         if (result == c.VK_ERROR_DEVICE_LOST) {
             self.fault_count += 1;
-            log.log.err("GPU reset triggered voluntarily (VK_ERROR_DEVICE_LOST). Total faults: {d}", .{self.fault_count});
+            log.log.err("Vulkan reported VK_ERROR_DEVICE_LOST during queue submission. Total faults: {d}", .{self.fault_count});
             self.logDeviceFaults();
             return error.GpuLost;
         }
@@ -510,13 +511,37 @@ pub const VulkanDevice = struct {
 
         log.log.info("Querying VK_EXT_device_fault for detailed hang info...", .{});
 
+        var fault_counts = std.mem.zeroes(c.VkDeviceFaultCountsEXT);
+        fault_counts.sType = c.VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
+        const count_result = func(self.vk_device, &fault_counts, null);
+        if (count_result != c.VK_SUCCESS) {
+            log.log.warn("Failed to query device fault record counts: {d}", .{count_result});
+            return;
+        }
+
+        const address_infos = self.allocator.alloc(c.VkDeviceFaultAddressInfoEXT, fault_counts.addressInfoCount) catch {
+            log.log.warn("Failed to allocate device fault address records.", .{});
+            return;
+        };
+        defer self.allocator.free(address_infos);
+        const vendor_infos = self.allocator.alloc(c.VkDeviceFaultVendorInfoEXT, fault_counts.vendorInfoCount) catch {
+            log.log.warn("Failed to allocate device fault vendor records.", .{});
+            return;
+        };
+        defer self.allocator.free(vendor_infos);
+
+        // Vendor binaries can be arbitrarily large and are intended for
+        // external crash-dump tooling. Keep runtime fault reporting bounded.
+        fault_counts.vendorBinarySize = 0;
         var fault_info = std.mem.zeroes(c.VkDeviceFaultInfoEXT);
         fault_info.sType = c.VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
+        fault_info.pAddressInfos = if (address_infos.len == 0) null else address_infos.ptr;
+        fault_info.pVendorInfos = if (vendor_infos.len == 0) null else vendor_infos.ptr;
 
-        const result = func(self.vk_device, &fault_info);
-        if (result == c.VK_SUCCESS) {
+        const result = func(self.vk_device, &fault_counts, &fault_info);
+        if (result == c.VK_SUCCESS or result == c.VK_INCOMPLETE) {
             const desc: [*:0]const u8 = @ptrCast(&fault_info.description);
-            log.log.err("GPU Fault Detected: {s}", .{desc});
+            log.log.err("GPU Fault Detected: {s} (addresses: {d}, vendor records: {d})", .{ desc, fault_counts.addressInfoCount, fault_counts.vendorInfoCount });
         } else {
             log.log.warn("Failed to retrieve device fault info: {d}", .{result});
         }

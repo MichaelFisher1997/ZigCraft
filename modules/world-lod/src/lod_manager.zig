@@ -82,6 +82,7 @@ const ChunkCoordSet = std.HashMap(ChunkCoordKey, void, ChunkCoordKeyContext, std
 const PendingIngestion = lod_manager_context.PendingIngestion;
 const PlayerChunkPos = lod_manager_context.PlayerChunkPos;
 const LifecycleQueue = lod_manager_context.LifecycleQueue;
+const LODScanState = lod_manager_context.LODScanState;
 pub const ChunkResolver = lod_manager_context.ChunkResolver;
 const MAX_LOD_REGIONS = lod_manager_context.MAX_LOD_REGIONS;
 
@@ -169,6 +170,7 @@ pub const LODManager = struct {
     // Current player position (chunk coords), read by worker threads for stale-job checks.
     player_cx: std.atomic.Value(i32),
     player_cz: std.atomic.Value(i32),
+    scan_states: [LODLevel.count]LODScanState,
 
     // Stats
     stats: LODStats,
@@ -290,6 +292,14 @@ pub const LODManager = struct {
         return lod_manager_core.getStats(self);
     }
 
+    /// Returns the configured outer radius of the coarsest active LOD band.
+    pub fn getHorizonRenderRadius(self: *Self) i32 {
+        self.mutex.lockShared();
+        defer self.mutex.unlockShared();
+        const active_count = lod_chunk.activeLODCount(self.config);
+        return self.config.getRadii()[active_count - 1];
+    }
+
     /// Returns whether the coarsest active level has produced drawable fallback
     /// terrain within the current horizon. Scoping this to the player prevents
     /// stale regions after a teleport from releasing foreground prefetch early.
@@ -309,7 +319,7 @@ pub const LODManager = struct {
             const center_z = @as(i64, chunk.region_z) * scale + @divFloor(scale, 2);
             const dx = center_x - player_cx;
             const dz = center_z - player_cz;
-            if (dx * dx + dz * dz <= radius * radius) return true;
+            if (@as(i128, dx) * dx + @as(i128, dz) * dz <= @as(i128, radius) * radius) return true;
         }
         return false;
     }
@@ -346,13 +356,13 @@ pub const LODManager = struct {
 
     /// Renders a frame-aware LOD layer. The monotonic WorldRenderer serial
     /// allows terrain and water to share one visibility projection.
-    pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, layer: LODRenderLayer) void {
-        return lod_manager_core.renderFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer);
+    pub fn renderFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, use_frustum: bool, max_distance_chunks: ?i32, detail_render_radius: i32, layer: LODRenderLayer) void {
+        return lod_manager_core.renderFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, layer);
     }
 
     /// Prepares same-frame GPU LOD culling before active graphics passes.
-    pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32) void {
-        return lod_manager_core.prepareFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks);
+    pub fn prepareFrame(self: *Self, frame_serial: u64, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, detail_render_radius: i32) void {
+        return lod_manager_core.prepareFrame(self, frame_serial, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, detail_render_radius);
     }
 
     /// Enables persistent source-data caching for LOD regions below `save_dir_path`.
@@ -367,8 +377,21 @@ pub const LODManager = struct {
         return lod_manager_cache_ops.flushDirtyStores(self);
     }
 
-    /// Explicitly waits for accepted cache I/O and applies its completions.
-    /// This is for shutdown/tests; frame updates never block on cache I/O.
+    /// Settles older writes, then queues and waits for every current dirty
+    /// source snapshot. Used by explicit save points.
+    pub fn flushDirtyStoresNow(self: *Self) void {
+        return lod_manager_cache_ops.flushDirtyStoresNow(self);
+    }
+
+    /// Deletes settled cache payloads for edited source updates that are still
+    /// blocked on missing or in-flight regions. The pending ingestion remains
+    /// queued and will write a fresh snapshot after it can be applied.
+    pub fn invalidatePendingEditedStoresNow(self: *Self) void {
+        return lod_manager_cache_ops.invalidatePendingEditedStoresNow(self);
+    }
+
+    /// Flushes completed cache IO work and applies read/write completions.
+    /// Call from the main thread when synchronous cache progress is required.
     pub fn flushCacheIO(self: *Self) void {
         return lod_manager_cache_ops.flushCacheIO(self);
     }
@@ -497,15 +520,24 @@ pub const LODManager = struct {
         return lod_manager_ingestion_ops.markChunkEdited(self, cx, cz);
     }
 
+    /// Applies queued edit provenance before full-detail storage unloads the
+    /// resolver-owned chunk. Returns the LOD-level mask still waiting for a
+    /// source region and optionally retains that work for a later retry.
+    pub fn flushEditedChunkForUnload(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, retain_pending: bool) u8 {
+        if (self.benchmark_fixture_active) return 0;
+        return lod_manager_ingestion_ops.flushEditedChunkForUnload(self, cx, cz, chunk, retain_pending);
+    }
+
     /// Applies chunk-derived source samples to currently loaded LOD regions.
-    /// Returns a bitmask describing which LOD levels accepted the update.
+    /// Returns a bitmask describing which LOD levels still need the update.
     pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) u8 {
         return lod_manager_ingestion_ops.applyIngestionToRegions(self, cx, cz, chunk, provenance);
     }
 
     /// Records a deferred ingestion request while the ingestion mutex is already held.
-    /// `mask` tracks which LOD levels still need the chunk once regions become available.
-    pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) void {
+    /// `mask` tracks which LOD levels still need the chunk once regions become
+    /// available. Returns false when bounded queue admission fails.
+    pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) bool {
         return lod_manager_ingestion_ops.recordPendingLocked(self, cx, cz, provenance, mask);
     }
 
@@ -527,10 +559,28 @@ pub const LODManager = struct {
         return lod_manager_ingestion_ops.drainPendingIngestions(self);
     }
 
+    /// Immediately attempts every currently deferred ingestion once. Entries
+    /// that are still unavailable remain queued for later update ticks.
+    pub fn drainPendingIngestionsNow(self: *Self) void {
+        return lod_manager_ingestion_ops.drainPendingIngestionsNow(self);
+    }
+
     /// Converts debounced edited-chunk coordinates into ingestion requests.
     /// Clears the dirty-edit set once requests have been queued or applied.
     pub fn flushEditedChunks(self: *Self) void {
         return lod_manager_ingestion_ops.flushEditedChunks(self);
+    }
+
+    /// Immediately applies pending edited chunks without waiting for the
+    /// coalescing cooldown. Used by explicit save points.
+    pub fn flushEditedChunksNow(self: *Self) void {
+        return lod_manager_ingestion_ops.flushEditedChunksNow(self);
+    }
+
+    /// Immediately consumes at most the ordinary per-frame edit budget.
+    /// Intended for autosave paths that must not synchronously drain all edits.
+    pub fn flushEditedChunksBounded(self: *Self) void {
+        return lod_manager_ingestion_ops.flushEditedChunksBounded(self);
     }
 
     /// Queues missing or dirty regions for generation at one LOD level.

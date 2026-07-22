@@ -89,6 +89,13 @@ pub const Input = struct {
     pub fn pollEvents(self: *Input) void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
+            // Quit-class events belong to the application, not an optional UI
+            // event sink. In particular, RmlUi must not be able to consume a
+            // compositor window-close request before game input observes it.
+            if (isQuitEvent(event.type)) {
+                self.should_quit = true;
+                continue;
+            }
             if (self.raw_event_processor) |processor| {
                 if (processor.process(processor.context, &event)) continue;
             }
@@ -107,9 +114,11 @@ pub const Input = struct {
         return false;
     }
 
-    fn processEvent(self: *Input, event: c.SDL_Event) void {
+    /// Updates input state from one SDL event. Public for focused tests and
+    /// platforms that forward SDL events instead of using `pollEvents`.
+    pub fn processEvent(self: *Input, event: c.SDL_Event) void {
         switch (event.type) {
-            c.SDL_EVENT_QUIT => {
+            c.SDL_EVENT_QUIT, c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
                 self.should_quit = true;
             },
             c.SDL_EVENT_KEY_DOWN => {
@@ -158,6 +167,10 @@ pub const Input = struct {
             },
             else => {},
         }
+    }
+
+    fn isQuitEvent(event_type: u32) bool {
+        return event_type == c.SDL_EVENT_QUIT or event_type == c.SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     }
 
     /// Record a key press, keeping `keys_pressed` and `keys_down` consistent.

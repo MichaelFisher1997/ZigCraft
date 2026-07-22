@@ -23,6 +23,7 @@ const LODGPUBridge = lod_gpu.LODGPUBridge;
 const MeshMap = lod_gpu.MeshMap;
 const RegionMap = lod_gpu.RegionMap;
 const lod_cache = @import("lod_cache.zig");
+const cache_io = @import("lod_cache_io.zig");
 const lod_store = @import("lod_store.zig");
 const manager_mod = @import("lod_manager.zig");
 const LODManager = manager_mod.LODManager;
@@ -69,6 +70,119 @@ test "LODManager cache helpers save and reload source data" {
     try testing.expectEqual(data.heightmap[idx], loaded.heightmap[idx]);
     try testing.expectEqual(data.biomes[idx], loaded.biomes[idx]);
     try testing.expectEqual(data.material_layers[idx].foundation, loaded.material_layers[idx].foundation);
+}
+
+test "flushDirtyStoresNow persists the latest edited source snapshot" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+
+    const key = LODRegionKey{ .rx = 0, .rz = -1, .lod = .lod4 };
+    const chunk = try putTestRegion(&manager, key, .generated);
+    chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, .lod4) };
+    chunk.data.simplified.setColumn(1, 1, 64.0, .plains, .{ .surface = .sand, .subsurface = .sand, .foundation = .stone }, 0xc2b280, .{
+        .is_surface = true,
+        .surface_height = 65.0,
+        .depth = 1.0,
+        .coverage = 0.5,
+    }, .daylight, .empty);
+    chunk.data.simplified.setColumnProvenance(1, 1, .edited);
+    chunk.markSourceDirty();
+
+    manager.flushDirtyStoresNow();
+
+    var loaded = manager.loadCachedSourceData(key) orelse return error.ExpectedCacheHit;
+    defer loaded.deinit();
+    const idx = 1 + loaded.width;
+    try testing.expect(loaded.water[idx].is_surface);
+    try testing.expectEqual(@as(f32, 0.5), loaded.water[idx].coverage);
+    try testing.expectEqual(LODColumnProvenance.edited, loaded.provenance[idx]);
+}
+
+test "explicit persistence invalidates blocked edited store payloads" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    defer manager.ingestion_queue.pending_ingestions.deinit(testing.allocator);
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+
+    const key = LODRegionKey.fromChunkCoords(0, 0, .lod2);
+    var stale = try LODSimplifiedData.init(testing.allocator, key.lod);
+    defer stale.deinit();
+    stale.setColumn(0, 0, 40.0, .plains, .{ .surface = .stone, .subsurface = .stone, .foundation = .stone }, 0x808080, .empty, .daylight, .empty);
+    manager.saveCachedSourceData(key, &stale);
+    manager.flushCacheIO();
+    var initially_loaded = manager.loadCachedSourceData(key) orelse return error.ExpectedCacheHit;
+    initially_loaded.deinit();
+
+    manager.ingestion_queue.mutex.lock();
+    const recorded = manager.recordPendingLocked(0, 0, .edited, @as(u8, 1) << @intFromEnum(LODLevel.lod2));
+    manager.ingestion_queue.mutex.unlock();
+    try testing.expect(recorded);
+
+    manager.flushDirtyStoresNow();
+    manager.invalidatePendingEditedStoresNow();
+    try testing.expect(manager.loadCachedSourceData(key) == null);
+
+    // A saturated pending queue re-retains an edit in edit_dirty. Explicit
+    // persistence must invalidate that coordinate's full active LOD ladder too.
+    manager.saveCachedSourceData(key, &stale);
+    manager.flushCacheIO();
+    try manager.ingestion_queue.edit_dirty.put(.{ .cx = 0, .cz = 0 }, {});
+    manager.invalidatePendingEditedStoresNow();
+    try testing.expect(manager.loadCachedSourceData(key) == null);
+}
+
+test "flushDirtyStoresNow drains more than one cache pipeline batch" {
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const dir = fs.Dir{ .inner = tmp_dir.dir };
+    var path_buf: [fs.max_path_bytes]u8 = undefined;
+    const save_dir_path = try dir.realpath(".", &path_buf);
+
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+    try manager.enableCache(save_dir_path);
+    defer if (manager.cache_store.cache_dir_path) |path| testing.allocator.free(path);
+
+    const region_count = cache_io.MAX_PENDING_TASKS + 1;
+    for (0..region_count) |i| {
+        const key = LODRegionKey{ .rx = @intCast(i), .rz = -2, .lod = .lod4 };
+        const chunk = try putTestRegion(&manager, key, .generated);
+        chunk.data = .{ .simplified = try LODSimplifiedData.init(testing.allocator, key.lod) };
+        chunk.data.simplified.setColumn(0, 0, @floatFromInt(40 + i), .plains, .{ .surface = .stone, .subsurface = .stone, .foundation = .stone }, 0x808080, .empty, .daylight, .empty);
+        chunk.data.simplified.setColumnProvenance(0, 0, .edited);
+        chunk.markSourceDirty();
+    }
+
+    manager.flushDirtyStoresNow();
+
+    for (0..region_count) |i| {
+        const key = LODRegionKey{ .rx = @intCast(i), .rz = -2, .lod = .lod4 };
+        var loaded = manager.loadCachedSourceData(key) orelse return error.ExpectedCacheHit;
+        defer loaded.deinit();
+        try testing.expectEqual(@as(f32, @floatFromInt(40 + i)), loaded.getHeight(0, 0));
+        try testing.expectEqual(LODColumnProvenance.edited, loaded.getColumnProvenance(0, 0));
+    }
 }
 
 test "LODManager cache helpers delete corrupt cache files" {
@@ -689,7 +803,7 @@ test "LODManager ignores stale compact draw failures and retries on source chang
     try testing.expectEqual(@as(u32, 0), counter.calls);
 }
 
-test "LODManager meshes reduced LOD3 and full-density horizon grids through compact and expanded paths" {
+test "LODManager meshes reduced far grids through compact and expanded paths" {
     const Cases = [_]struct { lod: LODLevel, width: u32, compact_capable: bool }{
         .{ .lod = .lod3, .width = 65, .compact_capable = true },
         .{ .lod = .lod4, .width = 65, .compact_capable = true },
@@ -761,6 +875,57 @@ test "LODManager meshes reduced LOD3 and full-density horizon grids through comp
         } else try testing.expect(mesh.pendingVerticesForTest() != null);
         try testing.expectEqual(LODState.mesh_ready, chunk.getState());
     }
+}
+
+test "stale generation completion preserves edited source published in flight" {
+    var config = LODConfig{};
+    var manager = try initEvictionTestManager(testing.allocator, &config);
+    defer deinitEvictionTestManager(&manager);
+
+    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod4 };
+    const chunk = try putTestRegion(&manager, key, .generating);
+    chunk.job_token = 1;
+
+    const RaceContext = struct {
+        manager: *LODManager,
+        key: LODRegionKey,
+    };
+    var context = RaceContext{ .manager = &manager, .key = key };
+    manager.generator = .{
+        .ptr = &context,
+        .generate_heightmap_only = struct {
+            fn generate(ptr: *anyopaque, data: *LODSimplifiedData, _: i32, _: i32, _: LODLevel, _: ?*const std.atomic.Value(bool)) void {
+                const race: *RaceContext = @ptrCast(@alignCast(ptr));
+                for (0..data.width) |z| for (0..data.width) |x| {
+                    data.setGeneratedColumn(@intCast(x), @intCast(z), 64.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4f8c45, .empty, .daylight, .empty);
+                };
+
+                var edited = LODSimplifiedData.init(testing.allocator, .lod4) catch unreachable;
+                edited.setGeneratedColumn(0, 0, 20.0, .plains, .{ .surface = .stone, .subsurface = .stone, .foundation = .stone }, 0x808080, .empty, .daylight, .empty);
+                edited.setColumnProvenance(0, 0, .edited);
+
+                race.manager.mutex.lock();
+                defer race.manager.mutex.unlock();
+                const region = race.manager.regions[@intFromEnum(race.key.lod)].get(race.key).?;
+                region.data = .{ .simplified = edited };
+                region.markSourceDirty();
+            }
+        }.generate,
+        .maybe_recenter_cache = struct {
+            fn recenter(_: *anyopaque, _: i32, _: i32) bool {
+                return false;
+            }
+        }.recenter,
+        .seed = 1,
+        .identity_hash = 1,
+        .version = 1,
+    };
+
+    generation_ops.processLODJob(&manager, .{ .type = .chunk_generation, .data = .{ .chunk = .{ .x = key.rx, .z = key.rz, .job_token = chunk.job_token, .lod_level = @intFromEnum(key.lod), .coord_scale = @intCast(key.lod.chunksPerSide()), .lod_radius = 4096 } } });
+
+    try testing.expectEqual(LODState.generated, chunk.getState());
+    try testing.expectEqual(@as(f32, 20.0), chunk.data.simplified.getHeight(0, 0));
+    try testing.expectEqual(LODColumnProvenance.edited, chunk.data.simplified.getColumnProvenance(0, 0));
 }
 
 fn putTestRegion(manager: *LODManager, key: LODRegionKey, state: LODState) !*LODChunk {
@@ -888,7 +1053,7 @@ test "LODManager upload budget defers remaining queued meshes" {
     try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
 }
 
-test "LODManager upload budget defers an oversized first mesh" {
+test "LODManager upload budget admits one oversized mesh to guarantee progress" {
     var config = LODConfig{ .max_uploads_per_frame = 8 };
     var manager = try initEvictionTestManager(testing.allocator, &config);
     defer deinitEvictionTestManager(&manager);
@@ -896,15 +1061,20 @@ test "LODManager upload budget defers an oversized first mesh" {
     var mock = UploadMock{ .allocator = testing.allocator };
     manager.gpu_bridge = mock.bridge();
 
-    const key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
-    const chunk = try putTestRegion(&manager, key, .uploading);
-    _ = try putTestPendingMesh(&manager, key, 1);
-    try manager.upload_queues[1].push(chunk);
+    const first_key = LODRegionKey{ .rx = 0, .rz = 0, .lod = .lod1 };
+    const second_key = LODRegionKey{ .rx = 1, .rz = 0, .lod = .lod1 };
+    const first = try putTestRegion(&manager, first_key, .uploading);
+    const second = try putTestRegion(&manager, second_key, .uploading);
+    _ = try putTestPendingMesh(&manager, first_key, 1);
+    _ = try putTestPendingMesh(&manager, second_key, 1);
+    try manager.upload_queues[1].push(first);
+    try manager.upload_queues[1].push(second);
 
     manager.processUploadsWithBudget(@sizeOf(Vertex) - 1);
 
-    try testing.expectEqual(@as(u32, 0), mock.calls);
-    try testing.expectEqual(LODState.uploading, chunk.state);
+    try testing.expectEqual(@as(u32, 1), mock.calls);
+    try testing.expectEqual(LODState.renderable, first.state);
+    try testing.expectEqual(LODState.uploading, second.state);
     try testing.expectEqual(@as(usize, 1), manager.upload_queues[1].count());
 }
 
@@ -933,6 +1103,13 @@ test "LODManager upload budget lets a near upload bypass a far pool migration" {
     try testing.expectEqual(LODState.uploading, far.state);
     try testing.expectEqual(LODState.renderable, near.state);
     try testing.expectEqual(@as(usize, 1), manager.upload_queues[@intFromEnum(far_key.lod)].count());
+
+    // On the next frame no smaller work remains, so one over-budget pool
+    // migration must be allowed through instead of starving forever.
+    manager.processUploadsWithBudget(2 * @sizeOf(Vertex));
+    try testing.expectEqual(@as(u32, 2), mock.calls);
+    try testing.expectEqual(LODState.renderable, far.state);
+    try testing.expectEqual(@as(usize, 0), manager.upload_queues[@intFromEnum(far_key.lod)].count());
 }
 
 test "LODManager routine upload and eviction record no streaming device waits" {

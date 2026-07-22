@@ -93,7 +93,7 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .horizon_radius = 512,
         .lod_store_size_cap_mb = 1536,
         .horizontal_detail = .{ 33, 65, 65, 97, 97 },
-        .sample_density = .{ 1.0, 1.0, 1.0, 0.5, 1.0 },
+        .sample_density = .{ 1.0, 1.0, 1.0, 0.5, 0.5 },
         .vertical_span_budget = 3,
         .mesh_path = .column_spans,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3, 0.22 },
@@ -106,11 +106,11 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .show_warning = false,
     },
     .{
-        .lod_radii = .{ 14, 64, 156, 375, 1024 },
-        .horizon_radius = 1024,
+        .lod_radii = .{ 14, 64, 156, 375, 512 },
+        .horizon_radius = 512,
         .lod_store_size_cap_mb = 3072,
         .horizontal_detail = .{ 33, 65, 65, 129, 129 },
-        .sample_density = .{ 1.0, 1.0, 1.0, 0.5, 1.0 },
+        .sample_density = .{ 1.0, 1.0, 1.0, 0.5, 0.5 },
         .vertical_span_budget = 4,
         .mesh_path = .column_spans,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3, 0.2 },
@@ -123,11 +123,11 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
         .show_warning = false,
     },
     .{
-        .lod_radii = .{ 16, 64, 156, 375, 2048 },
-        .horizon_radius = 2048,
+        .lod_radii = .{ 16, 64, 156, 375, 512 },
+        .horizon_radius = 512,
         .lod_store_size_cap_mb = 4096,
         .horizontal_detail = .{ 33, 65, 65, 129, 129 },
-        .sample_density = .{ 1.0, 1.0, 1.0, 0.5, 1.0 },
+        .sample_density = .{ 1.0, 1.0, 1.0, 0.5, 0.5 },
         .vertical_span_budget = 4,
         .mesh_path = .column_spans,
         .fog_start_percent = .{ 0.5, 0.5, 0.4, 0.3, 0.18 },
@@ -143,6 +143,15 @@ pub const RENDER_DISTANCE_PRESETS = [_]RenderDistancePresetConfig{
 
 pub fn getPresetConfig(preset: RenderDistancePreset) RenderDistancePresetConfig {
     return RENDER_DISTANCE_PRESETS[@intFromEnum(preset)];
+}
+
+test "512 chunk presets use a budget-feasible coarse fallback grid" {
+    const std = @import("std");
+    for (RENDER_DISTANCE_PRESETS[1..]) |preset| {
+        try std.testing.expectEqual(@as(i32, 512), preset.horizon_radius);
+        try std.testing.expectEqual(@as(f32, 0.5), preset.sample_density[@intFromEnum(LODLevel.lod4)]);
+    }
+    try std.testing.expectEqual(@as(f32, 1.0), RENDER_DISTANCE_PRESETS[0].sample_density[@intFromEnum(LODLevel.lod4)]);
 }
 
 pub const RenderSettingsAdapter = struct {

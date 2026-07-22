@@ -107,7 +107,17 @@ pub fn recover(ctx: anytype) !void {
     ctx.draw.descriptors_updated = false;
     ctx.draw.bound_texture = 0;
 
-    _ = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
+    const idle_result = c.vkDeviceWaitIdle(ctx.vulkan_device.vk_device);
+    if (idle_result != c.VK_SUCCESS) {
+        // VK_ERROR_DEVICE_LOST is terminal for this logical device. Recreating
+        // only swapchain resources on it is invalid and previously produced a
+        // misleading second "recovery failed" error. Full device/resource
+        // reconstruction must happen through a clean application restart.
+        log.log.err("RHI: Lost logical device cannot be recovered in place (vkDeviceWaitIdle={d}). Restart required.", .{idle_result});
+        ctx.vulkan_device.recovery_fail_count += 1;
+        ctx.runtime.gpu_fault_detected = true;
+        return error.GpuLost;
+    }
 
     ctx.runtime.gpu_fault_detected = false;
     ctx.mutex.lock();

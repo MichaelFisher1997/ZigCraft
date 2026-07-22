@@ -62,6 +62,17 @@ fn gpuBlockCapacityForBudgetMb(budget_mb: usize) usize {
     return @min(MAX_MDI_CHUNKS, max_by_budget);
 }
 
+pub fn isWithinChunkRenderRadius(chunk_x: i64, chunk_z: i64, player_chunk_x: i64, player_chunk_z: i64, radius: i64) bool {
+    const dx = @as(i128, chunk_x) - @as(i128, player_chunk_x);
+    const dz = @as(i128, chunk_z) - @as(i128, player_chunk_z);
+    const safe_radius = @as(i128, @max(radius, 0));
+    return dx * dx + dz * dz <= safe_radius * safe_radius;
+}
+
+pub fn hasMdiCapacity(instance_count: usize, command_count: usize, additional_commands: usize) bool {
+    return instance_count < MAX_MDI_CHUNKS and command_count <= MAX_MDI_CHUNKS * 3 and additional_commands <= MAX_MDI_CHUNKS * 3 - command_count;
+}
+
 pub const RenderStats = struct {
     chunks_total: u32 = 0,
     chunks_rendered: u32 = 0,
@@ -326,17 +337,19 @@ pub const WorldRenderer = struct {
         if (layer != .fluid) {
             self.last_render_stats = .{ .gpu_culling = self.use_gpu_culling };
         }
+        const detail_render_radius = if (lod_manager) |mgr| @min(render_distance, mgr.config.getChunkRenderRadius()) else render_distance;
 
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
+                const lod_render_limit = lod_mgr.getHorizonRenderRadius();
                 if (layer != .fluid) {
                     self.timing.beginPassTiming("LODTerrainPass");
-                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.terrain);
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(self.storage), true, lod_render_limit, detail_render_radius, LODRenderLayer.terrain);
                     self.timing.endPassTiming("LODTerrainPass");
                 }
                 if (layer != .terrain and parseEnabledEnv(getenv("ZIGCRAFT_LOD_WATER"), true)) {
                     self.timing.beginPassTiming("LODWaterPass");
-                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(self.storage), true, null, LODRenderLayer.fluid);
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(self.storage), true, lod_render_limit, detail_render_radius, LODRenderLayer.fluid);
                     self.timing.endPassTiming("LODWaterPass");
                 }
             }
@@ -358,8 +371,7 @@ pub const WorldRenderer = struct {
         const pc_x: i64 = pc.chunk_x;
         const pc_z: i64 = pc.chunk_z;
 
-        const r_dist_val: i32 = if (lod_manager) |mgr| @min(render_distance, mgr.config.getChunkRenderRadius()) else render_distance;
-        const r_dist: i64 = @as(i64, @intCast(r_dist_val));
+        const r_dist: i64 = @as(i64, @intCast(detail_render_radius));
         const count_stats = layer != .fluid;
 
         if (self.use_gpu_culling) {
@@ -377,6 +389,9 @@ pub const WorldRenderer = struct {
         var total_vertices: u64 = 0;
 
         for (self.visible_chunks.items) |data| {
+            // LOD projection is not proof that GPU culling emitted replacement
+            // geometry. Keep detail as the fail-open fallback; the LOD shader
+            // mask owns overlap with the contiguous detailed area.
             if (layer != .fluid) {
                 self.last_render_stats.chunks_rendered += 1;
             }
@@ -393,47 +408,61 @@ pub const WorldRenderer = struct {
                 continue;
             }
 
+            const chunk_command_count = @as(usize, if (layer != .fluid and data.render.mesh.solid_allocation != null) 1 else 0) +
+                @as(usize, if (layer != .fluid and data.render.mesh.cutout_allocation != null) 1 else 0) +
+                @as(usize, if (layer != .terrain and data.render.mesh.fluid_allocation != null) 1 else 0);
+            if (chunk_command_count == 0) continue;
+            if (!hasMdiCapacity(self.instance_data.items.len, self.draw_commands.items.len, chunk_command_count)) {
+                total_vertices += self.drawChunkDirect(data, model, layer, true);
+                continue;
+            }
+            self.instance_data.ensureUnusedCapacity(self.allocator, 1) catch {
+                total_vertices += self.drawChunkDirect(data, model, layer, true);
+                continue;
+            };
+            self.draw_commands.ensureUnusedCapacity(self.allocator, chunk_command_count) catch {
+                total_vertices += self.drawChunkDirect(data, model, layer, true);
+                continue;
+            };
+
             const instance_idx: u32 = @intCast(self.instance_data.items.len);
 
-            self.instance_data.append(self.allocator, .{
+            self.instance_data.appendAssumeCapacity(.{
                 .model = model,
                 .mask_radius = 0,
                 .lod_fade = 1.0,
                 .padding = .{ 0, 0 },
-            }) catch |err| {
-                log.log.debug("MDI: instance append failed: {}", .{err});
-                continue;
-            };
+            });
 
             if (layer != .fluid) {
                 if (data.render.mesh.solid_allocation) |alloc| {
                     self.last_render_stats.vertices_rendered += alloc.count;
-                    self.draw_commands.append(self.allocator, .{
+                    self.draw_commands.appendAssumeCapacity(.{
                         .vertexCount = alloc.count,
                         .instanceCount = 1,
                         .firstVertex = @intCast(alloc.offset / vertex_size),
                         .firstInstance = instance_idx,
-                    }) catch |err| log.log.debug("MDI: solid cmd append failed: {}", .{err});
+                    });
                 }
                 if (data.render.mesh.cutout_allocation) |alloc| {
                     self.last_render_stats.vertices_rendered += alloc.count;
-                    self.draw_commands.append(self.allocator, .{
+                    self.draw_commands.appendAssumeCapacity(.{
                         .vertexCount = alloc.count,
                         .instanceCount = 1,
                         .firstVertex = @intCast(alloc.offset / vertex_size),
                         .firstInstance = instance_idx,
-                    }) catch |err| log.log.debug("MDI: cutout cmd append failed: {}", .{err});
+                    });
                 }
             }
             if (layer != .terrain) {
                 if (data.render.mesh.fluid_allocation) |alloc| {
                     self.last_render_stats.vertices_rendered += alloc.count;
-                    self.draw_commands.append(self.allocator, .{
+                    self.draw_commands.appendAssumeCapacity(.{
                         .vertexCount = alloc.count,
                         .instanceCount = 1,
                         .firstVertex = @intCast(alloc.offset / vertex_size),
                         .firstInstance = instance_idx,
-                    }) catch |err| log.log.debug("MDI: fluid cmd append failed: {}", .{err});
+                    });
                 }
             }
         }
@@ -444,14 +473,8 @@ pub const WorldRenderer = struct {
             const max_instances: usize = MAX_MDI_CHUNKS;
             const max_commands: usize = MAX_MDI_CHUNKS * 3;
 
-            if (self.instance_data.items.len > max_instances) {
-                log.log.warn("MDI: instance overflow ({} > {}), truncating", .{ self.instance_data.items.len, max_instances });
-                self.instance_data.shrinkRetainingCapacity(max_instances);
-            }
-            if (self.draw_commands.items.len > max_commands) {
-                log.log.warn("MDI: command overflow ({} > {}), truncating", .{ self.draw_commands.items.len, max_commands });
-                self.draw_commands.shrinkRetainingCapacity(max_commands);
-            }
+            std.debug.assert(self.instance_data.items.len <= max_instances);
+            std.debug.assert(self.draw_commands.items.len <= max_commands);
 
             const instance_bytes = std.mem.sliceAsBytes(self.instance_data.items);
             self.rm.updateBuffer(self.instance_buffers[fi], 0, instance_bytes) catch |err| {
@@ -476,7 +499,7 @@ pub const WorldRenderer = struct {
             );
         }
 
-        self.drawGuaranteedNearChunks(@intCast(pc_x), @intCast(pc_z), camera_pos, layer);
+        self.drawGuaranteedNearChunks(@intCast(pc_x), @intCast(pc_z), r_dist, camera_pos, layer);
     }
 
     fn drawChunkDirect(self: *WorldRenderer, data: *ChunkData, model: Mat4, layer: RenderLayer, count_vertices: bool) u64 {
@@ -505,13 +528,14 @@ pub const WorldRenderer = struct {
         return total_vertices;
     }
 
-    fn drawGuaranteedNearChunks(self: *WorldRenderer, pc_x: i32, pc_z: i32, camera_pos: Vec3, layer: RenderLayer) void {
+    fn drawGuaranteedNearChunks(self: *WorldRenderer, pc_x: i32, pc_z: i32, render_radius: i64, camera_pos: Vec3, layer: RenderLayer) void {
         var dz: i32 = -1;
         while (dz <= 1) : (dz += 1) {
             var dx: i32 = -1;
             while (dx <= 1) : (dx += 1) {
                 const cx = pc_x + dx;
                 const cz = pc_z + dz;
+                if (!isWithinChunkRenderRadius(@as(i64, cx), @as(i64, cz), @as(i64, pc_x), @as(i64, pc_z), render_radius)) continue;
                 const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse continue;
 
                 var already_drawn = false;
@@ -537,29 +561,27 @@ pub const WorldRenderer = struct {
 
         var diagnostics = CpuCullDiagnostics.init();
 
-        var cz = pc_z - r_dist;
-        while (cz <= pc_z + r_dist) : (cz += 1) {
-            var cx = pc_x - r_dist;
-            while (cx <= pc_x + r_dist) : (cx += 1) {
-                const dx = cx - pc_x;
-                const dz = cz - pc_z;
-                const dist_sq = dx * dx + dz * dz;
-                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
-                        const is_camera_neighborhood = @abs(cx - pc_x) <= 1 and @abs(cz - pc_z) <= 1;
-                        if (!is_camera_neighborhood and !frustum.intersectsChunkRelative(@as(i32, @intCast(cx)), @as(i32, @intCast(cz)), camera_pos.x, camera_pos.y, camera_pos.z)) {
-                            diagnostics.recordFrustumCulled();
-                            if (count_stats) self.last_render_stats.chunks_culled += 1;
-                            continue;
-                        }
-                        self.visible_chunks.append(self.allocator, data) catch {};
-                        diagnostics.recordVisible(cx, cz, data);
-                    } else {
-                        diagnostics.recordNotRenderable(cx, cz, dist_sq, r_dist);
-                    }
-                } else {
-                    diagnostics.recordNotInStorage(cx, cz, dist_sq, r_dist);
+        var chunk_iter = self.storage.iteratorUnsafe();
+        while (chunk_iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const data = entry.value_ptr.*;
+            const cx = @as(i64, key.x);
+            const cz = @as(i64, key.z);
+            const dx = cx - pc_x;
+            const dz = cz - pc_z;
+            const dist_sq = dx * dx + dz * dz;
+            if (!isWithinChunkRenderRadius(cx, cz, pc_x, pc_z, r_dist)) continue;
+            if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
+                const is_camera_neighborhood = @abs(cx - pc_x) <= 1 and @abs(cz - pc_z) <= 1;
+                if (!is_camera_neighborhood and !frustum.intersectsChunkRelative(key.x, key.z, camera_pos.x, camera_pos.y, camera_pos.z)) {
+                    diagnostics.recordFrustumCulled();
+                    if (count_stats) self.last_render_stats.chunks_culled += 1;
+                    continue;
                 }
+                self.visible_chunks.append(self.allocator, data) catch {};
+                diagnostics.recordVisible(cx, cz, data);
+            } else {
+                diagnostics.recordNotRenderable(cx, cz, dist_sq, r_dist);
             }
         }
         diagnostics.logFrame(self.storage, self.visible_chunks.items.len, pc_x, pc_z, r_dist, self.render_frame_count, build_options.startup_diagnostic_seconds);
@@ -643,7 +665,9 @@ pub const WorldRenderer = struct {
             const limit = @min(@as(usize, @intCast(prev_visible_count)), self.gpu_visible_indices.items.len);
             for (self.gpu_visible_indices.items[0..limit]) |idx| {
                 if (idx < self.chunk_lookup[prev_fi].items.len) {
-                    self.visible_chunks.append(self.allocator, self.chunk_lookup[prev_fi].items[idx]) catch continue;
+                    const data = self.chunk_lookup[prev_fi].items[idx];
+                    if (!isWithinChunkRenderRadius(@as(i64, data.chunk.chunk_x), @as(i64, data.chunk.chunk_z), pc_x, pc_z, r_dist)) continue;
+                    self.visible_chunks.append(self.allocator, data) catch continue;
                 }
             }
         }
@@ -653,17 +677,22 @@ pub const WorldRenderer = struct {
         self.aabb_data.clearRetainingCapacity();
         self.chunk_lookup[fi].clearRetainingCapacity();
 
-        var cz = pc_z - r_dist;
-        while (cz <= pc_z + r_dist) : (cz += 1) {
-            var cx = pc_x - r_dist;
-            while (cx <= pc_x + r_dist) : (cx += 1) {
-                if (self.storage.chunks.get(.{ .x = @as(i32, @intCast(cx)), .z = @as(i32, @intCast(cz)) })) |data| {
-                    if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
-                        self.aabb_data.append(self.allocator, chunkAABB(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos)) catch continue;
-                        self.chunk_lookup[fi].append(self.allocator, data) catch continue;
-                    }
-                }
+        var chunk_iter = self.storage.iteratorUnsafe();
+        while (chunk_iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const data = entry.value_ptr.*;
+            if (!isWithinChunkRenderRadius(key.x, key.z, pc_x, pc_z, r_dist)) continue;
+            if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
+                self.aabb_data.append(self.allocator, chunkAABB(data.chunk.chunk_x, data.chunk.chunk_z, camera_pos)) catch continue;
+                self.chunk_lookup[fi].append(self.allocator, data) catch continue;
             }
+        }
+
+        if (self.aabb_data.items.len > MAX_MDI_CHUNKS) {
+            log.log.warn("GPU chunk culling capacity exceeded ({} > {}); switching to uncapped CPU culling", .{ self.aabb_data.items.len, MAX_MDI_CHUNKS });
+            self.use_gpu_culling = false;
+            self.visible_chunks.clearRetainingCapacity();
+            return self.renderCpuCull(view_proj, camera_pos, pc_x, pc_z, r_dist, count_stats);
         }
 
         const chunk_count: u32 = @intCast(self.aabb_data.items.len);

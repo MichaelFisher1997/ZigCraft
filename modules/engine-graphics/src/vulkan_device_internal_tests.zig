@@ -169,7 +169,7 @@ test "VulkanDevice vkGetDeviceFaultInfoEXT defaults to null" {
         .allocator = testing.allocator,
     };
 
-    try testing.expectEqual(@as(?*const fn (c.VkDevice, *c.VkDeviceFaultInfoEXT) callconv(.c) c.VkResult, null), device.vkGetDeviceFaultInfoEXT);
+    try testing.expectEqual(@as(?*const fn (c.VkDevice, *c.VkDeviceFaultCountsEXT, ?*c.VkDeviceFaultInfoEXT) callconv(.c) c.VkResult, null), device.vkGetDeviceFaultInfoEXT);
 }
 
 test "VulkanDevice fault_count defaults to zero" {

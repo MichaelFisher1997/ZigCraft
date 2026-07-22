@@ -209,6 +209,10 @@ pub const ResourceManager = struct {
         self.transfer.resetTransferState();
     }
 
+    pub fn abortCurrentFrame(self: *ResourceManager) void {
+        self.transfer.abortCurrentFrame(self.vulkan_device.vk_device);
+    }
+
     pub fn prepareTransfer(self: *ResourceManager) !c.VkCommandBuffer {
         return self.transfer.prepareTransfer();
     }

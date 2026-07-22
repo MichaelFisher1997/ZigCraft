@@ -17,6 +17,7 @@ const apply_logic = settings_pkg.apply_logic;
 const Settings = settings_pkg.Settings;
 const render_settings_mod = @import("engine-rhi").render_settings;
 const RenderDistancePreset = render_settings_mod.RenderDistancePreset;
+const LODConfig = @import("world-lod").lod_chunk.LODConfig;
 
 const SettingsTab = enum { display, camera, world, rendering };
 const SettingAction = enum { previous, next, toggle };
@@ -160,21 +161,17 @@ pub const RmlSettingsScreen = struct {
 
     fn handleWorldAction(self: *@This(), id: []const u8) void {
         const settings = self.context.settings;
-        if (std.mem.eql(u8, id, "render-distance-prev") and settings.render_distance > 1) {
+        if (std.mem.eql(u8, id, "render-distance-prev") and settings.render_distance > 2) {
             settings.render_distance -= 1;
-        } else if (std.mem.eql(u8, id, "render-distance-next")) {
+        } else if (std.mem.eql(u8, id, "render-distance-next") and settings.render_distance < std.math.maxInt(i32)) {
             settings.render_distance += 1;
+            settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
         } else if (std.mem.eql(u8, id, "horizon-distance-prev") or std.mem.eql(u8, id, "horizon-distance-next")) {
-            const values = [_]i32{ 256, 512, 1024, 2048 };
-            var index: usize = 1;
-            for (values, 0..) |value, i| {
-                if (settings.horizon_distance == value) index = i;
-            }
-            index = if (std.mem.eql(u8, id, "horizon-distance-prev"))
-                if (index == 0) values.len - 1 else index - 1
-            else
-                (index + 1) % values.len;
-            settings.horizon_distance = values[index];
+            settings.horizon_distance = LODConfig.stepHorizonDistance(
+                settings.render_distance,
+                settings.horizon_distance,
+                std.mem.eql(u8, id, "horizon-distance-next"),
+            );
         } else if (std.mem.eql(u8, id, "lod-toggle")) {
             settings.lod_enabled = !settings.lod_enabled;
             if (settings_pkg.sanitizeRuntimeConflicts(settings)) {
@@ -331,11 +328,12 @@ pub const RmlSettingsScreen = struct {
     fn appendWorldRows(self: *@This(), out: *std.ArrayList(u8)) !void {
         var buffer: [32]u8 = undefined;
         const settings = self.context.settings;
+        settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
         try appendSection(out, self.context.allocator, "DISTANCE");
         const render_distance = try std.fmt.bufPrint(&buffer, "{} CHUNKS", .{settings.render_distance});
-        try appendStepperRow(out, self.context.allocator, "RENDER DISTANCE", "Near-field chunk budget.", render_distance, "render-distance");
+        try appendStepperRow(out, self.context.allocator, "RENDER DISTANCE", "Full-detail chunk radius.", render_distance, "render-distance");
         const horizon_distance = try std.fmt.bufPrint(&buffer, "{} CHUNKS", .{settings.horizon_distance});
-        try appendStepperRow(out, self.context.allocator, "HORIZON DISTANCE", "Coarsest LOD radius, independent of near chunks.", horizon_distance, "horizon-distance");
+        try appendStepperRow(out, self.context.allocator, "DISTANT LOD LIMIT", "Maximum distant-terrain radius from the player.", horizon_distance, "horizon-distance");
         try appendSection(out, self.context.allocator, "STREAMING");
         try appendToggleRow(out, self.context.allocator, "LOD SYSTEM", "Distance terrain streaming.", settings.lod_enabled, "lod");
     }

@@ -117,7 +117,7 @@ pub const Settings = struct {
     ui_scale: f32 = 1.0, // Manual UI scale multiplier (0.5 to 2.0)
     window_width: u32 = 1920,
     window_height: u32 = 1080,
-    lod_enabled: bool = false,
+    lod_enabled: bool = true,
     render_distance_preset: RenderDistancePreset = .high,
     texture_pack: []const u8 = "default",
     environment_map: []const u8 = "default", // "default" or filename.exr/hdr
@@ -198,15 +198,12 @@ pub const Settings = struct {
     pub const metadata = struct {
         pub const render_distance = SettingMetadata{
             .label = "RENDER DISTANCE",
-            .kind = .{ .int_range = .{ .min = 2, .max = 32, .step = 1 } },
+            .kind = .{ .int_range = .{ .min = 2, .max = std.math.maxInt(i32), .step = 1 } },
         };
         pub const horizon_distance = SettingMetadata{
-            .label = "HORIZON DISTANCE",
-            .description = "Coarsest LOD radius in chunks, independent of full-detail render distance",
-            .kind = .{ .choice = .{
-                .labels = &[_][]const u8{ "256 CHUNKS", "512 CHUNKS", "1024 CHUNKS", "2048 CHUNKS" },
-                .values = &[_]u32{ 256, 512, 1024, 2048 },
-            } },
+            .label = "DISTANT LOD LIMIT",
+            .description = "Maximum distant-terrain radius from the player",
+            .kind = .{ .int_range = .{ .min = 256, .max = 512, .step = 2 } },
         };
         pub const mouse_sensitivity = SettingMetadata{
             .label = "SENSITIVITY",

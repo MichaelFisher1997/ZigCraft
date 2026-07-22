@@ -96,6 +96,7 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
         .mutex = &self.mutex,
         .player_cx = player.cx,
         .player_cz = player.cz,
+        .scan_states = &self.scan_states,
         .next_job_token = &self.job_dispatcher.next_token,
         .cleanup_covered_regions = self.cleanup_covered_regions,
         .coverage_ptr = self,
@@ -105,6 +106,9 @@ pub fn queueLODRegions(self: *Self, lod: LODLevel, velocity: Vec3, chunk_checker
         // not persistent LOD caching is enabled.
         .defer_generation_dispatch = true,
         .pending_regions = &self.pending_region_count,
+        // Distance is not bounded by a fixed region count. The logical-memory
+        // reservation below provides the actual resource-based backpressure.
+        .resident_region_limit = std.math.maxInt(usize),
         .logical_memory_limit_bytes = if (memory_budget_bytes == 0) std.math.maxInt(usize) else memory_budget_bytes,
         .logical_memory_bytes = &self.memory_governor.logical_admission_bytes,
         .logical_region_reservation_bytes = if (memory_budget_bytes == 0) 0 else @min(memory_budget_bytes, LOGICAL_LOD_REGION_RESERVATION_BYTES),
@@ -658,11 +662,18 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
                     return;
                 }
 
-                // Acquire lock to update chunk data
+                // Acquire lock to update chunk data. A cache read or forced
+                // save-time edit may have published source while this worker
+                // was generating. Never let stale worldgen replace that newer
+                // authoritative snapshot.
                 self.mutex.lock();
-                chunk.data = .{ .simplified = data };
-                chunk.updateHeightBoundsFromData();
-                chunk.markSourceDirty();
+                if (chunk.data == .simplified) {
+                    data.deinit();
+                } else {
+                    chunk.data = .{ .simplified = data };
+                    chunk.updateHeightBoundsFromData();
+                    chunk.markSourceDirty();
+                }
                 self.mutex.unlock();
             }
             success = true;

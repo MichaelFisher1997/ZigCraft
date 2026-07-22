@@ -117,3 +117,16 @@ test "raw event processor retains its explicit context" {
     try testing.expect(!input.dispatchRawEvent(&event));
     try testing.expectEqual(@as(u32, 1), receiver.calls);
 }
+
+test "quit and window close events request shutdown" {
+    var input = Input.init(testing.allocator);
+    defer input.deinit();
+
+    inline for (.{ c.SDL_EVENT_QUIT, c.SDL_EVENT_WINDOW_CLOSE_REQUESTED }) |event_type| {
+        input.should_quit = false;
+        var event = std.mem.zeroes(c.SDL_Event);
+        event.type = event_type;
+        input.processEvent(event);
+        try testing.expect(input.interface().shouldQuit());
+    }
+}

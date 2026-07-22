@@ -1,4 +1,5 @@
 const std = @import("std");
+const LODConfig = @import("world-lod").lod_chunk.LODConfig;
 const UISystem = @import("engine-ui").UISystem;
 const Screen = @import("../screen.zig");
 const IScreen = Screen.IScreen;
@@ -32,6 +33,19 @@ const CSM = @import("engine-graphics").csm;
 const settings_data = @import("game-core").settings.data;
 const world_debug = @import("world_debug.zig");
 const world_frame_params = @import("world_frame_params.zig");
+
+const PauseScreenFactory = struct {
+    context: EngineContext,
+
+    pub fn construct(self: *@This()) !IScreen {
+        if (rmlui.available and self.context.ui_manager.getRmlUi() != null) {
+            const paused_screen = try RmlPausedScreen.init(self.context.allocator, self.context);
+            return paused_screen.screen();
+        }
+        const paused_screen = try PausedScreen.init(self.context.allocator, self.context);
+        return paused_screen.screen();
+    }
+};
 
 const ShadowProbeInfo = struct {
     block_x: i32,
@@ -74,6 +88,7 @@ pub const WorldScreen = struct {
         .deinit = deinit,
         .update = update,
         .draw = draw,
+        .drawBackground = drawBackground,
         .onEnter = onEnter,
         .onExit = onExit,
         .getWorldStats = getWorldStatsIScreen,
@@ -102,7 +117,12 @@ pub const WorldScreen = struct {
 
     fn initWithDistance(allocator: std.mem.Allocator, context: EngineContext, seed: u64, generator_index: usize, render_distance: i32, horizon_distance: i32, lod_enabled: bool, compact_tiles_enabled: bool, menu_preview: bool) !*WorldScreen {
         const render_system = context.render_system;
-        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, render_distance, horizon_distance, lod_enabled, compact_tiles_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
+        const diagnostic_horizon = context.benchmark_runner != null or context.build_config.phase5_visual_scene.len > 0 or context.build_config.benchmark_fixture.len > 0;
+        const effective_horizon_distance = if (diagnostic_horizon)
+            LODConfig.normalizeHorizonDistance(render_distance, horizon_distance)
+        else
+            LODConfig.normalizeUserHorizonDistance(render_distance, horizon_distance);
+        const session = try GameSession.init(allocator, render_system.getRHI(), render_system.getAtlas(), seed, render_distance, effective_horizon_distance, lod_enabled, compact_tiles_enabled, generator_index, context.settings.render_distance_preset, context.build_config);
         errdefer session.deinit();
         const world = session.world.interface();
 
@@ -161,16 +181,21 @@ pub const WorldScreen = struct {
         }
 
         const cam = &self.session.player.camera;
-        ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
-
-        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture or self.menu_preview);
-        if (self.menu_preview) self.applyMenuCamera();
-        render_system.getCloudSystem().step(dt);
-
-        const world_telemetry = self.world.telemetry();
         if (!self.menu_preview) {
-            const preset = rhi_pkg.getPresetConfig(ctx.settings.render_distance_preset);
-            self.session.world.setLODChunkRenderRadiusLimit(preset.lod_radii[0]);
+            // Keep persisted/manual values aligned with the supported UI range
+            // so the displayed Distant LOD Limit matches the runtime radius.
+            const diagnostic_horizon = benchmark_mode or ctx.build_config.phase5_visual_scene.len > 0 or ctx.build_config.benchmark_fixture.len > 0;
+            ctx.settings.horizon_distance = if (diagnostic_horizon)
+                LODConfig.normalizeHorizonDistance(ctx.settings.render_distance, ctx.settings.horizon_distance)
+            else
+                LODConfig.normalizeUserHorizonDistance(ctx.settings.render_distance, ctx.settings.horizon_distance);
+            // The World settings control is explicitly the full-detail chunk
+            // radius. Presets seed startup budgets, but a live manual value
+            // must be allowed to raise or lower that radius after the menu
+            // closes instead of remaining silently capped by the preset.
+            self.session.world.setLODChunkRenderRadiusLimit(ctx.settings.render_distance);
+            cam.far = @import("game-core").session.cameraFarPlaneForDistances(ctx.settings.render_distance, ctx.settings.horizon_distance);
+            const world_telemetry = self.world.telemetry();
             if (world_telemetry.getRenderDistance() != ctx.settings.render_distance) {
                 world_telemetry.setRenderDistance(ctx.settings.render_distance);
             }
@@ -178,6 +203,11 @@ pub const WorldScreen = struct {
                 world_telemetry.setHorizonDistance(ctx.settings.horizon_distance);
             }
         }
+        ctx.audio_system.setListener(cam.position, cam.forward, cam.up);
+
+        try self.session.update(dt, ctx.time.elapsed, ctx.input, ctx.input_mapper, render_system.getAtlas(), ctx.window_manager.window, false, ctx.skip_world_update, benchmark_mode or automated_capture or self.menu_preview);
+        if (self.menu_preview) self.applyMenuCamera();
+        render_system.getCloudSystem().step(dt);
 
         self.maybeLogStartupDiagnostic(now);
     }
@@ -208,15 +238,8 @@ pub const WorldScreen = struct {
         }
 
         if (ctx.input_mapper.isActionPressed(ctx.input, .ui_back)) {
-            if (rmlui.available and ctx.ui_manager.getRmlUi() != null) {
-                const paused_screen = try RmlPausedScreen.init(ctx.allocator, self.parent_context);
-                errdefer paused_screen.deinit(paused_screen);
-                ctx.screen_manager.pushScreen(paused_screen.screen());
-            } else {
-                const paused_screen = try PausedScreen.init(ctx.allocator, self.parent_context);
-                errdefer paused_screen.deinit(paused_screen);
-                ctx.screen_manager.pushScreen(paused_screen.screen());
-            }
+            const factory = try Screen.makeScreenFactory(PauseScreenFactory, ctx.allocator, .{ .context = self.parent_context });
+            ctx.screen_manager.pushScreenFactory(factory);
             return true;
         }
 
@@ -661,6 +684,24 @@ pub const WorldScreen = struct {
                 world_debug.applyToggle(debug_state, click.feature, ctx, render_system, rhi, ctx.time.elapsed);
             }
         }
+    }
+
+    fn drawBackground(ptr: *anyopaque, ui: *UISystem) !void {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        const telemetry = self.world.telemetry();
+        const restore_lod = telemetry.isLODRenderingEnabled();
+
+        // Compact vertex-pulling draws beneath a retained menu overlay can make
+        // RADV on RDNA1 reject the combined command stream. The nearby
+        // full-detail world remains a useful pause backdrop, so omit distant LOD
+        // only while this screen is rendered as another screen's background and
+        // restore the user's setting before leaving the draw call.
+        if (restore_lod) _ = telemetry.toggleLODRendering();
+        defer {
+            if (restore_lod) _ = telemetry.toggleLODRendering();
+        }
+
+        try draw(ptr, ui);
     }
 
     pub fn onEnter(ptr: *anyopaque) void {

@@ -13,6 +13,7 @@ const apply_logic = settings_pkg.apply_logic;
 const Settings = settings_pkg.Settings;
 const render_settings_mod = @import("engine-rhi").render_settings;
 const RenderDistancePreset = render_settings_mod.RenderDistancePreset;
+const LODConfig = @import("world-lod").lod_chunk.LODConfig;
 
 const PANEL_WIDTH_MAX = 1360.0;
 const PANEL_HEIGHT_MAX = 820.0;
@@ -289,28 +290,25 @@ fn drawCameraTab(ui: *UISystem, settings: anytype, layout: ColumnLayout, row_h: 
 
 fn drawWorldTab(ui: *UISystem, settings: anytype, rs: anytype, layout: ColumnLayout, row_h: f32, label_scale: f32, value_scale: f32, button_scale: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, scale: f32) void {
     var num_buf: [32]u8 = undefined;
+    settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
 
     var y_left = layout.top_y;
     Theme.drawSectionLabel(ui, layout.left_x, y_left, "DISTANCE", scale);
     y_left += 28.0 * scale;
 
     const render_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.render_distance}) catch "?";
-    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "RENDER DISTANCE", "Near-field chunk budget.", render_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
-        if (step == .previous and settings.render_distance > 1) settings.render_distance -= 1;
-        if (step == .next) settings.render_distance += 1;
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "RENDER DISTANCE", "Full-detail chunk radius.", render_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        if (step == .previous and settings.render_distance > 2) settings.render_distance -= 1;
+        if (step == .next and settings.render_distance < std.math.maxInt(i32)) {
+            settings.render_distance += 1;
+            settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
+        }
     }
     y_left += row_h + 8.0 * scale;
 
     const horizon_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.horizon_distance}) catch "?";
-    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "HORIZON DISTANCE", "Coarsest LOD radius, independent of near chunks.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
-        const values = [_]i32{ 256, 512, 1024, 2048 };
-        var current_idx: usize = 1;
-        for (values, 0..) |value, i| {
-            if (settings.horizon_distance == value) current_idx = i;
-        }
-        if (step == .previous) current_idx = if (current_idx == 0) values.len - 1 else current_idx - 1;
-        if (step == .next) current_idx = (current_idx + 1) % values.len;
-        settings.horizon_distance = values[current_idx];
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "DISTANT LOD LIMIT", "Maximum distant-terrain radius from the player.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+        settings.horizon_distance = LODConfig.stepHorizonDistance(settings.render_distance, settings.horizon_distance, step == .next);
     }
 
     var y_right = if (layout.two_column) layout.top_y else y_left + row_h + 22.0 * scale;

@@ -238,22 +238,27 @@ pub const WorldStreamer = struct {
 
     pub fn isStartupBusy(self: *WorldStreamer, target_render_dist: i32) bool {
         if (self.lod_coordinator.isStartupBusy(self.getStats(), target_render_dist)) return true;
+        if (self.queue_coordinator.hasInFlightWork()) return true;
+        if (!self.has_scanned_missing_chunks) return true;
 
-        const radius = @min(target_render_dist, self.lod_coordinator.targetRenderDistance());
         const pc_x = self.lod_coordinator.last_pc.x;
         const pc_z = self.lod_coordinator.last_pc.z;
         self.storage.chunks_mutex.lockShared();
         defer self.storage.chunks_mutex.unlockShared();
 
-        var cz = pc_z - radius;
-        while (cz <= pc_z + radius) : (cz += 1) {
-            var cx = pc_x - radius;
-            while (cx <= pc_x + radius) : (cx += 1) {
-                const dx: i64 = @as(i64, cx) - pc_x;
-                const dz: i64 = @as(i64, cz) - pc_z;
-                const radius_i64: i64 = radius;
+        // Startup finalization only remeshes the camera neighborhood. The
+        // bounded missing-chunk scan plus empty queues above proves the wider
+        // disk has drained without rescanning millions of coordinates here.
+        const radius_i64: i64 = 1;
+        var cz = @as(i64, pc_z) - radius_i64;
+        while (cz <= @as(i64, pc_z) + radius_i64) : (cz += 1) {
+            var cx = @as(i64, pc_x) - radius_i64;
+            while (cx <= @as(i64, pc_x) + radius_i64) : (cx += 1) {
+                const dx = cx - @as(i64, pc_x);
+                const dz = cz - @as(i64, pc_z);
                 if (dx * dx + dz * dz > radius_i64 * radius_i64) continue;
-                const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse return true;
+                if (cx < std.math.minInt(i32) or cx > std.math.maxInt(i32) or cz < std.math.minInt(i32) or cz > std.math.maxInt(i32)) continue;
+                const data = self.storage.chunks.get(.{ .x = @intCast(cx), .z = @intCast(cz) }) orelse return true;
                 if (data.chunk.state != .renderable or !data.render.mesh.ready) return true;
             }
         }
@@ -504,16 +509,19 @@ pub const WorldStreamer = struct {
         // The required chunk set changes only after crossing a chunk boundary or
         // changing view distance. A periodic scan remains as a safety net for a
         // failed queue insertion without taking the storage writer lock every frame.
-        const needs_missing_scan = !self.has_scanned_missing_chunks or
+        const missing_rescan_requested = self.queue_coordinator.takeMissingRescanRequest();
+        if (missing_rescan_requested) self.queue_coordinator.restartMissingScan();
+        const needs_missing_scan = missing_rescan_requested or
+            !self.has_scanned_missing_chunks or
             self.last_missing_scan_pc_x != frame.pc_x or
             self.last_missing_scan_pc_z != frame.pc_z or
             self.last_missing_scan_render_dist != frame.stream_dist or
             self.frame_counter % 60 == 0;
         if (needs_missing_scan) {
-            self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.stream_dist, frame.movement) catch |err| {
+            self.has_scanned_missing_chunks = self.queue_coordinator.scanForMissingChunks(frame.pc_x, frame.pc_z, frame.stream_dist, frame.movement) catch |err| result: {
                 log.log.warn("scanForMissingChunks error (non-fatal): {}", .{err});
+                break :result false;
             };
-            self.has_scanned_missing_chunks = true;
             self.last_missing_scan_pc_x = frame.pc_x;
             self.last_missing_scan_pc_z = frame.pc_z;
             self.last_missing_scan_render_dist = frame.stream_dist;
@@ -610,43 +618,97 @@ pub const WorldStreamer = struct {
     fn processUnloads(self: *WorldStreamer, player_pos: Vec3) !void {
         const pc = worldToChunkFromFloat(player_pos.x, player_pos.z);
         const render_dist_unload = self.lod_coordinator.targetRenderDistance();
-        const unload_dist_sq = (render_dist_unload + CHUNK_UNLOAD_BUFFER) * (render_dist_unload + CHUNK_UNLOAD_BUFFER);
+        const unload_distance = @as(i128, render_dist_unload) + CHUNK_UNLOAD_BUFFER;
+        const unload_dist_sq = unload_distance * unload_distance;
 
-        self.storage.chunks_mutex.lock();
         var to_remove = std.ArrayListUnmanaged(ChunkKey).empty;
         defer to_remove.deinit(self.allocator);
 
-        var unload_iter = self.storage.iteratorUnsafe();
-        while (unload_iter.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const data = entry.value_ptr.*;
-            const dx = key.x - pc.chunk_x;
-            const dz = key.z - pc.chunk_z;
-            if (dx * dx + dz * dz > unload_dist_sq) {
-                if (data.chunk.state != .generating and data.chunk.state != .meshing and
-                    data.chunk.state != .uploading and
-                    !data.chunk.isPinned())
-                {
-                    try to_remove.append(self.allocator, key);
+        {
+            self.storage.chunks_mutex.lock();
+            defer self.storage.chunks_mutex.unlock();
+
+            var unload_iter = self.storage.iteratorUnsafe();
+            while (unload_iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const data = entry.value_ptr.*;
+                const dx = @as(i128, key.x) - @as(i128, pc.chunk_x);
+                const dz = @as(i128, key.z) - @as(i128, pc.chunk_z);
+                if (dx * dx + dz * dz > unload_dist_sq) {
+                    if (data.chunk.state != .generating and data.chunk.state != .meshing and
+                        data.chunk.state != .uploading and
+                        !data.chunk.isPinned())
+                    {
+                        try to_remove.append(self.allocator, key);
+                    }
                 }
             }
         }
 
         for (to_remove.items) |key| {
-            if (self.save_manager) |sm| {
-                if (self.storage.chunks.get(key)) |data| {
-                    if (data.chunk.modified and data.chunk.generated) {
-                        data.chunk.pin();
-                        sm.enqueueSave(&data.chunk);
-                        data.chunk.modified = false;
-                        data.chunk.unpin();
-                    }
+            const unload_candidate = blk: {
+                self.storage.chunks_mutex.lock();
+                defer self.storage.chunks_mutex.unlock();
+
+                const data = self.storage.chunks.get(key) orelse continue;
+                if (data.chunk.state == .generating or data.chunk.state == .meshing or
+                    data.chunk.state == .uploading or data.chunk.isPinned())
+                {
+                    continue;
+                }
+                const previous_state = data.chunk.state;
+                data.chunk.pin();
+                data.chunk.state = .unloading;
+                break :blk .{ .chunk = &data.chunk, .previous_state = previous_state };
+            };
+            const chunk = unload_candidate.chunk;
+
+            // Do not acquire the LOD manager while holding chunks_mutex: LOD
+            // visibility takes the locks in the opposite order. The pin keeps
+            // this authoritative snapshot alive through edit ingestion/save.
+            var defer_unload = false;
+            if (chunk.generated) {
+                if (self.lod_coordinator.lod_manager) |manager| {
+                    const retain_pending = manager.isInRange(key.x, key.z);
+                    const pending_mask = manager.flushEditedChunkForUnload(key.x, key.z, chunk, retain_pending);
+                    defer_unload = retain_pending and pending_mask != 0;
                 }
             }
+
+            // Keep an edited full-detail source resident while visible LOD
+            // levels are still in flight. Once the player leaves the LOD
+            // horizon, the persisted chunk becomes the durable repair source.
+            if (defer_unload) {
+                self.storage.chunks_mutex.lock();
+                if (self.storage.chunks.get(key)) |data| {
+                    if (&data.chunk == chunk and data.chunk.state == .unloading) {
+                        data.chunk.state = unload_candidate.previous_state;
+                    }
+                }
+                chunk.unpin();
+                self.storage.chunks_mutex.unlock();
+                continue;
+            }
+
+            const save_enqueued = chunk.modified and chunk.generated and self.save_manager != null;
+            if (save_enqueued) self.save_manager.?.enqueueSave(chunk);
+
             self.gpu_acceleration.freeChunk(key.x, key.z);
-            _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
+
+            self.storage.chunks_mutex.lock();
+            if (self.storage.chunks.get(key)) |data| {
+                if (&data.chunk == chunk and data.chunk.state == .unloading) {
+                    if (save_enqueued) data.chunk.modified = false;
+                    data.chunk.unpin();
+                    _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
+                } else {
+                    chunk.unpin();
+                }
+            } else {
+                chunk.unpin();
+            }
+            self.storage.chunks_mutex.unlock();
         }
-        self.storage.chunks_mutex.unlock();
     }
 
     fn logMissingChunkDiagnostic(self: *WorldStreamer, pc_x: i32, pc_z: i32) void {
@@ -658,15 +720,20 @@ pub const WorldStreamer = struct {
         defer missing_keys.deinit(self.allocator);
 
         self.storage.chunks_mutex.lockShared();
-        var cz: i32 = pc_z - render_dist;
-        while (cz <= pc_z + render_dist) : (cz += 1) {
-            var cx: i32 = pc_x - render_dist;
-            while (cx <= pc_x + render_dist) : (cx += 1) {
-                const dx = cx - pc_x;
-                const dz = cz - pc_z;
-                if (dx * dx + dz * dz > render_dist * render_dist) continue;
+        const radius = @as(i64, render_dist);
+        const diagnostic_grid_radius: i64 = 8;
+        var sample_z = -diagnostic_grid_radius;
+        while (sample_z <= diagnostic_grid_radius) : (sample_z += 1) {
+            var sample_x = -diagnostic_grid_radius;
+            while (sample_x <= diagnostic_grid_radius) : (sample_x += 1) {
+                if (sample_x * sample_x + sample_z * sample_z > diagnostic_grid_radius * diagnostic_grid_radius) continue;
+                const cx = @as(i64, pc_x) + @divTrunc(sample_x * radius, diagnostic_grid_radius);
+                const cz = @as(i64, pc_z) + @divTrunc(sample_z * radius, diagnostic_grid_radius);
+                if (cx < std.math.minInt(i32) or cx > std.math.maxInt(i32) or cz < std.math.minInt(i32) or cz > std.math.maxInt(i32)) continue;
+                const chunk_x: i32 = @intCast(cx);
+                const chunk_z: i32 = @intCast(cz);
 
-                if (self.storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+                if (self.storage.chunks.get(.{ .x = chunk_x, .z = chunk_z })) |data| {
                     switch (data.chunk.state) {
                         .missing => counts[0] += 1,
                         .queued_for_generation => counts[1] += 1,
@@ -681,7 +748,7 @@ pub const WorldStreamer = struct {
                     }
                 } else {
                     counts[0] += 1;
-                    missing_keys.append(self.allocator, .{ .x = cx, .z = cz }) catch {};
+                    missing_keys.append(self.allocator, .{ .x = chunk_x, .z = chunk_z }) catch {};
                 }
             }
         }
@@ -697,7 +764,7 @@ pub const WorldStreamer = struct {
         self.last_diag_meshed = meshed_total;
         self.last_diag_uploaded = uploaded_total;
 
-        log.log.info("CHUNK_DIAG [frame={}] pc=({},{}) rd={}/{} | missing={} qgen={} gen={} gentd={} qmesh={} mesh={} mready={} upload={} render={} unload={} | not_in_storage={} | throughput gen={}/{} mesh={}/{} upload={}/{}", .{
+        log.log.info("CHUNK_DIAG_SAMPLE [frame={}] pc=({},{}) rd={}/{} | missing={} qgen={} gen={} gentd={} qmesh={} mesh={} mready={} upload={} render={} unload={} | not_in_storage={} | throughput gen={}/{} mesh={}/{} upload={}/{}", .{
             self.frame_counter,     pc_x,            pc_z,            render_dist,  target_render_dist,
             counts[0],              counts[1],       counts[2],       counts[3],    counts[4],
             counts[5],              counts[6],       counts[7],       counts[8],    counts[9],

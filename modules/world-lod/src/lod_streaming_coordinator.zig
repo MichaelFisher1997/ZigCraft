@@ -91,6 +91,7 @@ pub const LODStreamingCoordinator = struct {
     const STARTUP_RADIUS_STEP = 2;
     const STARTUP_PREFETCH_RINGS = 2;
     const STARTUP_RADIUS_CHECK_PERIOD = 10;
+    const STARTUP_READINESS_GRID_RADIUS: i64 = 4;
 
     pub fn init(render_distance: i32) LODStreamingCoordinator {
         return .{
@@ -102,9 +103,13 @@ pub const LODStreamingCoordinator = struct {
     pub fn setRenderDistance(self: *LODStreamingCoordinator, distance: i32) bool {
         if (self.render_distance == distance) return false;
 
+        const previous_active = self.getActiveRenderDistance();
         self.render_distance = distance;
-        self.startup_stream_radius = @min(distance, STARTUP_RADIUS_INITIAL);
-        self.effective_render_dist = 0;
+        // Runtime increases grow outward from the currently visible radius
+        // instead of collapsing back to the three-chunk startup disk.
+        // Decreases clamp immediately so out-of-range chunks stop rendering.
+        self.startup_stream_radius = @min(distance, @max(previous_active, STARTUP_RADIUS_INITIAL));
+        self.effective_render_dist = self.startup_stream_radius;
         self.startup_mesh_finalized = false;
         self.horizon_bootstrap_ready = false;
         self.forceRescan();
@@ -210,22 +215,24 @@ pub const LODStreamingCoordinator = struct {
 
         if (frame_counter % STARTUP_RADIUS_CHECK_PERIOD != 0) return;
 
-        var total_in_radius: u32 = 0;
-        var ready_in_radius: u32 = 0;
+        var total_in_radius: u64 = 0;
+        var ready_in_radius: u64 = 0;
 
         storage.chunks_mutex.lockShared();
         defer storage.chunks_mutex.unlockShared();
 
-        var cz = pc_z - self.startup_stream_radius;
-        while (cz <= pc_z + self.startup_stream_radius) : (cz += 1) {
-            var cx = pc_x - self.startup_stream_radius;
-            while (cx <= pc_x + self.startup_stream_radius) : (cx += 1) {
-                const dx = cx - pc_x;
-                const dz = cz - pc_z;
-                if (dx * dx + dz * dz > self.startup_stream_radius * self.startup_stream_radius) continue;
+        const radius = @as(i64, self.startup_stream_radius);
+        var sample_z = -STARTUP_READINESS_GRID_RADIUS;
+        while (sample_z <= STARTUP_READINESS_GRID_RADIUS) : (sample_z += 1) {
+            var sample_x = -STARTUP_READINESS_GRID_RADIUS;
+            while (sample_x <= STARTUP_READINESS_GRID_RADIUS) : (sample_x += 1) {
+                if (sample_x * sample_x + sample_z * sample_z > STARTUP_READINESS_GRID_RADIUS * STARTUP_READINESS_GRID_RADIUS) continue;
+                const cx = @as(i64, pc_x) + @divTrunc(sample_x * radius, STARTUP_READINESS_GRID_RADIUS);
+                const cz = @as(i64, pc_z) + @divTrunc(sample_z * radius, STARTUP_READINESS_GRID_RADIUS);
+                if (cx < std.math.minInt(i32) or cx > std.math.maxInt(i32) or cz < std.math.minInt(i32) or cz > std.math.maxInt(i32)) continue;
 
                 total_in_radius += 1;
-                if (storage.chunks.get(.{ .x = cx, .z = cz })) |data| {
+                if (storage.chunks.get(.{ .x = @intCast(cx), .z = @intCast(cz) })) |data| {
                     if (data.chunk.state == .renderable or data.render.mesh.solid_allocation != null or data.render.mesh.cutout_allocation != null or data.render.mesh.fluid_allocation != null) {
                         ready_in_radius += 1;
                     }
@@ -234,7 +241,7 @@ pub const LODStreamingCoordinator = struct {
         }
 
         if (total_in_radius == 0) return;
-        if (ready_in_radius * 100 < total_in_radius * 85) return;
+        if (@as(u128, ready_in_radius) * 100 < @as(u128, total_in_radius) * 85) return;
 
         self.startup_stream_radius = @min(target_render_dist, self.startup_stream_radius + STARTUP_RADIUS_STEP);
         log.log.info("STARTUP_STREAM_RADIUS: expanded to {} / {}", .{ self.startup_stream_radius, target_render_dist });
@@ -252,4 +259,18 @@ test "startup streaming prefetches two rings beyond visible radius" {
     );
     try std.testing.expectEqual(@as(i32, 3), render_dist);
     try std.testing.expectEqual(@as(i32, 7), stream_dist);
+}
+
+test "runtime render-distance changes preserve or clamp the active radius" {
+    var coordinator = LODStreamingCoordinator.init(12);
+    coordinator.startup_stream_radius = 12;
+    coordinator.effective_render_dist = 12;
+
+    try std.testing.expect(coordinator.setRenderDistance(4096));
+    try std.testing.expectEqual(@as(i32, 12), coordinator.getActiveRenderDistance());
+    try std.testing.expectEqual(@as(i32, 12), coordinator.startup_stream_radius);
+
+    try std.testing.expect(coordinator.setRenderDistance(8));
+    try std.testing.expectEqual(@as(i32, 8), coordinator.getActiveRenderDistance());
+    try std.testing.expectEqual(@as(i32, 8), coordinator.startup_stream_radius);
 }

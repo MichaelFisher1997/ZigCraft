@@ -47,6 +47,8 @@ const vec3 WATER_SHALLOW = vec3(0.20, 0.58, 0.86);
 const vec3 WATER_MID = vec3(0.08, 0.34, 0.70);
 const vec3 WATER_DEEP = vec3(0.02, 0.12, 0.42);
 const float WATER_MAX_DEPTH = 14.0;
+// Matches the two-chunk overlap reserved by LODConfig.calculateMaskRadius().
+const float LOD_MASK_BLEND_WIDTH = 32.0;
 
 const float WAVE_AMPLITUDE = 0.5;
 const float WAVE_FREQUENCY = 1.5;
@@ -129,9 +131,19 @@ vec2 atlasUV(int tileID, vec2 texCoord) {
 }
 
 void main() {
-    bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
-    if (vMaskRadius >= 1.0) {
-        if (length(vFragPosWorld.xz) < vMaskRadius) discard;
+    bool isLOD = vTileID < 0 || abs(vMaskRadius) > 0.0;
+    float lodMaskAlpha = 1.0;
+    if (abs(vMaskRadius) >= 1.0) {
+        // A negative radius carries the outer edge of the ready detail disk;
+        // begin water's translucent handoff two chunks inside that edge.
+        bool readyDiskMask = vMaskRadius < 0.0;
+        float maskRadius = abs(vMaskRadius);
+        if (readyDiskMask) maskRadius = max(maskRadius - LOD_MASK_BLEND_WIDTH, 0.0);
+        float maskDistance = length(vFragPosWorld.xz);
+        if (maskDistance < maskRadius) discard;
+        // Fade the translucent LOD underlay in across the detailed-water
+        // overlap instead of changing its contribution at a hard circle.
+        lodMaskAlpha = smoothstep(maskRadius, maskRadius + LOD_MASK_BLEND_WIDTH, maskDistance);
     }
     float time = global.params.x;
 
@@ -216,7 +228,6 @@ void main() {
     if (global.params.z > 0.5) {
         float rawFog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
         float fogBlend = max(rawFog * rawFog * 0.65, water_mass * 0.28);
-        if (isLOD) fogBlend = max(fogBlend, smoothstep(260.0, 1000.0, vDistance) * 0.56);
         waterColor = mix(waterColor, global.fog_color.rgb, fogBlend);
     }
 
@@ -226,5 +237,5 @@ void main() {
     if (isLOD) alpha = max(alpha, 0.93);
     alpha = clamp(alpha, 0.56, 0.96);
 
-    FragColor = vec4(waterColor, alpha);
+    FragColor = vec4(waterColor, alpha * lodMaskAlpha);
 }

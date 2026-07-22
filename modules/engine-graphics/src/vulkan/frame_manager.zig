@@ -224,8 +224,25 @@ pub const FrameManager = struct {
 
     pub fn abortFrame(self: *FrameManager) void {
         if (!self.frame_in_progress) return;
-        // Wait for fence to be safe? No, just reset state.
-        // But we might have acquired an image.
+        const frame = self.current_frame;
+        const device = self.vulkan_device.vk_device;
+
+        // Discard every recorded reference before world/session teardown can
+        // release its buffers. This command pool belongs exclusively to the
+        // current frame slot, whose fence was waited before beginFrame.
+        const reset_result = c.vkResetCommandPool(device, self.frame_command_pools[frame], 0);
+        if (reset_result != c.VK_SUCCESS) {
+            log.log.err("Failed to reset aborted graphics command pool: {d}", .{reset_result});
+        }
+
+        // beginFrame reset this fence, but an aborted frame has no graphics
+        // submission to signal it. Queue an empty submission so this slot can
+        // be reused without destroying/recreating synchronization objects.
+        var submit_info = std.mem.zeroes(c.VkSubmitInfo);
+        submit_info.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        self.vulkan_device.submitGuarded(submit_info, self.in_flight_fences[frame]) catch |err| {
+            log.log.errWithTrace("Failed to retire aborted frame slot: {}", .{err});
+        };
         self.frame_in_progress = false;
     }
 

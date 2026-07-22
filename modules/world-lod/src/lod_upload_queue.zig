@@ -163,6 +163,7 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        detail_render_radius: i32,
         layer: LODRenderLayer,
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
@@ -178,6 +179,7 @@ pub const LODRenderInterface = struct {
         chunk_checker: ?ChunkChecker,
         checker_ctx: ?*anyopaque,
         max_distance_chunks: ?i32,
+        detail_render_radius: i32,
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void = null,
@@ -217,12 +219,13 @@ pub const LODRenderInterface = struct {
         checker_ctx: ?*anyopaque,
         use_frustum: bool,
         max_distance_chunks: ?i32,
+        detail_render_radius: i32,
         layer: LODRenderLayer,
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void {
         if (self.render_frame_fn) |render_frame| {
-            render_frame(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
+            render_frame(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, detail_render_radius, layer, stats, profiling);
         } else {
             self.render(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, use_frustum, max_distance_chunks, layer, stats, profiling);
         }
@@ -232,8 +235,8 @@ pub const LODRenderInterface = struct {
         self.deinit_fn(self.ptr);
     }
 
-    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
-        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, stats, profiling);
+    pub fn prepareFrame(self: LODRenderInterface, frame_serial: u64, meshes: *const [LODLevel.count]MeshMap, regions: *const [LODLevel.count]RegionMap, config: ILODConfig, view_proj: Mat4, camera_pos: Vec3, chunk_checker: ?ChunkChecker, checker_ctx: ?*anyopaque, max_distance_chunks: ?i32, detail_render_radius: i32, stats: ?*LODStats, profiling: ?*LODProfilingCollector) void {
+        if (self.prepare_frame_fn) |prepare| prepare(self.ptr, frame_serial, meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, max_distance_chunks, detail_render_radius, stats, profiling);
     }
 
     pub fn memoryStats(self: LODRenderInterface) LODRendererMemoryStats {

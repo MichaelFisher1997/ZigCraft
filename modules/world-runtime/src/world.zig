@@ -653,11 +653,11 @@ pub const World = struct {
         const storage = ChunkStorage.init(allocator);
         const safe_mode = runtime_env.safeModeEnabled();
         const strict_safe_mode = runtime_env.strictSafeModeEnabled();
-        const safe_render_distance: i32 = options.render_distance;
+        const safe_render_distance: i32 = @max(options.render_distance, 2);
         const streamer_render_distance: i32 = if (options.lod_config) |lod_config|
-            @min(safe_render_distance, lod_config.getChunkRenderRadius())
+            effectiveChunkRenderRadius(safe_render_distance, lod_config.getChunkRenderRadius(), true)
         else
-            safe_render_distance;
+            effectiveChunkRenderRadius(safe_render_distance, safe_render_distance, false);
         const max_uploads: usize = if (strict_safe_mode)
             @as(usize, 4)
         else if (safe_mode)
@@ -834,10 +834,36 @@ pub const World = struct {
         self.storage.chunks_mutex.unlock();
     }
 
+    /// Applies pending block edits to LOD source data and waits for the
+    /// corresponding source-store writes. Full-detail save points call this
+    /// while resident chunks are still available to the ingestion resolver.
+    fn flushLODEditsForPersistence(self: *World) void {
+        const lod = self.lod orelse return;
+        lod.manager.flushEditedChunksNow();
+        lod.manager.drainPendingIngestionsNow();
+        lod.manager.flushDirtyStoresNow();
+        // In-flight or currently missing target regions cannot accept the
+        // authoritative edit yet. Remove their settled old payloads so reload
+        // regenerates them instead of briefly displaying stale distant terrain.
+        lod.manager.invalidatePendingEditedStoresNow();
+    }
+
+    /// Starts bounded LOD persistence work without waiting for cache storage.
+    /// Autosave uses this path to avoid turning a slow source-store write into
+    /// an unbounded frame stall; explicit saves still use the full barrier.
+    fn queueLODEditsForPersistence(self: *World) void {
+        const lod = self.lod orelse return;
+        lod.manager.flushEditedChunksBounded();
+        lod.manager.drainPendingIngestions();
+        lod.manager.flushDirtyStores();
+    }
+
     /// Synchronously saves chunks marked dirty by mutations or streaming.
     /// Returns errors from persistence and leaves unsaved chunks dirty for later retry.
     pub fn saveAllModifiedChunks(self: *World) void {
         const sm = self.save_manager orelse return;
+
+        self.flushLODEditsForPersistence();
 
         var dirty_keys = self.enqueueModifiedChunks(sm);
         defer dirty_keys.deinit(self.allocator);
@@ -855,6 +881,8 @@ pub const World = struct {
     pub fn checkAutoSave(self: *World) void {
         const sm = self.save_manager orelse return;
         if (!sm.shouldAutoSave()) return;
+
+        self.queueLODEditsForPersistence();
 
         var dirty_keys = self.enqueueModifiedChunks(sm);
         defer dirty_keys.deinit(self.allocator);
@@ -877,10 +905,11 @@ pub const World = struct {
 
     /// Set render distance and trigger chunk loading/unloading update
     pub fn setRenderDistance(self: *World, distance: i32) void {
-        const target = if (self.safe_mode) @min(distance, self.safe_render_distance) else distance;
+        const requested = @max(distance, 2);
+        const target = if (self.safe_mode) @min(requested, self.safe_render_distance) else requested;
 
         if (self.render_distance != target) {
-            if (self.safe_mode and target != distance) {
+            if (self.safe_mode and target != requested) {
                 log.log.warn("ZIGCRAFT_SAFE_MODE clamped render distance {} -> {}", .{ distance, target });
             }
             log.log.info("Render distance changed: {} -> {}", .{ self.render_distance, target });
@@ -889,9 +918,9 @@ pub const World = struct {
         }
     }
 
-    /// Updates the preset-owned full-detail radius cap. This is separate from
-    /// the user-facing distance so manual values above a preset's LOD0 radius
-    /// still expand the horizon rather than flooding full-detail chunks.
+    /// Updates the full-detail streaming radius limit. Presets seed this value
+    /// during startup; the live World setting then synchronizes it to the
+    /// explicitly requested full-detail radius.
     pub fn setLODChunkRenderRadiusLimit(self: *World, limit: i32) void {
         const target = @max(limit, 1);
         if (self.lod_chunk_render_radius_limit == target) return;
@@ -904,28 +933,34 @@ pub const World = struct {
         self.streamer.setRenderDistance(chunk_render_radius);
 
         if (self.lod) |lod| {
-            const radii = LODConfig.radiiForDistances(self.render_distance, self.horizon_distance);
+            const radii = effectiveLODRadii(self.render_distance, self.lod_chunk_render_radius_limit, self.horizon_distance);
             lod.setChunkRenderRadius(chunk_render_radius);
             lod.setRadii(radii);
-            lod.setActiveLODCount(LODConfig.activeCountForRenderDistance(self.render_distance));
         }
     }
 
     pub fn effectiveChunkRenderRadius(render_distance: i32, preset_limit: i32, lod_enabled: bool) i32 {
-        return if (lod_enabled) @min(render_distance, preset_limit) else render_distance;
+        const requested = @max(render_distance, 2);
+        return if (lod_enabled) @max(@min(requested, preset_limit), 2) else requested;
+    }
+
+    /// Builds the live LOD ladder from the same capped near-detail radius used
+    /// by chunk streaming. The requested horizon remains independent.
+    pub fn effectiveLODRadii(render_distance: i32, preset_limit: i32, horizon_distance: i32) [LODLevel.count]i32 {
+        const chunk_render_radius = effectiveChunkRenderRadius(render_distance, preset_limit, true);
+        return LODConfig.radiiForDistances(chunk_render_radius, horizon_distance);
     }
 
     /// Changes the distant-terrain horizon distance.
     /// LOD queues and visibility update on subsequent world ticks.
     pub fn setHorizonDistance(self: *World, distance: i32) void {
-        const target = @max(distance, self.render_distance);
+        const target = LODConfig.normalizeHorizonDistance(self.render_distance, distance);
         if (self.horizon_distance == target) return;
         log.log.info("Horizon distance changed: {} -> {}", .{ self.horizon_distance, target });
         self.horizon_distance = target;
         if (self.lod) |lod| {
-            const radii = LODConfig.radiiForDistances(self.render_distance, target);
+            const radii = effectiveLODRadii(self.render_distance, self.lod_chunk_render_radius_limit, target);
             lod.setRadii(radii);
-            lod.setActiveLODCount(LODLevel.count);
         }
     }
 
@@ -1079,7 +1114,8 @@ pub const World = struct {
     /// render pass becomes active. Normal rendering remains a CPU fallback.
     pub fn prepareLODCulling(self: *World, view_proj: Mat4, camera_pos: Vec3) void {
         if (self.lod) |lod| {
-            lod.manager.prepareFrame(self.renderer.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkRenderable, @ptrCast(&self.storage), null);
+            const detail_render_radius = @min(self.streamer.getActiveRenderDistance(), lod.manager.config.getChunkRenderRadius());
+            lod.manager.prepareFrame(self.renderer.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(&self.storage), lod.manager.getHorizonRenderRadius(), detail_render_radius);
         }
     }
 

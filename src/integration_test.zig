@@ -132,6 +132,7 @@ const UploadScreen = struct {
     buffer: rhi.BufferHandle,
     payload: [64]u8 = [_]u8{0} ** 64,
     tick: u8 = 0,
+    quit_on_draw: bool = false,
 
     pub const vtable = IScreen.VTable{
         .deinit = deinit,
@@ -160,11 +161,65 @@ const UploadScreen = struct {
         try self.context.render_system.getRHI().resourceManager().updateBuffer(self.buffer, 0, self.payload[0..]);
     }
 
-    fn draw(_: *anyopaque, ui: *UISystem) !void {
+    fn draw(ptr: *anyopaque, ui: *UISystem) !void {
+        const self: *UploadScreen = @ptrCast(@alignCast(ptr));
         ui.begin();
         ui.end();
+        if (self.quit_on_draw) self.context.input.setShouldQuit(true);
     }
     pub fn screen(self: *UploadScreen) IScreen {
+        return Screen.makeScreen(@This(), self);
+    }
+};
+
+const UploadScreenFactory = struct {
+    context: EngineContext,
+    result: *?*UploadScreen,
+
+    pub fn construct(self: *@This()) !IScreen {
+        const screen = try UploadScreen.init(self.context.allocator, self.context);
+        self.result.* = screen;
+        return screen.screen();
+    }
+};
+
+/// Pause-menu analogue: render the world parent, then request a destructive
+/// replacement factory during UI drawing. App must submit that frame before it
+/// constructs the replacement or destroys the world and its Vulkan resources.
+const ReplaceDuringDrawScreen = struct {
+    context: EngineContext,
+    replacement: ?Screen.ScreenFactory,
+
+    pub const vtable = IScreen.VTable{
+        .deinit = deinit,
+        .update = update,
+        .draw = draw,
+    };
+
+    pub fn init(allocator: std.mem.Allocator, context: EngineContext, replacement: Screen.ScreenFactory) !*ReplaceDuringDrawScreen {
+        const result = try allocator.create(ReplaceDuringDrawScreen);
+        result.* = .{ .context = context, .replacement = replacement };
+        return result;
+    }
+
+    fn deinit(ptr: *anyopaque) void {
+        const self: *ReplaceDuringDrawScreen = @ptrCast(@alignCast(ptr));
+        if (self.replacement) |replacement| replacement.deinit();
+        self.context.allocator.destroy(self);
+    }
+
+    fn update(_: *anyopaque, _: f32) !void {}
+
+    fn draw(ptr: *anyopaque, ui: *UISystem) !void {
+        const self: *ReplaceDuringDrawScreen = @ptrCast(@alignCast(ptr));
+        try self.context.screen_manager.drawBackgroundFor(ptr, ui);
+        if (self.replacement) |replacement| {
+            self.replacement = null;
+            self.context.screen_manager.setScreenFactory(replacement);
+        }
+    }
+
+    pub fn screen(self: *ReplaceDuringDrawScreen) IScreen {
         return Screen.makeScreen(@This(), self);
     }
 };
@@ -188,8 +243,7 @@ test "smoke test: launch, generate, render, exit" {
 
     try app.runSingleFrame();
 
-    // The screen manager handles the screen transition in the next update/draw cycle
-    // In our implementation, setScreen sets next_screen, and update() consumes it.
+    // The app consumes the pending transition at the next GPU frame boundary.
 
     try testing.expect(app.screen_manager.stack.items.len > 0);
 
@@ -197,8 +251,35 @@ test "smoke test: launch, generate, render, exit" {
 
     try testing.expect(stats.chunks_loaded > 0);
 
-    const upload_screen = try UploadScreen.init(test_allocator, app.engineContext());
-    app.screen_manager.setScreen(upload_screen.screen());
+    // Runtime World settings are literal live controls, not display-only
+    // values capped by the startup preset. Decrease by one so this remains
+    // inexpensive even when the local test settings use a large radius.
+    const settings = app.engineContext().settings;
+    const requested_detail = if (settings.render_distance > 2) settings.render_distance - 1 else settings.render_distance + 1;
+    const requested_horizon = if (settings.horizon_distance > requested_detail) settings.horizon_distance - 1 else settings.horizon_distance + 1;
+    settings.render_distance = requested_detail;
+    settings.horizon_distance = requested_horizon;
+    try app.runSingleFrame();
+    try testing.expectEqual(requested_detail, world_screen.session.world.streamer.lod_coordinator.targetRenderDistance());
+    try testing.expectEqual(world_lod.lod_chunk.LODConfig.normalizeUserHorizonDistance(requested_detail, requested_horizon), world_screen.session.world.horizon_distance);
+
+    var upload_screen: ?*UploadScreen = null;
+    const upload_factory = try Screen.makeScreenFactory(UploadScreenFactory, test_allocator, .{ .context = app.engineContext(), .result = &upload_screen });
+    const replace_during_draw = try ReplaceDuringDrawScreen.init(test_allocator, app.engineContext(), upload_factory);
+    app.screen_manager.pushScreen(replace_during_draw.screen());
+    try testing.expect(upload_screen == null);
+
+    // The overlay draws the world's menu-safe background, requests replacement
+    // during draw, and App applies it only after endFrame. This is the real
+    // Quit-to-Title ordering, including suppression of distant LOD beneath the
+    // retained pause overlay, a GPU idle drain, and boundary-time construction
+    // of the replacement's Vulkan resources.
+    const fault_count_before_replace = app.render_system.getRHI().query().getFaultCount();
+    try app.runSingleFrame();
+    const active_upload_screen = upload_screen.?;
+    try testing.expectEqual(@as(usize, 1), app.screen_manager.stack.items.len);
+    try testing.expect(app.screen_manager.stack.items[0].ptr == @as(*anyopaque, @ptrCast(active_upload_screen)));
+    try testing.expectEqual(fault_count_before_replace, app.render_system.getRHI().query().getFaultCount());
 
     const frame_count = rhi.MAX_FRAMES_IN_FLIGHT + 2;
     for (0..frame_count) |_| {
@@ -219,6 +300,27 @@ test "smoke test: launch, generate, render, exit" {
         try testing.expectEqual(@as(u32, @intCast(actual_w)), extent[0]);
         try testing.expectEqual(@as(u32, @intCast(actual_h)), extent[1]);
     }
+
+    // A quit event must stop the frame before beginFrame/endFrame. Submitting
+    // one final frame while the window system is closing can report device
+    // loss on otherwise healthy Vulkan devices.
+    const fault_count_before_quit = app.render_system.getRHI().query().getFaultCount();
+    var quit_event = std.mem.zeroes(c.SDL_Event);
+    quit_event.type = c.SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+    _ = c.SDL_PushEvent(&quit_event);
+    try app.runSingleFrame();
+    try testing.expect(app.input.interface().shouldQuit());
+    try testing.expectEqual(fault_count_before_quit, app.render_system.getRHI().query().getFaultCount());
+    app.input.interface().setShouldQuit(false);
+
+    // A quit requested after beginFrame must discard both graphics commands and
+    // this screen's pending transfer upload. Teardown immediately follows and
+    // must not leave recording command buffers referencing destroyed resources.
+    active_upload_screen.quit_on_draw = true;
+    const fault_count_before_late_quit = app.render_system.getRHI().query().getFaultCount();
+    try app.runSingleFrame();
+    try testing.expect(app.input.interface().shouldQuit());
+    try testing.expectEqual(fault_count_before_late_quit, app.render_system.getRHI().query().getFaultCount());
 
     const val_count = app.render_system.getRHI().query().getValidationErrorCount();
     if (val_count > 0) {

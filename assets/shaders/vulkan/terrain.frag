@@ -41,6 +41,20 @@ layout(set = 0, binding = 0) uniform GlobalUniforms {
 
 // Constants
 const float PI = 3.14159265359;
+const float LOD_CHUNK_SIZE = 16.0;
+
+bool shouldDiscardLODFragment(float encodedMaskRadius, vec2 cameraRelativeXZ) {
+    float maskRadius = abs(encodedMaskRadius);
+    if (maskRadius < 1.0) return false;
+
+    bool readyDiskMask = encodedMaskRadius < 0.0;
+    vec2 cameraChunkLocal = mod(global.cam_pos.xz, LOD_CHUNK_SIZE);
+    vec2 chunkDelta = floor((cameraRelativeXZ + cameraChunkLocal) / LOD_CHUNK_SIZE);
+    // Streaming gives the contiguous ready disk to detail and the outer
+    // annulus to LOD. Legacy integral masks retain the two-chunk overlap.
+    float detailRadiusChunks = floor(maskRadius / LOD_CHUNK_SIZE) + (readyDiskMask ? 0.0 : 2.0);
+    return dot(chunkDelta, chunkDelta) <= detailRadiusChunks * detailRadiusChunks;
+}
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
@@ -264,7 +278,7 @@ float computeShadowFactor(vec3 fragPosWorld, vec3 N, vec3 L, int layer) {
     // receiver reference moves slightly closer to the light (higher depth) to
     // avoid self-shadowing on coplanar surfaces.
     float biasTexels = 0.35 + 0.2 * min(tanTheta, 5.0);
-    if (vTileID < 0 || vMaskRadius > 0.0) biasTexels = max(biasTexels, 0.45);
+    if (vTileID < 0 || abs(vMaskRadius) > 0.0) biasTexels = max(biasTexels, 0.45);
     float bias = worldTexelSize * biasTexels / depthSpan;
     float compareDepth = min(currentDepth + bias, 1.0);
 
@@ -509,17 +523,15 @@ void main() {
     const float TEXTURE_FADE_START = 32.0;
     const float TEXTURE_FADE_END = 128.0;
     float viewDistance = length(vFragPosWorld);
-    bool isLOD = vTileID < 0 || vMaskRadius > 0.0;
+    bool isLOD = vTileID < 0 || abs(vMaskRadius) > 0.0;
     float textureDetail = 1.0 - smoothstep(TEXTURE_FADE_START, TEXTURE_FADE_END, viewDistance);
     if (isLOD) {
         textureDetail = 0.0;
     }
 
-    if (vMaskRadius >= 1.0) {
-        // Full-detail chunks own this area. Dithering the handoff creates a
-        // camera-following grid of holes at the chunk/LOD boundary.
-        if (length(vFragPosWorld.xz) < vMaskRadius) discard;
-    }
+    // Full-detail chunks own this area. Dithering the handoff creates a
+    // camera-following grid of holes at the chunk/LOD boundary.
+    if (shouldDiscardLODFragment(vMaskRadius, vFragPosWorld.xz)) discard;
 
     vec2 tileBase = vec2(mod(float(vTileID), 16.0), floor(float(vTileID) / 16.0)) * (1.0 / 16.0);
     vec2 tiledUV = fract(vTexCoord);
@@ -585,11 +597,6 @@ void main() {
     if (global.params.z > 0.5) {
         float rawFog = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0);
         float fogFactor = rawFog * rawFog * 0.72 * atmosphericVisibility;
-        if (isLOD) {
-            float lodEdgeFog = smoothstep(0.65, 1.0, vLODFade) * rawFog * atmosphericVisibility;
-            float lodHorizonFog = smoothstep(420.0, 1400.0, viewDistance) * atmosphericVisibility;
-            fogFactor = max(fogFactor, max(lodEdgeFog * 0.9, lodHorizonFog * 0.82));
-        }
         color = mix(color, global.fog_color.rgb, fogFactor);
     }
 

@@ -15,9 +15,22 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("Found robust-demo at: {s}\n", .{robust_demo_path});
 
+    var argv_buffer: [2][]const u8 = undefined;
+    const argv: []const []const u8 = if (init.environ_map.get("ZIGCRAFT_DYNAMIC_LINKER")) |dynamic_linker| blk: {
+        if (dynamic_linker.len == 0) {
+            argv_buffer[0] = robust_demo_path;
+            break :blk argv_buffer[0..1];
+        }
+        argv_buffer = .{ dynamic_linker, robust_demo_path };
+        break :blk &argv_buffer;
+    } else blk: {
+        argv_buffer[0] = robust_demo_path;
+        break :blk argv_buffer[0..1];
+    };
+
     // Run the demo
     const run_result = try std.process.run(allocator, init.io, .{
-        .argv = &[_][]const u8{robust_demo_path},
+        .argv = argv,
         .stdout_limit = .limited(4096),
         .stderr_limit = .limited(4096),
     });
@@ -38,7 +51,8 @@ pub fn main(init: std.process.Init) !void {
             }
         },
         else => {
-            std.debug.print("robust-demo crashed or was signaled\n", .{});
+            std.debug.print("robust-demo terminated unexpectedly: {any}\n", .{result});
+            std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ stdout, stderr });
             return error.DemoCrashed;
         },
     }

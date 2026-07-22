@@ -2,8 +2,10 @@ const std = @import("std");
 const fs = @import("fs");
 const Self = @import("lod_manager.zig").LODManager;
 const LODRegionKey = @import("lod_chunk.zig").LODRegionKey;
+const LODRegionKeyContext = @import("lod_chunk.zig").LODRegionKeyContext;
 const LODSimplifiedData = @import("lod_chunk.zig").LODSimplifiedData;
 const lod_chunk = @import("lod_chunk.zig");
+const manager_ctx = @import("lod_manager_context.zig");
 const lod_cache = @import("lod_cache.zig");
 const lod_store = @import("lod_store.zig");
 const cache_io = @import("lod_cache_io.zig");
@@ -48,6 +50,64 @@ pub fn flushDirtyStores(self: *Self) void {
     _ = queueDirtyStores(self, 1);
 }
 
+/// Settles older writes, then drains every currently eligible dirty source
+/// snapshot in bounded batches. Explicit save points use this so an edited
+/// snapshot cannot be skipped behind a stale worldgen write.
+pub fn flushDirtyStoresNow(self: *Self) void {
+    flushAllDirtyStores(self);
+}
+
+/// Removes known-stale payloads for edited ingestions that could not be
+/// applied synchronously. Call only after `flushDirtyStoresNow`, which settles
+/// older asynchronous writes before these payloads are deleted.
+pub fn invalidatePendingEditedStoresNow(self: *Self) void {
+    const path = self.cacheDirPathSnapshot() orelse return;
+    defer self.allocator.free(path);
+
+    var stale_keys = std.HashMap(LODRegionKey, void, LODRegionKeyContext, std.hash_map.default_max_load_percentage).init(self.allocator);
+    defer stale_keys.deinit();
+
+    self.ingestion_queue.mutex.lock();
+    for (self.ingestion_queue.pending_ingestions.items) |pending| {
+        if (pending.provenance != .edited) continue;
+        var level: usize = 1;
+        while (level < lod_chunk.LODLevel.count) : (level += 1) {
+            const level_mask = @as(u8, 1) << @intCast(level);
+            if (pending.pending_levels & level_mask == 0) continue;
+            const lod: lod_chunk.LODLevel = @enumFromInt(@as(u3, @intCast(level)));
+            stale_keys.put(LODRegionKey.fromChunkCoords(pending.cx, pending.cz, lod), {}) catch {
+                log.log.warn("Failed to track stale LOD{} store payload for invalidation", .{level});
+            };
+        }
+    }
+    // Queue saturation can leave an edited coordinate in `edit_dirty` rather
+    // than `pending_ingestions`. Its full active LOD ladder is equally stale.
+    var dirty_iter = self.ingestion_queue.edit_dirty.keyIterator();
+    while (dirty_iter.next()) |dirty| {
+        var level: usize = 1;
+        while (level < lod_chunk.activeLODCount(self.config)) : (level += 1) {
+            const lod: lod_chunk.LODLevel = @enumFromInt(@as(u3, @intCast(level)));
+            stale_keys.put(LODRegionKey.fromChunkCoords(dirty.cx, dirty.cz, lod), {}) catch {
+                log.log.warn("Failed to track dirty LOD{} store payload for invalidation", .{level});
+            };
+        }
+    }
+    self.ingestion_queue.mutex.unlock();
+
+    self.cache_store.store_mutex.lock();
+    defer self.cache_store.store_mutex.unlock();
+    var iter = stale_keys.keyIterator();
+    while (iter.next()) |key| {
+        const cache_key = self.cacheKey(key.*);
+        lod_store.deletePayload(self.allocator, path, cache_key);
+        const legacy_path = self.legacyCacheFilePath(path, cache_key) catch continue;
+        fs.cwd().deleteFile(legacy_path) catch |err| {
+            if (err != error.FileNotFound) log.log.warn("Failed to invalidate stale legacy LOD cache '{s}': {}", .{ legacy_path, err });
+        };
+        self.allocator.free(legacy_path);
+    }
+}
+
 pub fn flushCacheIO(self: *Self) void {
     self.cache_io.waitUntilIdle();
     drainCacheCompletions(self);
@@ -56,14 +116,26 @@ pub fn flushCacheIO(self: *Self) void {
 /// Deinit-only flushing. Accepted work may block here; normal updates must use
 /// `flushDirtyStores` and never wait for I/O.
 pub fn shutdownCacheIO(self: *Self) void {
+    flushAllDirtyStores(self);
+}
+
+fn flushAllDirtyStores(self: *Self) void {
+    // An older write can occupy a region's queued flag. Apply its completion
+    // before scanning, otherwise a stale completion may hide the newer dirty
+    // revision from the first (and only) batch.
+    self.flushCacheIO();
+
     var attempts: usize = 0;
     while (attempts < 2048) : (attempts += 1) {
         const queued = queueDirtyStores(self, cache_io.MAX_PENDING_TASKS);
         if (queued == 0) break;
-        self.cache_io.waitUntilIdle();
-        drainCacheCompletions(self);
+        self.flushCacheIO();
     }
     self.flushCacheIO();
+
+    if (attempts == 2048) {
+        log.log.warn("LOD source-store flush stopped after {} batches; dirty snapshots remain eligible for retry", .{attempts});
+    }
 }
 
 pub fn drainCacheCompletions(self: *Self) void {
@@ -332,6 +404,7 @@ pub fn initCacheTestManager(allocator: std.mem.Allocator, cache_dir_path: []cons
         .transition_queue = .empty,
         .player_cx = std.atomic.Value(i32).init(0),
         .player_cz = std.atomic.Value(i32).init(0),
+        .scan_states = [_]manager_ctx.LODScanState{manager_ctx.LODScanState{}} ** lod_chunk.LODLevel.count,
         .stats = .{},
         .profiling = .init(false),
         .cache_hits = 0,

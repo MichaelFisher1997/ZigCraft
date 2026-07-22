@@ -30,8 +30,21 @@ layout(set = 0, binding = 0) uniform Global {
     vec4 lpv_origin;
 } global;
 
+const float LOD_CHUNK_SIZE = 16.0;
+
+bool shouldDiscardLODFragment(float encodedMaskRadius, vec2 cameraRelativeXZ) {
+    float maskRadius = abs(encodedMaskRadius);
+    if (maskRadius < 1.0) return false;
+
+    bool readyDiskMask = encodedMaskRadius < 0.0;
+    vec2 cameraChunkLocal = mod(global.cam_pos.xz, LOD_CHUNK_SIZE);
+    vec2 chunkDelta = floor((cameraRelativeXZ + cameraChunkLocal) / LOD_CHUNK_SIZE);
+    float detailRadiusChunks = floor(maskRadius / LOD_CHUNK_SIZE) + (readyDiskMask ? 0.0 : 2.0);
+    return dot(chunkDelta, chunkDelta) <= detailRadiusChunks * detailRadiusChunks;
+}
+
 void main() {
-    if (vMaskRadius >= 1.0 && length(vFragPosWorld.xz) < vMaskRadius) discard;
+    if (shouldDiscardLODFragment(vMaskRadius, vFragPosWorld.xz)) discard;
     vec3 normal = normalize(vNormal);
     vec3 light_dir = normalize(global.sun_dir.xyz);
     float diffuse = max(dot(normal, light_dir), 0.0);
@@ -39,8 +52,8 @@ void main() {
     float illumination = clamp(max(vSkyLight * global.lighting.x, block_light) + diffuse * global.params.w * 0.45, 0.18, 1.15);
     vec3 color = vColor * illumination * mix(0.72, 1.0, clamp(vAO, 0.0, 1.0));
     if (global.params.z > 0.5) {
-        float fog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
-        fog = max(fog, smoothstep(300.0, 1200.0, vDistance) * 0.62);
+        float rawFog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
+        float fog = rawFog * rawFog * 0.72;
         color = mix(color, global.fog_color.rgb, fog);
     }
     outColor = vec4(color, 1.0);

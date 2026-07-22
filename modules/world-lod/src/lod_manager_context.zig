@@ -163,6 +163,16 @@ pub const PlayerChunkPos = struct {
     cz: i32,
 };
 
+/// Persistent bounded concentric-scan cursor for one LOD level.
+pub const LODScanState = struct {
+    player_rx: i32 = 0,
+    player_rz: i32 = 0,
+    effective_radius: i32 = -1,
+    next_ring: i64 = 0,
+    ring_index: i64 = 0,
+    last_examined: usize = 0,
+};
+
 pub const ChunkResolver = struct {
     ptr: *anyopaque,
     resolve_fn: *const fn (ptr: *anyopaque, cx: i32, cz: i32) ?*const Chunk,
