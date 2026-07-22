@@ -228,7 +228,6 @@ void main() {
     if (global.params.z > 0.5) {
         float rawFog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
         float fogBlend = max(rawFog * rawFog * 0.65, water_mass * 0.28);
-        if (isLOD) fogBlend = max(fogBlend, smoothstep(260.0, 1000.0, vDistance) * 0.56);
         waterColor = mix(waterColor, global.fog_color.rgb, fogBlend);
     }
 

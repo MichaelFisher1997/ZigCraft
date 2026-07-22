@@ -306,6 +306,31 @@ pub const TransferQueue = struct {
         self.transfer_submitted[self.current_frame] = false;
     }
 
+    fn discardPendingState(self: *TransferQueue, frame_index: usize) void {
+        self.pending_copy_count[frame_index] = 0;
+        self.pending_staging_buffer[frame_index] = null;
+        self.pending_dst_access_mask[frame_index] = 0;
+        self.transfer_ready[frame_index] = false;
+        self.transfer_submitted[frame_index] = false;
+    }
+
+    /// Discards transfer commands recorded for a graphics frame that will not
+    /// be submitted. The staging allocation remains owned by the frame slot and
+    /// is reclaimed normally when that slot's fence boundary is reused.
+    pub fn abortCurrentFrame(self: *TransferQueue, vk_device: c.VkDevice) void {
+        const frame_index = self.current_frame;
+        if (self.transfer_submitted[frame_index] and self.is_dedicated) {
+            self.waitForFrameFence(vk_device, frame_index);
+        }
+        if (self.transfer_ready[frame_index]) {
+            const result = c.vkResetCommandBuffer(self.command_buffers[frame_index], 0);
+            if (result != c.VK_SUCCESS) {
+                log.log.err("Failed to reset aborted transfer command buffer: {d}", .{result});
+            }
+        }
+        self.discardPendingState(frame_index);
+    }
+
     pub fn endTransferCommandBuffer(self: *TransferQueue) !void {
         if (!self.transfer_ready[self.current_frame]) return;
         const cb = self.command_buffers[self.current_frame];
@@ -370,6 +395,24 @@ test "staging ring distinguishes full from empty" {
     try std.testing.expect(ring.allocate(1, 0) == null);
     ring.reclaimFrame(0);
     try std.testing.expectEqual(@as(u64, 0), ring.allocated());
+}
+
+test "aborted transfer state drops pending copies without reclaiming staging ownership" {
+    var transfer = std.mem.zeroes(TransferQueue);
+    transfer.current_frame = 1;
+    transfer.pending_copy_count[1] = 7;
+    transfer.pending_staging_buffer[1] = @ptrFromInt(1);
+    transfer.pending_dst_access_mask[1] = c.VK_ACCESS_INDEX_READ_BIT;
+    transfer.transfer_ready[1] = true;
+    transfer.transfer_submitted[1] = true;
+
+    transfer.discardPendingState(1);
+
+    try std.testing.expectEqual(@as(usize, 0), transfer.pending_copy_count[1]);
+    try std.testing.expect(transfer.pending_staging_buffer[1] == null);
+    try std.testing.expectEqual(@as(c.VkAccessFlags, 0), transfer.pending_dst_access_mask[1]);
+    try std.testing.expect(!transfer.transfer_ready[1]);
+    try std.testing.expect(!transfer.transfer_submitted[1]);
 }
 
 test "staging ring reclaims wrapped frame regions" {

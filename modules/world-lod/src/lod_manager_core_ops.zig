@@ -336,8 +336,8 @@ pub fn update(self: *Self, player_pos: Vec3, player_velocity: Vec3, chunk_checke
     const active_lod_count = lod_chunk.activeLODCount(self.config);
     self.mutex.unlock();
 
-    // Queue a small horizon seed first so something appears quickly, then
-    // let LOD0/LOD1/LOD2 refinements replace the coarse fallback.
+    // Queue the coarsest concentric fallback first, then let LOD0/LOD1/LOD2
+    // refinements fill and replace it without creating outer-horizon islands.
     const scheduling_timer = self.profiling.begin();
     var order_idx: usize = 0;
     while (order_idx < active_lod_count) : (order_idx += 1) {

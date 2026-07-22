@@ -319,6 +319,8 @@ const LODCullingSystem = struct {
         const compact = stream >= MAX_LOD_LEVELS * 2;
         const water = stream % (MAX_LOD_LEVELS * 2) >= MAX_LOD_LEVELS;
         const command = if (water) candidate.water_command else candidate.terrain_command;
+        var expected_model = candidate.model;
+        if (!water) expected_model.data[3][1] -= 0.05;
         if (!compact) {
             const command_offset = (if (water) self.validation_layout.water_commands_offset else self.validation_layout.terrain_commands_offset) + output_index * @sizeOf(rhi.DrawIndirectCommand);
             const actual_command: *const rhi.DrawIndirectCommand = @ptrCast(@alignCast(bytes + command_offset));
@@ -332,7 +334,7 @@ const LODCullingSystem = struct {
             const instance_offset = (if (water) self.validation_layout.water_instances_offset else self.validation_layout.terrain_instances_offset) + output_index * @sizeOf(rhi.InstanceData);
             const actual_instance: *const rhi.InstanceData = @ptrCast(@alignCast(bytes + instance_offset));
             const expected_instance = rhi.InstanceData{
-                .model = candidate.model,
+                .model = expected_model,
                 .mask_radius = candidate.instance_params[0],
                 .lod_fade = candidate.instance_params[1],
                 .padding = .{ candidate.instance_params[2], candidate.instance_params[3] },
@@ -352,7 +354,7 @@ const LODCullingSystem = struct {
         const instance_offset = (if (water) self.validation_layout.compact_water_instances_offset else self.validation_layout.compact_terrain_instances_offset) + output_index * @sizeOf(rhi.CompactLODInstance);
         const actual_instance: *const rhi.CompactLODInstance = @ptrCast(@alignCast(bytes + instance_offset));
         const expected_instance = rhi.CompactLODInstance{
-            .model = candidate.model,
+            .model = expected_model,
             .params = candidate.instance_params,
             .words = candidate.compact_words,
         };

@@ -183,9 +183,6 @@ pub const LODRenderInterface = struct {
         stats: ?*LODStats,
         profiling: ?*LODProfilingCollector,
     ) void = null,
-    /// Frame-stable terrain ownership query. A true result means a visible LOD
-    /// region owns this chunk until the contiguous detail disk reaches it.
-    suppresses_detail_chunk_fn: ?*const fn (self_ptr: *anyopaque, chunk_x: i32, chunk_z: i32) bool = null,
     memory_stats_fn: ?*const fn (self_ptr: *anyopaque) LODRendererMemoryStats = null,
     /// Destroy renderer resources.
     deinit_fn: *const fn (self_ptr: *anyopaque) void,
@@ -245,10 +242,5 @@ pub const LODRenderInterface = struct {
     pub fn memoryStats(self: LODRenderInterface) LODRendererMemoryStats {
         if (self.memory_stats_fn) |memory_stats| return memory_stats(self.ptr);
         return .{};
-    }
-
-    pub fn suppressesDetailChunk(self: LODRenderInterface, chunk_x: i32, chunk_z: i32) bool {
-        const query = self.suppresses_detail_chunk_fn orelse return false;
-        return query(self.ptr, chunk_x, chunk_z);
     }
 };

@@ -52,8 +52,8 @@ void main() {
     float illumination = clamp(max(vSkyLight * global.lighting.x, block_light) + diffuse * global.params.w * 0.45, 0.18, 1.15);
     vec3 color = vColor * illumination * mix(0.72, 1.0, clamp(vAO, 0.0, 1.0));
     if (global.params.z > 0.5) {
-        float fog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
-        fog = max(fog, smoothstep(300.0, 1200.0, vDistance) * 0.62);
+        float rawFog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
+        float fog = rawFog * rawFog * 0.72;
         color = mix(color, global.fog_color.rgb, fog);
     }
     outColor = vec4(color, 1.0);

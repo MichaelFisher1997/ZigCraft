@@ -392,6 +392,18 @@ pub const App = struct {
         return screen.screen();
     }
 
+    fn applyPendingScreenTransitions(self: *App) !void {
+        if (!self.screen_manager.hasPendingTransition()) return;
+
+        // Screen factories and destructors can load/close RmlUi documents and
+        // create/destroy complete world render resources. A submitted frame is
+        // still allowed to reference those resources after endFrame returns, so
+        // a command-recording boundary alone is insufficient. Drain in-flight
+        // GPU work before resolving any ownership-changing transition.
+        self.render_system.waitIdle();
+        try self.screen_manager.applyPendingTransitions();
+    }
+
     pub fn runSingleFrame(self: *App) !void {
         self.frame_start_counter = c.SDL_GetPerformanceCounter();
         self.time.update();
@@ -401,6 +413,15 @@ pub const App = struct {
 
         self.input.beginFrame();
         self.input.pollEvents();
+        // Do not record and submit one more frame after SDL reports that the
+        // window is closing. On some WSI/driver paths that final submission
+        // races surface teardown and returns VK_ERROR_DEVICE_LOST.
+        if (self.input.interface().shouldQuit()) return;
+
+        // Screen replacement destroys the old world/session. Keep that
+        // ownership change outside a recording Vulkan frame; a device idle wait
+        // cannot sanitize unsubmitted command buffers.
+        try self.applyPendingScreenTransitions();
 
         const swapchain_extent = self.render_system.getRHI().renderContext().getNativeSwapchainExtent();
         if (build_options.skip_present and swapchain_extent[0] > 0 and swapchain_extent[1] > 0) {
@@ -440,7 +461,8 @@ pub const App = struct {
         self.render_system.setViewport(window_width, window_height);
 
         self.render_system.beginFrame();
-        errdefer self.render_system.endFrame();
+        var frame_open = true;
+        defer if (frame_open) self.render_system.abortFrame();
 
         try self.render_system.updateGlobalUniforms(.{
             .view_proj = Mat4.identity,
@@ -478,16 +500,27 @@ pub const App = struct {
             .lpv_origin = Vec3.zero,
         });
 
-        try self.screen_manager.update(self.time.delta_time);
+        try self.screen_manager.updateCurrent(self.time.delta_time);
+
+        // Screen updates can request shutdown (for example, a bounded startup
+        // diagnostic). Discard commands recorded so far instead of submitting
+        // a final frame after shutdown has begun.
+        if (self.input.interface().shouldQuit()) return;
 
         if (self.screen_manager.stack.items.len == 0) {
             self.render_system.endFrame();
+            frame_open = false;
+            try self.applyPendingScreenTransitions();
             return;
         }
 
         const world_stats = self.getWorldStats();
         const cpu_ms = self.time.delta_time * 1000.0;
         try self.ui_manager.draw(&self.screen_manager, self.render_system.getRHI(), world_stats, cpu_ms, self.time.fps);
+
+        // The legacy immediate-mode menu resolves its Exit action while
+        // drawing. Never submit that frame after the action requests quit.
+        if (self.input.interface().shouldQuit()) return;
 
         // Capture is recorded before endFrame so Vulkan appends its copy after
         // the UI pass, but before normal presentation releases the image.
@@ -563,6 +596,8 @@ pub const App = struct {
         // buffer is still open. Vulkan records the readback after its final
         // output pass and before submission/presentation.
         self.render_system.endFrame();
+        frame_open = false;
+        try self.applyPendingScreenTransitions();
         self.revealMenuWindowWhenReady();
 
         if (build_options.benchmark) {

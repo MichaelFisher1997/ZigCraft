@@ -374,13 +374,13 @@ pub const LODChunk = struct {
         if (self.transition_frames_remaining > 0) self.transition_frames_remaining -= 1;
     }
 
-    /// Reports whether finer renderable children cover this region sufficiently to hide the parent.
-    /// `fallback_missing_child_threshold` controls how much missing child coverage is tolerated.
+    /// Reports whether all four direct finer children cover this region.
+    /// Partial child coverage must never hide the parent: quality thresholds
+    /// may tune transitions, but cannot create a terrain hole.
     pub fn isCoveredByFinerLOD(self: *const LODChunk, fallback_missing_child_threshold: f32) bool {
+        _ = fallback_missing_child_threshold;
         if (self.lod_level == .lod0) return false;
-        const missing_children = 4 - @min(self.ready_children, 4);
-        const missing_fraction = @as(f32, @floatFromInt(missing_children)) / 4.0;
-        return missing_fraction <= fallback_missing_child_threshold and self.transition_frames_remaining == 0;
+        return self.ready_children >= 4 and self.transition_frames_remaining == 0;
     }
 
     /// Marks source data dirty after chunk-derived ingestion or edits.
@@ -636,6 +636,10 @@ pub const LODConfig = struct {
     pub const default_chunk_render_radius: i32 = 16;
     pub const default_horizon_radius: i32 = 512;
     pub const minimum_horizon_radius: i32 = 256;
+    /// Production user setting limit. Larger horizons remain available only to
+    /// explicit benchmark/diagnostic configurations until additional coarse
+    /// levels remove the current logical-memory and compact-pool pressure.
+    pub const maximum_user_horizon_radius: i32 = 512;
     pub const target_lod1_radius: i32 = 96; // keep 2-block cells visible farther out.
     pub const target_lod2_radius: i32 = 256;
     pub const target_lod3_radius: i32 = 512;
@@ -697,10 +701,10 @@ pub const LODConfig = struct {
     }
 
     /// Expands a full-detail render distance into the default LOD radius ladder.
-    /// The farthest radius scales with full-detail distance while retaining the
-    /// default horizon for ordinary settings.
+    /// Ordinary settings use the qualified user horizon; benchmarks and
+    /// diagnostics request larger ladders explicitly through radiiForDistances.
     pub fn radiiForRenderDistance(distance: i32) [LODLevel.count]i32 {
-        return radiiForDistances(distance, normalizeHorizonDistance(distance, default_horizon_radius));
+        return radiiForDistances(distance, normalizeUserHorizonDistance(distance, default_horizon_radius));
     }
 
     /// Returns the minimum useful distant-LOD horizon for a full-detail radius.
@@ -712,18 +716,28 @@ pub const LODConfig = struct {
         return @intCast(@max(@as(i64, minimum_horizon_radius), scaled));
     }
 
-    /// Normalizes an explicit horizon so it never collapses distant LOD bands.
+    /// Normalizes the explicit outer LOD limit without silently expanding it
+    /// to the recommended long-distance profile.
     pub fn normalizeHorizonDistance(render_distance: i32, horizon_distance: i32) i32 {
-        return @max(horizon_distance, recommendedHorizonDistance(render_distance));
+        return @max(horizon_distance, @max(render_distance, minimum_horizon_radius));
     }
 
-    /// Steps an uncapped horizon geometrically while respecting the dynamic
-    /// minimum required by the full-detail render distance.
+    /// Clamps the normal user-facing distant terrain control to the currently
+    /// qualified production range. Benchmark configs use the uncapped helper.
+    pub fn normalizeUserHorizonDistance(render_distance: i32, horizon_distance: i32) i32 {
+        return @min(normalizeHorizonDistance(render_distance, horizon_distance), @max(render_distance, maximum_user_horizon_radius));
+    }
+
+    /// Steps the explicit outer LOD limit geometrically. The recommendation is
+    /// a preset default, not a mandatory minimum, so users can trade reach for
+    /// contiguous fill and lower generation pressure.
     pub fn stepHorizonDistance(render_distance: i32, horizon_distance: i32, increase: bool) i32 {
-        const minimum = recommendedHorizonDistance(render_distance);
-        const current = @max(horizon_distance, minimum);
+        const minimum = @max(render_distance, minimum_horizon_radius);
+        const maximum = @max(render_distance, maximum_user_horizon_radius);
+        if (horizon_distance > maximum) return maximum;
+        const current = std.math.clamp(horizon_distance, minimum, maximum);
         if (!increase) return @max(minimum, @divFloor(current, 2));
-        return @intCast(@min(@as(i64, current) * 2, @as(i64, std.math.maxInt(i32))));
+        return @intCast(@min(@as(i64, current) * 2, @as(i64, maximum)));
     }
 
     /// Expands full-detail and horizon distances into monotonically increasing LOD radii.
@@ -747,20 +761,6 @@ pub const LODConfig = struct {
     pub fn activeCountForRenderDistance(distance: i32) u32 {
         _ = distance;
         return LODLevel.count;
-    }
-
-    /// Returns the number of useful LOD bands in a radius ladder.
-    /// When a short horizon collapses several coarser levels to the same radius,
-    /// keeping them active only duplicates scheduling and draw work.
-    pub fn activeCountForRadii(radii: [LODLevel.count]i32) u32 {
-        var count: u32 = 1;
-        var last = radii[0];
-        for (radii[1..]) |radius| {
-            if (radius <= last) continue;
-            count += 1;
-            last = radius;
-        }
-        return std.math.clamp(count, 1, LODLevel.count);
     }
 
     /// Returns the coarsest supported LOD level.
@@ -1002,8 +1002,6 @@ test "ILODConfig exposes clamped active LOD count" {
 test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(8));
     try std.testing.expectEqual(@as(u32, LODLevel.count), LODConfig.activeCountForRenderDistance(32));
-    try std.testing.expectEqual(@as(u32, 1), LODConfig.activeCountForRadii(.{ 22, 22, 22, 22, 22 }));
-    try std.testing.expectEqual(@as(u32, 4), LODConfig.activeCountForRadii(.{ 30, 96, 256, 512, 512 }));
 
     const low_radii = LODConfig.radiiForRenderDistance(8);
     try std.testing.expectEqual(@as(i32, 24), low_radii[0]);
@@ -1016,13 +1014,20 @@ test "LODConfig expands render distance into distant LOD horizon" {
     try std.testing.expectEqual(@as(i32, 96), radii[0]);
     try std.testing.expectEqual(@as(i32, 192), radii[1]);
     try std.testing.expectEqual(@as(i32, 384), radii[2]);
-    try std.testing.expectEqual(@as(i32, 768), radii[3]);
-    try std.testing.expectEqual(@as(i32, 1024), radii[4]);
+    try std.testing.expectEqual(@as(i32, 512), radii[3]);
+    try std.testing.expectEqual(@as(i32, 512), radii[4]);
 
     try std.testing.expectEqual(@as(i32, 256), LODConfig.recommendedHorizonDistance(8));
     try std.testing.expectEqual(@as(i32, 131_072), LODConfig.recommendedHorizonDistance(4096));
     try std.testing.expectEqual(std.math.maxInt(i32), LODConfig.recommendedHorizonDistance(std.math.maxInt(i32)));
-    try std.testing.expectEqual(@as(i32, 131_072), LODConfig.normalizeHorizonDistance(4096, 2048));
+    try std.testing.expectEqual(@as(i32, 4096), LODConfig.normalizeHorizonDistance(4096, 2048));
+    try std.testing.expectEqual(@as(i32, 512), LODConfig.stepHorizonDistance(32, 1024, false));
+    try std.testing.expectEqual(@as(i32, 256), LODConfig.stepHorizonDistance(32, 512, false));
+    try std.testing.expectEqual(@as(i32, 256), LODConfig.stepHorizonDistance(32, 256, false));
+    try std.testing.expectEqual(@as(i32, 512), LODConfig.stepHorizonDistance(32, 512, true));
+    try std.testing.expectEqual(@as(i32, 256), LODConfig.normalizeUserHorizonDistance(32, 128));
+    try std.testing.expectEqual(@as(i32, 512), LODConfig.normalizeUserHorizonDistance(32, 1024));
+    try std.testing.expectEqual(@as(i32, 600), LODConfig.normalizeUserHorizonDistance(600, 512));
 
     const custom_horizon = LODConfig.radiiForDistances(12, 1024);
     try std.testing.expectEqual(@as(i32, 36), custom_horizon[0]);
@@ -1033,7 +1038,6 @@ test "LODConfig expands render distance into distant LOD horizon" {
 
     const beyond_horizon = LODConfig.radiiForDistances(4096, 2048);
     try std.testing.expectEqual([_]i32{4096} ** LODLevel.count, beyond_horizon);
-    try std.testing.expectEqual(@as(u32, 1), LODConfig.activeCountForRadii(beyond_horizon));
 
     const integer_limit = LODConfig.radiiForDistances(std.math.maxInt(i32), 2048);
     try std.testing.expectEqual([_]i32{std.math.maxInt(i32)} ** LODLevel.count, integer_limit);
@@ -1042,6 +1046,10 @@ test "LODConfig expands render distance into distant LOD horizon" {
 test "LODConfig keeps the coarse fallback when tail radii match" {
     var config = LODConfig{ .active_lod_count = LODLevel.count };
     const interface = config.interface();
+
+    interface.setRadii(.{ 96, 192, 256, 256, 256 });
+    try std.testing.expectEqual(@as(u32, LODLevel.count), interface.getActiveLODCount());
+    try std.testing.expectEqual(@as(i32, 256), interface.getRadii()[@intFromEnum(LODLevel.lod4)]);
 
     interface.setRadii(.{ 30, 96, 256, 512, 512 });
     try std.testing.expectEqual(@as(u32, LODLevel.count), interface.getActiveLODCount());
@@ -1089,6 +1097,17 @@ test "ILODConfig exposes fallback missing child threshold" {
 
     config.fallback_missing_child_threshold = 2.0;
     try std.testing.expectEqual(@as(f32, 1.0), interface.getFallbackMissingChildThreshold());
+}
+
+test "LOD parent remains visible until all direct children are ready" {
+    var parent = LODChunk.init(0, 0, .lod4);
+    parent.state = .renderable;
+    parent.ready_children = 3;
+    parent.transition_frames_remaining = 0;
+
+    try std.testing.expect(!parent.isCoveredByFinerLOD(1.0));
+    parent.ready_children = 4;
+    try std.testing.expect(parent.isCoveredByFinerLOD(0.0));
 }
 
 test "ILODConfig exposes LOD quality tuning controls" {

@@ -1,6 +1,17 @@
 # LOD Quality Controls
 
-The render distance preset is the supported user-facing control for distant LOD quality. Presets intentionally expose a small set of stable knobs:
+The render distance preset seeds distant LOD quality. The World settings also
+expose `Render Distance` for full-detail chunks and `Distant LOD Limit` as the
+outer terrain radius. Lowering the latter reduces generation pressure;
+coarse regions fill concentrically so the engine does not render isolated
+outer-horizon islands before nearby fallback terrain.
+
+The production `Distant LOD Limit` currently supports 256 or 512 chunks.
+Larger radii remain benchmark/diagnostic-only: the five-level hierarchy has no
+coarser level beyond LOD4, so a contiguous 1,024-chunk disk exceeds the normal
+logical-memory and compact-pool qualification budgets.
+
+Presets intentionally expose a small set of stable knobs:
 
 - `lod_radii`: chunk radii for LOD0 through LOD4.
 - `horizon_radius`: the supported far-terrain horizon in chunks.
@@ -8,16 +19,19 @@ The render distance preset is the supported user-facing control for distant LOD 
   containers. The cache worker evicts the oldest containers after atomic
   writes and compacts live entries when sector growth reaches the cap.
 - `horizontal_detail`: target horizontal detail per LOD. This is used as a floor for QEM triangle targets when the experimental QEM mesh path is enabled.
-- `sample_density`: source-grid density per LOD. Medium uses half density for
-  LOD4 so its initial 512-chunk horizon has 33x33 source grids instead of
-  65x65 grids; finer LODs replace those 16-block cells as they stream in.
+- `sample_density`: source-grid density per LOD. Every 512-chunk production
+  horizon uses half density for LOD4, giving the fallback 33x33 source grids
+  instead of 65x65 grids; finer LODs replace those 16-block cells as they
+  stream in. The 256-chunk Low horizon retains its denser LOD4 source grid.
 - `vertical_span_budget`: enables rich column/span source data when nonzero.
   The numeric values are reserved preset policy; current source allocation is
   bounded by the engine-wide `MAX_LOD_VERTICAL_SPANS` limit.
 - `mesh_path`: selects the rich `column_spans` path for near and mid-distance
   LODs. LOD3/LOD4 deliberately fall back to heightfields to bound far-horizon
   geometry and memory; `qem` remains available for controlled testing.
-- `fog_start_percent`: controls the fade band for each LOD level.
+- `fog_start_percent`: records the intended per-level fade-band policy. Terrain
+  and water currently use the shared atmospheric distance-fog curve so loaded
+  LODs do not turn into an opaque horizon-colored shelf near the player.
 - `memory_budget_mb` and `max_uploads_per_frame`: bound cache pressure and per-frame GPU upload work.
 
 ## Supported presets
@@ -27,8 +41,8 @@ The render distance preset is the supported user-facing control for distant LOD 
 | Low | 256 chunks | 33/33/33/65/65 | 2 | 128 MB | 512 MB | 4 |
 | Medium | 512 chunks | 33/49/49/65/33 | 2 | 256 MB | 1,024 MB | 8 |
 | High | 512 chunks | 33/65/65/97/97 | 3 | 384 MB | 1,536 MB | 8 |
-| Ultra | 1,024 chunks | 33/65/65/129/129 | 4 | 512 MB | 3,072 MB | 12 |
-| Extreme | 2,048 chunks | 33/65/65/129/129 | 4 | 1,024 MB | 4,096 MB | 16 |
+| Ultra | 512 chunks | 33/65/65/129/129 | 4 | 512 MB | 3,072 MB | 12 |
+| Extreme | 512 chunks | 33/65/65/129/129 | 4 | 1,024 MB | 4,096 MB | 16 |
 
 These values are policy inputs, not a promise that all hardware sustains the
 full horizon. The memory governor shrinks refinement radii under pressure but
@@ -48,6 +62,9 @@ The benchmark SLOs and regression thresholds are maintained in
 - Parent regions remain visible until all four finer children are renderable
   and the transition window completes. Streaming delay therefore degrades to
   coarser terrain rather than a hierarchy hole.
+- Expanded and compact LOD terrain and water use the same atmospheric fog
+  progression as their full-detail counterparts. LOD representation changes
+  must not introduce an additional fixed-distance fog floor.
 - Pause and large traversal changes invalidate queued and in-flight worker
   tokens. Per-region cancellation prevents a stale generation result from
   publishing after unpause or teleport.

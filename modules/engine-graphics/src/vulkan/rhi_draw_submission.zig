@@ -17,6 +17,17 @@ const ModelUniforms = extern struct {
     mask_radius: f32,
 };
 
+/// Push constants for an indirect draw that must fetch instance data from the
+/// bound instance buffer. Alpha is the shader's indirect sentinel so signed
+/// LOD handoff masks remain valid direct-draw values.
+pub fn indirectModelUniforms() ModelUniforms {
+    return .{
+        .model = Mat4.identity,
+        .color = .{ 1.0, 1.0, 1.0, -1.0 },
+        .mask_radius = 0.0,
+    };
+}
+
 const ShadowModelUniforms = extern struct {
     mvp: Mat4,
     bias_params: [4]f32,
@@ -222,11 +233,7 @@ pub fn drawIndirect(ctx: anytype, handle: rhi.BufferHandle, command_buffer: rhi.
                 };
                 c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ShadowModelUniforms), &shadow_uniforms);
             } else {
-                const uniforms = ModelUniforms{
-                    .model = Mat4.identity,
-                    .color = .{ 1.0, 1.0, 1.0, 1.0 },
-                    .mask_radius = -1.0,
-                };
+                const uniforms = indirectModelUniforms();
                 c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
             }
 
@@ -302,7 +309,7 @@ pub fn drawIndirectCount(ctx: anytype, handle: rhi.BufferHandle, command_buffer:
     }
     const descriptor_set = if (ctx.draw.lod_mode) lodDescriptorSet(ctx) else ctx.descriptors.descriptor_sets[ctx.frames.current_frame];
     c.vkCmdBindDescriptorSets(cb, c.VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.pipeline_manager.pipeline_layout, 0, 1, &descriptor_set, 0, null);
-    const uniforms = ModelUniforms{ .model = Mat4.identity, .color = .{ 1.0, 1.0, 1.0, 1.0 }, .mask_radius = -1.0 };
+    const uniforms = indirectModelUniforms();
     c.vkCmdPushConstants(cb, ctx.pipeline_manager.pipeline_layout, c.VK_SHADER_STAGE_VERTEX_BIT | c.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(ModelUniforms), &uniforms);
     const offsets = [_]c.VkDeviceSize{0};
     c.vkCmdBindVertexBuffers(cb, 0, 1, &vbo.buffer, &offsets);

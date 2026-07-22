@@ -597,11 +597,6 @@ void main() {
     if (global.params.z > 0.5) {
         float rawFog = clamp(1.0 - exp(-viewDistance * global.params.y), 0.0, 1.0);
         float fogFactor = rawFog * rawFog * 0.72 * atmosphericVisibility;
-        if (isLOD) {
-            float lodEdgeFog = smoothstep(0.65, 1.0, vLODFade) * rawFog * atmosphericVisibility;
-            float lodHorizonFog = smoothstep(420.0, 1400.0, viewDistance) * atmosphericVisibility;
-            fogFactor = max(fogFactor, max(lodEdgeFog * 0.9, lodHorizonFog * 0.82));
-        }
         color = mix(color, global.fog_color.rgb, fogFactor);
     }
 

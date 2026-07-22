@@ -87,6 +87,17 @@ const MeshInputRevisions = struct {
 const RECOVERY_SCAN_PERIOD: u64 = 60;
 const MAX_MISSING_SCAN_STEPS: usize = 1024;
 
+/// Persisted chunks are authoritative over advisory LOD source caches, even
+/// when an older cache snapshot already carries edited provenance. Freshly
+/// generated chunks retain the opt-in ingestion path until it is qualified for
+/// the default streaming workload.
+fn lodIngestionProvenance(load_result: LoadResult, ingest_generated_chunks: bool) ?LODColumnProvenance {
+    return switch (load_result) {
+        .success, .success_relight_required => .edited,
+        else => if (ingest_generated_chunks) .chunk_derived else null,
+    };
+}
+
 pub const ChunkQueueCoordinator = struct {
     allocator: std.mem.Allocator,
     storage: *ChunkStorage,
@@ -736,12 +747,11 @@ pub const ChunkQueueCoordinator = struct {
             if (chunk_data.chunk.state == .generated and chunk_data.chunk.job_token == job.data.chunk.job_token) {
                 self.markNeighborsForRemesh(cx, cz);
                 self.enqueueReadyNeighborhood(cx, cz);
-                // Feed the real chunk into the LOD system so distant terrain is
-                // derived from actual blocks (chunk_derived provenance) instead
-                // of worldgen sampling. The chunk is pinned for this call.
-                if (engine_core.envFlag("ZIGCRAFT_LOD_CHUNK_INGEST", false)) {
-                    if (self.lod_manager) |mgr| {
-                        mgr.ingestChunk(cx, cz, &chunk_data.chunk, .chunk_derived);
+                // Saved chunks always override advisory LOD cache data. Fresh
+                // generated chunks keep the separately qualified opt-in path.
+                if (self.lod_manager) |mgr| {
+                    if (lodIngestionProvenance(load_result, engine_core.envFlag("ZIGCRAFT_LOD_CHUNK_INGEST", false))) |provenance| {
+                        mgr.ingestChunk(cx, cz, &chunk_data.chunk, provenance);
                     }
                 }
             }
@@ -1050,6 +1060,13 @@ test "runtime edits enqueue dirty renderable chunks immediately" {
 
     try testing.expectEqual(Chunk.State.generated, data.chunk.state);
     try testing.expectEqual(@as(usize, 1), coordinator.pending_mesh_incoming.items.len);
+}
+
+test "saved chunks always override advisory LOD source snapshots" {
+    try std.testing.expectEqual(LODColumnProvenance.edited, lodIngestionProvenance(.success, false).?);
+    try std.testing.expectEqual(LODColumnProvenance.edited, lodIngestionProvenance(.success_relight_required, false).?);
+    try std.testing.expectEqual(@as(?LODColumnProvenance, null), lodIngestionProvenance(.not_found, false));
+    try std.testing.expectEqual(LODColumnProvenance.chunk_derived, lodIngestionProvenance(.not_found, true).?);
 }
 
 test "missing chunk scan cursor covers concentric square rings without duplicates" {

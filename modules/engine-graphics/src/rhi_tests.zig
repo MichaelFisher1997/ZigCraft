@@ -636,6 +636,13 @@ test "IRenderContext getEncoder" {
     try testing.expectEqual(&MockContext.MOCK_STATE_VTABLE, state.vtable);
 }
 
+test "indirect model uniforms use alpha sentinel without consuming mask sign" {
+    const uniforms = @import("vulkan/rhi_draw_submission.zig").indirectModelUniforms();
+
+    try testing.expect(uniforms.color[3] < 0.0);
+    try testing.expectEqual(@as(f32, 0.0), uniforms.mask_radius);
+}
+
 test "AtmosphereSystem.renderSky with null handles" {
     var mock = MockContext{};
     const rhi_instance = rhi.RHI{ .ptr = &mock, .vtable = &MockContext.MOCK_VULKAN_RHI_VTABLE, .device = null };

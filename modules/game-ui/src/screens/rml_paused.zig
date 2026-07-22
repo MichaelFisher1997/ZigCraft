@@ -47,13 +47,13 @@ pub const RmlPausedScreen = struct {
 
     pub fn draw(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
-        try self.context.screen_manager.drawParentScreen(ptr, ui);
+        try self.context.screen_manager.drawBackgroundFor(ptr, ui);
         self.page.draw(ui);
     }
 
     fn drawBackground(ptr: *anyopaque, ui: *UISystem) !void {
         const self: *@This() = @ptrCast(@alignCast(ptr));
-        try self.context.screen_manager.drawParentScreen(ptr, ui);
+        try self.context.screen_manager.drawBackgroundFor(ptr, ui);
     }
 
     pub fn onEnter(ptr: *anyopaque) void {
@@ -72,21 +72,39 @@ pub const RmlPausedScreen = struct {
         if (std.mem.eql(u8, target_id, "resume")) {
             self.context.screen_manager.popScreen();
         } else if (std.mem.eql(u8, target_id, "settings")) {
-            const settings_screen = RmlSettingsScreen.init(self.context.allocator, self.context) catch |err| {
-                log.log.err("RmlUi pause Settings action failed: {}", .{err});
+            const factory = Screen.makeScreenFactory(SettingsScreenFactory, self.context.allocator, .{ .context = self.context }) catch |err| {
+                log.log.err("RmlUi pause Settings request failed: {}", .{err});
                 return;
             };
-            self.context.screen_manager.pushScreen(settings_screen.screen());
+            self.context.screen_manager.pushScreenFactory(factory);
         } else if (std.mem.eql(u8, target_id, "quit-to-title")) {
-            const home_screen = RmlHomeScreen.init(self.context.allocator, self.context) catch |err| {
-                log.log.err("RmlUi pause Quit to Title action failed: {}", .{err});
+            const factory = Screen.makeScreenFactory(HomeScreenFactory, self.context.allocator, .{ .context = self.context }) catch |err| {
+                log.log.err("RmlUi pause Quit to Title request failed: {}", .{err});
                 return;
             };
-            self.context.screen_manager.setScreen(home_screen.screen());
+            self.context.screen_manager.setScreenFactory(factory);
         }
     }
 
     pub fn screen(self: *@This()) IScreen {
         return Screen.makeScreen(@This(), self);
+    }
+};
+
+const SettingsScreenFactory = struct {
+    context: EngineContext,
+
+    pub fn construct(self: *@This()) !IScreen {
+        const settings_screen = try RmlSettingsScreen.init(self.context.allocator, self.context);
+        return settings_screen.screen();
+    }
+};
+
+const HomeScreenFactory = struct {
+    context: EngineContext,
+
+    pub fn construct(self: *@This()) !IScreen {
+        const home_screen = try RmlHomeScreen.init(self.context.allocator, self.context);
+        return home_screen.screen();
     }
 };

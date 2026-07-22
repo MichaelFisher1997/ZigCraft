@@ -25,6 +25,14 @@ const BufferHandle = rhi_types.BufferHandle;
 const RhiError = rhi_types.RhiError;
 const QuadricSimplifier = @import("world-meshing").meshing.quadric_simplifier.QuadricSimplifier;
 const log = @import("engine-core").log;
+
+/// Chunk-derived and edited source columns can contain cave and overhang spans
+/// surrounded by worldgen-only samples. Rendering those partial underground
+/// intervals at a streaming boundary exposes a giant terrain cross-section.
+/// Their authoritative surface height remains safe for the heightfield path.
+pub fn canBuildColumnSpans(data: *const LODSimplifiedData) bool {
+    return data.hasVerticalSpans() and !data.hasNonWorldgenColumns();
+}
 const lod_seam = @import("lod_seam.zig");
 const resources_mod = @import("lod_mesh_resources.zig");
 const geom = @import("lod_geometry.zig");
@@ -665,7 +673,7 @@ pub const LODMesh = struct {
     /// when spans are not available. This is intentionally exposed as a test/config hook.
     pub fn buildFromColumnSpans(self: *LODMesh, data: *const LODSimplifiedData, world_x: i32, world_z: i32, atlas: *const TextureAtlas) !void {
         if (data.width < 2) return error.EmptyData;
-        if (!data.hasVerticalSpans()) return self.buildFromSimplifiedData(data, world_x, world_z, atlas);
+        if (!canBuildColumnSpans(data)) return self.buildFromSimplifiedData(data, world_x, world_z, atlas);
 
         const region_size: f32 = @floatFromInt(lod_chunk.regionSizeBlocks(self.lod_level));
         const cell_size = region_size / @as(f32, @floatFromInt(data.width - 1));
@@ -1024,6 +1032,15 @@ pub const LODMesh = struct {
         render_ctx.drawOffset(self.buffer_handle, self.vertex_count, .triangles, self.vertex_offset);
     }
 };
+
+test "chunk-derived span sources use the stable heightfield fallback" {
+    var data = try LODSimplifiedData.initWithVerticalSpans(std.testing.allocator, .lod2);
+    defer data.deinit();
+
+    try std.testing.expect(canBuildColumnSpans(&data));
+    data.setColumnProvenance(0, 0, .chunk_derived);
+    try std.testing.expect(!canBuildColumnSpans(&data));
+}
 
 /// LOD Mesh Builder - builds meshes for LOD regions
 pub const LODMeshBuilder = struct {

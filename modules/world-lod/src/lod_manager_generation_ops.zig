@@ -662,11 +662,18 @@ pub fn processLODJob(ctx: *anyopaque, job: Job) void {
                     return;
                 }
 
-                // Acquire lock to update chunk data
+                // Acquire lock to update chunk data. A cache read or forced
+                // save-time edit may have published source while this worker
+                // was generating. Never let stale worldgen replace that newer
+                // authoritative snapshot.
                 self.mutex.lock();
-                chunk.data = .{ .simplified = data };
-                chunk.updateHeightBoundsFromData();
-                chunk.markSourceDirty();
+                if (chunk.data == .simplified) {
+                    data.deinit();
+                } else {
+                    chunk.data = .{ .simplified = data };
+                    chunk.updateHeightBoundsFromData();
+                    chunk.markSourceDirty();
+                }
                 self.mutex.unlock();
             }
             success = true;

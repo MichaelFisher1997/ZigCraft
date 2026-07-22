@@ -5,6 +5,10 @@ const presets = @import("json_presets.zig");
 const persistence = @import("persistence.zig");
 const RenderDistancePreset = @import("engine-rhi").RenderDistancePreset;
 
+test "distance terrain is enabled by default" {
+    try std.testing.expect((Settings{}).lod_enabled);
+}
+
 test "Persistence Roundtrip" {
     const allocator = std.testing.allocator;
     _ = allocator;

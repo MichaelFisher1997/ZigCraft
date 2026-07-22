@@ -60,6 +60,26 @@ const MockScreen = struct {
     }
 };
 
+const MockFactoryPayload = struct {
+    screen: *MockScreen,
+    construct_count: *usize,
+    deinit_count: *usize,
+    replaced_state: ?*MockState = null,
+    constructed_after_replace_deinit: ?*bool = null,
+
+    pub fn construct(self: *@This()) !IScreen {
+        self.construct_count.* += 1;
+        if (self.replaced_state) |state| {
+            if (self.constructed_after_replace_deinit) |result| result.* = state.deinit_count == 1;
+        }
+        return self.screen.make();
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.deinit_count.* += 1;
+    }
+};
+
 test "ScreenManager.init creates empty manager" {
     const allocator = testing.allocator;
     const manager = ScreenManager.init(allocator);
@@ -184,6 +204,90 @@ test "ScreenManager.update processes replace" {
     try testing.expectEqual(@as(usize, 1), manager.stack.items.len);
 
     manager.deinit();
+}
+
+test "ScreenManager applies destructive replacement separately from screen update" {
+    var manager = ScreenManager.init(testing.allocator);
+
+    var old_state = MockState{};
+    var new_state = MockState{};
+    var old_screen: MockScreen = .{ .state = &old_state };
+    var new_screen: MockScreen = .{ .state = &new_state };
+
+    manager.pushScreen(old_screen.make());
+    try manager.applyPendingTransitions();
+    try manager.updateCurrent(0.016);
+    manager.setScreen(new_screen.make());
+
+    // Scheduling a frame-boundary replacement must not destroy the active
+    // world while its current update/render frame is still in progress.
+    try testing.expectEqual(@as(usize, 0), old_state.deinit_count);
+    try testing.expectEqual(@as(usize, 1), old_state.update_count);
+
+    try manager.applyPendingTransitions();
+    try testing.expectEqual(@as(usize, 1), old_state.exit_count);
+    try testing.expectEqual(@as(usize, 1), old_state.deinit_count);
+    try testing.expectEqual(@as(usize, 1), new_state.enter_count);
+    try testing.expectEqual(@as(usize, 0), new_state.update_count);
+
+    manager.deinit();
+}
+
+test "ScreenManager constructs replacement factory only at transition boundary" {
+    var manager = ScreenManager.init(testing.allocator);
+
+    var old_state = MockState{};
+    var new_state = MockState{};
+    var old_screen: MockScreen = .{ .state = &old_state };
+    var new_screen: MockScreen = .{ .state = &new_state };
+    var construct_count: usize = 0;
+    var factory_deinit_count: usize = 0;
+    var constructed_after_replace_deinit = false;
+
+    manager.pushScreen(old_screen.make());
+    try manager.applyPendingTransitions();
+    const factory = try screen_module.makeScreenFactory(MockFactoryPayload, testing.allocator, .{
+        .screen = &new_screen,
+        .construct_count = &construct_count,
+        .deinit_count = &factory_deinit_count,
+        .replaced_state = &old_state,
+        .constructed_after_replace_deinit = &constructed_after_replace_deinit,
+    });
+    manager.setScreenFactory(factory);
+
+    try testing.expectEqual(@as(usize, 0), construct_count);
+    try testing.expectEqual(@as(usize, 0), factory_deinit_count);
+    try testing.expectEqual(@as(usize, 0), old_state.deinit_count);
+
+    try manager.applyPendingTransitions();
+    try testing.expectEqual(@as(usize, 1), construct_count);
+    try testing.expectEqual(@as(usize, 1), factory_deinit_count);
+    try testing.expectEqual(@as(usize, 1), old_state.deinit_count);
+    try testing.expect(constructed_after_replace_deinit);
+    try testing.expectEqual(@as(usize, 1), new_state.enter_count);
+
+    manager.deinit();
+}
+
+test "ScreenManager destroys a cancelled factory without constructing it" {
+    var manager = ScreenManager.init(testing.allocator);
+    defer manager.deinit();
+
+    var state = MockState{};
+    var screen: MockScreen = .{ .state = &state };
+    var construct_count: usize = 0;
+    var factory_deinit_count: usize = 0;
+    const factory = try screen_module.makeScreenFactory(MockFactoryPayload, testing.allocator, .{
+        .screen = &screen,
+        .construct_count = &construct_count,
+        .deinit_count = &factory_deinit_count,
+    });
+
+    manager.pushScreenFactory(factory);
+    manager.popScreen();
+
+    try testing.expectEqual(@as(usize, 0), construct_count);
+    try testing.expectEqual(@as(usize, 1), factory_deinit_count);
 }
 
 test "ScreenManager.update calls update on current screen" {

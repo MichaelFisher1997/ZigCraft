@@ -464,6 +464,29 @@ test "ingestChunk defers while a cancelled worker still pins source data" {
     try std.testing.expect(mgr.ingestion_queue.pending_ingestions.items.len > 0);
 }
 
+test "ingestChunk into generated source invalidates stale mesh transition" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    lchunk.state = .generated;
+    const old_token = lchunk.job_token;
+
+    var chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 64) : (y += 1) chunk.setBlock(0, y, 0, .stone);
+
+    mgr.ingestChunk(0, 0, &chunk, .edited);
+
+    try std.testing.expectEqual(old_token + 1, lchunk.job_token);
+    const token = mgr.transition_tokens.pop() orelse return error.ExpectedMeshTransition;
+    try std.testing.expectEqual(@import("lod_manager_context.zig").LifecycleStage.mesh, token.stage);
+    try std.testing.expectEqual(lchunk.job_token, token.job_token);
+    try std.testing.expectEqual(lchunk.source_revision, token.source_revision);
+}
+
 test "ingestChunk provenance authority: edited beats chunk_derived, worldgen cannot overwrite" {
     const allocator = std.testing.allocator;
     var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 } };
@@ -532,6 +555,107 @@ test "markChunkEdited coalesces and re-ingests via the resolver on update" {
 
     try std.testing.expectEqual(@as(f32, 90.0), lchunk.data.simplified.getHeight(0, 0));
     try std.testing.expectEqual(LODColumnProvenance.edited, lchunk.data.simplified.getColumnProvenance(0, 0));
+
+    // Explicit save points bypass the coalescing cooldown and persist edits in
+    // the same transaction rather than losing them to a later frame.
+    edited_chunk.setBlock(0, 90, 0, .air);
+    lchunk.setState(.renderable);
+    if (lchunk.isPinned()) lchunk.unpin();
+    mgr.markChunkEdited(0, 0);
+    mgr.ingestion_queue.edit_cooldown = 1.0;
+    mgr.flushEditedChunksNow();
+    try std.testing.expectEqual(@as(f32, 89.0), lchunk.data.simplified.getHeight(0, 0));
+}
+
+test "edited chunk unload consumes queued work before resolver removal" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 }, .active_lod_count = 2 };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    lchunk.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .empty, .daylight, .empty);
+
+    var edited_chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 72) : (y += 1) chunk_derived_setBlock(&edited_chunk, 0, y, 0, .stone);
+    mgr.markChunkEdited(0, 0);
+
+    try std.testing.expectEqual(@as(u8, 0), mgr.flushEditedChunkForUnload(0, 0, &edited_chunk, false));
+    try std.testing.expectEqual(@as(f32, 72.0), lchunk.data.simplified.getHeight(0, 0));
+    try std.testing.expectEqual(LODColumnProvenance.edited, lchunk.data.simplified.getColumnProvenance(0, 0));
+    try std.testing.expectEqual(@as(usize, 0), mgr.ingestion_queue.edit_dirty.count());
+    try std.testing.expectEqual(@as(u8, 0), mgr.flushEditedChunkForUnload(0, 0, &edited_chunk, false));
+}
+
+test "edited chunk unload retains in-flight LOD work inside the horizon" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 }, .active_lod_count = 2 };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lchunk = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    lchunk.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .empty, .daylight, .empty);
+    lchunk.state = .meshing;
+
+    var edited_chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 72) : (y += 1) chunk_derived_setBlock(&edited_chunk, 0, y, 0, .stone);
+    mgr.markChunkEdited(0, 0);
+
+    const lod1_mask = @as(u8, 1) << @intFromEnum(LODLevel.lod1);
+    try std.testing.expectEqual(lod1_mask, mgr.flushEditedChunkForUnload(0, 0, &edited_chunk, true));
+    try std.testing.expectEqual(@as(usize, 1), mgr.ingestion_queue.pending_ingestions.items.len);
+    try std.testing.expectEqual(@as(f32, 10.0), lchunk.data.simplified.getHeight(0, 0));
+
+    lchunk.state = .renderable;
+    try std.testing.expectEqual(@as(u8, 0), mgr.flushEditedChunkForUnload(0, 0, &edited_chunk, true));
+    try std.testing.expectEqual(@as(usize, 0), mgr.ingestion_queue.pending_ingestions.items.len);
+    try std.testing.expectEqual(@as(f32, 72.0), lchunk.data.simplified.getHeight(0, 0));
+}
+
+test "deferred edited ingestion retries only levels still pending" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .radii = .{ 2, 4, 8, 16, 32 }, .active_lod_count = 3 };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+
+    const lod1 = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod1);
+    const lod2 = try placeSimplifiedRegion(mgr, allocator, 0, 0, .lod2);
+    lod1.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .empty, .daylight, .empty);
+    lod2.data.simplified.setColumn(0, 0, 10.0, .plains, .{ .surface = .grass, .subsurface = .dirt, .foundation = .stone }, 0x4D8033, .empty, .daylight, .empty);
+    lod2.state = .meshing;
+
+    var edited_chunk = Chunk.init(0, 0);
+    var y: u32 = 0;
+    while (y <= 72) : (y += 1) chunk_derived_setBlock(&edited_chunk, 0, y, 0, .stone);
+    mgr.markChunkEdited(0, 0);
+
+    const lod2_mask = @as(u8, 1) << @intFromEnum(LODLevel.lod2);
+    try std.testing.expectEqual(lod2_mask, mgr.flushEditedChunkForUnload(0, 0, &edited_chunk, true));
+    const lod1_revision = lod1.source_revision;
+    try std.testing.expectEqual(@as(f32, 72.0), lod1.data.simplified.getHeight(0, 0));
+
+    lod2.state = .renderable;
+    try std.testing.expectEqual(@as(u8, 0), mgr.flushEditedChunkForUnload(0, 0, &edited_chunk, true));
+    try std.testing.expectEqual(lod1_revision, lod1.source_revision);
+    try std.testing.expectEqual(@as(f32, 72.0), lod2.data.simplified.getHeight(0, 0));
+}
+
+test "bounded edited chunk flush preserves work beyond the frame budget" {
+    const allocator = std.testing.allocator;
+    var config = LODConfig{ .active_lod_count = 2 };
+    const mgr = try buildIngestionManager(allocator, &config);
+    defer mgr.deinit();
+    mgr.ingestion_queue.drain_per_frame = 2;
+
+    mgr.markChunkEdited(0, 0);
+    mgr.markChunkEdited(1, 0);
+    mgr.markChunkEdited(2, 0);
+    mgr.flushEditedChunksBounded();
+
+    try std.testing.expectEqual(@as(usize, 1), mgr.ingestion_queue.edit_dirty.count());
+    try std.testing.expectEqual(@as(usize, 2), mgr.ingestion_queue.pending_ingestions.items.len);
 }
 
 fn chunk_derived_setBlock(chunk: *Chunk, x: u32, y: u32, z: u32, block: world_core.BlockType) void {

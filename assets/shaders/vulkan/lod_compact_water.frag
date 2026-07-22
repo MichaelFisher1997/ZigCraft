@@ -64,8 +64,8 @@ void main() {
     base += global.sun_color.rgb * diffuse * global.params.w * 0.06;
 
     if (global.params.z > 0.5) {
-        float fog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
-        fog = max(fog, smoothstep(280.0, 1100.0, vDistance) * 0.62);
+        float rawFog = clamp(1.0 - exp(-vDistance * global.params.y), 0.0, 1.0);
+        float fog = rawFog * rawFog * 0.65;
         base = mix(base, global.fog_color.rgb, fog);
     }
 

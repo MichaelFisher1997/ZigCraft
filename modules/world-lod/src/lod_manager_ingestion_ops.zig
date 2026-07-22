@@ -76,10 +76,15 @@ pub fn setChunkResolver(self: *Self, resolver: ChunkResolver) void {
 /// `update()`. Safe to call from the generation worker thread; the caller
 /// must pin the chunk for the duration of the call.
 pub fn ingestChunk(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) void {
-    const pending_mask = self.applyIngestionToRegions(cx, cz, chunk, provenance);
+    const pending_mask = applyIngestionToRegionsMask(self, cx, cz, chunk, provenance, activeIngestionMask(self));
     if (pending_mask != 0) {
         self.ingestion_queue.mutex.lock();
-        self.recordPendingLocked(cx, cz, provenance, pending_mask);
+        const recorded = self.recordPendingLocked(cx, cz, provenance, pending_mask);
+        if (!recorded and provenance == .edited) {
+            // Preserve discoverability for persistence invalidation when the
+            // bounded pending queue is saturated entirely by edited work.
+            self.ingestion_queue.edit_dirty.put(.{ .cx = cx, .cz = cz }, {}) catch {};
+        }
         self.ingestion_queue.mutex.unlock();
     }
 }
@@ -90,11 +95,10 @@ pub fn ingestChunk(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenanc
 pub fn requestIngestion(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance) void {
     self.ingestion_queue.mutex.lock();
     defer self.ingestion_queue.mutex.unlock();
-    var mask: u8 = 0;
-    const active = lod_chunk.activeLODCount(self.config);
-    var i: usize = 1;
-    while (i < active) : (i += 1) mask |= @as(u8, 1) << @intCast(i);
-    self.recordPendingLocked(cx, cz, provenance, mask);
+    const recorded = self.recordPendingLocked(cx, cz, provenance, activeIngestionMask(self));
+    if (!recorded and provenance == .edited) {
+        self.ingestion_queue.edit_dirty.put(.{ .cx = cx, .cz = cz }, {}) catch {};
+    }
 }
 
 /// Notify the LOD system that a block edit affected chunk (cx, cz).
@@ -108,11 +112,51 @@ pub fn markChunkEdited(self: *Self, cx: i32, cz: i32) void {
     };
 }
 
+/// Consumes any queued edit work for a chunk that is about to leave full-detail
+/// storage, then applies its final authoritative snapshot to every currently
+/// available LOD region. Deferred entries are removed because their resolver
+/// would become invalid as soon as the caller completes the unload.
+pub fn flushEditedChunkForUnload(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, retain_pending: bool) u8 {
+    var requested_mask: u8 = 0;
+    self.ingestion_queue.mutex.lock();
+    if (self.ingestion_queue.edit_dirty.remove(.{ .cx = cx, .cz = cz })) {
+        requested_mask = activeIngestionMask(self);
+    }
+
+    var index: usize = 0;
+    while (index < self.ingestion_queue.pending_ingestions.items.len) {
+        const pending = self.ingestion_queue.pending_ingestions.items[index];
+        if (pending.cx == cx and pending.cz == cz and pending.provenance == .edited) {
+            requested_mask |= pending.pending_levels;
+            _ = self.ingestion_queue.pending_ingestions.orderedRemove(index);
+            continue;
+        }
+        index += 1;
+    }
+    self.ingestion_queue.mutex.unlock();
+
+    if (requested_mask == 0) return 0;
+    const pending_mask = applyIngestionToRegionsMask(self, cx, cz, chunk, .edited, requested_mask);
+    if (pending_mask != 0 and retain_pending) {
+        self.ingestion_queue.mutex.lock();
+        const recorded = self.recordPendingLocked(cx, cz, .edited, pending_mask);
+        if (!recorded) {
+            self.ingestion_queue.edit_dirty.put(.{ .cx = cx, .cz = cz }, {}) catch {};
+        }
+        self.ingestion_queue.mutex.unlock();
+    }
+    return pending_mask;
+}
+
 /// Apply one chunk's contribution to every LOD region that already has
 /// source data and is not in-flight. Returns a bitmask of LOD levels that
 /// could not be applied (region missing, not yet generated, or meshing)
 /// so the caller can record them as pending.
 pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance) u8 {
+    return applyIngestionToRegionsMask(self, cx, cz, chunk, provenance, activeIngestionMask(self));
+}
+
+fn applyIngestionToRegionsMask(self: *Self, cx: i32, cz: i32, chunk: *const Chunk, provenance: LODColumnProvenance, requested_mask: u8) u8 {
     var pending_mask: u8 = 0;
     const active = lod_chunk.activeLODCount(self.config);
 
@@ -121,10 +165,12 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
 
     var i: usize = 1;
     while (i < active) : (i += 1) {
+        const level_mask = @as(u8, 1) << @intCast(i);
+        if (requested_mask & level_mask == 0) continue;
         const lod: LODLevel = @enumFromInt(@as(u3, @intCast(i)));
         const key = LODRegionKey.fromChunkCoords(cx, cz, lod);
         const lod_chunk_ptr = self.regions[i].get(key) orelse {
-            pending_mask |= @as(u8, 1) << @intCast(i);
+            pending_mask |= level_mask;
             continue;
         };
         switch (lod_chunk_ptr.data) {
@@ -137,7 +183,7 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
                     lod_chunk_ptr.getState() == .meshing or
                     lod_chunk_ptr.getState() == .uploading)
                 {
-                    pending_mask |= @as(u8, 1) << @intCast(i);
+                    pending_mask |= level_mask;
                     continue;
                 }
                 const region_size: i32 = @intCast(world_core.regionSizeBlocks(lod));
@@ -153,27 +199,35 @@ pub fn applyIngestionToRegions(self: *Self, cx: i32, cz: i32, chunk: *const Chun
             },
             else => {
                 // Region exists but has no source data yet (not generated).
-                pending_mask |= @as(u8, 1) << @intCast(i);
+                pending_mask |= level_mask;
             },
         }
     }
     return pending_mask;
 }
 
+fn activeIngestionMask(self: *Self) u8 {
+    var mask: u8 = 0;
+    const active = lod_chunk.activeLODCount(self.config);
+    var i: usize = 1;
+    while (i < active) : (i += 1) mask |= @as(u8, 1) << @intCast(i);
+    return mask;
+}
+
 /// Assumes `ingestion_mutex` held. Coalesces by coordinate, keeping the
 /// most authoritative provenance and the union of pending level bits.
 /// Deferred work is deliberately durable: a player edit can outlive many
 /// unload/reload or teleport cycles before its source chunk becomes resident.
-pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) void {
+pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnProvenance, mask: u8) bool {
     for (self.ingestion_queue.pending_ingestions.items) |*entry| {
         if (entry.cx == cx and entry.cz == cz) {
             entry.pending_levels |= mask;
             entry.ttl = 0;
             if (provenance.canOverwrite(entry.provenance)) entry.provenance = provenance;
-            return;
+            return true;
         }
     }
-    if (!makePendingRoomLocked(self, cx, cz, provenance)) return;
+    if (!makePendingRoomLocked(self, cx, cz, provenance)) return false;
     self.ingestion_queue.pending_ingestions.append(self.allocator, .{
         .cx = cx,
         .cz = cz,
@@ -182,7 +236,9 @@ pub fn recordPendingLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnP
         .ttl = 0,
     }) catch |err| {
         log.log.warn("Failed to defer LOD ingestion for chunk ({}, {}): {}", .{ cx, cz, err });
+        return false;
     };
+    return true;
 }
 
 /// Re-record a pending entry from outside the lock. Coalesces with any
@@ -230,6 +286,17 @@ pub fn decayPendingLocked(self: *Self) void {
 /// lock, resolve each chunk, and re-apply. Unresolved or still-in-flight
 /// levels remain queued until they apply or manager teardown.
 pub fn drainPendingIngestions(self: *Self) void {
+    drainPendingIngestionsWithLimit(self, self.ingestion_queue.drain_per_frame);
+}
+
+/// Makes one immediate attempt to apply every currently deferred ingestion.
+/// Requests that still cannot resolve or target in-flight regions remain
+/// queued for later updates.
+pub fn drainPendingIngestionsNow(self: *Self) void {
+    drainPendingIngestionsWithLimit(self, std.math.maxInt(usize));
+}
+
+fn drainPendingIngestionsWithLimit(self: *Self, max_count: usize) void {
     var snapshot = std.ArrayListUnmanaged(PendingIngestion).empty;
     {
         self.ingestion_queue.mutex.lock();
@@ -244,7 +311,7 @@ pub fn drainPendingIngestions(self: *Self) void {
     defer snapshot.deinit(self.allocator);
 
     const resolver = self.ingestion_queue.chunk_resolver;
-    const limit = @min(snapshot.items.len, self.ingestion_queue.drain_per_frame);
+    const limit = @min(snapshot.items.len, max_count);
 
     // Process the head of the snapshot and retain the tail for a later frame.
     var i: usize = 0;
@@ -257,7 +324,7 @@ pub fn drainPendingIngestions(self: *Self) void {
         }
         const chunk = if (resolver) |r| r.resolve(entry.cx, entry.cz) else null;
         if (chunk) |c| {
-            const remaining = self.applyIngestionToRegions(entry.cx, entry.cz, c, entry.provenance);
+            const remaining = applyIngestionToRegionsMask(self, entry.cx, entry.cz, c, entry.provenance, entry.pending_levels);
             if (remaining != 0) {
                 self.rerecordPending(entry.cx, entry.cz, entry.provenance, remaining, 0);
             }
@@ -285,12 +352,31 @@ fn makePendingRoomLocked(self: *Self, cx: i32, cz: i32, provenance: LODColumnPro
     return false;
 }
 
+/// Immediately applies pending edited chunks, bypassing the ordinary
+/// coalescing cooldown. Used by explicit save points that must persist the
+/// corresponding LOD source snapshot in the same transaction.
+pub fn flushEditedChunksNow(self: *Self) void {
+    self.ingestion_queue.edit_cooldown = 0.0;
+    flushEditedChunksWithLimit(self, std.math.maxInt(usize));
+}
+
+/// Bypasses the cooldown but consumes only the ordinary per-frame ingestion
+/// budget. Autosave uses this to start persistence without a large edit burst.
+pub fn flushEditedChunksBounded(self: *Self) void {
+    self.ingestion_queue.edit_cooldown = 0.0;
+    flushEditedChunksWithLimit(self, self.ingestion_queue.drain_per_frame);
+}
+
 /// Flush debounced player edits: re-ingest edited chunks with the `edited`
 /// provenance. Runs on a cooldown so rapid edits coalesce into one rebuild.
 pub fn flushEditedChunks(self: *Self) void {
     self.ingestion_queue.edit_cooldown -= LOD_FRAME_DT_APPROX;
     if (self.ingestion_queue.edit_cooldown > 0.0) return;
 
+    flushEditedChunksWithLimit(self, std.math.maxInt(usize));
+}
+
+fn flushEditedChunksWithLimit(self: *Self, max_count: usize) void {
     var snapshot = std.ArrayListUnmanaged(ChunkCoordKey).empty;
     {
         self.ingestion_queue.mutex.lock();
@@ -298,9 +384,10 @@ pub fn flushEditedChunks(self: *Self) void {
         if (self.ingestion_queue.edit_dirty.count() == 0) return;
         var it = self.ingestion_queue.edit_dirty.keyIterator();
         while (it.next()) |k| {
+            if (snapshot.items.len >= max_count) break;
             snapshot.append(self.allocator, k.*) catch break;
         }
-        self.ingestion_queue.edit_dirty.clearRetainingCapacity();
+        for (snapshot.items) |key| _ = self.ingestion_queue.edit_dirty.remove(key);
     }
     defer snapshot.deinit(self.allocator);
 
@@ -308,7 +395,7 @@ pub fn flushEditedChunks(self: *Self) void {
     for (snapshot.items) |k| {
         if (resolver) |r| {
             if (r.resolve(k.cx, k.cz)) |chunk| {
-                _ = self.applyIngestionToRegions(k.cx, k.cz, chunk, .edited);
+                self.ingestChunk(k.cx, k.cz, chunk, .edited);
                 continue;
             }
         }

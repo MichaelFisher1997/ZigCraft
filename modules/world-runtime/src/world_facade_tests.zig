@@ -13,11 +13,17 @@ const WorldMutationCoordinator = @import("world_mutation.zig").WorldMutationCoor
 const SaveManager = @import("world-persistence").SaveManager;
 const World = world_mod.World;
 
-test "explicit render distance controls full-detail reach" {
-    try testing.expectEqual(@as(i32, 22), World.effectiveChunkRenderRadius(22));
-    try testing.expectEqual(@as(i32, 4096), World.effectiveChunkRenderRadius(4096));
-    try testing.expectEqual(std.math.maxInt(i32), World.effectiveChunkRenderRadius(std.math.maxInt(i32)));
-    try testing.expectEqual(@as(i32, 6), World.effectiveChunkRenderRadius(6));
+test "full-detail radius follows active preset cap" {
+    try testing.expectEqual(@as(i32, 12), World.effectiveChunkRenderRadius(16, 12, true));
+    try testing.expectEqual(@as(i32, 16), World.effectiveChunkRenderRadius(16, 16, true));
+    try testing.expectEqual(@as(i32, 22), World.effectiveChunkRenderRadius(22, 10, false));
+    try testing.expectEqual(@as(i32, 2), World.effectiveChunkRenderRadius(0, 12, true));
+    try testing.expectEqual(@as(i32, 2), World.effectiveChunkRenderRadius(-8, 12, false));
+}
+
+test "live LOD radii follow the active full-detail preset cap" {
+    const expected = @import("world-lod").LODConfig.radiiForDistances(10, 1024);
+    try testing.expectEqual(expected, World.effectiveLODRadii(18, 10, 1024));
 }
 
 test "full-detail render candidates use the streaming disk" {
@@ -299,9 +305,12 @@ fn makeStorageOnlyWorld(allocator: std.mem.Allocator) world_mod.World {
         .allocator = allocator,
         .generator = undefined,
         .render_distance = 8,
+        .lod_chunk_render_radius_limit = 8,
         .horizon_distance = 512,
         .rhi = undefined,
         .paused = false,
+        .safe_mode = false,
+        .safe_render_distance = 8,
         .lod = null,
         .lod_enabled = false,
         .save_manager = null,

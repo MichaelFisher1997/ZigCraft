@@ -253,14 +253,67 @@ pub const IScreen = struct {
     }
 };
 
+/// Owns the copied inputs needed to construct a screen at a GPU frame boundary.
+/// Screen constructors may allocate RmlUi documents, textures, buffers, or a
+/// complete world, so input and draw callbacks must queue one of these instead
+/// of constructing the replacement while command recording is active.
+pub const ScreenFactory = struct {
+    ptr: *anyopaque,
+    construct_fn: *const fn (ptr: *anyopaque) anyerror!IScreen,
+    deinit_fn: *const fn (ptr: *anyopaque) void,
+
+    pub fn construct(self: ScreenFactory) !IScreen {
+        return self.construct_fn(self.ptr);
+    }
+
+    pub fn deinit(self: ScreenFactory) void {
+        self.deinit_fn(self.ptr);
+    }
+};
+
+/// Allocates an owned factory payload. `T.construct` must copy everything the
+/// returned screen retains; the payload is destroyed immediately after the
+/// boundary-time constructor returns.
+pub fn makeScreenFactory(comptime T: type, allocator: std.mem.Allocator, payload: T) !ScreenFactory {
+    const Owned = struct {
+        allocator: std.mem.Allocator,
+        payload: T,
+    };
+    const owned = try allocator.create(Owned);
+    owned.* = .{ .allocator = allocator, .payload = payload };
+
+    const Adapter = struct {
+        fn construct(ptr: *anyopaque) anyerror!IScreen {
+            const self: *Owned = @ptrCast(@alignCast(ptr));
+            return self.payload.construct();
+        }
+
+        fn deinit(ptr: *anyopaque) void {
+            const self: *Owned = @ptrCast(@alignCast(ptr));
+            if (@hasDecl(T, "deinit")) self.payload.deinit();
+            self.allocator.destroy(self);
+        }
+    };
+
+    return .{
+        .ptr = owned,
+        .construct_fn = Adapter.construct,
+        .deinit_fn = Adapter.deinit,
+    };
+}
+
 pub const ScreenManager = struct {
-    allocator: std.mem.Allocator,
-    stack: std.ArrayListUnmanaged(IScreen),
-    next_screen: ?union(enum) {
+    const PendingTransition = union(enum) {
         push: IScreen,
+        push_factory: ScreenFactory,
         pop: void,
         replace: IScreen,
-    } = null,
+        replace_factory: ScreenFactory,
+    };
+
+    allocator: std.mem.Allocator,
+    stack: std.ArrayListUnmanaged(IScreen),
+    next_screen: ?PendingTransition = null,
 
     pub fn init(allocator: std.mem.Allocator) ScreenManager {
         return .{
@@ -276,59 +329,69 @@ pub const ScreenManager = struct {
             screen.deinit();
         }
         if (self.next_screen) |next| {
-            switch (next) {
-                .push => |s| s.deinit(),
-                .replace => |s| s.deinit(),
-                .pop => {},
-            }
+            discardPendingTransition(next);
         }
         self.stack.deinit(self.allocator);
     }
 
     pub fn pushScreen(self: *ScreenManager, screen: IScreen) void {
-        if (self.next_screen) |next| {
-            switch (next) {
-                .push => |s| s.deinit(),
-                .replace => |s| s.deinit(),
-                .pop => {},
-            }
-        }
+        self.discardPending();
         self.next_screen = .{ .push = screen };
     }
 
+    pub fn pushScreenFactory(self: *ScreenManager, factory: ScreenFactory) void {
+        self.discardPending();
+        self.next_screen = .{ .push_factory = factory };
+    }
+
     pub fn popScreen(self: *ScreenManager) void {
-        if (self.next_screen) |next| {
-            switch (next) {
-                .push => |s| s.deinit(),
-                .replace => |s| s.deinit(),
-                .pop => {},
-            }
-        }
+        self.discardPending();
         self.next_screen = .pop;
     }
 
     pub fn setScreen(self: *ScreenManager, screen: IScreen) void {
-        if (self.next_screen) |next| {
-            switch (next) {
-                .push => |s| s.deinit(),
-                .replace => |s| s.deinit(),
-                .pop => {},
-            }
-        }
+        self.discardPending();
         self.next_screen = .{ .replace = screen };
     }
 
-    pub fn update(self: *ScreenManager, dt: f32) !void {
+    pub fn setScreenFactory(self: *ScreenManager, factory: ScreenFactory) void {
+        self.discardPending();
+        self.next_screen = .{ .replace_factory = factory };
+    }
+
+    pub fn hasPendingTransition(self: *const ScreenManager) bool {
+        return self.next_screen != null;
+    }
+
+    fn discardPending(self: *ScreenManager) void {
+        if (self.next_screen) |next| discardPendingTransition(next);
+        self.next_screen = null;
+    }
+
+    fn discardPendingTransition(next: PendingTransition) void {
+        switch (next) {
+            .push, .replace => |screen| screen.deinit(),
+            .push_factory, .replace_factory => |factory| factory.deinit(),
+            .pop => {},
+        }
+    }
+
+    /// Applies ownership-changing screen transitions. Call this only outside a
+    /// recording frame. If screens own GPU resources, the caller must also wait
+    /// for submitted work to complete before constructors or destructors run.
+    pub fn applyPendingTransitions(self: *ScreenManager) !void {
         while (self.next_screen != null) {
             const next = self.next_screen.?;
             self.next_screen = null;
             switch (next) {
                 .push => |screen| {
-                    if (self.stack.items.len > 0) {
-                        self.stack.items[self.stack.items.len - 1].onExit();
-                    }
-                    try self.stack.append(self.allocator, screen);
-                    screen.onEnter();
+                    try self.applyPush(screen);
+                },
+                .push_factory => |factory| {
+                    defer factory.deinit();
+                    const screen = try factory.construct();
+                    errdefer screen.deinit();
+                    try self.applyPush(screen);
                 },
                 .pop => {
                     if (self.stack.items.len > 0) {
@@ -341,20 +404,54 @@ pub const ScreenManager = struct {
                     }
                 },
                 .replace => |screen| {
-                    while (self.stack.items.len > 0) {
-                        const s = self.stack.pop().?;
-                        s.onExit();
-                        s.deinit();
-                    }
-                    try self.stack.append(self.allocator, screen);
-                    screen.onEnter();
+                    try self.applyReplace(screen);
+                },
+                .replace_factory => |factory| {
+                    defer factory.deinit();
+                    // Replacement factories commonly create a complete world.
+                    // The caller has already drained GPU work, so release the
+                    // old stack first instead of temporarily retaining two
+                    // worlds and two sets of RmlUi resources.
+                    self.clearStack();
+                    const screen = try factory.construct();
+                    errdefer screen.deinit();
+                    try self.applyPush(screen);
                 },
             }
         }
+    }
 
+    fn applyPush(self: *ScreenManager, screen: IScreen) !void {
+        if (self.stack.items.len > 0) {
+            self.stack.items[self.stack.items.len - 1].onExit();
+        }
+        try self.stack.append(self.allocator, screen);
+        screen.onEnter();
+    }
+
+    fn applyReplace(self: *ScreenManager, screen: IScreen) !void {
+        self.clearStack();
+        try self.stack.append(self.allocator, screen);
+        screen.onEnter();
+    }
+
+    fn clearStack(self: *ScreenManager) void {
+        while (self.stack.items.len > 0) {
+            const current = self.stack.pop().?;
+            current.onExit();
+            current.deinit();
+        }
+    }
+
+    pub fn updateCurrent(self: *ScreenManager, dt: f32) !void {
         if (self.stack.items.len > 0) {
             try self.stack.items[self.stack.items.len - 1].update(dt);
         }
+    }
+
+    pub fn update(self: *ScreenManager, dt: f32) !void {
+        try self.applyPendingTransitions();
+        try self.updateCurrent(dt);
     }
 
     pub fn draw(self: *ScreenManager, ui: *UISystem) !void {

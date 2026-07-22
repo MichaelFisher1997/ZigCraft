@@ -341,14 +341,15 @@ pub const WorldRenderer = struct {
 
         if (render_lod) {
             if (lod_manager) |lod_mgr| {
+                const lod_render_limit = lod_mgr.getHorizonRenderRadius();
                 if (layer != .fluid) {
                     self.timing.beginPassTiming("LODTerrainPass");
-                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(self.storage), true, null, detail_render_radius, LODRenderLayer.terrain);
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(self.storage), true, lod_render_limit, detail_render_radius, LODRenderLayer.terrain);
                     self.timing.endPassTiming("LODTerrainPass");
                 }
                 if (layer != .terrain and parseEnabledEnv(getenv("ZIGCRAFT_LOD_WATER"), true)) {
                     self.timing.beginPassTiming("LODWaterPass");
-                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(self.storage), true, null, detail_render_radius, LODRenderLayer.fluid);
+                    lod_mgr.renderFrame(self.frame_serial, view_proj, camera_pos, ChunkStorage.isChunkTerrainReadyForHandoff, @ptrCast(self.storage), true, lod_render_limit, detail_render_radius, LODRenderLayer.fluid);
                     self.timing.endPassTiming("LODWaterPass");
                 }
             }
@@ -388,8 +389,9 @@ pub const WorldRenderer = struct {
         var total_vertices: u64 = 0;
 
         for (self.visible_chunks.items) |data| {
-            const suppress_terrain = render_lod and layer != .fluid and if (lod_manager) |mgr| mgr.suppressesDetailChunk(data.chunk.chunk_x, data.chunk.chunk_z) else false;
-            if (suppress_terrain and layer == .terrain) continue;
+            // LOD projection is not proof that GPU culling emitted replacement
+            // geometry. Keep detail as the fail-open fallback; the LOD shader
+            // mask owns overlap with the contiguous detailed area.
             if (layer != .fluid) {
                 self.last_render_stats.chunks_rendered += 1;
             }
@@ -399,11 +401,6 @@ pub const WorldRenderer = struct {
             const rel_z = chunk_world_z - camera_pos.z;
             const rel_y = -camera_pos.y;
             const model = Mat4.translate(Vec3.init(rel_x, rel_y, rel_z));
-
-            if (suppress_terrain) {
-                total_vertices += self.drawChunkDirect(data, model, .fluid, true);
-                continue;
-            }
 
             const is_camera_neighborhood = @abs(data.chunk.chunk_x - @as(i32, @intCast(pc_x))) <= 1 and @abs(data.chunk.chunk_z - @as(i32, @intCast(pc_z))) <= 1;
             if (!supports_indirect_first_instance or force_mdi_fallback or is_camera_neighborhood) {
@@ -502,7 +499,7 @@ pub const WorldRenderer = struct {
             );
         }
 
-        self.drawGuaranteedNearChunks(@intCast(pc_x), @intCast(pc_z), r_dist, camera_pos, lod_manager, render_lod, layer);
+        self.drawGuaranteedNearChunks(@intCast(pc_x), @intCast(pc_z), r_dist, camera_pos, layer);
     }
 
     fn drawChunkDirect(self: *WorldRenderer, data: *ChunkData, model: Mat4, layer: RenderLayer, count_vertices: bool) u64 {
@@ -531,7 +528,7 @@ pub const WorldRenderer = struct {
         return total_vertices;
     }
 
-    fn drawGuaranteedNearChunks(self: *WorldRenderer, pc_x: i32, pc_z: i32, render_radius: i64, camera_pos: Vec3, lod_manager: ?*LODManager, render_lod: bool, layer: RenderLayer) void {
+    fn drawGuaranteedNearChunks(self: *WorldRenderer, pc_x: i32, pc_z: i32, render_radius: i64, camera_pos: Vec3, layer: RenderLayer) void {
         var dz: i32 = -1;
         while (dz <= 1) : (dz += 1) {
             var dx: i32 = -1;
@@ -539,8 +536,6 @@ pub const WorldRenderer = struct {
                 const cx = pc_x + dx;
                 const cz = pc_z + dz;
                 if (!isWithinChunkRenderRadius(@as(i64, cx), @as(i64, cz), @as(i64, pc_x), @as(i64, pc_z), render_radius)) continue;
-                const suppress_terrain = render_lod and layer != .fluid and if (lod_manager) |mgr| mgr.suppressesDetailChunk(cx, cz) else false;
-                if (suppress_terrain and layer == .terrain) continue;
                 const data = self.storage.chunks.get(.{ .x = cx, .z = cz }) orelse continue;
 
                 var already_drawn = false;
@@ -555,7 +550,7 @@ pub const WorldRenderer = struct {
                 const chunk_world_x: f32 = @floatFromInt(cx * CHUNK_SIZE_X);
                 const chunk_world_z: f32 = @floatFromInt(cz * CHUNK_SIZE_Z);
                 const model = Mat4.translate(Vec3.init(chunk_world_x - camera_pos.x, -camera_pos.y, chunk_world_z - camera_pos.z));
-                _ = self.drawChunkDirect(data, model, if (suppress_terrain) .fluid else layer, false);
+                _ = self.drawChunkDirect(data, model, layer, false);
             }
         }
     }

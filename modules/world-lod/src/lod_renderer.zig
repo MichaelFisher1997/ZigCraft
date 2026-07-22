@@ -131,12 +131,6 @@ fn expandContiguousReadyDiskRadius(checker: ?ChunkChecker, checker_ctx: ?*anyopa
     return @max(max_radius, 0);
 }
 
-fn detailChunkKey(chunk_x: i32, chunk_z: i32) u64 {
-    const x_bits: u32 = @bitCast(chunk_x);
-    const z_bits: u32 = @bitCast(chunk_z);
-    return (@as(u64, x_bits) << 32) | @as(u64, z_bits);
-}
-
 fn selectLODDescriptorStream(render_ctx: anytype, layer: LODRenderLayer, compact: bool, gpu: bool) void {
     if (comptime !@hasDecl(@TypeOf(render_ctx), "setLODDescriptorStream")) return;
     const stream: rhi_types.LODDescriptorStream = switch (layer) {
@@ -244,7 +238,6 @@ const VisibleRegion = struct {
     model: Mat4,
     mask_radius: f32,
     lod_fade: f32,
-    suppresses_detail: bool = false,
 };
 
 const MAX_LOD_MDI_REGIONS: usize = 2048;
@@ -267,15 +260,6 @@ pub fn LODRenderer(comptime RHI: type) type {
         instance_data: std.ArrayListUnmanaged(rhi_types.InstanceData),
         draw_list: std.ArrayListUnmanaged(*LODMesh),
         projection_regions: std.ArrayListUnmanaged(VisibleRegion),
-        /// Number of projected LOD terrain regions that currently cover each
-        /// detailed chunk. Counts let a failed region release only its own
-        /// provisional ownership without flashing unrelated chunks back on.
-        suppressed_detail_chunks: std.AutoHashMapUnmanaged(u64, u16),
-        suppression_camera_chunk_x: i32,
-        suppression_camera_chunk_z: i32,
-        suppression_detail_radius: i32,
-        suppression_ready_radius: i32,
-        suppression_failed: bool,
         cached_ready_disk_camera_x: i32,
         cached_ready_disk_camera_z: i32,
         cached_ready_disk_max_radius: i32,
@@ -294,6 +278,10 @@ pub fn LODRenderer(comptime RHI: type) type {
         /// stride remains the wider grid's stride and can feed invalid vertex
         /// IDs to the water vertex-pulling path on RADV.
         compact_index_buffers: [2][2][COMPACT_GRID_WIDTHS.len]rhi_types.BufferHandle,
+        /// Static index uploads are recorded in the first LOD render frame.
+        /// They become drawable only after that frame has been submitted.
+        compact_index_upload_frame: ?u64,
+        compact_index_init_failed: bool,
         frame_index: usize,
         frame_serial: u64,
         enable_mdi: bool,
@@ -315,13 +303,38 @@ pub fn LODRenderer(comptime RHI: type) type {
         /// streams are not reported as two independent culling submissions.
         gpu_culling_submitted_frame: ?u64,
 
-        fn createCompactIndexBuffer(allocator: std.mem.Allocator, resources: anytype, width: u32, include_skirts: bool) !rhi_types.BufferHandle {
+        fn uploadCompactIndexBuffer(allocator: std.mem.Allocator, resources: anytype, handle: rhi_types.BufferHandle, width: u32, include_skirts: bool) !void {
             const indices = try compactGridIndices(allocator, width, include_skirts);
             defer allocator.free(indices);
-            const handle = try resources.createBuffer(std.mem.sliceAsBytes(indices).len, .index);
-            errdefer resources.destroyBuffer(handle);
             try resources.uploadBuffer(handle, std.mem.sliceAsBytes(indices));
-            return handle;
+        }
+
+        /// Record static compact topology uploads only after a render frame has
+        /// opened its staging/transfer slot. Uploads queued during world setup
+        /// can otherwise be discarded when the first frame resets that slot.
+        fn ensureCompactIndexBuffers(self: *Self, frame_serial: u64) bool {
+            if (self.compact_index_upload_frame) |upload_frame| return frame_serial > upload_frame;
+            if (self.compact_index_init_failed) return false;
+
+            const resources = if (@hasDecl(RHI, "resourceManager")) self.rhi.resourceManager() else self.rhi;
+            inline for (.{ LODLevel.lod3, LODLevel.lod4 }, 0..) |lod, idx| {
+                const max_width = @import("world-core").LODSimplifiedData.getGridSize(lod);
+                inline for (.{ true, false }, 0..) |include_skirts, layer_idx| for (COMPACT_GRID_WIDTHS, 0..) |width, width_idx| {
+                    if (width > max_width) continue;
+                    const handle = self.compact_index_buffers[idx][layer_idx][width_idx];
+                    if (handle == 0) {
+                        self.compact_index_init_failed = true;
+                        log.log.err("Compact LOD index topology is missing LOD{} width={} layer={}", .{ @intFromEnum(lod), width, layer_idx });
+                        return false;
+                    }
+                    uploadCompactIndexBuffer(self.allocator, resources, handle, width, include_skirts) catch |err| {
+                        log.log.errWithTrace("Failed to upload compact LOD index topology: {}", .{err});
+                        return false;
+                    };
+                };
+            }
+            self.compact_index_upload_frame = frame_serial;
+            return false;
         }
 
         /// Allocates LOD renderer GPU buffers and per-frame indirect draw resources.
@@ -353,12 +366,16 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
             var compact_index_buffers = std.mem.zeroes([2][2][COMPACT_GRID_WIDTHS.len]rhi_types.BufferHandle);
             errdefer for (&compact_index_buffers) |*lod_handles| for (lod_handles) |layer_handles| for (layer_handles) |handle| if (handle != 0) resources.destroyBuffer(handle);
-            inline for (.{ LODLevel.lod3, LODLevel.lod4 }, 0..) |lod, idx| {
-                const max_width = @import("world-core").LODSimplifiedData.getGridSize(lod);
-                inline for (.{ true, false }, 0..) |include_skirts, layer_idx| for (COMPACT_GRID_WIDTHS, 0..) |width, width_idx| {
-                    if (width > max_width) continue;
-                    compact_index_buffers[idx][layer_idx][width_idx] = try createCompactIndexBuffer(allocator, resources, width, include_skirts);
-                };
+            if (comptime @hasDecl(RHI, "resourceManager") or @hasDecl(RHI, "uploadBuffer") or @hasDecl(RHI, "updateBuffer")) {
+                inline for (.{ LODLevel.lod3, LODLevel.lod4 }, 0..) |lod, idx| {
+                    const max_width = @import("world-core").LODSimplifiedData.getGridSize(lod);
+                    inline for (.{ true, false }, 0..) |include_skirts, layer_idx| for (COMPACT_GRID_WIDTHS, 0..) |width, width_idx| {
+                        _ = include_skirts;
+                        if (width > max_width) continue;
+                        const byte_count = compactGridIndexCount(width, layer_idx == 0) * @sizeOf(u32);
+                        compact_index_buffers[idx][layer_idx][width_idx] = try resources.createBuffer(byte_count, .index);
+                    };
+                }
             }
 
             const gpu_culling_requested = gpuCullingRequested(build_options.benchmark_gpu_culling, engine_core.envFlag("ZIGCRAFT_LOD_GPU_CULLING", false));
@@ -378,12 +395,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .instance_data = .empty,
                 .draw_list = .empty,
                 .projection_regions = .empty,
-                .suppressed_detail_chunks = .empty,
-                .suppression_camera_chunk_x = 0,
-                .suppression_camera_chunk_z = 0,
-                .suppression_detail_radius = 0,
-                .suppression_ready_radius = -1,
-                .suppression_failed = false,
                 .cached_ready_disk_camera_x = 0,
                 .cached_ready_disk_camera_z = 0,
                 .cached_ready_disk_max_radius = -1,
@@ -397,6 +408,8 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .vertex_pools = vertex_pools,
                 .compact_pool = CompactLODPool.init(allocator),
                 .compact_index_buffers = compact_index_buffers,
+                .compact_index_upload_frame = null,
+                .compact_index_init_failed = false,
                 .frame_index = 0,
                 .frame_serial = 0,
                 .enable_mdi = !engine_core.envFlag("ZIGCRAFT_DISABLE_LOD_MDI", false),
@@ -440,7 +453,6 @@ pub fn LODRenderer(comptime RHI: type) type {
             self.instance_data.deinit(self.allocator);
             self.draw_list.deinit(self.allocator);
             self.projection_regions.deinit(self.allocator);
-            self.suppressed_detail_chunks.deinit(self.allocator);
             self.gpu_candidates.deinit(self.allocator);
             self.gpu_candidate_keys.deinit(self.allocator);
             self.compact_fallback_regions.deinit(self.allocator);
@@ -473,6 +485,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             profiling: ?*LODProfilingCollector,
         ) void {
             self.frame_serial = frame_serial;
+            _ = self.ensureCompactIndexBuffers(frame_serial);
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             self.frame_index = query.getFrameIndex();
             // Reusing a frame slot means the RHI has completed that slot's
@@ -528,7 +541,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             if (!self.gpu_culling_requested or self.projection_frame == frame_serial) return;
             const visibility_timer = if (profiling) |profile| profile.begin() else null;
             defer if (profiling) |profile| profile.end(.visibility, visibility_timer);
-            self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, false, null, detail_render_radius, stats, profiling) catch |err| {
+            self.buildVisibilityProjection(meshes, regions, config, view_proj, camera_pos, chunk_checker, checker_ctx, false, max_distance_chunks, detail_render_radius, stats, profiling) catch |err| {
                 log.log.err("LOD GPU culling projection failed: {}", .{err});
                 return;
             };
@@ -797,11 +810,7 @@ pub fn LODRenderer(comptime RHI: type) type {
             profiling: ?*LODProfilingCollector,
         ) !void {
             self.projection_regions.clearRetainingCapacity();
-            self.suppressed_detail_chunks.clearRetainingCapacity();
-            errdefer {
-                self.projection_regions.clearRetainingCapacity();
-                self.suppressed_detail_chunks.clearRetainingCapacity();
-            }
+            errdefer self.projection_regions.clearRetainingCapacity();
             if (stats) |s| {
                 s.drawn = [_]u32{0} ** LODLevel.count;
                 s.instances = [_]u32{0} ** LODLevel.count;
@@ -817,10 +826,6 @@ pub fn LODRenderer(comptime RHI: type) type {
             const chunk_radius = @max(detail_render_radius, 0);
             const ready_detail_radius = self.readyDiskRadiusForProjection(chunk_checker, checker_ctx, camera_chunk.chunk_x, camera_chunk.chunk_z, chunk_radius);
             const handoff_mask_radius = readyDiskMaskRadius(ready_detail_radius);
-            self.suppression_camera_chunk_x = camera_chunk.chunk_x;
-            self.suppression_camera_chunk_z = camera_chunk.chunk_z;
-            self.suppression_detail_radius = chunk_radius;
-            self.suppression_ready_radius = ready_detail_radius;
             var i = lod_chunk.activeLODCount(config);
             while (i > 0) {
                 i -= 1;
@@ -855,7 +860,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                         if (profiling) |profile| profile.addRejected();
                         continue;
                     }
-
                     const bounds = chunk.worldBounds();
                     const chunk_bounds = chunk.chunkBounds();
                     // Cheap radial and frustum tests intentionally precede the
@@ -891,13 +895,11 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }
                     }
 
-                    const suppresses_detail = mesh.drawRange(.terrain) != null;
                     try self.projection_regions.append(self.allocator, .{
                         .key = entry.key_ptr.*,
                         .model = Mat4.translate(Vec3.init(@as(f32, @floatFromInt(bounds.min_x)) - camera_pos.x, -camera_pos.y, @as(f32, @floatFromInt(bounds.min_z)) - camera_pos.z)),
                         .mask_radius = mask_radius,
                         .lod_fade = chunk.transitionFadeProgress(),
-                        .suppresses_detail = suppresses_detail,
                     });
                     telemetry.accepted += 1;
                     if (profiling) |profile| profile.addVisible();
@@ -906,73 +908,9 @@ pub fn LODRenderer(comptime RHI: type) type {
             }
         }
 
-        fn addPartialDetailSuppression(self: *Self, region_key: LODRegionKey) void {
-            self.adjustPartialDetailSuppression(region_key, true);
-        }
-
-        fn resetProjectedDetailSuppression(self: *Self) void {
-            self.suppressed_detail_chunks.clearRetainingCapacity();
-            self.suppression_failed = false;
-            for (self.projection_regions.items) |visible| {
-                if (visible.suppresses_detail) self.addPartialDetailSuppression(visible.key);
-            }
-        }
-
-        fn releasePartialDetailSuppression(self: *Self, visible: VisibleRegion) void {
-            if (!visible.suppresses_detail) return;
-            self.adjustPartialDetailSuppression(visible.key, false);
-        }
-
-        fn adjustPartialDetailSuppression(self: *Self, region_key: LODRegionKey, add: bool) void {
-            if (self.suppression_failed) return;
-            const bounds = region_key.chunkBounds();
-            const detail_radius = @as(i64, self.suppression_ready_radius);
-            const detail_radius_sq = if (detail_radius >= 0) detail_radius * detail_radius else -1;
-            const chunk_radius_sq = @as(i64, self.suppression_detail_radius) * @as(i64, self.suppression_detail_radius);
-
-            var cz = bounds.min_z;
-            while (cz <= bounds.max_z) : (cz += 1) {
-                var cx = bounds.min_x;
-                while (cx <= bounds.max_x) : (cx += 1) {
-                    const dx = @as(i64, cx) - @as(i64, self.suppression_camera_chunk_x);
-                    const dz = @as(i64, cz) - @as(i64, self.suppression_camera_chunk_z);
-                    const dist_sq = dx * dx + dz * dz;
-                    if (dist_sq > chunk_radius_sq or dist_sq <= detail_radius_sq) continue;
-                    const key = detailChunkKey(cx, cz);
-                    if (add) {
-                        if (self.suppressed_detail_chunks.getPtr(key)) |count| {
-                            count.* +|= 1;
-                        } else {
-                            self.suppressed_detail_chunks.put(self.allocator, key, 1) catch {
-                                // Ownership bookkeeping must fail open: render
-                                // detail rather than leaving a terrain hole.
-                                self.suppressed_detail_chunks.clearRetainingCapacity();
-                                self.suppression_failed = true;
-                                return;
-                            };
-                        }
-                    } else if (self.suppressed_detail_chunks.getPtr(key)) |count| {
-                        if (count.* > 1) {
-                            count.* -= 1;
-                        } else {
-                            _ = self.suppressed_detail_chunks.remove(key);
-                        }
-                    }
-                }
-            }
-        }
-
-        pub fn suppressesDetailChunk(self: *const Self, chunk_x: i32, chunk_z: i32) bool {
-            return self.suppressed_detail_chunks.contains(detailChunkKey(chunk_x, chunk_z));
-        }
-
         /// Returns false only when a prepared GPU frame could not be submitted;
         /// callers must rebuild the CPU projection with normal culling first.
         fn renderProjectedLayer(self: *Self, all_meshes: *const [LODLevel.count]MeshMap, layer: LODRenderLayer, stats: ?*LODStats, profiling: ?*LODProfilingCollector) bool {
-            // A frame can render terrain more than once (for example G-pass and
-            // opaque). Rebuild provisional ownership for each terrain pass so a
-            // failure in one pass cannot make a later pass inherit stale releases.
-            if (layer == .terrain) self.resetProjectedDetailSuppression();
             const query = if (@hasDecl(RHI, "query")) self.rhi.query() else self.rhi;
             const render_ctx = if (@hasDecl(RHI, "renderContext")) self.rhi.renderContext() else self.rhi;
             self.frame_index = query.getFrameIndex();
@@ -1013,18 +951,9 @@ pub fn LODRenderer(comptime RHI: type) type {
                 defer if (compact_timing_started and @hasDecl(RHI, "timing")) self.rhi.timing().endPassTiming(compact_timing_name);
                 for (self.projection_regions.items) |visible| {
                     const lod_idx = @intFromEnum(visible.key.lod);
-                    const mesh = all_meshes[lod_idx].get(visible.key) orelse {
-                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
-                        continue;
-                    };
-                    const range = mesh.drawRange(layer) orelse {
-                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
-                        continue;
-                    };
-                    if (!mesh.isReady() or range.count == 0) {
-                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
-                        continue;
-                    }
+                    const mesh = all_meshes[lod_idx].get(visible.key) orelse continue;
+                    const range = mesh.drawRange(layer) orelse continue;
+                    if (!mesh.isReady() or range.count == 0) continue;
                     if (gpu_submitted and self.gpuCandidateDraws(visible.key, layer)) continue;
                     if (mesh.isCompact()) {
                         if (!compact_timing_started and @hasDecl(RHI, "timing")) {
@@ -1046,22 +975,16 @@ pub fn LODRenderer(comptime RHI: type) type {
                             // Draw parent fallbacks only after the compact pass
                             // scope closes so expanded draws do not contaminate
                             // compact GPU timing.
-                            self.compact_fallback_regions.append(self.allocator, visible) catch {
-                                if (layer == .terrain) self.releasePartialDetailSuppression(visible);
-                            };
+                            self.compact_fallback_regions.append(self.allocator, visible) catch {};
                         }
                         continue;
                     }
                     const lod_y_offset: f32 = if (layer == .fluid) 0.0 else -0.05;
                     var instance = rhi_types.InstanceData{ .model = visible.model, .mask_radius = visible.mask_radius, .lod_fade = visible.lod_fade, .padding = .{ 0, 0 } };
                     instance.model.data[3][1] += lod_y_offset;
-                    self.instance_data.append(self.allocator, instance) catch {
-                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
-                        continue;
-                    };
+                    self.instance_data.append(self.allocator, instance) catch continue;
                     self.draw_list.append(self.allocator, mesh) catch {
                         _ = self.instance_data.pop();
-                        if (layer == .terrain) self.releasePartialDetailSuppression(visible);
                         continue;
                     };
                     if (mesh.isPooled()) {
@@ -1073,7 +996,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                         }) catch {
                             _ = self.draw_list.pop();
                             _ = self.instance_data.pop();
-                            if (layer == .terrain) self.releasePartialDetailSuppression(visible);
                             continue;
                         };
                     }
@@ -1089,8 +1011,7 @@ pub fn LODRenderer(comptime RHI: type) type {
                 }
             }
             for (self.compact_fallback_regions.items) |visible| {
-                const fallback_drawn = self.renderParentFallback(all_meshes, visible, layer, render_ctx, profiling);
-                if (!fallback_drawn and layer == .terrain) self.releasePartialDetailSuppression(visible);
+                _ = self.renderParentFallback(all_meshes, visible, layer, render_ctx, profiling);
             }
             if (self.instance_data.items.len == 0) return true;
             const indirect_drawn = self.enable_mdi and self.renderIndirectBatches(render_ctx, query);
@@ -1146,13 +1067,11 @@ pub fn LODRenderer(comptime RHI: type) type {
                     .model = child_model,
                     .mask_radius = child.mask_radius,
                     .lod_fade = 1.0,
-                    .suppresses_detail = child.suppresses_detail,
                 };
                 if (mesh.isCompact()) {
                     const result = self.renderCompactMesh(render_ctx, parent_visible, mesh, layer);
                     if (result == .drawn) {
                         if (profiling) |profile| profile.addCompactSubmission();
-                        if (layer == .terrain) self.addPartialDetailSuppression(parent_key);
                         return true;
                     }
                     self.noteCompactRenderFailure(mesh, result, profiling);
@@ -1167,7 +1086,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                 } else {
                     render_ctx.draw(mesh.bufferHandle(), range.count, .triangles);
                 }
-                if (layer == .terrain) self.addPartialDetailSuppression(parent_key);
                 return true;
             }
             return false;
@@ -1324,6 +1242,8 @@ pub fn LODRenderer(comptime RHI: type) type {
         }
 
         fn compactIndexBuffer(self: *const Self, lod: LODLevel, width: u32, layer: LODRenderLayer) rhi_types.BufferHandle {
+            const upload_frame = self.compact_index_upload_frame orelse return 0;
+            if (self.frame_serial <= upload_frame) return 0;
             if (lod != .lod3 and lod != .lod4) return 0;
             const width_index = compactGridVariant(width) orelse return 0;
             return self.compact_index_buffers[@intFromEnum(lod) - @intFromEnum(LODLevel.lod3)][if (layer == .fluid) 1 else 0][width_index];
@@ -1405,7 +1325,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                         if (profiling) |profile| profile.addRejected();
                         continue;
                     }
-
                     const bounds = chunk.worldBounds();
                     const chunk_bounds = chunk.chunkBounds();
 
@@ -1712,9 +1631,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                 result.pool_cpu_shadow_bytes += capacity;
             }
             const compact = self.compact_pool.memoryStats();
-            result.pool_gpu_capacity_bytes += compact.capacity_bytes;
-            result.pool_gpu_allocated_bytes += compact.allocated_bytes;
-            result.pool_gpu_slack_bytes += compact.free_bytes;
             result.compact_pool_capacity_bytes = compact.capacity_bytes;
             result.compact_pool_allocated_bytes = compact.allocated_bytes;
             result.compact_pool_free_bytes = compact.free_bytes;
@@ -1771,10 +1687,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     return renderer.memoryStats();
                 }
-                fn suppressesDetailChunkFn(self_ptr: *anyopaque, chunk_x: i32, chunk_z: i32) bool {
-                    const renderer: *Self = @ptrCast(@alignCast(self_ptr));
-                    return renderer.suppressesDetailChunk(chunk_x, chunk_z);
-                }
                 fn deinitFn(self_ptr: *anyopaque) void {
                     const renderer: *Self = @ptrCast(@alignCast(self_ptr));
                     renderer.deinit();
@@ -1784,7 +1696,6 @@ pub fn LODRenderer(comptime RHI: type) type {
                 .render_fn = Wrapper.renderFn,
                 .render_frame_fn = Wrapper.renderFrameFn,
                 .prepare_frame_fn = Wrapper.prepareFrameFn,
-                .suppresses_detail_chunk_fn = Wrapper.suppressesDetailChunkFn,
                 .memory_stats_fn = Wrapper.memoryStatsFn,
                 .deinit_fn = Wrapper.deinitFn,
                 .ptr = self,
@@ -1796,6 +1707,13 @@ pub fn LODRenderer(comptime RHI: type) type {
 fn isRegionInRange(bounds: ChunkBounds, camera_pos: Vec3, max_distance_chunks: i32) bool {
     const camera_chunk = worldToChunkFromFloat(camera_pos.x, camera_pos.z);
     return bounds.intersectsRadius(camera_chunk.chunk_x, camera_chunk.chunk_z, max_distance_chunks);
+}
+
+test "distant LOD render limit rejects disconnected resident regions" {
+    const near = ChunkBounds{ .min_x = 200, .min_z = -16, .max_x = 240, .max_z = 16 };
+    const far = ChunkBounds{ .min_x = 300, .min_z = -16, .max_x = 340, .max_z = 16 };
+    try std.testing.expect(isRegionInRange(near, Vec3.zero, 256));
+    try std.testing.expect(!isRegionInRange(far, Vec3.zero, 256));
 }
 
 fn calculateBandFade(config: ILODConfig, lod: LODLevel, bounds: ChunkBounds, camera_pos: Vec3) f32 {
@@ -1838,12 +1756,12 @@ fn cullCommandFor(mesh: *const LODMesh, range: ?LODMesh.DrawRange, compact: bool
 fn extractPlanes(view_proj: Mat4) [6][4]f32 {
     const m = view_proj.data;
     var planes = [6][4]f32{
-        .{ m[3][0] + m[0][0], m[3][1] + m[0][1], m[3][2] + m[0][2], m[3][3] + m[0][3] },
-        .{ m[3][0] - m[0][0], m[3][1] - m[0][1], m[3][2] - m[0][2], m[3][3] - m[0][3] },
-        .{ m[3][0] - m[1][0], m[3][1] - m[1][1], m[3][2] - m[1][2], m[3][3] - m[1][3] },
-        .{ m[3][0] + m[1][0], m[3][1] + m[1][1], m[3][2] + m[1][2], m[3][3] + m[1][3] },
-        .{ m[3][0] + m[2][0], m[3][1] + m[2][1], m[3][2] + m[2][2], m[3][3] + m[2][3] },
-        .{ m[3][0] - m[2][0], m[3][1] - m[2][1], m[3][2] - m[2][2], m[3][3] - m[2][3] },
+        .{ m[0][3] + m[0][0], m[1][3] + m[1][0], m[2][3] + m[2][0], m[3][3] + m[3][0] },
+        .{ m[0][3] - m[0][0], m[1][3] - m[1][0], m[2][3] - m[2][0], m[3][3] - m[3][0] },
+        .{ m[0][3] + m[0][1], m[1][3] + m[1][1], m[2][3] + m[2][1], m[3][3] + m[3][1] },
+        .{ m[0][3] - m[0][1], m[1][3] - m[1][1], m[2][3] - m[2][1], m[3][3] - m[3][1] },
+        .{ m[0][2], m[1][2], m[2][2], m[3][2] },
+        .{ m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2] },
     };
     for (&planes) |*plane| {
         const length = @sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
@@ -1891,6 +1809,23 @@ test "benchmark GPU-culling build option requests telemetry without environment"
     try std.testing.expect(!gpuCullingRequested(false, false));
 }
 
+test "GPU culling planes match the canonical high-altitude frustum" {
+    const camera = Vec3.init(0.0, 900.0, 0.0);
+    const target = Vec3.init(256.0, 64.0, -384.0);
+    const view = Mat4.lookAt(Vec3.zero, target.sub(camera), Vec3.init(0.0, 0.0, -1.0));
+    const projection = Mat4.perspectiveReverseZ(std.math.pi / 3.0, 16.0 / 9.0, 0.5, 20_000.0);
+    const view_proj = projection.multiply(view);
+    const canonical = Frustum.fromViewProj(view_proj);
+    const gpu_planes = extractPlanes(view_proj);
+
+    for (canonical.planes, gpu_planes) |expected, actual| {
+        try std.testing.expectApproxEqAbs(expected.normal.x, actual[0], 0.0001);
+        try std.testing.expectApproxEqAbs(expected.normal.y, actual[1], 0.0001);
+        try std.testing.expectApproxEqAbs(expected.normal.z, actual[2], 0.0001);
+        try std.testing.expectApproxEqAbs(expected.distance, actual[3], 0.0001);
+    }
+}
+
 test "compact grid variants retain exact decimated topology" {
     for (COMPACT_GRID_WIDTHS, 0..) |width, expected_variant| {
         try std.testing.expectEqual(expected_variant, compactGridVariant(width).?);
@@ -1903,6 +1838,47 @@ test "compact grid variants retain exact decimated topology" {
         }
     }
     try std.testing.expect(compactGridVariant(7) == null);
+}
+
+test "compact index topology uploads in the first render frame before becoming drawable" {
+    const MockState = struct {
+        next_handle: u32 = 1,
+        uploads: u32 = 0,
+        destroys: u32 = 0,
+    };
+    const MockRHI = struct {
+        state: *MockState,
+
+        pub fn createBuffer(self: @This(), _: usize, _: anytype) !u32 {
+            const handle = self.state.next_handle;
+            self.state.next_handle += 1;
+            return handle;
+        }
+        pub fn uploadBuffer(self: @This(), _: u32, data: []const u8) !void {
+            try std.testing.expect(data.len > 0);
+            self.state.uploads += 1;
+        }
+        pub fn destroyBuffer(self: @This(), _: u32) void {
+            self.state.destroys += 1;
+        }
+        pub fn waitIdle(_: @This()) void {}
+    };
+
+    var state = MockState{};
+    const Renderer = LODRenderer(MockRHI);
+    const renderer = try Renderer.init(std.testing.allocator, .{ .state = &state });
+    defer renderer.deinit();
+
+    try std.testing.expectEqual(@as(u32, 0), state.uploads);
+    renderer.frame_serial = 7;
+    try std.testing.expect(!renderer.ensureCompactIndexBuffers(7));
+    try std.testing.expectEqual(@as(u32, 22), state.uploads);
+    try std.testing.expectEqual(@as(rhi_types.BufferHandle, 0), renderer.compactIndexBuffer(.lod4, 65, .terrain));
+
+    renderer.frame_serial = 8;
+    try std.testing.expect(renderer.ensureCompactIndexBuffers(8));
+    try std.testing.expect(renderer.compactIndexBuffer(.lod4, 65, .terrain) != 0);
+    try std.testing.expectEqual(@as(u32, 22), state.uploads);
 }
 
 test "ready detail disk stops at the first incomplete chunk ring" {
@@ -1969,6 +1945,14 @@ test "LODRenderer init/deinit lifecycle" {
     // Verify init created instance + indirect buffers for each frame in flight.
     try std.testing.expectEqual(@as(u32, rhi_types.MAX_FRAMES_IN_FLIGHT * 2), mock_state.buffers_created);
     try std.testing.expectEqual(@as(u32, 0), mock_state.buffers_destroyed);
+
+    renderer.compact_pool.buffer_handle = 999;
+    const memory = renderer.memoryStats();
+    try std.testing.expectEqual(@as(usize, 0), memory.pool_gpu_capacity_bytes);
+    try std.testing.expectEqual(@as(usize, 0), memory.pool_gpu_allocated_bytes);
+    try std.testing.expectEqual(@as(usize, 0), memory.pool_gpu_slack_bytes);
+    try std.testing.expectEqual(@as(usize, CompactLODPool.CAPACITY_BYTES), memory.compact_pool_capacity_bytes);
+    renderer.compact_pool.buffer_handle = 0;
 
     renderer.deinit();
 
@@ -2611,9 +2595,6 @@ test "LODRenderer keeps mask for partially covered chunk regions" {
 
     try std.testing.expectEqual(@as(u32, 1), mock_state.draw_calls);
     try std.testing.expectEqual(readyDiskMaskRadius(0), mock_state.last_mask_radius);
-    try std.testing.expect(!renderer.suppressesDetailChunk(0, 0));
-    try std.testing.expect(renderer.suppressesDetailChunk(2, 0));
-    try std.testing.expect(renderer.suppressesDetailChunk(3, 0));
 }
 
 test "LODRenderer skips coarse LOD when finer coverage is ready" {

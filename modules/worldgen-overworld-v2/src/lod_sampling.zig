@@ -172,7 +172,7 @@ fn classifyLODSample(self: anytype, wx: f32, wz: f32) ClassifiedLODSample {
 
 fn sampleLODColumn(self: anytype, wx: i32, wz: i32) ColumnSample {
     const base_height = util.floorToI32(terrain_shape.baseTerrainLevelAtPoint(self, wx, wz));
-    const terrain_height = terrain_shape.estimateGroundedTerrainHeight(self, wx, wz, base_height);
+    const terrain_height = sampleTerrainHeightForLOD(self, wx, wz);
     const climate_sample = climate.sampleClimate(self, wx, wz);
     const river = terrain_shape.isRiverColumn(self, wx, wz) and terrain_height >= self.params.sea_level - 18 and terrain_height <= self.params.sea_level + 1;
     const biome = biomes.selectBiome(self, wx, wz, terrain_height, river, climate_sample.temperature, climate_sample.humidity);
@@ -187,6 +187,14 @@ fn sampleLODColumn(self: anytype, wx: i32, wz: i32) ColumnSample {
         .humidity = climate_sample.humidity,
         .continentalness = continentalness,
     };
+}
+
+/// Uses the same highest-solid terrain estimate as full chunk generation.
+/// The grounded-only estimate stops at the first air gap and can miss elevated
+/// mountain terrain above an underwater base, turning distant islands into sea.
+pub fn sampleTerrainHeightForLOD(self: anytype, wx: i32, wz: i32) i32 {
+    const base_height = util.floorToI32(terrain_shape.baseTerrainLevelAtPoint(self, wx, wz));
+    return terrain_shape.estimateTerrainHeight(self, wx, wz, base_height);
 }
 
 fn lodVegetationHintFromSamples(self: anytype, samples: []const ClassifiedLODSample, center_wx: f32, center_wz: f32) world_core.LODVegetationHint {

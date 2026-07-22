@@ -76,52 +76,10 @@ pub const MAX_LOD_SCAN_STEPS: usize = 512;
 const MAX_PENDING_LOD_REGIONS = @import("lod_manager_context.zig").MAX_PENDING_LOD_REGIONS;
 const MAX_LOD_REGIONS = @import("lod_manager_context.zig").MAX_LOD_REGIONS;
 
-const HORIZON_SEED_DIRECTIONS = [_][2]i32{
-    .{ 1024, 0 },  .{ 946, 392 },   .{ 724, 724 },   .{ 392, 946 },
-    .{ 0, 1024 },  .{ -392, 946 },  .{ -724, 724 },  .{ -946, 392 },
-    .{ -1024, 0 }, .{ -946, -392 }, .{ -724, -724 }, .{ -392, -946 },
-    .{ 0, -1024 }, .{ 392, -946 },  .{ 724, -724 },  .{ 946, -392 },
-};
-
-fn scaledSeedOffset(component: i32, radius: i64) i64 {
-    const product = @as(i64, component) * radius;
-    return @divTrunc(product + (if (product >= 0) @as(i64, 512) else -512), 1024);
-}
-
-fn initialHorizonSeedRank(rx: i32, rz: i32, player_rx: i32, player_rz: i32, region_radius: i64) ?usize {
-    const outer_radius = @max(1, region_radius - 1);
-    for (HORIZON_SEED_DIRECTIONS, 0..) |dir, i| {
-        if (@as(i64, rx) == @as(i64, player_rx) + scaledSeedOffset(dir[0], outer_radius) and
-            @as(i64, rz) == @as(i64, player_rz) + scaledSeedOffset(dir[1], outer_radius)) return i;
-    }
-
-    const middle_radius = @max(1, @divFloor(outer_radius, 2));
-    for (0..8) |i| {
-        const dir = HORIZON_SEED_DIRECTIONS[i * 2];
-        if (@as(i64, rx) == @as(i64, player_rx) + scaledSeedOffset(dir[0], middle_radius) and
-            @as(i64, rz) == @as(i64, player_rz) + scaledSeedOffset(dir[1], middle_radius)) return HORIZON_SEED_DIRECTIONS.len + i;
-    }
-    return null;
-}
-
 fn regionCoordinateRepresentable(region: i64, scale: i32) bool {
     const min_chunk = region * @as(i64, scale);
     const max_chunk = min_chunk + @as(i64, scale) - 1;
     return min_chunk >= std.math.minInt(i32) and max_chunk <= std.math.maxInt(i32);
-}
-
-fn horizonSeedCoordinate(index: usize, player_rx: i32, player_rz: i32, region_radius: i64) [2]i64 {
-    const outer_radius = @max(1, region_radius - 1);
-    const middle_radius = @max(1, @divFloor(outer_radius, 2));
-    const direction = if (index < HORIZON_SEED_DIRECTIONS.len)
-        HORIZON_SEED_DIRECTIONS[index]
-    else
-        HORIZON_SEED_DIRECTIONS[(index - HORIZON_SEED_DIRECTIONS.len) * 2];
-    const radius = if (index < HORIZON_SEED_DIRECTIONS.len) outer_radius else middle_radius;
-    return .{
-        @as(i64, player_rx) + scaledSeedOffset(direction[0], radius),
-        @as(i64, player_rz) + scaledSeedOffset(direction[1], radius),
-    };
 }
 
 fn nextRingCoordinate(state: *LODScanState, player_rx: i32, player_rz: i32, region_radius: i64) [2]i64 {
@@ -154,6 +112,31 @@ fn nextRingCoordinate(state: *LODScanState, player_rx: i32, player_rz: i32, regi
         state.ring_index = 0;
     }
     return .{ @as(i64, player_rx) + relative[0], @as(i64, player_rz) + relative[1] };
+}
+
+fn updateScanOrigin(state: *LODScanState, player_rx: i32, player_rz: i32, effective_radius: i32, restart_on_move: bool) void {
+    const moved_rx = @as(i64, player_rx) - @as(i64, state.player_rx);
+    const moved_rz = @as(i64, player_rz) - @as(i64, state.player_rz);
+    if (state.effective_radius != effective_radius) {
+        state.* = .{
+            .player_rx = player_rx,
+            .player_rz = player_rz,
+            .effective_radius = effective_radius,
+        };
+        return;
+    }
+    if (player_rx == state.player_rx and player_rz == state.player_rz) return;
+
+    state.player_rx = player_rx;
+    state.player_rz = player_rz;
+    // Preserve refinement progress during ordinary traversal. The coarsest
+    // level opts into restarting for every region-origin change so a moving
+    // player cannot leave an unvisited hole in the fallback disk.
+    if (restart_on_move or @max(@abs(moved_rx), @abs(moved_rz)) > 8) {
+        state.next_ring = 0;
+        state.ring_index = 0;
+        state.last_examined = 0;
+    }
 }
 
 pub fn priorityRank(lod: LODLevel, active_lod_count: usize) usize {
@@ -244,7 +227,11 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
     // Keep only the bounded best candidates while walking the horizon. This
     // avoids allocating/sorting an entry for every potential region.
-    const Candidate = struct { key: LODRegionKey, encoded_priority: i32, selection_priority: i64, preserve_priority: bool };
+    const Candidate = struct {
+        key: LODRegionKey,
+        encoded_priority: i32,
+        scan_state_before: LODScanState,
+    };
     const max_candidates = maxQueueCandidatesForLOD(lod, active_lod_count);
     var candidates = std.ArrayListUnmanaged(Candidate).empty;
     defer candidates.deinit(ctx.allocator);
@@ -255,26 +242,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     ctx.mutex.lock();
     const candidate_storage = &ctx.regions[@intFromEnum(lod)];
     const state = &ctx.scan_states[@intFromEnum(lod)];
-    const moved_rx = @as(i64, player_rx) - @as(i64, state.player_rx);
-    const moved_rz = @as(i64, player_rz) - @as(i64, state.player_rz);
-    const radius_changed = state.effective_radius != radius;
-    if (radius_changed) {
-        state.* = .{
-            .player_rx = player_rx,
-            .player_rz = player_rz,
-            .effective_radius = radius,
-        };
-    } else if (player_rx != state.player_rx or player_rz != state.player_rz) {
-        state.player_rx = player_rx;
-        state.player_rz = player_rz;
-        if (is_coarsest) state.seed_index = 0;
-        // Preserve outward progress during ordinary traversal, but restart near
-        // the player after a teleport so the new location receives fallback.
-        if (@max(@abs(moved_rx), @abs(moved_rz)) > 8) {
-            state.next_ring = 0;
-            state.ring_index = 0;
-        }
-    }
+    updateScanOrigin(state, player_rx, player_rz, radius, is_coarsest);
     if (state.next_ring > region_radius) {
         state.next_ring = 0;
         state.ring_index = 0;
@@ -282,11 +250,8 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
 
     var examined: usize = 0;
     while (examined < MAX_LOD_SCAN_STEPS and candidates.items.len < max_candidates) : (examined += 1) {
-        const coordinate = if (is_coarsest and state.seed_index < HORIZON_SEED_DIRECTIONS.len + 8) blk: {
-            const seed = horizonSeedCoordinate(state.seed_index, player_rx, player_rz, region_radius);
-            state.seed_index += 1;
-            break :blk seed;
-        } else nextRingCoordinate(state, player_rx, player_rz, region_radius);
+        const scan_state_before = state.*;
+        const coordinate = nextRingCoordinate(state, player_rx, player_rz, region_radius);
         const rx = coordinate[0];
         const rz = coordinate[1];
         diag.considered += 1;
@@ -325,24 +290,12 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         const center_cx = @as(i64, key.rx) * @as(i64, scale) + @divFloor(scale, 2);
         const center_cz = @as(i64, key.rz) * @as(i64, scale) + @divFloor(scale, 2);
         const distance_priority = encodePriority(lod, center_cx - @as(i64, ctx.player_cx), center_cz - @as(i64, ctx.player_cz), velocity, active_lod_count);
-        const seed_rank = if (is_coarsest) initialHorizonSeedRank(key.rx, key.rz, player_rx, player_rz, region_radius) else null;
-        // Preserve the spatial seed order in the worker queue as well as
-        // candidate admission; otherwise distance reprioritization makes
-        // the newly admitted outer shell wait behind nearby coarse tiles.
-        const encoded_priority = if (seed_rank) |rank|
-            lodPriorityBias(lod, active_lod_count) | @as(i32, @intCast(rank))
-        else
-            distance_priority;
-        const selection_priority: i64 = if (seed_rank) |rank| @intCast(rank) else distance_priority;
         const candidate = Candidate{
             .key = key,
-            .encoded_priority = encoded_priority,
-            .selection_priority = selection_priority,
-            .preserve_priority = seed_rank != null,
+            .encoded_priority = distance_priority,
+            .scan_state_before = scan_state_before,
         };
-        var insert_at: usize = 0;
-        while (insert_at < candidates.items.len and candidates.items[insert_at].selection_priority <= selection_priority) : (insert_at += 1) {}
-        candidates.insert(ctx.allocator, insert_at, candidate) catch |err| {
+        candidates.append(ctx.allocator, candidate) catch |err| {
             ctx.mutex.unlock();
             return err;
         };
@@ -360,16 +313,32 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
     var resident_regions: usize = 0;
     for (ctx.regions) |region_map| resident_regions += region_map.count();
     for (candidates.items) |cand| {
-        if (queued_count >= max_candidates) break;
+        // Candidate discovery advances the persistent scan cursor. If bounded
+        // admission cannot accept this coordinate, rewind to it so the next
+        // update resumes at the first actual coverage hole instead of skipping
+        // the remainder of a ring and producing directional strips.
+        if (queued_count >= max_candidates) {
+            state.* = cand.scan_state_before;
+            break;
+        }
         if (ctx.pending_regions) |pending| {
-            if (pending.* >= MAX_PENDING_LOD_REGIONS) break;
+            if (pending.* >= MAX_PENDING_LOD_REGIONS) {
+                state.* = cand.scan_state_before;
+                break;
+            }
         }
 
         const existing = storage.get(cand.key);
-        if (existing == null and resident_regions >= ctx.resident_region_limit) break;
+        if (existing == null and resident_regions >= ctx.resident_region_limit) {
+            state.* = cand.scan_state_before;
+            break;
+        }
         if (existing == null) if (ctx.logical_memory_bytes) |logical| {
             const reservation = ctx.logical_region_reservation_bytes;
-            if (reservation > ctx.logical_memory_limit_bytes -| logical.*) break;
+            if (reservation > ctx.logical_memory_limit_bytes -| logical.*) {
+                state.* = cand.scan_state_before;
+                break;
+            }
         };
         // A cancelled worker keeps the region pinned until it observes its
         // cancellation signal. Do not reset that signal by dispatching a new
@@ -392,7 +361,7 @@ pub fn queueLODRegions(ctx: SchedulerContext, lod: LODLevel, velocity: Vec3, chu
         chunk.job_token = ctx.next_job_token.*;
         ctx.next_job_token.* += 1;
         chunk.job_priority = cand.encoded_priority;
-        chunk.preserve_job_priority = cand.preserve_priority;
+        chunk.preserve_job_priority = false;
         if (ctx.defer_generation_dispatch) {
             chunk.setState(.queued_for_generation);
             if (ctx.generation_tokens) |tokens| {
@@ -469,6 +438,35 @@ test "LOD scheduling seeds horizon before detailed refinements" {
     try std.testing.expectEqual(@as(usize, 1), priorityLevelIndex(2, LODLevel.count));
     try std.testing.expectEqual(@as(usize, 2), priorityLevelIndex(3, LODLevel.count));
     try std.testing.expectEqual(@as(usize, 3), priorityLevelIndex(4, LODLevel.count));
+}
+
+test "LOD scheduling preserves ring progress during ordinary movement" {
+    var state = LODScanState{
+        .player_rx = 12,
+        .player_rz = -4,
+        .effective_radius = 1024,
+        .next_ring = 9,
+        .ring_index = 17,
+        .last_examined = MAX_LOD_SCAN_STEPS,
+    };
+
+    updateScanOrigin(&state, 13, -4, 1024, false);
+
+    try std.testing.expectEqual(@as(i32, 13), state.player_rx);
+    try std.testing.expectEqual(@as(i32, -4), state.player_rz);
+    try std.testing.expectEqual(@as(i64, 9), state.next_ring);
+    try std.testing.expectEqual(@as(i64, 17), state.ring_index);
+    try std.testing.expectEqual(MAX_LOD_SCAN_STEPS, state.last_examined);
+
+    updateScanOrigin(&state, 30, -4, 1024, false);
+    try std.testing.expectEqual(@as(i64, 0), state.next_ring);
+    try std.testing.expectEqual(@as(i64, 0), state.ring_index);
+    try std.testing.expectEqual(@as(usize, 0), state.last_examined);
+
+    state = .{ .player_rx = 12, .player_rz = -4, .effective_radius = 1024, .next_ring = 9, .ring_index = 17 };
+    updateScanOrigin(&state, 13, -4, 1024, true);
+    try std.testing.expectEqual(@as(i64, 0), state.next_ring);
+    try std.testing.expectEqual(@as(i64, 0), state.ring_index);
 }
 
 test "LOD scheduling caps resident regions and logical admission memory" {
@@ -551,7 +549,7 @@ test "LOD scheduling caps resident regions and logical admission memory" {
     try std.testing.expectEqual(lod_chunk.LODState.generating, chunk.state);
 }
 
-test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
+test "LOD scheduling fills nearby horizon fallback before distant regions" {
     const allocator = std.testing.allocator;
 
     var regions: [LODLevel.count]RegionMap = undefined;
@@ -653,12 +651,13 @@ test "LOD scheduling caps LOD0 flood while still queuing horizon jobs" {
 
     try std.testing.expectEqual(LOD0_QUEUE_CANDIDATE_LIMIT, lod0_count);
     try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, horizon_count);
-    // The bootstrap batch includes azimuthally distributed outer-horizon
-    // seeds instead of spending every admission near the player.
-    try std.testing.expect(max_horizon_dist_sq >= 400 * 400);
+    // Coarsest fallback advances concentrically. A cold start must not spend
+    // its bounded admission budget on disconnected outer-horizon islands.
+    const nearby_limit_chunks: i64 = 6 * @as(i64, @intCast(LODLevel.lod4.chunksPerSide()));
+    try std.testing.expect(max_horizon_dist_sq <= nearby_limit_chunks * nearby_limit_chunks);
 }
 
-test "LOD scheduling advances horizon beyond existing nearest batch" {
+test "LOD scheduling does not skip horizon coordinates with one admission slot" {
     const allocator = std.testing.allocator;
 
     var regions: [LODLevel.count]RegionMap = undefined;
@@ -690,6 +689,7 @@ test "LOD scheduling advances horizon beyond existing nearest batch" {
     const config_iface = config.interface();
     var mutex: sync.RwLock = .{};
     var next_job_token: u32 = 1;
+    var pending_regions: usize = MAX_PENDING_LOD_REGIONS - 1;
     var radius_reduction = [_]i32{0} ** LODLevel.count;
     var scan_states = [_]LODScanState{LODScanState{}} ** LODLevel.count;
     var coverage_ctx: u8 = 0;
@@ -714,13 +714,31 @@ test "LOD scheduling advances horizon beyond existing nearest batch" {
         .coverage_ptr = &coverage_ctx,
         .are_all_chunks_loaded = Coverage.neverCovered,
         .radius_reduction = &radius_reduction,
+        .pending_regions = &pending_regions,
     };
 
-    try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
-    try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, queue_ptrs[LODLevel.count - 1].count());
+    // Repeatedly free exactly one pipeline slot. The scheduler must resume at
+    // the first unadmitted coordinate rather than advancing 64 candidates and
+    // leaving a directionally biased set of holes behind.
+    for (0..HORIZON_QUEUE_CANDIDATE_LIMIT) |_| {
+        try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
+        try std.testing.expectEqual(@as(usize, 1), queue_ptrs[LODLevel.count - 1].count());
+        _ = queue_ptrs[LODLevel.count - 1].pop().?;
+        pending_regions = MAX_PENDING_LOD_REGIONS - 1;
+    }
 
-    try queueLODRegions(ctx, .lod4, Vec3.zero, null, null);
-    try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT * 2, queue_ptrs[LODLevel.count - 1].count());
+    try std.testing.expectEqual(HORIZON_QUEUE_CANDIDATE_LIMIT, regions[@intFromEnum(LODLevel.lod4)].count());
+    var z: i32 = -3;
+    while (z <= 3) : (z += 1) {
+        var x: i32 = -3;
+        while (x <= 3) : (x += 1) {
+            try std.testing.expect(regions[@intFromEnum(LODLevel.lod4)].contains(.{ .rx = x, .rz = z, .lod = .lod4 }));
+        }
+    }
+    var iter = regions[@intFromEnum(LODLevel.lod4)].keyIterator();
+    while (iter.next()) |key| {
+        try std.testing.expect(@max(@abs(key.rx), @abs(key.rz)) <= 4);
+    }
 }
 
 test "LOD scheduling biases priorities toward movement direction" {

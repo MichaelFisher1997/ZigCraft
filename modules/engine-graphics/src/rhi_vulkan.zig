@@ -137,11 +137,12 @@ fn abortFrame(ctx_ptr: *anyopaque) void {
     const ctx: *VulkanContext = @ptrCast(@alignCast(ctx_ptr));
     if (!ctx.frames.frame_in_progress) return;
 
-    if (ctx.runtime.main_pass_active) endMainPass(ctx_ptr);
-    if (ctx.shadow_system.pass_active) endShadowPass(ctx_ptr);
-    if (ctx.runtime.g_pass_active) endGPass(ctx_ptr);
-
+    // Reset both recording command buffers before any screen/world teardown.
+    // vkDeviceWaitIdle only covers submitted work and cannot make references in
+    // an unsubmitted recording command buffer safe to destroy.
+    ctx.resources.abortCurrentFrame();
     ctx.frames.abortFrame();
+    if (ctx.screenshot_capture.staging != null) screenshot.discardCapture(ctx);
 
     // Recreate semaphores
     const device = ctx.vulkan_device.vk_device;
@@ -161,6 +162,13 @@ fn abortFrame(ctx_ptr: *anyopaque) void {
     ctx.shadow_system.pass_active = false;
     ctx.runtime.g_pass_active = false;
     ctx.runtime.ssao_pass_active = false;
+    ctx.water_system.pass_active = false;
+    ctx.post_process.pass_active = false;
+    ctx.fxaa.pass_active = false;
+    ctx.ui.ui_swapchain_pass_active = false;
+    ctx.ui.ui_using_swapchain = false;
+    ctx.ui.ui_swapchain_clears_output = false;
+    ctx.runtime.final_composed.clear();
     ctx.draw.descriptors_updated = false;
     ctx.draw.bound_texture = 0;
 }

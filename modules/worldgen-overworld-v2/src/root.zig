@@ -61,7 +61,9 @@ pub const OverworldV2Generator = struct {
     pub const INFO = GeneratorInfo{
         .name = "Overworld V2",
         .description = "Luanti v7-style terrain with ridges, mountains, rivers, and cave noise.",
-        .version = 2,
+        // Version 3 invalidates LOD source caches generated with the grounded
+        // height estimator, which could classify elevated islands as ocean.
+        .version = 3,
     };
 
     pub const Params = struct {
@@ -499,6 +501,29 @@ test "overworld-v2 generates representative LOD data" {
 
     try std.testing.expect(filled_columns > 0);
     try std.testing.expect(material_columns > 0);
+}
+
+test "overworld-v2 LOD height sampling retains elevated terrain above underwater bases" {
+    var gen = OverworldV2Generator.init(12345, std.testing.allocator);
+    const sea_level = gen.params.sea_level;
+    var found_elevated_island = false;
+
+    var wz: i32 = -2048;
+    scan: while (wz <= 2048) : (wz += 32) {
+        var wx: i32 = -2048;
+        while (wx <= 2048) : (wx += 32) {
+            const base_height = util.floorToI32(terrain_shape.baseTerrainLevelAtPoint(&gen, wx, wz));
+            const grounded_height = terrain_shape.estimateGroundedTerrainHeight(&gen, wx, wz, base_height);
+            const full_height = terrain_shape.estimateTerrainHeight(&gen, wx, wz, base_height);
+            if (grounded_height < sea_level and full_height >= sea_level) {
+                try std.testing.expectEqual(full_height, lod_sampling.sampleTerrainHeightForLOD(&gen, wx, wz));
+                found_elevated_island = true;
+                break :scan;
+            }
+        }
+    }
+
+    try std.testing.expect(found_elevated_island);
 }
 
 test "overworld-v2 LOD tree density covers forest variants" {

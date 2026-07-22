@@ -28,6 +28,7 @@ capture() {
     local disable_lod_mdi=1
     local scene_frame="$frame"
     local scene_delay="$delay"
+    local timeout_budget="$capture_timeout"
     local save_environment=()
     if [[ ( "$scene" == "lod-handoff" || "$scene" == "lod-handoff-traversal" || "$scene" == "fog-rapid-turn" || "$scene" == "teleport-handoff" || "$scene" == "saved-world-reload" ) && "$mode" == "auto" ]]; then
         gpu_culling=1
@@ -37,10 +38,16 @@ capture() {
         save_environment+=("ZIGCRAFT_SAVE_DIR=$save_dir")
     fi
     # Motion completes after 180 rendered frames, then streaming at the final
-    # pose must drain and remain stable for another 180 frames. Give real world
-    # generation wall-clock time to settle instead of racing a fast GPU's frame
-    # counter and failing the readiness assertion at frame 900.
-    if [[ "$scene" == "lod-handoff-traversal" || "$scene" == "fog-rapid-turn" || "$scene" == "teleport-handoff" ]]; then
+    # pose must drain and remain stable for another 180 frames. Saved-world
+    # create/reload also waits for persistence, cache ingestion, and GPU
+    # validation before capture. Give these paths real wall-clock time to
+    # settle instead of racing a fast GPU's frame counter and failing the
+    # readiness assertion at frame 900.
+    if [[ "$scene" == saved-world-* ]]; then
+        scene_frame="${PHASE5_VISUAL_SAVED_SCREENSHOT_FRAME:-4800}"
+        scene_delay="${PHASE5_VISUAL_SAVED_SCREENSHOT_DELAY_SECONDS:-30}"
+        timeout_budget="${PHASE5_VISUAL_SAVED_CAPTURE_TIMEOUT:-180s}"
+    elif [[ "$scene" == "lod-handoff-traversal" || "$scene" == "fog-rapid-turn" || "$scene" == "teleport-handoff" ]]; then
         scene_frame="${PHASE5_VISUAL_MOTION_SCREENSHOT_FRAME:-2400}"
         scene_delay="${PHASE5_VISUAL_MOTION_SCREENSHOT_DELAY_SECONDS:-15}"
     fi
@@ -53,7 +60,7 @@ capture() {
         ZIGCRAFT_LOD_GPU_CULLING_VALIDATE="$gpu_culling" \
         ZIGCRAFT_DISABLE_LOD_MDI="$disable_lod_mdi" \
         ZIGCRAFT_PHASE5_SETTLE_FRAMES="${PHASE5_VISUAL_SETTLE_FRAMES:-180}" \
-        timeout --preserve-status "$capture_timeout" nix develop --command zig build run \
+        timeout --preserve-status "$timeout_budget" nix develop --command zig build run \
         -Dskip-present \
         -Dauto-preset=low \
         -Dauto-world=flat \

@@ -1071,7 +1071,7 @@ fn defineBuildOptions(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildOp
     const screenshot_delay_seconds = b.option(u32, "screenshot-delay-seconds", "Seconds to wait after screenshot target is ready before capture") orelse 0;
     options.addOption(u32, "screenshot_delay_seconds", screenshot_delay_seconds);
 
-    const phase5_visual_scene = b.option([]const u8, "phase5-visual-scene", "Deterministic production-world fixture/camera for the Phase 5 visual gate (seam, water, lod-handoff, lod-handoff-traversal, fog-rapid-turn, teleport-handoff, saved-world-create, saved-world-reload)") orelse "";
+    const phase5_visual_scene = b.option([]const u8, "phase5-visual-scene", "Deterministic production-world fixture/camera for the Phase 5 visual gate (seam, water, lod-handoff, lod-aerial, lod-handoff-traversal, fog-rapid-turn, teleport-handoff, saved-world-create, saved-world-reload)") orelse "";
     options.addOption([]const u8, "phase5_visual_scene", phase5_visual_scene);
     const phase5_visual_run_id = b.option([]const u8, "phase5-visual-run-id", "Fresh evidence scope identifier for a Phase 5 visual-gate invocation") orelse "";
     options.addOption([]const u8, "phase5_visual_run_id", phase5_visual_run_id);

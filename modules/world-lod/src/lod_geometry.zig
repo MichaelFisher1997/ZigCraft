@@ -612,8 +612,9 @@ pub fn collectColumnSpans(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_
             });
         }
 
-        const water = data.water[idx];
-        if (!has_water_span and shouldEmitWaterSpanForLOD(data, gx, gz, lod_level, water) and count < out.len) {
+        const representative_water = representativeWaterStateForLOD(data, gx, gz, lod_level);
+        if (!has_water_span and representative_water != null and count < out.len) {
+            const water = representative_water.?;
             has_water_span = true;
             insertColumnSpan(out, &count, .{
                 .min_height = water.surface_height - water.depth,
@@ -1138,10 +1139,45 @@ pub fn waterCoverageStats(data: *const LODSimplifiedData, gx: u32, gz: u32) Wate
 pub fn shouldEmitWaterSpanForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel, water: world_core.LODWaterState) bool {
     if (!water.is_surface or water.coverage <= 0.0 or water.depth <= 0.01) return false;
     if (isFineSampleLOD(lod_level)) return true;
-    if (water.coverage >= 0.35) return true;
+    return isLODWaterCellForLOD(data, gx, gz, lod_level);
+}
 
+/// Returns the canonical water surface for a rendered LOD cell. Coarse cells
+/// use the same 2x2 coverage decision as terrain meshing, preventing one wet
+/// corner from creating a full-cell water span over otherwise dry terrain.
+pub fn representativeWaterStateForLOD(data: *const LODSimplifiedData, gx: u32, gz: u32, lod_level: LODLevel) ?world_core.LODWaterState {
+    if (isFineSampleLOD(lod_level)) {
+        const idx = cellIndex(data, gx, gz);
+        const water = data.water[idx];
+        if (!water.is_surface or water.coverage <= 0.0 or water.depth <= 0.01) return null;
+        var result = water;
+        result.surface_height = normalizedWaterSurfaceHeight(data, idx, water);
+        return result;
+    }
+    if (!isLODWaterCellForLOD(data, gx, gz, lod_level)) return null;
+
+    const surface_height = representativeWaterSurfaceHeightForCell(data, gx, gz, lod_level) orelse return null;
     const stats = waterCoverageStats(data, gx, gz);
-    return stats.wet_samples >= 2 and stats.average_coverage >= 0.25 and stats.representative_depth >= 1.5;
+    return .{
+        .is_surface = true,
+        .surface_height = surface_height,
+        .depth = stats.representative_depth,
+        .coverage = stats.average_coverage,
+    };
+}
+
+test "coarse representative water ignores one fully wet corner" {
+    var data = try LODSimplifiedData.init(std.testing.allocator, .lod2);
+    defer data.deinit();
+
+    data.water[0] = .{
+        .is_surface = true,
+        .surface_height = 63.0,
+        .depth = 8.0,
+        .coverage = 1.0,
+    };
+
+    try std.testing.expect(representativeWaterStateForLOD(&data, 0, 0, .lod2) == null);
 }
 
 // Helper functions for unpacking colors

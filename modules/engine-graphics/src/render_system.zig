@@ -325,6 +325,11 @@ pub const RenderSystem = struct {
         self.rhi.renderContext().endFrame();
     }
 
+    /// Discards the active frame without submitting it to the GPU.
+    pub fn abortFrame(self: *RenderSystem) void {
+        self.rhi.renderContext().abortFrame();
+    }
+
     pub fn waitIdle(self: *RenderSystem) void {
         self.rhi.query().waitIdle();
     }

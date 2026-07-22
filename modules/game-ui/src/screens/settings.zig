@@ -290,6 +290,7 @@ fn drawCameraTab(ui: *UISystem, settings: anytype, layout: ColumnLayout, row_h: 
 
 fn drawWorldTab(ui: *UISystem, settings: anytype, rs: anytype, layout: ColumnLayout, row_h: f32, label_scale: f32, value_scale: f32, button_scale: f32, mouse_x: f32, mouse_y: f32, mouse_clicked: bool, scale: f32) void {
     var num_buf: [32]u8 = undefined;
+    settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
 
     var y_left = layout.top_y;
     Theme.drawSectionLabel(ui, layout.left_x, y_left, "DISTANCE", scale);
@@ -300,13 +301,13 @@ fn drawWorldTab(ui: *UISystem, settings: anytype, rs: anytype, layout: ColumnLay
         if (step == .previous and settings.render_distance > 2) settings.render_distance -= 1;
         if (step == .next and settings.render_distance < std.math.maxInt(i32)) {
             settings.render_distance += 1;
-            settings.horizon_distance = LODConfig.normalizeHorizonDistance(settings.render_distance, settings.horizon_distance);
+            settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
         }
     }
     y_left += row_h + 8.0 * scale;
 
     const horizon_distance_label = std.fmt.bufPrint(&num_buf, "{} CHUNKS", .{settings.horizon_distance}) catch "?";
-    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "HORIZON DISTANCE", "Coarsest LOD radius; scales with full-detail distance.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
+    if (drawStepperRow(ui, .{ .x = layout.left_x, .y = y_left, .width = layout.col_w, .height = row_h }, "DISTANT LOD LIMIT", "Maximum distant-terrain radius from the player.", horizon_distance_label, label_scale, value_scale, button_scale, mouse_x, mouse_y, mouse_clicked, scale)) |step| {
         settings.horizon_distance = LODConfig.stepHorizonDistance(settings.render_distance, settings.horizon_distance, step == .next);
     }
 

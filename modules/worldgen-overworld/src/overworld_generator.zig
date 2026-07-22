@@ -48,7 +48,9 @@ pub const OverworldGenerator = struct {
     pub const INFO = GeneratorInfo{
         .name = "Overworld",
         .description = "Standard terrain with diverse biomes and caves.",
-        .version = 1,
+        // Version 3 invalidates LOD source caches whose blended controls did
+        // not match the chunk-local controls used by full-detail generation.
+        .version = 3,
     };
 
     allocator: std.mem.Allocator,
@@ -305,13 +307,6 @@ pub const OverworldGenerator = struct {
         const world_x = region_x * region_size_i;
         const world_z = region_z * region_size_i;
         const sea_level = self.terrain_shape.getSeaLevel();
-        const controls = region_pkg.RegionControlCorners.init(
-            self.terrain_shape.getRegionSeed(),
-            world_x,
-            world_z,
-            world_x + region_size_i,
-            world_z + region_size_i,
-        );
         // Kept allocated (cheap: empty HashMap, no heap use until first put) so
         // tree hints can be re-enabled per-level in sampleRepresentativeLODColumn
         // without a signature change. Currently unused since compute_tree_hints
@@ -326,7 +321,7 @@ pub const OverworldGenerator = struct {
             while (gx < data.width) : (gx += 1) {
                 const wx = @as(f32, @floatFromInt(world_x)) + (@as(f32, @floatFromInt(gx)) / grid_max) * region_size_f;
                 const wz = @as(f32, @floatFromInt(world_z)) + (@as(f32, @floatFromInt(gz)) / grid_max) * region_size_f;
-                const sample = self.sampleRepresentativeLODColumn(wx, wz, region_size_f / grid_max, sea_level, controls, &tree_hint_cache, lod_level);
+                const sample = self.sampleRepresentativeLODColumn(wx, wz, region_size_f / grid_max, sea_level, &tree_hint_cache, lod_level);
                 data.setGeneratedColumn(gx, gz, sample.height, sample.biome, sample.layers, sample.color, sample.water, sample.lighting, sample.vegetation);
             }
         }
@@ -355,7 +350,7 @@ pub const OverworldGenerator = struct {
     const TreeHintChunk = tree_hints.TreeHintChunk;
     const TreeHintCache = std.AutoHashMap(u64, TreeHintChunk);
 
-    fn sampleRepresentativeLODColumn(self: *const OverworldGenerator, wx: f32, wz: f32, cell_span: f32, sea_level: i32, controls: region_pkg.RegionControlCorners, tree_hint_cache: *TreeHintCache, lod_level: LODLevel) RepresentativeLODColumn {
+    fn sampleRepresentativeLODColumn(self: *const OverworldGenerator, wx: f32, wz: f32, cell_span: f32, sea_level: i32, tree_hint_cache: *TreeHintCache, lod_level: LODLevel) RepresentativeLODColumn {
         // Single center sample. The previous 3x3 (9-sample) grid sampled a
         // sub-block neighborhood (sample_radius ~= cell_span/2 ~= 0.5-1.3
         // blocks), so 8 of 9 samples were nearly co-located and returned
@@ -389,7 +384,7 @@ pub const OverworldGenerator = struct {
 
         for (sample_offsets) |oz| {
             for (sample_offsets) |ox| {
-                const sample = self.classifyLODSample(wx + ox * sample_radius, wz + oz * sample_radius, sea_level, controls);
+                const sample = self.classifyLODSample(wx + ox * sample_radius, wz + oz * sample_radius, sea_level);
                 const block_index = @intFromEnum(sample.surface_block);
                 if (block_index < block_counts.len) block_counts[block_index] += 1;
                 biome_counts[@intFromEnum(sample.biome)] += 1;
@@ -551,7 +546,8 @@ pub const OverworldGenerator = struct {
 
     fn classifyTreeHintSample(context: *const anyopaque, wx: f32, wz: f32, sea_level: i32, controls: region_pkg.RegionControlCorners) tree_hints.ClassifiedSample {
         const self: *const OverworldGenerator = @ptrCast(@alignCast(context));
-        const sample = self.classifyLODSample(wx, wz, sea_level, controls);
+        _ = controls;
+        const sample = self.classifyLODSample(wx, wz, sea_level);
         return .{
             .biome = sample.biome,
             .surface_block = sample.surface_block,
@@ -559,11 +555,11 @@ pub const OverworldGenerator = struct {
         };
     }
 
-    fn classifyLODSample(self: *const OverworldGenerator, wx: f32, wz: f32, sea_level: i32, controls: region_pkg.RegionControlCorners) ClassifiedLODSample {
+    fn classifyLODSample(self: *const OverworldGenerator, wx: f32, wz: f32, sea_level: i32) ClassifiedLODSample {
         const wx_i: i32 = @intFromFloat(@floor(wx));
         const wz_i: i32 = @intFromFloat(@floor(wz));
-        const column = self.terrain_shape.sampleColumnDataWithControls(wx, wz, 0, controls.sample(wx_i, wz_i));
-        const render_water_surface = column.terrain_height_i < sea_level and (column.is_ocean or self.isInlandWater(wx, wz, column.terrain_height_i));
+        const column = self.sampleFullDetailColumnData(wx, wz, wx_i, wz_i);
+        const render_water_surface = column.terrain_height_i < sea_level;
 
         if (self.getCachedClassification(wx_i, wz_i)) |cached| {
             return .{
@@ -604,6 +600,22 @@ pub const OverworldGenerator = struct {
             .surface_block = self.getSurfaceBlock(biome_id, column.terrain_height_i, sea_level, render_water_surface),
             .render_water_surface = render_water_surface,
         };
+    }
+
+    /// Samples terrain with the same chunk-local region controls as
+    /// `prepareChunkPhaseData`. Canonical blended controls can select a very
+    /// different terrain height and place an LOD surface above the real chunk.
+    fn sampleFullDetailColumnData(self: *const OverworldGenerator, wx: f32, wz: f32, wx_i: i32, wz_i: i32) terrain_shape_mod.ColumnData {
+        const chunk_x = @divFloor(wx_i, CHUNK_SIZE_X) * CHUNK_SIZE_X;
+        const chunk_z = @divFloor(wz_i, CHUNK_SIZE_Z) * CHUNK_SIZE_Z;
+        const controls = region_pkg.RegionControlCorners.init(
+            self.terrain_shape.getRegionSeed(),
+            chunk_x,
+            chunk_z,
+            chunk_x + CHUNK_SIZE_X - 1,
+            chunk_z + CHUNK_SIZE_Z - 1,
+        );
+        return self.terrain_shape.sampleColumnDataWithControls(wx, wz, 0, controls.sample(wx_i, wz_i));
     }
 
     fn dominantBlock(counts: [world_core.MAX_BLOCK_TYPES]u32) BlockType {
@@ -866,6 +878,65 @@ pub const OverworldGenerator = struct {
 test "LOD cached water surfaces resolve to seabed block" {
     try std.testing.expectEqual(BlockType.water, OverworldGenerator.surfaceTypeToBlock(undefined, .water_shallow));
     try std.testing.expectEqual(BlockType.water, OverworldGenerator.surfaceTypeToBlock(undefined, .water_deep));
+}
+
+test "LOD classification matches full-detail chunk controls and sea-level water" {
+    var gen = OverworldGenerator.initWithParams(12345, std.testing.allocator, testDecorationProvider(), .{
+        .terrain_shape = .{ .disable_caves = true },
+        .basic_chunks_only = true,
+    });
+    defer gen.deinit();
+
+    const sea_level = gen.terrain_shape.getSeaLevel();
+    const positions = [_][2]i32{
+        .{ -1025, -1025 },
+        .{ -513, 511 },
+        .{ -1, 0 },
+        .{ 0, 0 },
+        .{ 511, 513 },
+        .{ 1025, -1025 },
+    };
+    for (positions) |position| {
+        const wx: f32 = @floatFromInt(position[0]);
+        const wz: f32 = @floatFromInt(position[1]);
+        const chunk_x = @divFloor(position[0], CHUNK_SIZE_X) * CHUNK_SIZE_X;
+        const chunk_z = @divFloor(position[1], CHUNK_SIZE_Z) * CHUNK_SIZE_Z;
+        const controls = region_pkg.RegionControlCorners.init(
+            gen.terrain_shape.getRegionSeed(),
+            chunk_x,
+            chunk_z,
+            chunk_x + CHUNK_SIZE_X - 1,
+            chunk_z + CHUNK_SIZE_Z - 1,
+        );
+        const column = gen.terrain_shape.sampleColumnDataWithControls(wx, wz, 0, controls.sample(position[0], position[1]));
+        const lod_sample = gen.classifyLODSample(wx, wz, sea_level);
+        try std.testing.expectEqual(column.terrain_height_i, lod_sample.terrain_height_i);
+        try std.testing.expectEqual(column.terrain_height_i < sea_level, lod_sample.render_water_surface);
+    }
+}
+
+test "LOD surface height matches generated full-detail terrain at chunk origin" {
+    var gen = OverworldGenerator.initWithParams(12345, std.testing.allocator, testDecorationProvider(), .{
+        .terrain_shape = .{ .disable_caves = true },
+        .basic_chunks_only = true,
+    });
+    defer gen.deinit();
+
+    var chunk = Chunk.init(0, 0);
+    try gen.generate(&chunk, null);
+
+    var top_solid_y: i32 = 0;
+    var y: i32 = CHUNK_SIZE_Y - 1;
+    while (y >= 0) : (y -= 1) {
+        const block = chunk.getBlock(0, @intCast(y), 0);
+        if (block != .air and block != .water) {
+            top_solid_y = y;
+            break;
+        }
+    }
+
+    const lod_sample = gen.classifyLODSample(0.0, 0.0, gen.terrain_shape.getSeaLevel());
+    try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(top_solid_y)), lod_sample.terrain_height, 1.0);
 }
 
 fn testDecorationProvider() DecorationProvider {

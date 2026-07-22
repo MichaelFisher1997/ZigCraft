@@ -163,16 +163,13 @@ pub const PlayerChunkPos = struct {
     cz: i32,
 };
 
-/// Persistent bounded-scan cursor for one LOD level. Coordinates are generated
-/// relative to the current player region, so ordinary movement does not discard
-/// progress through the configured horizon.
+/// Persistent bounded concentric-scan cursor for one LOD level.
 pub const LODScanState = struct {
     player_rx: i32 = 0,
     player_rz: i32 = 0,
     effective_radius: i32 = -1,
     next_ring: i64 = 0,
     ring_index: i64 = 0,
-    seed_index: usize = 0,
     last_examined: usize = 0,
 };
 

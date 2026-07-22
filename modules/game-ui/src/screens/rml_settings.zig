@@ -165,7 +165,7 @@ pub const RmlSettingsScreen = struct {
             settings.render_distance -= 1;
         } else if (std.mem.eql(u8, id, "render-distance-next") and settings.render_distance < std.math.maxInt(i32)) {
             settings.render_distance += 1;
-            settings.horizon_distance = LODConfig.normalizeHorizonDistance(settings.render_distance, settings.horizon_distance);
+            settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
         } else if (std.mem.eql(u8, id, "horizon-distance-prev") or std.mem.eql(u8, id, "horizon-distance-next")) {
             settings.horizon_distance = LODConfig.stepHorizonDistance(
                 settings.render_distance,
@@ -328,11 +328,12 @@ pub const RmlSettingsScreen = struct {
     fn appendWorldRows(self: *@This(), out: *std.ArrayList(u8)) !void {
         var buffer: [32]u8 = undefined;
         const settings = self.context.settings;
+        settings.horizon_distance = LODConfig.normalizeUserHorizonDistance(settings.render_distance, settings.horizon_distance);
         try appendSection(out, self.context.allocator, "DISTANCE");
         const render_distance = try std.fmt.bufPrint(&buffer, "{} CHUNKS", .{settings.render_distance});
         try appendStepperRow(out, self.context.allocator, "RENDER DISTANCE", "Full-detail chunk radius.", render_distance, "render-distance");
         const horizon_distance = try std.fmt.bufPrint(&buffer, "{} CHUNKS", .{settings.horizon_distance});
-        try appendStepperRow(out, self.context.allocator, "HORIZON DISTANCE", "Coarsest LOD radius; scales with full-detail distance.", horizon_distance, "horizon-distance");
+        try appendStepperRow(out, self.context.allocator, "DISTANT LOD LIMIT", "Maximum distant-terrain radius from the player.", horizon_distance, "horizon-distance");
         try appendSection(out, self.context.allocator, "STREAMING");
         try appendToggleRow(out, self.context.allocator, "LOD SYSTEM", "Distance terrain streaming.", settings.lod_enabled, "lod");
     }

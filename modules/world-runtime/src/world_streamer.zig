@@ -621,41 +621,94 @@ pub const WorldStreamer = struct {
         const unload_distance = @as(i128, render_dist_unload) + CHUNK_UNLOAD_BUFFER;
         const unload_dist_sq = unload_distance * unload_distance;
 
-        self.storage.chunks_mutex.lock();
         var to_remove = std.ArrayListUnmanaged(ChunkKey).empty;
         defer to_remove.deinit(self.allocator);
 
-        var unload_iter = self.storage.iteratorUnsafe();
-        while (unload_iter.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const data = entry.value_ptr.*;
-            const dx = @as(i128, key.x) - @as(i128, pc.chunk_x);
-            const dz = @as(i128, key.z) - @as(i128, pc.chunk_z);
-            if (dx * dx + dz * dz > unload_dist_sq) {
-                if (data.chunk.state != .generating and data.chunk.state != .meshing and
-                    data.chunk.state != .uploading and
-                    !data.chunk.isPinned())
-                {
-                    try to_remove.append(self.allocator, key);
+        {
+            self.storage.chunks_mutex.lock();
+            defer self.storage.chunks_mutex.unlock();
+
+            var unload_iter = self.storage.iteratorUnsafe();
+            while (unload_iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const data = entry.value_ptr.*;
+                const dx = @as(i128, key.x) - @as(i128, pc.chunk_x);
+                const dz = @as(i128, key.z) - @as(i128, pc.chunk_z);
+                if (dx * dx + dz * dz > unload_dist_sq) {
+                    if (data.chunk.state != .generating and data.chunk.state != .meshing and
+                        data.chunk.state != .uploading and
+                        !data.chunk.isPinned())
+                    {
+                        try to_remove.append(self.allocator, key);
+                    }
                 }
             }
         }
 
         for (to_remove.items) |key| {
-            if (self.save_manager) |sm| {
-                if (self.storage.chunks.get(key)) |data| {
-                    if (data.chunk.modified and data.chunk.generated) {
-                        data.chunk.pin();
-                        sm.enqueueSave(&data.chunk);
-                        data.chunk.modified = false;
-                        data.chunk.unpin();
-                    }
+            const unload_candidate = blk: {
+                self.storage.chunks_mutex.lock();
+                defer self.storage.chunks_mutex.unlock();
+
+                const data = self.storage.chunks.get(key) orelse continue;
+                if (data.chunk.state == .generating or data.chunk.state == .meshing or
+                    data.chunk.state == .uploading or data.chunk.isPinned())
+                {
+                    continue;
+                }
+                const previous_state = data.chunk.state;
+                data.chunk.pin();
+                data.chunk.state = .unloading;
+                break :blk .{ .chunk = &data.chunk, .previous_state = previous_state };
+            };
+            const chunk = unload_candidate.chunk;
+
+            // Do not acquire the LOD manager while holding chunks_mutex: LOD
+            // visibility takes the locks in the opposite order. The pin keeps
+            // this authoritative snapshot alive through edit ingestion/save.
+            var defer_unload = false;
+            if (chunk.generated) {
+                if (self.lod_coordinator.lod_manager) |manager| {
+                    const retain_pending = manager.isInRange(key.x, key.z);
+                    const pending_mask = manager.flushEditedChunkForUnload(key.x, key.z, chunk, retain_pending);
+                    defer_unload = retain_pending and pending_mask != 0;
                 }
             }
+
+            // Keep an edited full-detail source resident while visible LOD
+            // levels are still in flight. Once the player leaves the LOD
+            // horizon, the persisted chunk becomes the durable repair source.
+            if (defer_unload) {
+                self.storage.chunks_mutex.lock();
+                if (self.storage.chunks.get(key)) |data| {
+                    if (&data.chunk == chunk and data.chunk.state == .unloading) {
+                        data.chunk.state = unload_candidate.previous_state;
+                    }
+                }
+                chunk.unpin();
+                self.storage.chunks_mutex.unlock();
+                continue;
+            }
+
+            const save_enqueued = chunk.modified and chunk.generated and self.save_manager != null;
+            if (save_enqueued) self.save_manager.?.enqueueSave(chunk);
+
             self.gpu_acceleration.freeChunk(key.x, key.z);
-            _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
+
+            self.storage.chunks_mutex.lock();
+            if (self.storage.chunks.get(key)) |data| {
+                if (&data.chunk == chunk and data.chunk.state == .unloading) {
+                    if (save_enqueued) data.chunk.modified = false;
+                    data.chunk.unpin();
+                    _ = self.storage.removeUnlocked(key.x, key.z, self.vertex_allocator);
+                } else {
+                    chunk.unpin();
+                }
+            } else {
+                chunk.unpin();
+            }
+            self.storage.chunks_mutex.unlock();
         }
-        self.storage.chunks_mutex.unlock();
     }
 
     fn logMissingChunkDiagnostic(self: *WorldStreamer, pc_x: i32, pc_z: i32) void {

@@ -84,7 +84,9 @@ void main() {
     float lod_fade;
     vec3 color_override;
 
-    if (model_data.mask_radius < 0.0) {
+    // Color alpha is reserved as the indirect-draw sentinel. Signed mask
+    // radii encode the dynamic ready-detail disk and are valid direct values.
+    if (model_data.color_override.w < 0.0) {
         InstanceData inst = instance_buf.instances[gl_InstanceIndex];
         model = inst.model;
         mask_radius = inst.mask_radius;

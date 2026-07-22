@@ -181,6 +181,7 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
     while (uploads < max_uploads) {
         const prep_timer = self.profiling.begin();
         var task: ?UploadTask = null;
+        var oversized_fallback: ?UploadTask = null;
         var completed_without_upload = false;
         var made_progress = false;
         var deferred_for_budget = false;
@@ -204,8 +205,22 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
                     const staging_bytes = self.gpu_bridge.uploadCost(mesh).total();
                     if (wouldExceedUploadBudget(uploaded_bytes, staging_bytes, upload_budget_bytes)) {
                         self.profiling.addStagingPressure();
-                        self.requeueUpload(i, chunk);
                         deferred_for_budget = true;
+                        // Preserve room for any smaller task later in the
+                        // priority scan. If every queued task is oversized,
+                        // admit one at the start of the frame so a pool
+                        // migration cannot be deferred forever.
+                        if (uploaded_bytes == 0 and oversized_fallback == null) {
+                            oversized_fallback = .{
+                                .key = key,
+                                .chunk = chunk,
+                                .mesh = mesh,
+                                .lod_idx = i,
+                                .staging_bytes = staging_bytes,
+                            };
+                        } else {
+                            self.requeueUpload(i, chunk);
+                        }
                         continue;
                     }
 
@@ -223,6 +238,14 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
                     completed_without_upload = true;
                 }
             };
+        }
+        if (oversized_fallback) |fallback| {
+            if (task == null and !completed_without_upload and uploaded_bytes == 0) {
+                fallback.chunk.pin();
+                task = fallback;
+            } else {
+                self.requeueUpload(fallback.lod_idx, fallback.chunk);
+            }
         }
         self.mutex.unlock();
 
@@ -286,7 +309,7 @@ pub fn processUploadsWithBudget(self: *Self, upload_budget_bytes: usize) void {
         };
         self.profiling.end(.upload_submission, submission_timer);
 
-        uploaded_bytes += upload_task.staging_bytes;
+        uploaded_bytes = std.math.add(usize, uploaded_bytes, upload_task.staging_bytes) catch std.math.maxInt(usize);
         self.profiling.addUploadBytes(upload_task.staging_bytes);
         // Count only ownership that reached the GPU bridge successfully. A
         // requeued failure arrives here once on its eventual successful upload,
@@ -384,7 +407,9 @@ pub fn demoteRegionForRemesh(self: *Self, key: LODRegionKey, chunk: *LODChunk) v
         chunk.setState(.generated);
         self.pending_region_count += 1;
         self.enqueueTransition(key, chunk, .mesh);
-    } else if (chunk.getState() == .mesh_ready) {
+    } else if (chunk.getState() == .mesh_ready or chunk.getState() == .generated) {
+        // A queued transition captured the pre-edit source revision. Invalidate
+        // it and publish a mesh transition for the authoritative edited data.
         chunk.job_token +%= 1;
         chunk.setState(.generated);
         self.enqueueTransition(key, chunk, .mesh);
