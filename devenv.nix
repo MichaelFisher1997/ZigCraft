@@ -409,8 +409,8 @@ in
   # Replaces the former flake packages.default / `nix build -L`. Produces a
   # relocatable zigcraft binary at the given prefix (default ./dist) with the
   # nixpkgs runtime libraries baked into its rpath. Invoked by CI as
-  # `devenv shell --profile unit -- devenv tasks run zigcraft`.
-  tasks.zigcraft.exec = ''
+  # `devenv shell --profile unit -- devenv tasks run zigcraft:build`.
+  tasks."zigcraft:build".exec = ''
     set -euo pipefail
     out="''${1:-$PWD/dist}"
     zig build -Doptimize=Debug -Dtarget=x86_64-linux-gnu --prefix "$out"

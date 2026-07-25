@@ -144,7 +144,7 @@ jobs:
 
       - name: Build
         if: needs.changes.outputs.code_changes == 'true'
-        run: devenv shell --profile unit -- devenv tasks run zigcraft
+        run: devenv shell --profile unit -- devenv tasks run zigcraft:build
 
       - name: Prepare Artifact
         if: needs.changes.outputs.code_changes == 'true'
