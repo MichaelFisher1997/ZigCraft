@@ -1,3 +1,9 @@
 inputs:
   nixpkgs:
-    url: github:NixOS/nixpkgs/nixos-unstable
+    # Pinned to the same nixos-unstable revision the former flake.lock used, so
+    # the flake -> devenv migration changes only the shell tooling, not the
+    # dependency versions. A newer nixpkgs surfaced 86 Vulkan validation-layer
+    # errors (viewport 0x0, render-pass srcAccessMask mismatches) in the
+    # integration test that the pinned layers do not flag. Bump this pin (and
+    # reconcile any newly-reported validation errors) in a separate PR.
+    url: github:NixOS/nixpkgs/0bb7ec54c8483066ec9d7720e780a5caa71f8612
