@@ -11,7 +11,7 @@ channel_ids=(0 1 2 3 9 12 13)
 for scene in "${scenes[@]}"; do
     mkdir -p "$output_dir/$scene"
     for i in "${!channels[@]}"; do
-        ZIGCRAFT_DEBUG_SHADER=${channel_ids[$i]} nix develop --command zig build run \
+        ZIGCRAFT_DEBUG_SHADER=${channel_ids[$i]} devenv shell --profile graphics -- zig build run \
             -Dskip-present \
             -Dshadow-test-scene \
             -Dshadow-test-variant="$scene" \

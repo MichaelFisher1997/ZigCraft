@@ -18,7 +18,7 @@ case "${out_path,,}" in
 esac
 
 mkdir -p "$(dirname "$out_path")"
-nix develop --command zig build run \
+devenv shell --profile graphics -- zig build run \
   -Dshadow-test-scene=true \
   -Dshadow-test-variant="$variant" \
   -Dscreenshot-path="$out_path" \

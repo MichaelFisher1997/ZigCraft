@@ -60,7 +60,7 @@ capture() {
         ZIGCRAFT_LOD_GPU_CULLING_VALIDATE="$gpu_culling" \
         ZIGCRAFT_DISABLE_LOD_MDI="$disable_lod_mdi" \
         ZIGCRAFT_PHASE5_SETTLE_FRAMES="${PHASE5_VISUAL_SETTLE_FRAMES:-180}" \
-        timeout --preserve-status "$timeout_budget" nix develop --command zig build run \
+        timeout --preserve-status "$timeout_budget" devenv shell --profile graphics -- zig build run \
         -Dskip-present \
         -Dauto-preset=low \
         -Dauto-world=flat \

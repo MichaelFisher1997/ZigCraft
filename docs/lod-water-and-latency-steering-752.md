@@ -108,7 +108,7 @@ timed out in the local environment before useful LOD diagnostics were emitted.
 
 ## Verification
 
-- `nix develop --command zig build test` after every change (add the W2
+- `devenv shell zig build test` after every change (add the W2
   regression test).
 - `headless-screenshot` (`-Dskip-present -Dauto-world=normal`): open-ocean
   view, coastline view, and a shot taken ~3 seconds after load to prove the

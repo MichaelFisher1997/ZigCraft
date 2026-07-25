@@ -13,7 +13,7 @@ ZigCraft is a high-performance Minecraft-style voxel engine built with:
 - **Zig 0.16+** with strict memory management (explicit allocators, defer/errdefer)
 - **SDL3** for windowing and input
 - **Vulkan** for rendering (only backend, via RHI abstraction)
-- **Nix** for reproducible builds (`nix develop --command zig build`)
+- **devenv** for reproducible builds (`devenv shell zig build`)
 - **GLSL shaders** validated via glslangValidator
 - **Custom job system** for multithreaded world generation and meshing
 
@@ -21,11 +21,11 @@ ZigCraft is a high-performance Minecraft-style voxel engine built with:
 
 | Command | Purpose |
 |---|---|
-| `nix develop --command zig build test` | Unit tests + shader validation |
-| `nix develop --command zig fmt src/ modules/` | Format code |
-| `nix develop --command zig build test -- --test-filter "test name"` | Verify a specific new test is discovered and runnable |
-| `nix develop --command zig build test-integration` | Integration smoke tests for game/graphics/runtime-adjacent changes |
-| `nix develop --command zig build -Doptimize=ReleaseFast` | Release build |
+| `devenv shell zig build test` | Unit tests + shader validation |
+| `devenv shell zig fmt src/ modules/` | Format code |
+| `devenv shell zig build test -- --test-filter "test name"` | Verify a specific new test is discovered and runnable |
+| `devenv shell zig build test-integration` | Integration smoke tests for game/graphics/runtime-adjacent changes |
+| `devenv shell zig build -Doptimize=ReleaseFast` | Release build |
 
 ### Project Structure (testing-relevant)
 
@@ -198,9 +198,9 @@ You are running inside the opencode GitHub Action. The infrastructure auto-creat
 
 1. Write your test files
 2. Register new test files in `src/tests.zig`
-3. Format: `nix develop --command zig fmt src/ modules/`
-4. Run tests: `nix develop --command zig build test` — ALL tests must pass, not just yours
-5. Run at least one new test by filter: `nix develop --command zig build test -- --test-filter "<new test name>"`
+3. Format: `devenv shell zig fmt src/ modules/`
+4. Run tests: `devenv shell zig build test` — ALL tests must pass, not just yours
+5. Run at least one new test by filter: `devenv shell zig build test -- --test-filter "<new test name>"`
 6. Self-review the diff and remove any fake, tautological, misleading, or unsafe test before committing
 7. Count actual added `test "..."` declarations from your diff and keep the run within 3-8 total new tests
 8. Commit your changes with message: `test: add {area} tests for {module}`
@@ -214,11 +214,11 @@ The infrastructure will push the branch and create the PR automatically.
 - Tests MUST pass before committing. This is non-negotiable.
 - A filtered run for at least one newly added test MUST pass before committing.
 - The new tests MUST be semantically analyzed and executed by `zig build test`; do not rely on registrations that hide test blocks from the test runner.
-- Format before commit: `nix develop --command zig fmt src/ modules/`.
+- Format before commit: `devenv shell zig fmt src/ modules/`.
 - 3-8 tests per run across the whole PR, not per file. Quality over quantity.
 - If the module has no testable logic, stop without committing and note limitations.
 - Skip if nothing to test — do not create trivial tests just to create a PR.
-- For game, graphics, windowing-adjacent, or runtime initialization tests, run `nix develop --command zig build test-integration` when feasible and report if it was not feasible.
+- For game, graphics, windowing-adjacent, or runtime initialization tests, run `devenv shell zig build test-integration` when feasible and report if it was not feasible.
 
 ## Stop Conditions
 
@@ -260,8 +260,8 @@ The PR body should follow this format:
 - Functions or paths that still need tests and why
 
 ## Verification
-- [x] `nix develop --command zig fmt src/ modules/` passes
-- [x] `nix develop --command zig build test` passes (all tests, not just new ones)
-- [x] `nix develop --command zig build test -- --test-filter "..."` passes for a newly added test
+- [x] `devenv shell zig fmt src/ modules/` passes
+- [x] `devenv shell zig build test` passes (all tests, not just new ones)
+- [x] `devenv shell zig build test -- --test-filter "..."` passes for a newly added test
 - [x] No non-test source files were modified
 ```

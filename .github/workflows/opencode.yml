@@ -35,8 +35,8 @@ jobs:
           git config user.name "${GITHUB_ACTOR}"
           git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Prepare opencode cache
         run: mkdir -p /tmp/opencode-cache && echo "XDG_CACHE_HOME=/tmp/opencode-cache" >> "$GITHUB_ENV"

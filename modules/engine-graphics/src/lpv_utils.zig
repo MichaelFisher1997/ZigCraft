@@ -37,7 +37,7 @@ pub fn createShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.A
 pub fn ensureShaderFileExists(path: []const u8) !void {
     fs.cwd().access(path, .{}) catch |err| {
         log.log.errWithTrace("LPV shader artifact missing: {s} ({})", .{ path, err });
-        log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
+        log.log.err("Run `devenv shell zig build` to regenerate Vulkan SPIR-V shaders.", .{});
         return err;
     };
 }

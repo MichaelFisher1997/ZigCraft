@@ -14,7 +14,7 @@ Perform a thorough audit of the `$MODULE_PATH/` directory in this codebase. Your
 
 **YOU MUST ONLY:**
 - Read source code files to understand the codebase
-- Run read-only commands (`ls`, `cat`, `gh issue list`, `gh pr list`, `nix develop --command zig build test`)
+- Run read-only commands (`ls`, `cat`, `gh issue list`, `gh pr list`, `devenv shell zig build test`)
 - Create EXACTLY ONE GitHub issue using `gh issue create`
 
 If you violate these rules, your output will be automatically reverted. No exceptions.
@@ -31,14 +31,14 @@ ZigCraft is a high-performance Minecraft-style voxel engine built with:
 - **Zig 0.16+** with strict memory management (explicit allocators, defer/errdefer)
 - **SDL3** for windowing and input
 - **Vulkan** for rendering (only backend, via RHI abstraction)
-- **Nix** for reproducible builds (`nix develop --command zig build`)
+- **devenv** for reproducible builds (`devenv shell zig build`)
 - **GLSL shaders** validated via glslangValidator
 - **Custom job system** for multithreaded world generation and meshing
 
 Build commands available:
-- `nix develop --command zig build test` — unit tests + shader validation
-- `nix develop --command zig fmt src/` — format code
-- `nix develop --command zig build -Doptimize=ReleaseFast` — release build
+- `devenv shell zig build test` — unit tests + shader validation
+- `devenv shell zig fmt src/` — format code
+- `devenv shell zig build -Doptimize=ReleaseFast` — release build
 
 ## MODULE-SPECIFIC FOCUS
 
@@ -89,7 +89,7 @@ Prioritize by impact. Check for:
 2. Read each source file in the module, starting with the most critical ones (those dealing with GPU resources, memory, or concurrency)
 3. For each file, trace the data flow: how are resources created, used, and destroyed?
 4. Cross-reference with other modules if needed (e.g., check if callers of a function handle errors correctly)
-5. If possible, run `nix develop --command zig build test` to check if existing tests pass
+5. If possible, run `devenv shell zig build test` to check if existing tests pass
 6. If you find a concrete issue, verify it by reading surrounding code to confirm it's a real problem, not a false positive
 
 ## ISSUE FORMAT
@@ -138,7 +138,7 @@ Example criteria:
 - "All unit tests in `src/tests.zig` pass"
 - "No memory leaks detected when running with `zig build test`"
 - "The function returns correct results for edge cases: empty input, max values, negative values"
-- "The fix has been verified with `nix develop --command zig build test`"
+- "The fix has been verified with `devenv shell zig build test`"
 
 ## 📚 References
 - Link to any related issues, docs, or Zig standard library patterns that are relevant.

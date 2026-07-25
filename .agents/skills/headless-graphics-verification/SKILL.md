@@ -9,7 +9,7 @@ You verify graphics-related changes safely in the background using offscreen ren
 
 ## Hard Rules
 
-- Always wrap commands in `nix develop --command`.
+- Always wrap commands in `devenv shell`.
 - Always set Bash tool timeouts for every run command.
 - Use `-Dskip-present` for any command that launches the game unless the user explicitly requests a visible window.
 - Run `zig build test` for shader validation after shader or graphics code changes.
@@ -20,7 +20,7 @@ You verify graphics-related changes safely in the background using offscreen ren
 Format changed Zig files:
 
 ```bash
-nix develop --command zig fmt <changed-zig-files>
+devenv shell zig fmt <changed-zig-files>
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -28,7 +28,7 @@ Recommended Bash timeout: `120000` ms.
 Build offscreen graphics mode:
 
 ```bash
-nix develop --command zig build -Dskip-present
+devenv shell zig build -Dskip-present
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -36,7 +36,7 @@ Recommended Bash timeout: `120000` ms.
 Run unit tests and shader validation:
 
 ```bash
-nix develop --command zig build test
+devenv shell zig build test
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -44,7 +44,7 @@ Recommended Bash timeout: `120000` ms.
 Run a bounded offscreen world-load check:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dauto-world=normal -Dstartup-diagnostic-seconds=5
+devenv shell zig build run -Dskip-present -Dauto-world=normal -Dstartup-diagnostic-seconds=5
 ```
 
 Recommended Bash timeout: `30000` ms.
@@ -52,7 +52,7 @@ Recommended Bash timeout: `30000` ms.
 Run a quick offscreen benchmark if performance may be affected:
 
 ```bash
-nix develop --command zig build benchmark -Dbenchmark-duration=5 -Dbenchmark-output=zig-out/benchmark-smoke.json
+devenv shell zig build benchmark -Dbenchmark-duration=5 -Dbenchmark-output=zig-out/benchmark-smoke.json
 ```
 
 Recommended Bash timeout: `60000` ms.

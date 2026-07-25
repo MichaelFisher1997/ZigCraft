@@ -118,15 +118,15 @@ Avoid broad range overlaps unless the priority behavior is intentional and cover
 For documentation-only changes, no Zig formatting is required. For code or data changes, run formatting on changed Zig files and at least the unit suite:
 
 ```bash
-nix develop --command zig fmt <changed-zig-files>
-nix develop --command zig build test
+devenv shell zig fmt <changed-zig-files>
+devenv shell zig build test
 ```
 
 For biome or terrain distribution changes, also compare deterministic reports and snapshots:
 
 ```bash
-nix develop --command zig build worldgen-report
-nix develop --command zig build worldgen-climate-snapshot
+devenv shell zig build worldgen-report
+devenv shell zig build worldgen-climate-snapshot
 ```
 
 Use the output from `terrain_report.zig` to inspect representative seed biome counts, height ranges, ocean/land ratio, mountain coverage, and role effect profiles. Use the climate snapshot when climate-space selection boundaries or biome scoring changed. Include intentional baseline changes in the PR description so reviewers know whether distribution movement is expected.

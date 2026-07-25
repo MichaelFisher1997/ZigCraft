@@ -81,7 +81,7 @@ Optimized for high chunk render distances with greedy meshing, job-based multith
 
 ## 🏗️ Build & Run
 
-This project uses **Nix** for a reproducible development environment.
+This project uses **devenv** (Nix-based) for a reproducible development environment.
 
 ### 🛠️ Development Setup
 
@@ -98,23 +98,23 @@ This configures a pre-push hook that runs:
 To bypass in emergencies: `git push --no-verify`
 
 ### 🎮 Running the Game
-- **Run**: `nix develop --command zig build run`
-- **Release build**: `nix develop --command zig build run -Doptimize=ReleaseFast`
+- **Run**: `devenv shell zig build run`
+- **Release build**: `devenv shell zig build run -Doptimize=ReleaseFast`
 
 ### Debug Build Flags
 
-- **Smoke test**: `nix develop --command zig build run -Dsmoke-test`
-- **Headless / no present**: `nix develop --command zig build run -Dskip-present`
-- **Headless benchmark**: `nix develop --command zig build benchmark -Dbenchmark-preset=low -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-low.json`
-- **Auto-open a world**: `nix develop --command zig build run -Dauto-world=normal`
-- **Open on monitor**: `nix develop --command zig build run -Dmonitor-index=1`
-- **Open on Hyprland monitor**: `nix develop --command zig build run -Dmonitor-name=DP-2`
-- **Force XWayland monitor placement**: `nix develop --command zig build run -Dmonitor-index=1 -Dwindow-video-driver=x11`
-- **Background window launch**: `nix develop --command zig build run -Dmonitor-name=DP-2 -Dwindow-video-driver=x11 -Dwindow-no-focus`
-- **Startup diagnostic**: `nix develop --command zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
-- **Worldgen climate snapshot JSON**: `nix develop --command zig build worldgen-climate-snapshot -- --seed 42 --origin-x -256 --origin-z -256 --width 128 --depth 128 --step 4 --output zig-out/climate-42.json`
-- **Worldgen climate heatmap**: `nix develop --command zig build worldgen-climate-snapshot -- --format ppm --field temperature --output zig-out/temperature-42.ppm`
-- **Chunk-only debug mode**: `nix develop --command zig build run -Dchunk-debug-mode -Dauto-world=normal`
+- **Smoke test**: `devenv shell zig build run -Dsmoke-test`
+- **Headless / no present**: `devenv shell zig build run -Dskip-present`
+- **Headless benchmark**: `devenv shell zig build benchmark -Dbenchmark-preset=low -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-low.json`
+- **Auto-open a world**: `devenv shell zig build run -Dauto-world=normal`
+- **Open on monitor**: `devenv shell zig build run -Dmonitor-index=1`
+- **Open on Hyprland monitor**: `devenv shell zig build run -Dmonitor-name=DP-2`
+- **Force XWayland monitor placement**: `devenv shell zig build run -Dmonitor-index=1 -Dwindow-video-driver=x11`
+- **Background window launch**: `devenv shell zig build run -Dmonitor-name=DP-2 -Dwindow-video-driver=x11 -Dwindow-no-focus`
+- **Startup diagnostic**: `devenv shell zig build run -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present`
+- **Worldgen climate snapshot JSON**: `devenv shell zig build worldgen-climate-snapshot -- --seed 42 --origin-x -256 --origin-z -256 --width 128 --depth 128 --step 4 --output zig-out/climate-42.json`
+- **Worldgen climate heatmap**: `devenv shell zig build worldgen-climate-snapshot -- --format ppm --field temperature --output zig-out/temperature-42.ppm`
+- **Chunk-only debug mode**: `devenv shell zig build run -Dchunk-debug-mode -Dauto-world=normal`
 - **Shadow/cave lighting capture**: `./scripts/capture_shadow_test.sh screenshots/shadow-test.png`
 
 `-Dchunk-debug-mode` strips the overworld down to basic chunks for isolation work:
@@ -135,21 +135,21 @@ Examples:
 
 ```bash
 # LOD only
-nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod -Dauto-world=normal
+devenv shell zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod -Dauto-world=normal
 
 # LOD plus cave generation
-nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,caves -Dauto-world=normal
+devenv shell zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,caves -Dauto-world=normal
 
 # Headless startup comparison after 5 seconds
-nix develop --command zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,water,caves -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present
+devenv shell zig build run -Dchunk-debug-mode -Dchunk-debug-enable=lod,water,caves -Dauto-world=normal -Dstartup-diagnostic-seconds=5 -Dskip-present
 ```
 
 The shadow/cave lighting capture launches a deterministic low-block test scene, applies a small shadow-focused graphics preset, waits 5 seconds after the target is ready, captures a PNG, and exits. It defaults to a `dug-cave` variant that matches a player-dug dirt/grass cave mouth. Use `ZIGCRAFT_SHADOW_TEST_VARIANT=bend ./scripts/capture_shadow_test.sh screenshots/shadow-bend.png` to check the older bend/deep-black regression. Override the wait with `ZIGCRAFT_SCREENSHOT_DELAY_SECONDS=8 ./scripts/capture_shadow_test.sh screenshots/shadow-test.png`. Screenshot paths are restricted to image extensions from `image/png`, `image/jpeg`, `image/gif`, and `image/webp`; the built-in encoder currently writes PNG.
 
 ### 🧪 Running Tests
-- **All Tests**: `nix develop --command zig build test`
-- **Single Test**: `nix develop --command zig build test -- --test-filter "Test Name"`
-- **Single Test Alternative**: `nix develop --command zig build test -Dtest-filter="Test Name"`
+- **All Tests**: `devenv shell zig build test`
+- **Single Test**: `devenv shell zig build test -- --test-filter "Test Name"`
+- **Single Test Alternative**: `devenv shell zig build test -Dtest-filter="Test Name"`
 
 ## 📂 Project Structure
 
@@ -196,7 +196,7 @@ cd ZigCraft
 ./scripts/setup-hooks.sh
 
 # Enter dev environment and run tests
-nix develop --command zig build test
+devenv shell zig build test
 ```
 
 ### Branch Workflow
@@ -214,13 +214,13 @@ All PRs target the `dev` branch. Use our PR templates (`feature.md`, `bug.md`, `
 
 ## 🔧 Troubleshooting
 
-### Nix Build Failures
+### devenv Build Failures
 ```bash
 # Clean build artifacts
 rm -rf zig-out/ .zig-cache/
 
-# Update Nix channels (if using older Nix)
-nix-channel --update
+# Refresh devenv inputs (updates the pinned nixpkgs)
+devenv update
 ```
 
 ### Vulkan Driver Issues
@@ -231,8 +231,8 @@ nix-channel --update
 ### Shader Validation Errors
 Shaders are validated during `zig build test`. If glslang fails:
 ```bash
-# Install glslang via Nix
-nix develop  # glslang is included in the dev shell
+# Install glslang via devenv
+devenv shell  # glslang is included in the dev shell
 ```
 
 ### Performance Issues

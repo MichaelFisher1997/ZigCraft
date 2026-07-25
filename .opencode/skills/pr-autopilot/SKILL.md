@@ -17,7 +17,7 @@ Use this skill after creating a PR, or when the user explicitly asks you to moni
 - Do not use force push unless the user explicitly approves it.
 - Do not skip hooks or checks unless the user explicitly approves it.
 - Do not modify unrelated user changes in the worktree.
-- Run all Zig build/test commands through `nix develop --command`.
+- Run all Zig build/test commands through `devenv shell`.
 - Continue the loop until the PR is green and merged, or until blocked by permissions, merge conflicts requiring user judgment, missing secrets, unavailable runners, or an explicitly failing external requirement you cannot fix.
 - As soon as GitHub reports the PR is merged, stop immediately and ignore any still-running runners/checks for that PR.
 - Only enable or perform auto-merge when the user requested autonomous merge behavior for this PR or workflow.
@@ -71,16 +71,16 @@ For failed checks:
 For ZigCraft, default verification includes:
 
 ```bash
-nix develop --command zig fmt src/
-nix develop --command zig build test
+devenv shell zig fmt src/
+devenv shell zig build test
 ```
 
 Use additional checks when relevant:
 
 ```bash
-nix develop --command zig build -Doptimize=ReleaseFast
-nix develop --command zig build test-integration
-nix develop --command zig build test-robustness
+devenv shell zig build -Doptimize=ReleaseFast
+devenv shell zig build test-integration
+devenv shell zig build test-robustness
 ```
 
 For runtime, graphics, screenshot, or benchmark failures, load the matching project skill:

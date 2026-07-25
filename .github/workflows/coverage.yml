@@ -23,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Setup Zig cache
         uses: ./.github/actions/setup-zig-cache
@@ -38,7 +38,7 @@ jobs:
           # kcov currently provides the stable line-coverage signal for Zig tests;
           # branch coverage and required thresholds are deferred until a baseline exists.
           set +e
-          nix develop .#ci-unit --command kcov \
+          devenv shell --profile unit -- kcov \
             --include-path=src,modules,libs \
             --exclude-path=.zig-cache,zig-cache,assets,docs \
             coverage/kcov \
@@ -47,7 +47,7 @@ jobs:
           set -e
           if [ "$kcov_status" -ne 0 ]; then
             echo "::warning::kcov exited with status $kcov_status; rerunning tests without instrumentation to distinguish coverage tooling failures from test failures"
-            nix develop .#ci-unit --command zig build test
+            devenv shell --profile unit -- zig build test
           fi
 
       - name: Upload coverage artifact

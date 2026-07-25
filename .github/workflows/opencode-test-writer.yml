@@ -75,9 +75,9 @@ jobs:
           BASE_BRANCH: ${{ steps.select-module.outputs.base_branch }}
         run: bash scripts/verify_pat_push_permissions.sh
 
-      - name: Setup Nix
+      - name: Setup devenv
         if: steps.check-existing.outputs.skip != 'true'
-        uses: ./.github/actions/setup-nix
+        uses: ./.github/actions/setup-devenv
 
       - name: Load test writer prompt
         if: steps.check-existing.outputs.skip != 'true'

@@ -431,7 +431,7 @@ fn slotOrMissing(slot: ?usize) i32 {
 fn ensureShaderFileExists(path: []const u8) !void {
     fs.cwd().access(path, .{}) catch |err| {
         log.log.errWithTrace("Mesh shader artifact missing: {s} ({})", .{ path, err });
-        log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
+        log.log.err("Run `devenv shell zig build` to regenerate Vulkan SPIR-V shaders.", .{});
         return err;
     };
 }

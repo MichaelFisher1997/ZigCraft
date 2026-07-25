@@ -8,5 +8,5 @@ Known limitations:
 
 - Windows is manual build-only until SDL/Vulkan library discovery and a stable headless Vulkan smoke path are available on GitHub-hosted Windows runners.
 - macOS uses MoltenVK plus the Vulkan loader and is manual build-only until a repeatable headless smoke test is defined for GitHub-hosted macOS runners.
-- Optional ImGui linkage remains covered by Linux/Nix CI; non-Linux build-only legs disable it until cimgui package availability is standardized there.
+- Optional ImGui linkage remains covered by Linux CI; non-Linux build-only legs disable it until cimgui package availability is standardized there.
 - Linux/Lavapipe remains the required correctness signal for tests and validation logs.

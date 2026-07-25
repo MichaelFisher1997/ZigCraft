@@ -43,8 +43,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Scan working tree for secrets
         if: github.event_name != 'schedule'
@@ -60,11 +60,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
-      - name: Record flake dependency graph
-        run: nix flake show --json > nix-flake-show.json
+      - name: Record devenv configuration snapshot
+        run: cp devenv.lock devenv-configuration.json
 
       - name: Scan filesystem
         run: |
@@ -73,11 +73,11 @@ jobs:
         env:
           TRIVY_CACHE_DIR: /tmp/trivy-cache
 
-      - name: Upload flake dependency graph
+      - name: Upload devenv configuration snapshot
         uses: actions/upload-artifact@v7
         with:
-          name: nix-flake-show
-          path: nix-flake-show.json
+          name: devenv-configuration
+          path: devenv-configuration.json
           retention-days: 7
 
   sbom:

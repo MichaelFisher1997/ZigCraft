@@ -11,7 +11,7 @@ The tracked `golden/menu.png` is known to be black and is therefore intentionall
 Capture a candidate through the same path used by CI. Inspect it visually and confirm it is non-black before promoting it:
 
 ```bash
-nix develop .#ci-graphics --command zig build run -Dskip-present=true -Dscreenshot-path=screenshots/menu-candidate.png
+devenv shell --profile graphics -- zig build run -Dskip-present=true -Dscreenshot-path=screenshots/menu-candidate.png
 magick screenshots/menu-candidate.png -colorspace RGB -format '%[fx:mean]\n' info:
 ```
 

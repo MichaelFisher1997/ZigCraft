@@ -23,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Setup Zig cache
         uses: ./.github/actions/setup-zig-cache
@@ -37,7 +37,7 @@ jobs:
           name: Sanitizer Unit Test (${{ matrix.optimize }})
           timeout: 35m
           log-file: sanitize-${{ matrix.optimize }}.log
-          command: nix develop .#ci-unit --command zig build -Dsanitize=address -Doptimize=${{ matrix.optimize }} test
+          command: devenv shell --profile unit -- zig build -Dsanitize=address -Doptimize=${{ matrix.optimize }} test
 
       - name: Upload sanitizer log
         if: failure()

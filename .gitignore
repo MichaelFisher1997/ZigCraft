@@ -8,6 +8,8 @@ result
 node_modules/
 __pycache__/
 .direnv/
+.devenv/
+.devenv.flake.nix
 *-profile*
 test_output.txt
 benchmark_results*.json

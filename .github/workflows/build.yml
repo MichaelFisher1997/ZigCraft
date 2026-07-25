@@ -12,9 +12,10 @@ on:
       - "docs/benchmarks/**"
       - "build.zig"
       - "build.zig.zon"
-      - "flake.nix"
-      - "flake.lock"
-      - ".github/actions/setup-nix/**"
+      - "devenv.nix"
+      - "devenv.yaml"
+      - "devenv.lock"
+      - ".github/actions/setup-devenv/**"
       - ".github/actions/setup-zig-cache/**"
       - ".github/actions/setup-lavapipe/**"
       - ".github/vulkan/**"
@@ -31,9 +32,10 @@ on:
       - "docs/benchmarks/**"
       - "build.zig"
       - "build.zig.zon"
-      - "flake.nix"
-      - "flake.lock"
-      - ".github/actions/setup-nix/**"
+      - "devenv.nix"
+      - "devenv.yaml"
+      - "devenv.lock"
+      - ".github/actions/setup-devenv/**"
       - ".github/actions/setup-zig-cache/**"
       - ".github/actions/setup-lavapipe/**"
       - ".github/vulkan/**"
@@ -88,9 +90,10 @@ jobs:
               - 'docs/benchmarks/**'
               - 'build.zig'
               - 'build.zig.zon'
-              - 'flake.nix'
-              - 'flake.lock'
-              - '.github/actions/setup-nix/**'
+              - 'devenv.nix'
+              - 'devenv.yaml'
+              - 'devenv.lock'
+              - '.github/actions/setup-devenv/**'
               - '.github/actions/setup-zig-cache/**'
               - '.github/actions/setup-lavapipe/**'
               - '.github/vulkan/**'
@@ -112,11 +115,11 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Check Zig formatting
-        run: nix develop .#ci-unit --command zig fmt --check src/ modules/
+        run: devenv shell --profile unit -- zig fmt --check src/ modules/
 
   build:
     permissions:
@@ -135,26 +138,26 @@ jobs:
         run: |
           echo "No build-relevant changes detected. Skipping binary build."
 
-      - name: Setup Nix
+      - name: Setup devenv
         if: needs.changes.outputs.code_changes == 'true'
-        uses: ./.github/actions/setup-nix
+        uses: ./.github/actions/setup-devenv
 
       - name: Build
         if: needs.changes.outputs.code_changes == 'true'
-        run: nix build -L
+        run: devenv shell --profile unit -- devenv tasks run zigcraft:build
 
       - name: Prepare Artifact
         if: needs.changes.outputs.code_changes == 'true'
         run: |
           mkdir -p dist
-          cp -L result/bin/zigcraft dist/zigcraft-linux
+          cp -L dist/bin/zigcraft dist/zigcraft-linux
 
       - name: Upload Artifact
         if: needs.changes.outputs.code_changes == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: zigcraft
-          path: dist/
+          path: dist/zigcraft-linux
           retention-days: 7
 
   unit-test-matrix:
@@ -178,9 +181,9 @@ jobs:
         run: |
           echo "No build-relevant changes detected. Skipping unit tests."
 
-      - name: Setup Nix
+      - name: Setup devenv
         if: needs.changes.outputs.code_changes == 'true'
-        uses: ./.github/actions/setup-nix
+        uses: ./.github/actions/setup-devenv
 
       - name: Setup Zig cache
         if: needs.changes.outputs.code_changes == 'true'
@@ -195,15 +198,15 @@ jobs:
           name: Unit Test (${{ matrix.optimize }})
           timeout: 25m
           log-file: unit-test-${{ matrix.optimize }}.log
-          command: nix develop .#ci-unit --command zig build -Doptimize=${{ matrix.optimize }} test
+          command: devenv shell --profile unit -- zig build -Doptimize=${{ matrix.optimize }} test
 
       - name: Run Phase 5 compact LOD gate
         if: needs.changes.outputs.code_changes == 'true' && matrix.optimize == 'Debug'
-        run: nix develop .#ci-unit --command zig build phase5-gate
+        run: devenv shell --profile unit -- zig build phase5-gate
 
       - name: Run bounded Phase 5 streaming stress gate
         if: needs.changes.outputs.code_changes == 'true' && matrix.optimize == 'Debug'
-        run: nix develop .#ci-unit --command zig build phase5-stress-gate -Dphase5-stress-iterations=64
+        run: devenv shell --profile unit -- zig build phase5-stress-gate -Dphase5-stress-iterations=64
 
       - name: Upload unit test log
         if: failure()
@@ -247,9 +250,9 @@ jobs:
         run: |
           echo "No build-relevant changes detected. Skipping integration tests."
 
-      - name: Setup Nix
+      - name: Setup devenv
         if: needs.changes.outputs.code_changes == 'true'
-        uses: ./.github/actions/setup-nix
+        uses: ./.github/actions/setup-devenv
 
       - name: Setup Zig cache
         if: needs.changes.outputs.code_changes == 'true'
@@ -272,7 +275,7 @@ jobs:
           name: Integration Test
           timeout: 25m
           log-file: integration-test.log
-          command: nix develop .#ci-graphics --command zig build test-integration -Dskip-present=true
+          command: devenv shell --profile graphics -- zig build test-integration -Dskip-present=true
 
       - name: Run world load smoke test (headless)
         if: needs.changes.outputs.code_changes == 'true'
@@ -281,7 +284,7 @@ jobs:
           name: World Smoke Test
           timeout: 15m
           log-file: world-smoke-test.log
-          command: nix develop .#ci-graphics --command zig build run -Dsmoke-test=true -Dskip-present=true
+          command: devenv shell --profile graphics -- zig build run -Dsmoke-test=true -Dskip-present=true
         env:
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless
@@ -295,7 +298,7 @@ jobs:
           name: Phase 5 Visual Motion and Saved-World Reload Gate
           timeout: 35m
           log-file: phase5-visual-gate.log
-          command: nix develop .#ci-graphics --command zig build phase5-visual-gate
+          command: devenv shell --profile graphics -- zig build phase5-visual-gate
         env:
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless

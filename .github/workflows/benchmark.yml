@@ -78,9 +78,9 @@ jobs:
         run: |
           printf 'Skipping benchmark: no benchmark-relevant paths changed and run-benchmark label is absent.\n'
 
-      - name: Setup Nix
+      - name: Setup devenv
         if: steps.gate.outputs.run == 'true'
-        uses: ./.github/actions/setup-nix
+        uses: ./.github/actions/setup-devenv
 
       - name: Setup Zig cache
         if: steps.gate.outputs.run == 'true'
@@ -104,7 +104,7 @@ jobs:
           name: Benchmark
           timeout: ${{ github.event_name == 'schedule' && '55m' || github.event_name == 'workflow_dispatch' && '55m' || '20m' }}
           log-file: benchmark.log
-          command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --scenarios stationary,traversal,rapid-turn,teleport-eviction --compact-modes off,auto --benchmark-world overworld --output-dir benchmark-results --per-preset-timeout 600
+          command: mkdir -p "$MESA_SHADER_CACHE_DIR" && devenv shell --profile graphics -- bash scripts/run_benchmark.sh --duration "$BENCHMARK_DURATION" --presets low,medium,high --scenarios stationary,traversal,rapid-turn,teleport-eviction --compact-modes off,auto --benchmark-world overworld --output-dir benchmark-results --per-preset-timeout 600
         env:
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless
@@ -115,9 +115,9 @@ jobs:
           # captures are longer acceptance evidence, not synthetic fixtures.
           BENCHMARK_DURATION: ${{ github.event_name == 'schedule' && '60' || github.event_name == 'workflow_dispatch' && github.event.inputs.duration || '5' }}
           ZIGCRAFT_BENCHMARK_GPU_ADAPTER: Lavapipe (Mesa software Vulkan)
-          ZIGCRAFT_BENCHMARK_GPU_DRIVER: Mesa Lavapipe supplied by the pinned Nix environment
+          ZIGCRAFT_BENCHMARK_GPU_DRIVER: Mesa Lavapipe supplied by the pinned devenv profile
           ZIGCRAFT_BENCHMARK_RUNNER: blacksmith-2vcpu-ubuntu-2404 GitHub Actions runner
-          ZIGCRAFT_BENCHMARK_ZIG_TOOLCHAIN: Zig 0.16.0 supplied by the pinned Nix flake
+          ZIGCRAFT_BENCHMARK_ZIG_TOOLCHAIN: Zig 0.16.0 supplied by the pinned devenv inputs
 
       - name: Run Phase 5 long-session streaming stress gate
         if: steps.gate.outputs.run == 'true'
@@ -126,7 +126,7 @@ jobs:
           name: Phase 5 Streaming Stress
           timeout: 15m
           log-file: phase5-streaming-stress.log
-          command: nix develop .#ci-unit --command zig build phase5-stress-gate -Dphase5-stress-iterations="$PHASE5_STRESS_ITERATIONS"
+          command: devenv shell --profile unit -- zig build phase5-stress-gate -Dphase5-stress-iterations="$PHASE5_STRESS_ITERATIONS"
         env:
           # The scheduled run is longer by operation count, never by a flaky
           # elapsed-time threshold. PR feedback stays bounded.
@@ -145,7 +145,7 @@ jobs:
           name: GPU Culling Baseline Sources
           timeout: 32m
           log-file: gpu-culling-benchmark.log
-          command: mkdir -p "$MESA_SHADER_CACHE_DIR" && nix develop .#ci-graphics --command bash -c 'scripts/run_benchmark.sh --duration 60 --presets extreme --scenarios traversal --compact-modes auto --gpu-culling off --gpu-culling-threshold 128 --benchmark-fixture gpu-culling-scale --benchmark-horizon-distance 4096 --benchmark-lod-memory-budget-mb 2048 --benchmark-require-gpu-candidates 1024 --benchmark-world flat --output-dir gpu-culling-results/cpu --per-preset-timeout 900 && scripts/run_benchmark.sh --duration 60 --presets extreme --scenarios traversal --compact-modes auto --gpu-culling on --gpu-culling-threshold 128 --benchmark-fixture gpu-culling-scale --benchmark-horizon-distance 4096 --benchmark-lod-memory-budget-mb 2048 --benchmark-require-gpu-candidates 1024 --benchmark-world flat --output-dir gpu-culling-results/gpu --per-preset-timeout 900'
+          command: mkdir -p "$MESA_SHADER_CACHE_DIR" && devenv shell --profile graphics -- bash -c 'scripts/run_benchmark.sh --duration 60 --presets extreme --scenarios traversal --compact-modes auto --gpu-culling off --gpu-culling-threshold 128 --benchmark-fixture gpu-culling-scale --benchmark-horizon-distance 4096 --benchmark-lod-memory-budget-mb 2048 --benchmark-require-gpu-candidates 1024 --benchmark-world flat --output-dir gpu-culling-results/cpu --per-preset-timeout 900 && scripts/run_benchmark.sh --duration 60 --presets extreme --scenarios traversal --compact-modes auto --gpu-culling on --gpu-culling-threshold 128 --benchmark-fixture gpu-culling-scale --benchmark-horizon-distance 4096 --benchmark-lod-memory-budget-mb 2048 --benchmark-require-gpu-candidates 1024 --benchmark-world flat --output-dir gpu-culling-results/gpu --per-preset-timeout 900'
         env:
           XDG_RUNTIME_DIR: /tmp/runtime-runner
           WAYLAND_DISPLAY: headless
@@ -153,9 +153,9 @@ jobs:
           SDL_AUDIODRIVER: dummy
           ZIGCRAFT_SAFE_MODE: "1"
           ZIGCRAFT_BENCHMARK_GPU_ADAPTER: Lavapipe (Mesa software Vulkan)
-          ZIGCRAFT_BENCHMARK_GPU_DRIVER: Mesa Lavapipe supplied by the pinned Nix environment
+          ZIGCRAFT_BENCHMARK_GPU_DRIVER: Mesa Lavapipe supplied by the pinned devenv profile
           ZIGCRAFT_BENCHMARK_RUNNER: blacksmith-2vcpu-ubuntu-2404 GitHub Actions runner
-          ZIGCRAFT_BENCHMARK_ZIG_TOOLCHAIN: Zig 0.16.0 supplied by the pinned Nix flake
+          ZIGCRAFT_BENCHMARK_ZIG_TOOLCHAIN: Zig 0.16.0 supplied by the pinned devenv inputs
 
       - name: Validate fresh CPU-vs-GPU culling pair
         if: steps.gate.outputs.run == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.capture_gpu_culling == 'true'))

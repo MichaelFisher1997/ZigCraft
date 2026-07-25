@@ -8,8 +8,9 @@ on:
       - ".github/actions/**"
       - "scripts/*.sh"
       - ".shellcheckrc"
-      - "flake.nix"
-      - "flake.lock"
+      - "devenv.nix"
+      - "devenv.yaml"
+      - "devenv.lock"
   pull_request:
     branches: [dev]
     paths:
@@ -17,8 +18,9 @@ on:
       - ".github/actions/**"
       - "scripts/*.sh"
       - ".shellcheckrc"
-      - "flake.nix"
-      - "flake.lock"
+      - "devenv.nix"
+      - "devenv.yaml"
+      - "devenv.lock"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -44,8 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Parse workflow YAML
         run: |
@@ -56,10 +58,10 @@ jobs:
           ruby -e 'require "yaml"; Dir[".github/actions/**/action.{yml,yaml}"].sort.each { |f| YAML.load_file(f); puts "OK #{f}" }'
 
       - name: Check shell script syntax
-        run: nix develop .#ci-unit --command bash -n scripts/*.sh
+        run: devenv shell --profile unit -- bash -n scripts/*.sh
 
       - name: Run ShellCheck
-        run: nix develop .#ci-unit --command shellcheck scripts/*.sh
+        run: devenv shell --profile unit -- shellcheck scripts/*.sh
 
-      - name: Check Nix flake metadata
-        run: nix flake check --no-build
+      - name: Validate devenv configuration
+        run: devenv info >/dev/null

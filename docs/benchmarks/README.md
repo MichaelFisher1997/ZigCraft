@@ -69,7 +69,7 @@ The checked canary and acceptance baselines were captured on:
 - Runner label: `local NixOS x86_64`
 - GPU: `AMD Radeon RX 5700 XT`
 - Graphics driver: Mesa RADV 25.2.6
-- Zig version: `0.16.0`, provided by the Nix flake
+- Zig version: `0.16.0`, provided by the devenv profile
 - Build mode: `ReleaseFast`
 - Presets: `low`, `medium`, `high`
 - `baseline.json`: 5 sampled seconds per row after readiness
@@ -284,7 +284,7 @@ present in the artifact rather than being hidden.
 Run the lightweight policy gate with:
 
 ```bash
-nix develop --command zig build phase5-gate
+devenv shell zig build phase5-gate
 ```
 
 It verifies that the build accepts exactly the four scenarios above (and rejects
@@ -310,7 +310,7 @@ override its broad health thresholds only for diagnosed platform differences wit
 Run only this slower graphics check with:
 
 ```bash
-nix develop --command zig build phase5-visual-gate
+devenv shell zig build phase5-visual-gate
 ```
 
 ## Automated motion captures
