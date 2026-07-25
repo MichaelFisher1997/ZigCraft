@@ -7,7 +7,7 @@ Pull requests run `zig build test` in both `Debug` and `ReleaseSafe` through the
 Run locally:
 
 ```bash
-nix develop --command zig build -Doptimize=ReleaseSafe test
+devenv shell zig build -Doptimize=ReleaseSafe test
 ```
 
 ## Coverage
@@ -17,7 +17,7 @@ The `Coverage` workflow runs kcov against the unit suite, uploads the generated 
 Run locally:
 
 ```bash
-nix develop .#ci-unit --command kcov \
+devenv shell --profile unit -- kcov \
   --include-path=src,modules,libs \
   --exclude-path=.zig-cache,zig-cache,assets,docs \
   coverage/kcov \
@@ -31,7 +31,7 @@ kcov reports line coverage only; branch coverage is not available from this setu
 The `Sanitize` workflow runs nightly and on `workflow_dispatch` with:
 
 ```bash
-nix develop --command zig build -Dsanitize=address test
+devenv shell zig build -Dsanitize=address test
 ```
 
 The project is pinned to Zig 0.16.0. That compiler exposes `-fsanitize-c` and `-fsanitize-thread`, but not an LLVM AddressSanitizer build flag through `std.Build`. The repository keeps `-Dsanitize=address` as the CI entrypoint requested by the audit, and currently maps it to Zig's full C undefined-behavior sanitizer support. Failures fail the scheduled workflow check and should be triaged from the uploaded log artifact.

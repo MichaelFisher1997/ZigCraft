@@ -19,7 +19,9 @@ Thank you for your interest in contributing to ZigCraft! This is primarily a sol
 ## Quick Start
 
 ### Prerequisites
-- Nix package manager (installed via [NixOS](https://nixos.org/) or [Determinate Nix Installer](https://github.com/DeterminateSystems/nix-installer))
+- Nix package manager (installed via [NixOS](https://nixos.org/) or [Determinate Nix Installer](https://github.com/DeterminateSystems/nix-installer)) — required by devenv
+- [devenv](https://devenv.sh/getting-started/) (`nix profile add nixpkgs#devenv`)
+- [direnv](https://direnv.net/) (optional; auto-activates the shell on `cd`)
 - Git
 
 ### First-Time Setup
@@ -29,7 +31,7 @@ git clone https://github.com/OpenStaticFish/ZigCraft.git
 cd ZigCraft
 
 # Enter dev environment
-nix develop
+devenv shell
 
 # Build and run tests
 zig build test
@@ -39,18 +41,18 @@ zig build test
 
 ## Development Environment
 
-The project uses Nix for reproducible builds. All commands must be run with `nix develop --command`.
+The project uses devenv (Nix-based) for reproducible builds. All commands must be run with `devenv shell`.
 
 ### Build & Run
 ```bash
 # Build
-nix develop --command zig build
+devenv shell zig build
 
 # Run
-nix develop --command zig build run
+devenv shell zig build run
 
 # Release build (optimized)
-nix develop --command zig build -Doptimize=ReleaseFast
+devenv shell zig build -Doptimize=ReleaseFast
 
 # Clean build artifacts
 rm -rf zig-out/ .zig-cache/
@@ -59,22 +61,22 @@ rm -rf zig-out/ .zig-cache/
 ### Testing
 ```bash
 # Run all unit tests (also validates Vulkan shaders)
-nix develop --command zig build test
+devenv shell zig build test
 
 # Run a specific test
-nix develop --command zig build test -- --test-filter "Vec3 addition"
+devenv shell zig build test -- --test-filter "Vec3 addition"
 
 # Integration test (window init smoke test)
-nix develop --command zig build test-integration
+devenv shell zig build test-integration
 ```
 
 ### Linting & Formatting
 ```bash
 # Format code
-nix develop --command zig fmt src/
+devenv shell zig fmt src/
 
 # Fast type-check (no full compilation)
-nix develop --command zig build check
+devenv shell zig build check
 ```
 
 ### Asset Processing
@@ -142,10 +144,10 @@ Follow the coding conventions in [Code Style](#code-style) below. The [AGENTS.md
 
 ```bash
 # Format your code before committing
-nix develop --command zig fmt src/
+devenv shell zig fmt src/
 
 # Run tests
-nix develop --command zig build test
+devenv shell zig build test
 ```
 
 ### 3. Commit Changes
@@ -266,10 +268,10 @@ For full coding guidelines, see [AGENTS.md](AGENTS.md) (internal AI agent refere
 ### Before Committing
 ```bash
 # Format code
-nix develop --command zig fmt src/
+devenv shell zig fmt src/
 
 # Run all tests
-nix develop --command zig build test
+devenv shell zig build test
 ```
 
 ### Test Coverage

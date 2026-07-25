@@ -11,7 +11,7 @@ ZigCraft uses three deliberately separate UI layers:
 
 ## Dependency boundary
 
-RmlUi 6.2 is pinned in `flake.nix`. `libs/rmlui_bridge` contains the only C++
+RmlUi 6.2 is pinned in `devenv.nix`. `libs/rmlui_bridge` contains the only C++
 integration code and exposes a narrow C ABI to Zig. Feature-off builds do not
 link the bridge or allocate the retained-geometry Vulkan buffers and pipelines.
 
@@ -62,4 +62,4 @@ HiDPI, clean document teardown, and visual regression captures at 1280x720,
 The tracked menu golden is invalid because it is black. The comparison script
 now rejects black inputs. A new golden must not be promoted until the headless
 capture visibly contains the final player UI and is deterministic under the
-`ci-graphics` Nix shell.
+`graphics` devenv profile.

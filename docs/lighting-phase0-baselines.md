@@ -34,7 +34,7 @@ captures outside either bound fail parity review.
 Record the pre-rewrite high-preset benchmark with:
 
 ```bash
-nix develop --command zig build benchmark -Doptimize=ReleaseFast \
+devenv shell zig build benchmark -Doptimize=ReleaseFast \
   -Dbenchmark-preset=high -Dbenchmark-duration=60 \
   -Dbenchmark-output=lighting-phase0-high.json
 ```

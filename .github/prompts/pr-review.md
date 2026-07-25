@@ -5,19 +5,19 @@ Use `gh pr diff $PR_NUMBER` and `gh pr view $PR_NUMBER` to examine the changes.
 
 Give full review coverage to PRs created by the automated test writer, especially PRs labeled `automated-test`, and verify whether any linked issues are fully addressed.
 
-ZigCraft is a high-performance Minecraft-style voxel engine built with Zig, SDL3, and Vulkan. It uses Nix for dependency management, a custom RHI (Render Hardware Interface) abstraction layer, and a multithreaded job system for world generation and meshing.
+ZigCraft is a high-performance Minecraft-style voxel engine built with Zig, SDL3, and Vulkan. It uses devenv for dependency management, a custom RHI (Render Hardware Interface) abstraction layer, and a multithreaded job system for world generation and meshing.
 
 **Tech Stack:**
 - Zig 0.16+ with strict memory management (explicit allocators, defer/errdefer)
 - SDL3 for windowing and input
 - Vulkan for rendering (only backend, via RHI abstraction)
-- Nix for reproducible builds (`nix develop --command zig build`)
+- devenv for reproducible builds (`devenv shell zig build`)
 - GLSL shaders validated via glslangValidator
 
 **Build Commands:**
-- `nix develop --command zig build test` - Unit tests + shader validation
-- `nix develop --command zig build test -- --test-filter "test name"` - Single test
-- `nix develop --command zig fmt src/` - Format code
+- `devenv shell zig build test` - Unit tests + shader validation
+- `devenv shell zig build test -- --test-filter "test name"` - Single test
+- `devenv shell zig fmt src/` - Format code
 
 **Prioritize review attention on:**
 - RHI/Vulkan correctness (buffer/texture handles, pipeline state, synchronization)

@@ -34,9 +34,9 @@ Also read existing nearby `*_tests.zig` files and the owning module `root.zig`/t
 
 Do not commit if any of these are true:
 
-1. `nix develop --command zig build test` fails.
+1. `devenv shell zig build test` fails.
 2. The new test file is not actually discovered by `zig build test`.
-3. A newly added test cannot be run by name with `nix develop --command zig build test -- --test-filter "<new test name>"`.
+3. A newly added test cannot be run by name with `devenv shell zig build test -- --test-filter "<new test name>"`.
 4. Any test depends on a real GPU, real Vulkan device, SDL window, display server, network, wall-clock timing, or nondeterministic scheduler behavior.
 5. Any test calls Vulkan destroy/create/submit functions with null or fake handles unless the production function guarantees it returns before the Vulkan call.
 6. The tests require modifying production code only to make private implementation details public.
@@ -121,12 +121,12 @@ If review would reasonably return `MERGE WITH FIXES` or `DO NOT MERGE`, fix the 
 
 ## VERIFICATION COMMANDS
 
-Run all commands through Nix.
+Run all commands through devenv.
 
-1. Format: `nix develop --command zig fmt src/ modules/`
-2. Run all unit tests: `nix develop --command zig build test`
-3. Run at least one newly added test by exact or narrow filter: `nix develop --command zig build test -- --test-filter "<new test name>"`
-4. For tests touching game, graphics, windowing-adjacent, or runtime initialization code, also run: `nix develop --command zig build test-integration`
+1. Format: `devenv shell zig fmt src/ modules/`
+2. Run all unit tests: `devenv shell zig build test`
+3. Run at least one newly added test by exact or narrow filter: `devenv shell zig build test -- --test-filter "<new test name>"`
+4. For tests touching game, graphics, windowing-adjacent, or runtime initialization code, also run: `devenv shell zig build test-integration`
 
 If `test-integration` is not feasible in the GitHub Action environment, do not guess. State the exact reason in the final message, but still require `zig build test` and the filtered test to pass before commit.
 

@@ -9,7 +9,7 @@ You run repeatable ZigCraft performance benchmarks without showing a window or s
 
 ## Hard Rules
 
-- Always wrap commands in `nix develop --command`.
+- Always wrap commands in `devenv shell`.
 - Always set a Bash tool timeout longer than the benchmark duration. Never run benchmarks without a timeout.
 - Use `zig build benchmark`; it is configured for offscreen graphics rendering and skip-present behavior.
 - Use `-Dbenchmark-preset=<preset>` when comparing graphics presets. Valid presets are `low`, `medium`, `high`, `ultra`, and `extreme`.
@@ -21,7 +21,7 @@ You run repeatable ZigCraft performance benchmarks without showing a window or s
 Short smoke benchmark:
 
 ```bash
-nix develop --command zig build benchmark -Dbenchmark-duration=5 -Dbenchmark-output=zig-out/benchmark-smoke.json
+devenv shell zig build benchmark -Dbenchmark-duration=5 -Dbenchmark-output=zig-out/benchmark-smoke.json
 ```
 
 Recommended Bash timeout: `60000` ms.
@@ -29,7 +29,7 @@ Recommended Bash timeout: `60000` ms.
 Standard benchmark:
 
 ```bash
-nix develop --command zig build benchmark -Dbenchmark-preset=medium -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-medium.json
+devenv shell zig build benchmark -Dbenchmark-preset=medium -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-medium.json
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -37,7 +37,7 @@ Recommended Bash timeout: `120000` ms.
 Low preset benchmark:
 
 ```bash
-nix develop --command zig build benchmark -Dbenchmark-preset=low -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-low.json
+devenv shell zig build benchmark -Dbenchmark-preset=low -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-low.json
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -45,7 +45,7 @@ Recommended Bash timeout: `120000` ms.
 High preset benchmark:
 
 ```bash
-nix develop --command zig build benchmark -Dbenchmark-preset=high -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-high.json
+devenv shell zig build benchmark -Dbenchmark-preset=high -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-high.json
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -53,7 +53,7 @@ Recommended Bash timeout: `120000` ms.
 Release-style benchmark build:
 
 ```bash
-nix develop --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=high -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-high-release.json
+devenv shell zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=high -Dbenchmark-duration=60 -Dbenchmark-output=benchmark-high-release.json
 ```
 
 Recommended Bash timeout: `180000` ms.

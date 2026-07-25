@@ -2,31 +2,31 @@
 
 ## Toolchain and commands
 
-- Use Zig 0.16.0 through Nix. Wrap every Zig build/test/format command in `nix develop --command`; CI uses the narrower `.#ci-unit` and `.#ci-graphics` shells.
+- Use Zig 0.16.0 through devenv. Wrap every Zig build/test/format command in `devenv shell`; CI uses the narrower `--profile unit` and `--profile graphics` profiles.
 - Build/run:
   ```bash
-  nix develop --command zig build
-  nix develop --command zig build run
-  nix develop --command zig build -Doptimize=ReleaseFast
+  devenv shell zig build
+  devenv shell zig build run
+  devenv shell zig build -Doptimize=ReleaseFast
   ```
 - Format all Zig code, not only `src/` (the local hook is less strict than CI):
   ```bash
-  nix develop --command zig fmt src/ modules/
-  nix develop --command zig fmt --check src/ modules/
+  devenv shell zig fmt src/ modules/
+  devenv shell zig fmt --check src/ modules/
   ```
 - `zig build test` is the broad suite: aggregate/module tests, fuzz roots, shader compilation/validation, SPIR-V size checks, shadow ABI checks, and Phase 5 policy tests.
   ```bash
-  nix develop --command zig build test
-  nix develop --command zig build test -Dtest-filter="name"
+  devenv shell zig build test
+  devenv shell zig build test -Dtest-filter="name"
   # Equivalent runtime-filter form:
-  nix develop --command zig build test -- --test-filter "name"
+  devenv shell zig build test -- --test-filter "name"
   ```
 - Graphics/runtime verification is separate:
   ```bash
-  nix develop --command zig build test-integration -Dskip-present=true
-  nix develop --command zig build test-robustness
-  nix develop --command zig build phase5-gate
-  nix develop --command zig build phase5-visual-gate
+  devenv shell zig build test-integration -Dskip-present=true
+  devenv shell zig build test-robustness
+  devenv shell zig build phase5-gate
+  devenv shell zig build phase5-visual-gate
   ```
 - `-Dskip-present=true` only suppresses presentation; SDL/Vulkan initialization still needs a display/compositor and driver. Use the repo skills `headless-crash-test`, `headless-screenshot`, `headless-benchmark`, or `headless-graphics-verification`, and always bound game/graphics commands with a timeout.
 - For deterministic startup checks, combine `-Dskip-present`, `-Dauto-world=<normal|overworld|overworld-v2|flat|test>`, and `-Dstartup-diagnostic-seconds=N`. `-Dchunk-debug-mode` disables LOD, water, caves, and decorations; selectively restore `lod,water,watergen,waterrender,caves,decorations` with `-Dchunk-debug-enable=`.
@@ -35,12 +35,12 @@
 
 - The benchmark harness is a separate build step; do not pass benchmark presets to ordinary `run` and assume benchmarking is active:
   ```bash
-  nix develop --command zig build benchmark -Doptimize=ReleaseFast \
+  devenv shell zig build benchmark -Doptimize=ReleaseFast \
     -Dbenchmark-preset=low -Dbenchmark-scenario=traversal \
     -Dbenchmark-duration=60 -Dbenchmark-output=zig-out/benchmark-low.json
   ```
   Scenarios are `stationary`, `traversal`, `rapid-turn`, and `teleport-eviction`. Prefer the `headless-benchmark` skill for bounded runs.
-- Focused CPU-only tools: `nix develop --command zig build worldgen-report` and `nix develop --command zig build lod-bench`. Pass climate snapshot arguments after `--`, e.g. `nix develop --command zig build worldgen-climate-snapshot -- --seed 42 ...`.
+- Focused CPU-only tools: `devenv shell zig build worldgen-report` and `devenv shell zig build lod-bench`. Pass climate snapshot arguments after `--`, e.g. `devenv shell zig build worldgen-climate-snapshot -- --seed 42 ...`.
 - Building/tests compile GLSL and write tracked `*.spv` files beside sources in `assets/shaders/vulkan/`. After intentional shader-size changes, run `./scripts/update_spirv_baseline.sh`; `docs/shaders/spirv-sizes.json` and shadow runtime SPIR-V parity are test-enforced.
 - New/changed textures go through `./scripts/process_textures.sh <pack> 512`; preserve licensing/attribution for placeholder assets.
 

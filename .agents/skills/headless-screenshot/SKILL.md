@@ -9,7 +9,7 @@ You capture visual output from ZigCraft without opening a visible game window.
 
 ## Hard Rules
 
-- Always wrap commands in `nix develop --command`.
+- Always wrap commands in `devenv shell`.
 - Always set a Bash tool timeout. Screenshot commands can hang if rendering or world loading stalls.
 - Always include `-Dskip-present` unless the user explicitly requests a visible capture.
 - Use deterministic launch flags where possible (`-Dauto-world=normal`, `-Dshadow-test-scene`, or other existing scenario flags).
@@ -20,7 +20,7 @@ You capture visual output from ZigCraft without opening a visible game window.
 General world screenshot:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dauto-world=normal -Dscreenshot-path=screenshots/headless-capture.png -Dscreenshot-frame=120
+devenv shell zig build run -Dskip-present -Dauto-world=normal -Dscreenshot-path=screenshots/headless-capture.png -Dscreenshot-frame=120
 ```
 
 Recommended Bash timeout: `90000` ms.
@@ -28,7 +28,7 @@ Recommended Bash timeout: `90000` ms.
 Delayed capture after world load:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dauto-world=normal -Dscreenshot-path=screenshots/headless-capture.png -Dscreenshot-frame=180 -Dscreenshot-delay-seconds=3
+devenv shell zig build run -Dskip-present -Dauto-world=normal -Dscreenshot-path=screenshots/headless-capture.png -Dscreenshot-frame=180 -Dscreenshot-delay-seconds=3
 ```
 
 Recommended Bash timeout: `120000` ms.
@@ -36,7 +36,7 @@ Recommended Bash timeout: `120000` ms.
 Shadow test scene capture:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dshadow-test-scene -Dscreenshot-path=screenshots/shadow-test.png -Dscreenshot-frame=180
+devenv shell zig build run -Dskip-present -Dshadow-test-scene -Dscreenshot-path=screenshots/shadow-test.png -Dscreenshot-frame=180
 ```
 
 Recommended Bash timeout: `120000` ms.

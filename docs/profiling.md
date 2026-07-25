@@ -5,7 +5,7 @@
 The current capture command is:
 
 ```bash
-nix develop .#ci-graphics --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=medium -Dbenchmark-duration=10 -Dbenchmark-output=profiling-artifacts/fixed-world-profile.json
+devenv shell --profile graphics -- zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=medium -Dbenchmark-duration=10 -Dbenchmark-output=profiling-artifacts/fixed-world-profile.json
 ```
 
 Artifacts are uploaded as `profiling-artifacts` and linked from the run summary:

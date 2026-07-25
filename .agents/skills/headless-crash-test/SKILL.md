@@ -9,7 +9,7 @@ You are validating ZigCraft runtime stability in the background without disrupti
 
 ## Hard Rules
 
-- Always wrap commands in `nix develop --command`.
+- Always wrap commands in `devenv shell`.
 - Always set a Bash tool timeout. Never run an open-ended game command without a timeout.
 - Prefer `-Dskip-present` for runtime checks. It keeps full offscreen graphics rendering active while hiding the SDL window and skipping presentation.
 - Do not use visible monitor-placement flags for crash testing unless the user explicitly asks for a visible window.
@@ -20,7 +20,7 @@ You are validating ZigCraft runtime stability in the background without disrupti
 Use this for a quick startup and world-load crash check:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dauto-world=normal -Dstartup-diagnostic-seconds=5
+devenv shell zig build run -Dskip-present -Dauto-world=normal -Dstartup-diagnostic-seconds=5
 ```
 
 Recommended Bash timeout: `30000` ms.
@@ -28,7 +28,7 @@ Recommended Bash timeout: `30000` ms.
 Use this for a longer stability check:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dauto-world=normal -Dstartup-diagnostic-seconds=30
+devenv shell zig build run -Dskip-present -Dauto-world=normal -Dstartup-diagnostic-seconds=30
 ```
 
 Recommended Bash timeout: `60000` ms.
@@ -36,7 +36,7 @@ Recommended Bash timeout: `60000` ms.
 Use this for the automated smoke mode:
 
 ```bash
-nix develop --command zig build run -Dskip-present -Dsmoke-test
+devenv shell zig build run -Dskip-present -Dsmoke-test
 ```
 
 Recommended Bash timeout: `60000` ms.
