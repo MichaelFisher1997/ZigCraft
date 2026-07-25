@@ -119,7 +119,7 @@ for preset in "${preset_list[@]}"; do
     if [[ -n "${IN_NIX_SHELL:-}" ]]; then
         env "${benchmark_env[@]}" timeout --preserve-status "${per_preset_timeout}s" "${benchmark_cmd[@]}"
     else
-        env "${benchmark_env[@]}" timeout --preserve-status "${per_preset_timeout}s" nix develop --command "${benchmark_cmd[@]}"
+        env "${benchmark_env[@]}" timeout --preserve-status "${per_preset_timeout}s" devenv shell --profile graphics -- "${benchmark_cmd[@]}"
     fi
     python3 "$(dirname "$0")/benchmark_baseline.py" validate-result "$output_file"
     python3 "$(dirname "$0")/benchmark_baseline.py" stamp-compact "$output_file" "$compact_mode"

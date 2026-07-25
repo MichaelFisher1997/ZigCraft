@@ -7,10 +7,10 @@ echo "To bypass these checks in an emergency, use: git push --no-verify"
 echo ""
 
 echo "[1/2] Checking formatting..."
-nix develop --command zig fmt --check src/
+devenv shell --profile unit -- zig fmt --check src/
 
 echo "[2/2] Running full test suite..."
-nix develop --command zig build test
+devenv shell --profile unit -- zig build test
 
 echo ""
 echo "=== All pre-push checks passed! ==="

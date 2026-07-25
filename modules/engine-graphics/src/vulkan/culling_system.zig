@@ -555,7 +555,7 @@ fn loadShaderModule(vk: c.VkDevice, path: []const u8, allocator: std.mem.Allocat
 fn ensureShaderFileExists(path: []const u8) !void {
     fs.cwd().access(path, .{}) catch |err| {
         log.log.errWithTrace("Culling shader artifact missing: {s} ({})", .{ path, err });
-        log.log.err("Run `nix develop --command zig build` to regenerate Vulkan SPIR-V shaders.", .{});
+        log.log.err("Run `devenv shell zig build` to regenerate Vulkan SPIR-V shaders.", .{});
         return err;
     };
 }
