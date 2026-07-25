@@ -23,8 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Setup Zig cache
         uses: ./.github/actions/setup-zig-cache
@@ -45,7 +45,7 @@ jobs:
           log-file: profiling.log
           command: |
             mkdir -p profiling-artifacts
-            nix develop .#ci-graphics --command zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=medium -Dbenchmark-duration=10 -Dbenchmark-output=profiling-artifacts/fixed-world-profile.json
+            devenv shell --profile graphics -- zig build benchmark -Doptimize=ReleaseFast -Dbenchmark-preset=medium -Dbenchmark-duration=10 -Dbenchmark-output=profiling-artifacts/fixed-world-profile.json
             ruby -rjson -e '
               profile = JSON.parse(File.read("profiling-artifacts/fixed-world-profile.json"))
               duration_us = (profile.fetch("duration_s").to_f * 1_000_000).to_i

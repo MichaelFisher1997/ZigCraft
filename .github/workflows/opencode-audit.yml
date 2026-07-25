@@ -45,8 +45,8 @@ jobs:
       - name: Configure git identity
         run: bash scripts/configure_git_identity.sh "opencode[bot]" "opencode[bot]@users.noreply.github.com"
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Ensure automated-audit label exists
         run: bash scripts/ensure_label.sh "automated-audit" "Issues found by automated opencode audit scans" "1D76DB"

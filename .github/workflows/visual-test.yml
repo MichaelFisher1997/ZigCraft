@@ -26,8 +26,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Setup devenv
+        uses: ./.github/actions/setup-devenv
 
       - name: Start headless Wayland compositor
         uses: ./.github/actions/start-weston
@@ -78,7 +78,7 @@ jobs:
           name: Visual Test
           timeout: 20m
           log-file: build-output.log
-          command: nix develop .#ci-graphics --command zig build run -Dscreenshot-path=screenshot.png -Dskip-present=true
+          command: devenv shell --profile graphics -- zig build run -Dscreenshot-path=screenshot.png -Dskip-present=true
         env:
           ZIG_GLOBAL_CACHE_DIR: /tmp/zig-cache-global
           XDG_RUNTIME_DIR: /tmp/runtime-runner
