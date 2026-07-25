@@ -374,6 +374,19 @@ let
     rmlui
     pkgs.freetype
   ];
+
+  # rpath baked into the distributed binary so it finds nixpkgs libs when run
+  # outside a devenv shell. Mirrors the postFixup of the former flake
+  # packages.default derivation.
+  artifact_runtime_rpath = pkgs.lib.makeLibraryPath [
+    pkgs.sdl3
+    pkgs.vulkan-loader
+    pkgs.stdenv.cc.cc.lib
+    cimgui
+    rmluiBridge
+    rmlui
+    pkgs.freetype
+  ];
 in
 {
   languages.zig = {
@@ -386,12 +399,24 @@ in
   # pick the lean CPU shell (--profile unit) or the graphics shell
   # (--profile graphics). Local devs get the full shell via the
   # `default` profile, which .envrc activates automatically.
-  packages = [ pkgs.pkg-config pkgs.glslang ] ++ commonBuildInputs;
+  packages = [ pkgs.pkg-config pkgs.glslang pkgs.patchelf ] ++ commonBuildInputs;
 
   env = {
     ZIGCRAFT_DYNAMIC_LINKER = nix_dynamic_linker;
     ZIGCRAFT_RUNTIME_LIBRARY_PATH = nix_runtime_library_path;
   };
+
+  # Replaces the former flake packages.default / `nix build -L`. Produces a
+  # relocatable zigcraft binary at the given prefix (default ./dist) with the
+  # nixpkgs runtime libraries baked into its rpath. Invoked by CI as
+  # `devenv shell --profile unit -- devenv tasks run zigcraft`.
+  tasks.zigcraft.exec = ''
+    set -euo pipefail
+    out="''${1:-$PWD/dist}"
+    zig build -Doptimize=Debug -Dtarget=x86_64-linux-gnu --prefix "$out"
+    patchelf --add-rpath ${artifact_runtime_rpath} "$out/bin/zigcraft"
+    echo "Built zigcraft -> $out/bin/zigcraft"
+  '';
 
   enterShell = ''
     echo "Zig ${zig_version} + SDL3 Dev Environment (devenv)"

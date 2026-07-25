@@ -2,10 +2,10 @@ name: Start Weston
 description: Start a headless Weston compositor and wait for the Wayland socket
 
 inputs:
-  nix-shell:
+  devenv-profile:
     required: false
-    default: .#ci-graphics
-    description: Nix shell containing weston
+    default: graphics
+    description: devenv profile containing weston
   runtime-dir:
     required: false
     default: /tmp/runtime-runner
@@ -46,10 +46,10 @@ runs:
         chmod 700 "${{ inputs.runtime-dir }}"
         export XDG_RUNTIME_DIR="${{ inputs.runtime-dir }}"
 
-        echo "Realizing ${{ inputs.nix-shell }} before starting Weston"
-        nix develop "${{ inputs.nix-shell }}" --command true
+        echo "Realizing devenv profile ${{ inputs.devenv-profile }} before starting Weston"
+        devenv shell --profile "${{ inputs.devenv-profile }}" -- true
 
-        nix develop "${{ inputs.nix-shell }}" --command weston \
+        devenv shell --profile "${{ inputs.devenv-profile }}" -- weston \
           --socket="${{ inputs.socket }}" \
           --backend=headless-backend.so \
           --width=1280 \

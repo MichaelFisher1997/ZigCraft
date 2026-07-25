@@ -33,9 +33,9 @@ runs:
         path: |
           ${{ github.workspace }}/${{ inputs.global-cache-dir }}
           ${{ github.workspace }}/${{ inputs.local-cache-dir }}
-        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock') }}-${{ hashFiles('src/**', 'modules/**', 'libs/**', 'assets/shaders/**') }}
+        key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'devenv.nix', 'devenv.yaml', 'devenv.lock') }}-${{ hashFiles('src/**', 'modules/**', 'libs/**', 'assets/shaders/**') }}
         restore-keys: |
-          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock') }}-
+          ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('build.zig', 'build.zig.zon', 'devenv.nix', 'devenv.yaml', 'devenv.lock') }}-
           ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
 
     - name: Summarize Zig cache

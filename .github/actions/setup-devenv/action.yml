@@ -1,0 +1,74 @@
+name: Setup devenv
+description: Install Nix (primary/fallback), devenv CLI, and restore the devenv shell cache
+
+inputs:
+  cache-key-prefix:
+    description: Prefix for the cache primary key
+    required: false
+    default: devenv
+  cache-paths:
+    description: Paths to cache
+    required: false
+    default: ~/.cache/nix
+
+runs:
+  using: composite
+  steps:
+    - name: Mark devenv setup start
+      shell: bash
+      run: |
+        START=$(date +%s)
+        echo "SETUP_NIX_START=$START" >> "$GITHUB_ENV"
+        echo "devenv setup start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    - name: Install Nix (primary)
+      id: nix_install_primary
+      continue-on-error: true
+      uses: DeterminateSystems/nix-installer-action@v16
+
+    - name: Install Nix (fallback)
+      if: steps.nix_install_primary.outcome == 'failure'
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: |
+          experimental-features = nix-command flakes
+
+    - name: Verify Nix installation
+      shell: bash
+      run: nix --version
+
+    # The devenv project publishes prebuilt closures to its own Cachix cache.
+    # Pulling from it avoids building devenv and its module dependencies.
+    # Public cache: no authToken needed; skipPush because we only pull.
+    - name: Configure devenv Cachix cache
+      uses: cachix/cachix-action@v16
+      with:
+        name: devenv
+        skipPush: true
+
+    - name: Install devenv
+      shell: bash
+      run: nix profile add nixpkgs#devenv
+
+    - name: Verify devenv installation
+      shell: bash
+      run: devenv version
+
+    - name: Cache Nix Store
+      continue-on-error: true
+      uses: nix-community/cache-nix-action@v7
+      with:
+        primary-key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('devenv.nix', 'devenv.yaml', 'devenv.lock') }}
+        restore-prefixes-first-match: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-
+        paths: ${{ inputs.cache-paths }}
+
+    - name: Mark devenv setup complete
+      shell: bash
+      run: |
+        END=$(date +%s)
+        START=${SETUP_NIX_START:-$END}
+        {
+          echo "### devenv Setup"
+          echo "- Duration: $((END - START))s"
+          echo "- Cache key: ${{ inputs.cache-key-prefix }}-${{ runner.os }}-${{ hashFiles('devenv.nix', 'devenv.yaml', 'devenv.lock') }}"
+        } >> "$GITHUB_STEP_SUMMARY"
