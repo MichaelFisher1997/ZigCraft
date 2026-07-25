@@ -8,8 +8,16 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        LVP_PATH=$(nix build --no-link --print-out-paths nixpkgs#mesa.drivers)/share/vulkan/icd.d/lvp_icd.x86_64.json
-        LAYER_PATH=$(nix build --no-link --print-out-paths nixpkgs#vulkan-validation-layers)/share/vulkan/explicit_layer.d
+        # Pin Lavapipe (mesa.drivers) and the Khronos validation layers to the
+        # same nixpkgs revision devenv.lock pins. The bare 'nixpkgs#' shorthand
+        # resolves to the floating flake registry and lets the validation
+        # layers drift independently of the project pin, which surfaced latent
+        # Vulkan errors (viewport 0x0, render-pass srcAccessMask mismatches)
+        # that broke the integration-test gate. Read the rev from devenv.lock
+        # so there is a single source of truth.
+        nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' devenv.lock)
+        LVP_PATH=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/${nixpkgs_rev}#mesa.drivers")/share/vulkan/icd.d/lvp_icd.x86_64.json
+        LAYER_PATH=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/${nixpkgs_rev}#vulkan-validation-layers")/share/vulkan/explicit_layer.d
         {
           echo "VK_ICD_FILENAMES=$LVP_PATH"
           echo "VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation"

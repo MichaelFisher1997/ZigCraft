@@ -157,7 +157,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: zigcraft
-          path: dist/
+          path: dist/zigcraft-linux
           retention-days: 7
 
   unit-test-matrix:

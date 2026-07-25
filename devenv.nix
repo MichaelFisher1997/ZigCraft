@@ -421,11 +421,14 @@ in
     # rather than external execution, so a failed rpath bake must not fail the
     # build -- the binary still runs inside 'devenv shell' via
     # ZIGCRAFT_DYNAMIC_LINKER / ZIGCRAFT_RUNTIME_LIBRARY_PATH.
-    if patchelf --add-rpath ${artifact_runtime_rpath} "$out/bin/zigcraft" 2>/dev/null; then
+    patchelf_log="$(mktemp)"
+    if patchelf --add-rpath ${artifact_runtime_rpath} "$out/bin/zigcraft" 2>"$patchelf_log"; then
       echo "Baked runtime rpath into $out/bin/zigcraft"
     else
-      echo "patchelf could not rewrite the PIE binary; rpath left unset (binary still runs inside 'devenv shell')"
+      echo "patchelf could not bake rpath (binary still runs inside 'devenv shell' via the loader env vars):"
+      cat "$patchelf_log"
     fi
+    rm -f "$patchelf_log"
     echo "Built zigcraft -> $out/bin/zigcraft"
   '';
 
