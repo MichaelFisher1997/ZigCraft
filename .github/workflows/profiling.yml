@@ -2,7 +2,7 @@ name: Profiling
 
 on:
   schedule:
-    - cron: "43 4 * * *"
+    - cron: "43 4 * * 4"
   workflow_dispatch:
 
 concurrency:

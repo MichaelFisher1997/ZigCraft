@@ -7,7 +7,7 @@ on:
   push:
     branches: [dev]
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "17 3 * * 3"
   workflow_dispatch:
     inputs:
       duration:
