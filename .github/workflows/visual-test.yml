@@ -2,7 +2,7 @@ name: visual-test
 
 on:
   schedule:
-    - cron: "43 4 * * *"
+    - cron: "43 4 * * 2"
   pull_request:
     branches: [dev]
     types: [labeled]
