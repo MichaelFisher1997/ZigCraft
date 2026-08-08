@@ -69,7 +69,7 @@ jobs:
 
       - name: Comment non-blocking coverage status
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const marker = '<!-- zigcraft-kcov-status -->';
