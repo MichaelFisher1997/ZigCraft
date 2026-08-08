@@ -72,7 +72,7 @@ jobs:
       code_changes: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.code_changes }}
       platform_changes: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.platform_changes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: github.event_name != 'workflow_dispatch'
 
       - name: Detect build-relevant changes
@@ -111,7 +111,7 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -129,7 +129,7 @@ jobs:
     timeout-minutes: 30
     needs: [changes, fmt]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -172,7 +172,7 @@ jobs:
       matrix:
         optimize: [Debug, ReleaseSafe]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -241,7 +241,7 @@ jobs:
     timeout-minutes: 75
     needs: [changes, unit-test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 
@@ -368,7 +368,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
 

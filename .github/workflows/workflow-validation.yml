@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run actionlint
         uses: reviewdog/action-actionlint@v1
@@ -44,7 +44,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup devenv
         uses: ./.github/actions/setup-devenv
