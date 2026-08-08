@@ -58,7 +58,7 @@ jobs:
           retention-days: 14
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         continue-on-error: true
         with:
           directory: coverage/kcov
