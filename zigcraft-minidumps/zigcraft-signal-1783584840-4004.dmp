@@ -1,0 +1,6 @@
+format=zigcraft-minidump-v1
+kind=signal
+pid=4004
+timestamp_unix=1783584840
+pii_policy=metadata-only-no-env-no-argv-no-memory
+signal=
